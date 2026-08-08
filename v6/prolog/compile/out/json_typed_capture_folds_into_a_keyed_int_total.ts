@@ -23,6 +23,7 @@ import { IncrementalRuntime, stage_ordered_frontiers } from "../runtime/1_increm
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,32 +155,46 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "star_event": [true, false],
+    "total": [true, false],
+  },
+};
+
 const ddl: readonly string[] = [
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "event" ("payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE TABLE "star_event" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
-  `CREATE TABLE "total" ("repo" TEXT NOT NULL, "sum" INTEGER NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
+  `CREATE TABLE "star_event" ("repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_star_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."stars" AS "stars", t."__refcount" AS "__refcount" FROM "star_event" t`,
+  `CREATE TABLE "total" ("repo" INTEGER NOT NULL, "sum" INTEGER NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_total" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."sum" AS "sum" FROM "total" t`,
   `CREATE TEMP TABLE "__delta_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__delta_event_sign" ON "__delta_event" ("_sign")`,
   `CREATE INDEX "__delta_event_group" ON "__delta_event" ("payload")`,
   `CREATE TEMP TABLE "__frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__frontier_event_phase" ON "__frontier_event" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE TEMP TABLE "__delta_star_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_star_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_star_event_sign" ON "__delta_star_event" ("_sign")`,
   `CREATE INDEX "__delta_star_event_group" ON "__delta_star_event" ("repo", "stars")`,
-  `CREATE TEMP TABLE "__frontier_star_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_star_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_star_event_phase" ON "__frontier_star_event" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_star_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_total" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_star_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_star_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."stars" AS "stars", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_star_event" t`,
+  `CREATE TEMP TABLE "__delta_total" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_total_sign" ON "__delta_total" ("_sign")`,
   `CREATE INDEX "__delta_total_group" ON "__delta_total" ("repo", "sum")`,
-  `CREATE TEMP TABLE "__frontier_total" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_total" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_total_phase" ON "__frontier_total" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_total" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_star_event" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_star_event" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_total" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "sum" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_total" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."sum" AS "sum", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_total" t`,
+  `CREATE TEMP TABLE "__support_next_star_event" ("repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_star_event" ("repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "star_event_zero" ON "star_event" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__pre_total" ("repo" TEXT NOT NULL, "sum" INTEGER NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__pre_total" ("repo" INTEGER NOT NULL, "sum" INTEGER NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -219,7 +235,8 @@ const arrival_targets: readonly string[] = ["event"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "star_event", sql: `DELETE FROM "star_event"`, params: [] },
-  { rel: "star_event", sql: `INSERT OR IGNORE INTO "star_event" ("repo", "stars") SELECT json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`, params: [] },
+  { rel: "star_event", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."payload", '$."repo"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`, params: [] },
+  { rel: "star_event", sql: `INSERT OR IGNORE INTO "star_event" ("repo", "stars") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."payload", '$."repo"')), json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`, params: [] },
 ];
 
 type Snapshot = {
@@ -231,15 +248,29 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     event: select_rows(seam, `SELECT "payload" FROM "event"`, rel_columns.event!, rel_column_types.event!),
-    star_event: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "star_event"`, rel_columns.star_event!, rel_column_types.star_event!),
-    total: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum" FROM "total"`, rel_columns.total!, rel_column_types.total!),
+    star_event: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "__txt_star_event"`, rel_columns.star_event!, rel_column_types.star_event!),
+    total: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum" FROM "__txt_total"`, rel_columns.total!, rel_column_types.total!),
   });
+}
+
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    event: select_rows(seam, `SELECT "payload" FROM "event"`, rel_columns.event!, rel_column_types.event!),
+    star_event: select_rows(seam, `SELECT "repo", "stars" FROM "star_event"`, rel_columns.star_event!, rel_column_types.star_event!),
+    total: select_rows(seam, `SELECT "repo", "sum" FROM "total"`, rel_columns.total!, rel_column_types.total!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
 }
 
 const final_select: Record<string, string> = {
   event: `SELECT "payload" FROM "event"`,
-  star_event: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "star_event"`,
-  total: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum" FROM "total"`,
+  star_event: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "__txt_star_event"`,
+  total: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum" FROM "__txt_total"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -270,8 +301,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "event", kind: "log", table_name: "event", delta_table_name: "__delta_event", frontier_table_name: "__frontier_event", next_frontier_table_name: "__next_frontier_event", columns: ["payload"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT INTO "event" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: null, boundary_sql: `SELECT "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_event" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"`, rule_observers: ["star_event/2"] },
-  { rel: "star_event", kind: "set", table_name: "star_event", delta_table_name: "__delta_star_event", frontier_table_name: "__frontier_star_event", next_frontier_table_name: "__next_frontier_star_event", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_star_event" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "stars", "_sign"`, rule_observers: ["total/2"] },
-  { rel: "total", kind: "set", table_name: "total", delta_table_name: "__delta_total", frontier_table_name: "__frontier_total", next_frontier_table_name: "__next_frontier_total", columns: ["repo", "sum"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_total" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "sum", "_sign"`, rule_observers: [] },
+  { rel: "star_event", kind: "set", table_name: "star_event", delta_table_name: "__delta_star_event", frontier_table_name: "__frontier_star_event", next_frontier_table_name: "__next_frontier_star_event", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_star_event" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "stars", "_sign"`, rule_observers: ["total/2"] },
+  { rel: "total", kind: "set", table_name: "total", delta_table_name: "__delta_total", frontier_table_name: "__frontier_total", next_frontier_table_name: "__next_frontier_total", columns: ["repo", "sum"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_total" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "sum", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -280,8 +311,9 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "star_event", rule_id: "json_typed_capture_folds_into_a_keyed_int_total:star_event/2#1", head_delta_table_name: "__delta_star_event", head_columns: ["repo", "stars"], insert_sql: `INSERT OR IGNORE INTO "star_event" ("repo", "stars") SELECT DISTINCT json_extract(d0."payload", '$."repo"'), json_extract(d0."payload", '$."stars"') FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 AND json_type(d0."payload", '$') = 'object' AND json_type(d0."payload", '$."repo"') = 'text' AND json_type(d0."payload", '$."stars"') = 'integer' RETURNING "repo", "stars"`, select_sql: `SELECT "repo", "stars" FROM "star_event"`, recompute_sql: `DELETE FROM "star_event";
-INSERT OR IGNORE INTO "star_event" ("repo", "stars") SELECT json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`, support_sql: [`DELETE FROM "__support_next_star_event"`, `INSERT INTO "__support_next_star_event" ("repo", "stars", "__refcount") SELECT "repo", "stars", sum("__refcount") FROM (SELECT json_extract(b0."payload", '$."repo"') AS "repo", json_extract(b0."payload", '$."stars"') AS "stars", count(*) AS "__refcount" FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer' GROUP BY json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"')) GROUP BY "repo", "stars"`, `UPDATE "star_event" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_star_event" n WHERE n."repo" = h."repo" AND n."stars" = h."stars"), 0)`, `INSERT INTO "__delta_star_event" ("_sign", "_sequence", "repo", "stars") SELECT -1, row_number() OVER () - 1, "repo", "stars" FROM "star_event" WHERE "__refcount" <= 0`, `DELETE FROM "star_event" WHERE "__refcount" <= 0`, `DELETE FROM "__new_star_event"`, `INSERT INTO "__new_star_event" ("repo", "stars", "__refcount") SELECT n."repo", n."stars", n."__refcount" FROM "__support_next_star_event" n LEFT JOIN "star_event" h ON n."repo" = h."repo" AND n."stars" = h."stars" WHERE h."repo" IS NULL`, `INSERT INTO "__delta_star_event" ("_sign", "_sequence", "repo", "stars") SELECT 1, "rowid" - 1, "repo", "stars" FROM "__new_star_event"`, `INSERT INTO "__frontier_star_event" ("_phase", "_sequence", "repo", "stars") SELECT ?, "rowid" - 1, "repo", "stars" FROM "__new_star_event"`, `INSERT INTO "__next_frontier_star_event" ("_phase", "_sequence", "repo", "stars") SELECT ?, "rowid" - 1, "repo", "stars" FROM "__new_star_event"`, `INSERT OR IGNORE INTO "star_event" ("repo", "stars", "__refcount") SELECT n."repo", n."stars", n."__refcount" FROM "__support_next_star_event" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "star_event", rule_id: "json_typed_capture_folds_into_a_keyed_int_total:star_event/2#1", head_delta_table_name: "__delta_star_event", head_columns: ["repo", "stars"], insert_sql: `INSERT OR IGNORE INTO "star_event" ("repo", "stars") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(d0."payload", '$."repo"')), json_extract(d0."payload", '$."stars"') FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 AND json_type(d0."payload", '$') = 'object' AND json_type(d0."payload", '$."repo"') = 'text' AND json_type(d0."payload", '$."stars"') = 'integer' RETURNING "repo", "stars"`, select_sql: `SELECT "repo", "stars" FROM "star_event"`, recompute_sql: `DELETE FROM "star_event";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."payload", '$."repo"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer';
+INSERT OR IGNORE INTO "star_event" ("repo", "stars") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."payload", '$."repo"')), json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`, support_sql: [`DELETE FROM "__support_next_star_event"`, `INSERT INTO "__support_next_star_event" ("repo", "stars", "__refcount") SELECT "repo", "stars", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."payload", '$."repo"')) AS "repo", json_extract(b0."payload", '$."stars"') AS "stars", count(*) AS "__refcount" FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer' GROUP BY json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"')) GROUP BY "repo", "stars"`, `UPDATE "star_event" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_star_event" n WHERE n."repo" = h."repo" AND n."stars" = h."stars"), 0)`, `INSERT INTO "__delta_star_event" ("_sign", "_sequence", "repo", "stars") SELECT -1, row_number() OVER () - 1, "repo", "stars" FROM "star_event" WHERE "__refcount" <= 0`, `DELETE FROM "star_event" WHERE "__refcount" <= 0`, `DELETE FROM "__new_star_event"`, `INSERT INTO "__new_star_event" ("repo", "stars", "__refcount") SELECT n."repo", n."stars", n."__refcount" FROM "__support_next_star_event" n LEFT JOIN "star_event" h ON n."repo" = h."repo" AND n."stars" = h."stars" WHERE h."repo" IS NULL`, `INSERT INTO "__delta_star_event" ("_sign", "_sequence", "repo", "stars") SELECT 1, "rowid" - 1, "repo", "stars" FROM "__new_star_event"`, `INSERT INTO "__frontier_star_event" ("_phase", "_sequence", "repo", "stars") SELECT ?, "rowid" - 1, "repo", "stars" FROM "__new_star_event"`, `INSERT INTO "__next_frontier_star_event" ("_phase", "_sequence", "repo", "stars") SELECT ?, "rowid" - 1, "repo", "stars" FROM "__new_star_event"`, `INSERT OR IGNORE INTO "star_event" ("repo", "stars", "__refcount") SELECT n."repo", n."stars", n."__refcount" FROM "__support_next_star_event" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(d0."payload", '$."repo"') FROM "__frontier_event" d0 WHERE d0."_phase" >= 0 AND json_type(d0."payload", '$') = 'object' AND json_type(d0."payload", '$."repo"') = 'text' AND json_type(d0."payload", '$."stars"') = 'integer'`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."payload", '$."repo"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`] },
 ];
 
 const EDGE_TOTAL_0_PROJECT_SQL = `SELECT ?1 AS "repo", ?2 AS "sum" WHERE NOT EXISTS (SELECT 1 FROM "total" n0 WHERE n0."repo" = ?1)`;
@@ -473,7 +505,8 @@ function ordered_carry_additions(mid: Snapshot, after: Snapshot, boundary: ITick
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "star_event";
-INSERT OR IGNORE INTO "star_event" ("repo", "stars") SELECT json_extract(b0."payload", '$."repo"'), json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."payload", '$."repo"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer';
+INSERT OR IGNORE INTO "star_event" ("repo", "stars") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."payload", '$."repo"')), json_extract(b0."payload", '$."stars"') FROM "event" b0 WHERE json_type(b0."payload", '$') = 'object' AND json_type(b0."payload", '$."repo"') = 'text' AND json_type(b0."payload", '$."stars"') = 'integer'`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -492,32 +525,36 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveTotal_0Writes(seam, before, arrivals), resolveTotal_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveTotal_0Writes(seam, before.stored, arrivals), resolveTotal_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // json_typed_capture_folds_into_a_keyed_int_total: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
 
 function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => snapshot_ordered_pre(seam).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((mid) => ({ before, mid })))),
-    concatMap(({ before, mid }) => process_ordered_occurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
+    concatMap((before) => read_stored_snapshot(seam).pipe(map((mid) => ({ before, mid })))),
+    concatMap(({ before, mid }) => process_ordered_occurrences(seam, before.stored, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
     concatMap(({ before, mid, written }) => recompute_levels(seam).pipe(map(() => ({ before, mid, written })))),
   ).pipe(
-    concatMap(({ before, mid, written }) => read_snapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: build_deltas(before, after) })))),
-    concatMap(({ mid, after, written, deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after, deltas, written)).pipe(
+    concatMap(({ before, mid, written }) => read_snapshots(seam).pipe(map((after) => ({ mid, after, written, deltas: build_deltas(before.decoded, after.decoded), stored_deltas: build_deltas(before.stored, after.stored) })))),
+    concatMap(({ mid, after, written, deltas, stored_deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after.stored, stored_deltas, written)).pipe(
       map((post_write_carry): ITickDeltas => ({ rels: deltas.rels, carry_pending: deltas.carry_pending || post_write_carry })),
     )),
   );
@@ -540,6 +577,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -571,7 +610,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_typed_capture_folds_into_a_keyed_int_total",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

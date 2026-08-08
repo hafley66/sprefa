@@ -65,7 +65,7 @@ function chain_arrivals(depth: number): readonly IArrivalRow[] {
 
 /** Pinned rather than only compared: an equality assertion alone would still
  *  hold if every depth grew together. Measured at depths 3, 8 and 16. */
-const STATEMENTS_FLAT = 32;
+const STATEMENTS_FLAT = 34;
 const STATEMENTS_PER_ROUND = 4;
 const statements_at_depth = (depth: number): number =>
   STATEMENTS_FLAT + STATEMENTS_PER_ROUND * (depth + 1);
@@ -92,7 +92,7 @@ function two_chain_arrivals(bulk_depth: number): readonly IArrivalRow[] {
 }
 
 const CONE_CHAIN_DEPTH = 3;
-const STATEMENTS_PER_DELETE_TICK = 111;
+const STATEMENTS_PER_DELETE_TICK = 113;
 
 async function run_one_tick(depth: number) {
   const seam = ScratchStore.open(":memory:");

@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,33 +136,50 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "demanded": [true, true],
+    "effect_call": [true],
+    "open_feed": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "demanded" ("target" TEXT NOT NULL, "session_id" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
-  `CREATE TABLE "effect_call" ("target" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("target")) WITHOUT ROWID`,
-  `CREATE TABLE "open_feed" ("session_id" TEXT NOT NULL, "target" TEXT NOT NULL, PRIMARY KEY ("session_id")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_demanded" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL, "session_id" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "demanded" ("target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_demanded" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session_id") AS "session_id", t."__refcount" AS "__refcount" FROM "demanded" t`,
+  `CREATE TABLE "effect_call" ("target" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("target")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_effect_call" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target", t."__refcount" AS "__refcount" FROM "effect_call" t`,
+  `CREATE TABLE "open_feed" ("session_id" INTEGER NOT NULL, "target" INTEGER NOT NULL, PRIMARY KEY ("session_id")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_open_feed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session_id") AS "session_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target" FROM "open_feed" t`,
+  `CREATE TEMP TABLE "__delta_demanded" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_demanded_sign" ON "__delta_demanded" ("_sign")`,
   `CREATE INDEX "__delta_demanded_group" ON "__delta_demanded" ("target", "session_id")`,
-  `CREATE TEMP TABLE "__frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL, "session_id" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_demanded_phase" ON "__frontier_demanded" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL, "session_id" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_effect_call" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_demanded" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_demanded" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session_id") AS "session_id", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_demanded" t`,
+  `CREATE TEMP TABLE "__delta_effect_call" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_effect_call_sign" ON "__delta_effect_call" ("_sign")`,
   `CREATE INDEX "__delta_effect_call_group" ON "__delta_effect_call" ("target")`,
-  `CREATE TEMP TABLE "__frontier_effect_call" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_effect_call" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_effect_call_phase" ON "__frontier_effect_call" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_effect_call" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_open_feed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "target" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_effect_call" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_effect_call" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_effect_call" t`,
+  `CREATE TEMP TABLE "__delta_open_feed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" INTEGER NOT NULL, "target" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_open_feed_sign" ON "__delta_open_feed" ("_sign")`,
   `CREATE INDEX "__delta_open_feed_group" ON "__delta_open_feed" ("session_id", "target")`,
-  `CREATE TEMP TABLE "__frontier_open_feed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "target" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_open_feed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" INTEGER NOT NULL, "target" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_open_feed_phase" ON "__frontier_open_feed" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_open_feed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "target" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_demanded" ("target" TEXT NOT NULL, "session_id" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_demanded" ("target" TEXT NOT NULL, "session_id" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_open_feed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" INTEGER NOT NULL, "target" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_open_feed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session_id") AS "session_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_open_feed" t`,
+  `CREATE TEMP TABLE "__support_next_demanded" ("target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_demanded" ("target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "demanded_zero" ON "demanded" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_effect_call" ("target" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_effect_call" ("target" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_effect_call" ("target" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "effect_call_zero" ON "effect_call" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -213,16 +232,30 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    demanded: select_rows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
-    effect_call: select_rows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "effect_call"`, rel_columns.effect_call!, rel_column_types.effect_call!),
-    open_feed: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "open_feed"`, rel_columns.open_feed!, rel_column_types.open_feed!),
+    demanded: select_rows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "__txt_demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
+    effect_call: select_rows(seam, `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "__txt_effect_call"`, rel_columns.effect_call!, rel_column_types.effect_call!),
+    open_feed: select_rows(seam, `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "__txt_open_feed"`, rel_columns.open_feed!, rel_column_types.open_feed!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    demanded: select_rows(seam, `SELECT "target", "session_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
+    effect_call: select_rows(seam, `SELECT "target" FROM "effect_call"`, rel_columns.effect_call!, rel_column_types.effect_call!),
+    open_feed: select_rows(seam, `SELECT "session_id", "target" FROM "open_feed"`, rel_columns.open_feed!, rel_column_types.open_feed!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  demanded: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "demanded"`,
-  effect_call: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "effect_call"`,
-  open_feed: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "open_feed"`,
+  demanded: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id" FROM "__txt_demanded"`,
+  effect_call: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "__txt_effect_call"`,
+  open_feed: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target" FROM "__txt_open_feed"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -252,9 +285,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "demanded", kind: "set", table_name: "demanded", delta_table_name: "__delta_demanded", frontier_table_name: "__frontier_demanded", next_frontier_table_name: "__next_frontier_demanded", columns: ["target", "session_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "target", "session_id", "_sign"`, rule_observers: ["effect_call/1"] },
-  { rel: "effect_call", kind: "set", table_name: "effect_call", delta_table_name: "__delta_effect_call", frontier_table_name: "__frontier_effect_call", next_frontier_table_name: "__next_frontier_effect_call", columns: ["target"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_effect_call" WHERE "_sign" IN (-1, 1) GROUP BY "target", "_sign"`, rule_observers: [] },
-  { rel: "open_feed", kind: "set", table_name: "open_feed", delta_table_name: "__delta_open_feed", frontier_table_name: "__frontier_open_feed", next_frontier_table_name: "__next_frontier_open_feed", columns: ["session_id", "target"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "open_feed" ("session_id", "target") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target" RETURNING "session_id", "target"`, arrival_del_sql: `DELETE FROM "open_feed" WHERE ("session_id", "target") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "session_id", "target"`, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_open_feed" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "target", "_sign"`, rule_observers: ["demanded/2"] },
+  { rel: "demanded", kind: "set", table_name: "demanded", delta_table_name: "__delta_demanded", frontier_table_name: "__frontier_demanded", next_frontier_table_name: "__next_frontier_demanded", columns: ["target", "session_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_demanded" WHERE "_sign" IN (-1, 1) GROUP BY "target", "session_id", "_sign"`, rule_observers: ["effect_call/1"] },
+  { rel: "effect_call", kind: "set", table_name: "effect_call", delta_table_name: "__delta_effect_call", frontier_table_name: "__frontier_effect_call", next_frontier_table_name: "__next_frontier_effect_call", columns: ["target"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_effect_call" WHERE "_sign" IN (-1, 1) GROUP BY "target", "_sign"`, rule_observers: [] },
+  { rel: "open_feed", kind: "set", table_name: "open_feed", delta_table_name: "__delta_open_feed", frontier_table_name: "__frontier_open_feed", next_frontier_table_name: "__next_frontier_open_feed", columns: ["session_id", "target"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "open_feed" ("session_id", "target") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target" RETURNING "session_id", "target"`, arrival_del_sql: `DELETE FROM "open_feed" WHERE ("session_id", "target") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "session_id", "target"`, boundary_sql: `SELECT CASE WHEN json_valid("session_id") AND json_type("session_id") = 'object' AND json_type("session_id", '$.fn') = 'text' AND json_type("session_id", '$.args') = 'array' THEN json_extract("session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session_id", '$.args')), '') || ')' ELSE "session_id" END AS "session_id", CASE WHEN json_valid("target") AND json_type("target") = 'object' AND json_type("target", '$.fn') = 'text' AND json_type("target", '$.args') = 'array' THEN json_extract("target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("target", '$.args')), '') || ')' ELSE "target" END AS "target", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_open_feed" WHERE "_sign" IN (-1, 1) GROUP BY "session_id", "target", "_sign"`, rule_observers: ["demanded/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -291,6 +324,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -314,11 +349,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -346,7 +384,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "demand_laziness_effect_rows",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

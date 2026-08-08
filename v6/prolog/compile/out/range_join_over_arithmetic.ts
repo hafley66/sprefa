@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,30 +136,47 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "eprintln_hit": [true, false],
+    "eprintln_waived": [true, false],
+    "eprintln_waiver_line": [true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "eprintln_hit" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
-  `CREATE TABLE "eprintln_waived" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
-  `CREATE TABLE "eprintln_waiver_line" ("path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL, PRIMARY KEY ("path", "waiver_line")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "eprintln_hit" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_eprintln_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number" FROM "eprintln_hit" t`,
+  `CREATE TABLE "eprintln_waived" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_eprintln_waived" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number", t."__refcount" AS "__refcount" FROM "eprintln_waived" t`,
+  `CREATE TABLE "eprintln_waiver_line" ("path" INTEGER NOT NULL, "waiver_line" INTEGER NOT NULL, PRIMARY KEY ("path", "waiver_line")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_eprintln_waiver_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."waiver_line" AS "waiver_line" FROM "eprintln_waiver_line" t`,
+  `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_hit_sign" ON "__delta_eprintln_hit" ("_sign")`,
   `CREATE INDEX "__delta_eprintln_hit_group" ON "__delta_eprintln_hit" ("path", "line_number")`,
-  `CREATE TEMP TABLE "__frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_hit_phase" ON "__frontier_eprintln_hit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_eprintln_waived" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_eprintln_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_eprintln_hit" t`,
+  `CREATE TEMP TABLE "__delta_eprintln_waived" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_waived_sign" ON "__delta_eprintln_waived" ("_sign")`,
   `CREATE INDEX "__delta_eprintln_waived_group" ON "__delta_eprintln_waived" ("path", "line_number")`,
-  `CREATE TEMP TABLE "__frontier_eprintln_waived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_eprintln_waived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_waived_phase" ON "__frontier_eprintln_waived" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_eprintln_waived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_eprintln_waiver_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_eprintln_waived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_eprintln_waived" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_eprintln_waived" t`,
+  `CREATE TEMP TABLE "__delta_eprintln_waiver_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_waiver_line_sign" ON "__delta_eprintln_waiver_line" ("_sign")`,
   `CREATE INDEX "__delta_eprintln_waiver_line_group" ON "__delta_eprintln_waiver_line" ("path", "waiver_line")`,
-  `CREATE TEMP TABLE "__frontier_eprintln_waiver_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_eprintln_waiver_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "waiver_line" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_waiver_line_phase" ON "__frontier_eprintln_waiver_line" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_eprintln_waiver_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "waiver_line" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_eprintln_waived" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_eprintln_waived" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_eprintln_waiver_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "waiver_line" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_eprintln_waiver_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."waiver_line" AS "waiver_line", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_eprintln_waiver_line" t`,
+  `CREATE TEMP TABLE "__support_next_eprintln_waived" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_eprintln_waived" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "eprintln_waived_zero" ON "eprintln_waived" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -197,9 +216,12 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["eprintln_hit", "eprintln_waiver_line"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") VALUES (?, ?)`, params: ["src/db.rs", 40] },
-  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") VALUES (?, ?)`, params: ["src/db.rs", 88] },
-  { rel: "eprintln_waiver_line", sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") VALUES (?, ?)`, params: ["src/db.rs", 39] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/db.rs"] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["src/db.rs", 40] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/db.rs"] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["src/db.rs", 88] },
+  { rel: "eprintln_waiver_line", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/db.rs"] },
+  { rel: "eprintln_waiver_line", sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["src/db.rs", 39] },
   { rel: "eprintln_waived", sql: `DELETE FROM "eprintln_waived"`, params: [] },
   { rel: "eprintln_waived", sql: `INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_number") SELECT b0."path", b1."line_number" FROM "eprintln_waiver_line" b0, "eprintln_hit" b1 WHERE b1."path" = b0."path" AND (b0."waiver_line" >= (b1."line_number" - 1)) AND (b0."waiver_line" <= b1."line_number")`, params: [] },
 ];
@@ -212,16 +234,30 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    eprintln_hit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_hit"`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
-    eprintln_waived: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_waived"`, rel_columns.eprintln_waived!, rel_column_types.eprintln_waived!),
-    eprintln_waiver_line: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "waiver_line" FROM "eprintln_waiver_line"`, rel_columns.eprintln_waiver_line!, rel_column_types.eprintln_waiver_line!),
+    eprintln_hit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "__txt_eprintln_hit"`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
+    eprintln_waived: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "__txt_eprintln_waived"`, rel_columns.eprintln_waived!, rel_column_types.eprintln_waived!),
+    eprintln_waiver_line: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "waiver_line" FROM "__txt_eprintln_waiver_line"`, rel_columns.eprintln_waiver_line!, rel_column_types.eprintln_waiver_line!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    eprintln_hit: select_rows(seam, `SELECT "path", "line_number" FROM "eprintln_hit"`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
+    eprintln_waived: select_rows(seam, `SELECT "path", "line_number" FROM "eprintln_waived"`, rel_columns.eprintln_waived!, rel_column_types.eprintln_waived!),
+    eprintln_waiver_line: select_rows(seam, `SELECT "path", "waiver_line" FROM "eprintln_waiver_line"`, rel_columns.eprintln_waiver_line!, rel_column_types.eprintln_waiver_line!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  eprintln_hit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_hit"`,
-  eprintln_waived: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_waived"`,
-  eprintln_waiver_line: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "waiver_line" FROM "eprintln_waiver_line"`,
+  eprintln_hit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "__txt_eprintln_hit"`,
+  eprintln_waived: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "__txt_eprintln_waived"`,
+  eprintln_waiver_line: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "waiver_line" FROM "__txt_eprintln_waiver_line"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -252,9 +288,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "eprintln_hit", kind: "set", table_name: "eprintln_hit", delta_table_name: "__delta_eprintln_hit", frontier_table_name: "__frontier_eprintln_hit", next_frontier_table_name: "__next_frontier_eprintln_hit", columns: ["path", "line_number"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "line_number"`, arrival_del_sql: `DELETE FROM "eprintln_hit" WHERE ("path", "line_number") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "line_number"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_hit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"`, rule_observers: ["eprintln_waived/2"] },
-  { rel: "eprintln_waived", kind: "set", table_name: "eprintln_waived", delta_table_name: "__delta_eprintln_waived", frontier_table_name: "__frontier_eprintln_waived", next_frontier_table_name: "__next_frontier_eprintln_waived", columns: ["path", "line_number"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_waived" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"`, rule_observers: [] },
-  { rel: "eprintln_waiver_line", kind: "set", table_name: "eprintln_waiver_line", delta_table_name: "__delta_eprintln_waiver_line", frontier_table_name: "__frontier_eprintln_waiver_line", next_frontier_table_name: "__next_frontier_eprintln_waiver_line", columns: ["path", "waiver_line"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "waiver_line"`, arrival_del_sql: `DELETE FROM "eprintln_waiver_line" WHERE ("path", "waiver_line") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "waiver_line"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "waiver_line", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_waiver_line" WHERE "_sign" IN (-1, 1) GROUP BY "path", "waiver_line", "_sign"`, rule_observers: ["eprintln_waived/2"] },
+  { rel: "eprintln_hit", kind: "set", table_name: "eprintln_hit", delta_table_name: "__delta_eprintln_hit", frontier_table_name: "__frontier_eprintln_hit", next_frontier_table_name: "__next_frontier_eprintln_hit", columns: ["path", "line_number"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "line_number"`, arrival_del_sql: `DELETE FROM "eprintln_hit" WHERE ("path", "line_number") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "line_number"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_eprintln_hit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"`, rule_observers: ["eprintln_waived/2"] },
+  { rel: "eprintln_waived", kind: "set", table_name: "eprintln_waived", delta_table_name: "__delta_eprintln_waived", frontier_table_name: "__frontier_eprintln_waived", next_frontier_table_name: "__next_frontier_eprintln_waived", columns: ["path", "line_number"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_eprintln_waived" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"`, rule_observers: [] },
+  { rel: "eprintln_waiver_line", kind: "set", table_name: "eprintln_waiver_line", delta_table_name: "__delta_eprintln_waiver_line", frontier_table_name: "__frontier_eprintln_waiver_line", next_frontier_table_name: "__next_frontier_eprintln_waiver_line", columns: ["path", "waiver_line"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "waiver_line"`, arrival_del_sql: `DELETE FROM "eprintln_waiver_line" WHERE ("path", "waiver_line") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "waiver_line"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "waiver_line", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_eprintln_waiver_line" WHERE "_sign" IN (-1, 1) GROUP BY "path", "waiver_line", "_sign"`, rule_observers: ["eprintln_waived/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -287,6 +323,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -310,11 +348,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -342,7 +383,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "range_join_over_arithmetic",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

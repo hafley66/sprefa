@@ -87,7 +87,7 @@ function incremental_arrivals(count: number): IArrivalBatch {
   }));
 }
 
-test("the ordered/pre family costs 13 + 2n statements per tick, against the incremental family's flat 31", async () => {
+test("the ordered/pre family costs 19 + 2n statements per tick, against the incremental family's flat 33", async () => {
   const sizes = [1, 5, 25, 100];
   const ordered = [];
   const incremental = [];
@@ -101,11 +101,11 @@ test("the ordered/pre family costs 13 + 2n statements per tick, against the incr
   // The exact curve, stated so that ANY movement in it is a failure someone has
   // to read. Flattening this is ARCH row `pre_occurrence_loop` and lives in the
   // prolog emitter; when it lands, this line is what it edits.
-  assert.deepEqual(ordered, sizes.map((size) => 13 + 2 * size), `ordered/pre at ${sizes.join(",")} arrivals`);
+  assert.deepEqual(ordered, sizes.map((size) => 19 + 2 * size), `ordered/pre at ${sizes.join(",")} arrivals`);
 
   // The comparison that makes the number mean something: the same seam, the
   // same counter, a program on the incremental family, flat.
-  assert.deepEqual(incremental, sizes.map(() => 31), `incremental at ${sizes.join(",")} arrivals`);
+  assert.deepEqual(incremental, sizes.map(() => 33), `incremental at ${sizes.join(",")} arrivals`);
 
   // And the claim in one line, independent of the constants above: the ordered
   // family's cost is a function of arrival count, the incremental family's is
@@ -134,7 +134,7 @@ test("the ordered/pre snapshot copies the whole relation every tick, arrivals or
 
   stmt_counter.reset();
   await firstValueFrom(program.tick(seam, []));
-  assert.equal(stmt_counter.get(), 13, "the constant term runs in full on a tick with no arrivals");
+  assert.equal(stmt_counter.get(), 17, "the constant term runs in full on a tick with no arrivals");
 
   const counter_rows = await firstValueFrom(seam.runner.execute(seam.db, 'SELECT count(*) AS n FROM "__pre_counter"'));
   assert.equal(counter_rows.rows[0]!.n, 3, "the pre table holds a full copy of the relation, not a delta");

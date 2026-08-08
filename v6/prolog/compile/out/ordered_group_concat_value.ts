@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,22 +136,36 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "item": [true, true],
+    "value_joined": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "item" ("group" TEXT NOT NULL, "value" TEXT NOT NULL, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
-  `CREATE TABLE "value_joined" ("group" TEXT NOT NULL, "col2" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "item" ("group" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "item" t`,
+  `CREATE TABLE "value_joined" ("group" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_value_joined" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."__refcount" AS "__refcount" FROM "value_joined" t`,
+  `CREATE TEMP TABLE "__delta_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_item_sign" ON "__delta_item" ("_sign")`,
   `CREATE INDEX "__delta_item_group" ON "__delta_item" ("group", "value")`,
-  `CREATE TEMP TABLE "__frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_item_phase" ON "__frontier_item" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_value_joined" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_item" t`,
+  `CREATE TEMP TABLE "__delta_value_joined" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_value_joined_sign" ON "__delta_value_joined" ("_sign")`,
   `CREATE INDEX "__delta_value_joined_group" ON "__delta_value_joined" ("group", "col2")`,
-  `CREATE TEMP TABLE "__frontier_value_joined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_value_joined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_value_joined_phase" ON "__frontier_value_joined" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_value_joined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__agg_scope_value_joined" ("group" TEXT NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__next_frontier_value_joined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_value_joined" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_value_joined" t`,
+  `CREATE TEMP TABLE "__agg_scope_value_joined" ("group" INTEGER NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -183,11 +199,18 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["item"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "item", sql: `INSERT OR IGNORE INTO "item" ("group", "value") VALUES (?, ?)`, params: ["north", "pear"] },
-  { rel: "item", sql: `INSERT OR IGNORE INTO "item" ("group", "value") VALUES (?, ?)`, params: ["north", "orange"] },
-  { rel: "item", sql: `INSERT OR IGNORE INTO "item" ("group", "value") VALUES (?, ?)`, params: ["north", "apple"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["pear"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "item" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["north", "pear"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["orange"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "item" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["north", "orange"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["apple"] },
+  { rel: "item", sql: `INSERT OR IGNORE INTO "item" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["north", "apple"] },
   { rel: "value_joined", sql: `DELETE FROM "value_joined"`, params: [] },
-  { rel: "value_joined", sql: `INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."value") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, params: [] },
+  { rel: "value_joined", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ' > ' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, params: [] },
+  { rel: "value_joined", sql: `INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ' > ' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) AS "__agg_2" FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0)`, params: [] },
 ];
 
 type Snapshot = {
@@ -197,14 +220,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    item: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "item"`, rel_columns.item!, rel_column_types.item!),
-    value_joined: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "value_joined"`, rel_columns.value_joined!, rel_column_types.value_joined!),
+    item: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_item"`, rel_columns.item!, rel_column_types.item!),
+    value_joined: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "__txt_value_joined"`, rel_columns.value_joined!, rel_column_types.value_joined!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    item: select_rows(seam, `SELECT "group", "value" FROM "item"`, rel_columns.item!, rel_column_types.item!),
+    value_joined: select_rows(seam, `SELECT "group", "col2" FROM "value_joined"`, rel_columns.value_joined!, rel_column_types.value_joined!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  item: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "item"`,
-  value_joined: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "value_joined"`,
+  item: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_item"`,
+  value_joined: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "__txt_value_joined"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -234,8 +270,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "item", kind: "set", table_name: "item", delta_table_name: "__delta_item", frontier_table_name: "__frontier_item", next_frontier_table_name: "__next_frontier_item", columns: ["group", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "item" ("group", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "value"`, arrival_del_sql: `DELETE FROM "item" WHERE ("group", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_item" WHERE "_sign" IN (-1, 1) GROUP BY "group", "value", "_sign"`, rule_observers: ["value_joined/2"] },
-  { rel: "value_joined", kind: "set", table_name: "value_joined", delta_table_name: "__delta_value_joined", frontier_table_name: "__frontier_value_joined", next_frontier_table_name: "__next_frontier_value_joined", columns: ["group", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_value_joined" WHERE "_sign" IN (-1, 1) GROUP BY "group", "col2", "_sign"`, rule_observers: [] },
+  { rel: "item", kind: "set", table_name: "item", delta_table_name: "__delta_item", frontier_table_name: "__frontier_item", next_frontier_table_name: "__next_frontier_item", columns: ["group", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "item" ("group", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "value"`, arrival_del_sql: `DELETE FROM "item" WHERE ("group", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_item" WHERE "_sign" IN (-1, 1) GROUP BY "group", "value", "_sign"`, rule_observers: ["value_joined/2"] },
+  { rel: "value_joined", kind: "set", table_name: "value_joined", delta_table_name: "__delta_value_joined", frontier_table_name: "__frontier_value_joined", next_frontier_table_name: "__next_frontier_value_joined", columns: ["group", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_value_joined" WHERE "_sign" IN (-1, 1) GROUP BY "group", "col2", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -243,12 +279,14 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { head_rel: "value_joined", rule_id: "ordered_group_concat_value:value_joined/2#1", head_delta_table_name: "__delta_value_joined", head_columns: ["group", "col2"], insert_sql: null, select_sql: `SELECT "group", "col2" FROM "value_joined"`, recompute_sql: `DELETE FROM "value_joined";
-INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."value") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_value_joined"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_value_joined" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "value_joined" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_value_joined") RETURNING "group", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."value") FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_value_joined") GROUP BY b0."group" HAVING count(*) > 0 RETURNING "group", "col2"`], delta_maintained: false } },
+INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ' > ' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0;
+INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ' > ' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) AS "__agg_2" FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0)`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_value_joined"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_value_joined" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "value_joined" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_value_joined") RETURNING "group", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ' > ' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) AS "__agg_2" FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_value_joined") GROUP BY b0."group" HAVING count(*) > 0) RETURNING "group", "col2"`], intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ' > ' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_value_joined") GROUP BY b0."group" HAVING count(*) > 0`], delta_maintained: false } },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "value_joined";
-INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", ' > ' ORDER BY b0."value") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ' > ' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0;
+INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ' > ' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) AS "__agg_2" FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0)`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -266,6 +304,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -289,11 +329,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -321,7 +364,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "ordered_group_concat_value",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

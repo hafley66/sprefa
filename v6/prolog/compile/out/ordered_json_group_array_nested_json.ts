@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,22 +136,36 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "child": [true, false],
+    "nested": [true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "child" ("group" TEXT NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")), PRIMARY KEY ("group", "payload")) WITHOUT ROWID`,
-  `CREATE TABLE "nested" ("group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_child" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "child" ("group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")), PRIMARY KEY ("group", "payload")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_child" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."payload" AS "payload" FROM "child" t`,
+  `CREATE TABLE "nested" ("group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_nested" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "nested" t`,
+  `CREATE TEMP TABLE "__delta_child" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__delta_child_sign" ON "__delta_child" ("_sign")`,
   `CREATE INDEX "__delta_child_group" ON "__delta_child" ("group", "payload")`,
-  `CREATE TEMP TABLE "__frontier_child" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
+  `CREATE TEMP TABLE "__frontier_child" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__frontier_child_phase" ON "__frontier_child" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_child" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE TEMP TABLE "__delta_nested" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
+  `CREATE TEMP TABLE "__next_frontier_child" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
+  `CREATE TEMP VIEW "__txt___delta_child" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."payload" AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_child" t`,
+  `CREATE TEMP TABLE "__delta_nested" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_nested_sign" ON "__delta_nested" ("_sign")`,
   `CREATE INDEX "__delta_nested_group" ON "__delta_nested" ("group", "col2")`,
-  `CREATE TEMP TABLE "__frontier_nested" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
+  `CREATE TEMP TABLE "__frontier_nested" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__frontier_nested_phase" ON "__frontier_nested" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_nested" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
-  `CREATE TEMP TABLE "__agg_scope_nested" ("group" TEXT NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__next_frontier_nested" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
+  `CREATE TEMP VIEW "__txt___delta_nested" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."col2" AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_nested" t`,
+  `CREATE TEMP TABLE "__agg_scope_nested" ("group" INTEGER NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -184,8 +200,10 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["child"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "child", sql: `INSERT OR IGNORE INTO "child" ("group", "payload") VALUES (?, ?)`, params: ["north", "{\"a\":2,\"z\":1}"] },
-  { rel: "child", sql: `INSERT OR IGNORE INTO "child" ("group", "payload") VALUES (?, ?)`, params: ["north", "{\"a\":3,\"z\":4}"] },
+  { rel: "child", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
+  { rel: "child", sql: `INSERT OR IGNORE INTO "child" ("group", "payload") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", "{\"a\":2,\"z\":1}"] },
+  { rel: "child", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["north"] },
+  { rel: "child", sql: `INSERT OR IGNORE INTO "child" ("group", "payload") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["north", "{\"a\":3,\"z\":4}"] },
   { rel: "nested", sql: `DELETE FROM "nested"`, params: [] },
   { rel: "nested", sql: `INSERT OR IGNORE INTO "nested" ("group", "col2") SELECT b0."group", json_group_array(json(b0."payload") ORDER BY b0."payload") FROM "child" b0 GROUP BY b0."group" HAVING count(*) > 0`, params: [] },
 ];
@@ -197,14 +215,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    child: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload" FROM "child"`, rel_columns.child!, rel_column_types.child!),
-    nested: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2" FROM "nested"`, rel_columns.nested!, rel_column_types.nested!),
+    child: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload" FROM "__txt_child"`, rel_columns.child!, rel_column_types.child!),
+    nested: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2" FROM "__txt_nested"`, rel_columns.nested!, rel_column_types.nested!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    child: select_rows(seam, `SELECT "group", "payload" FROM "child"`, rel_columns.child!, rel_column_types.child!),
+    nested: select_rows(seam, `SELECT "group", "col2" FROM "nested"`, rel_columns.nested!, rel_column_types.nested!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  child: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload" FROM "child"`,
-  nested: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2" FROM "nested"`,
+  child: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload" FROM "__txt_child"`,
+  nested: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2" FROM "__txt_nested"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -234,8 +265,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "child", kind: "set", table_name: "child", delta_table_name: "__delta_child", frontier_table_name: "__frontier_child", next_frontier_table_name: "__next_frontier_child", columns: ["group", "payload"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "child" ("group", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "payload"`, arrival_del_sql: `DELETE FROM "child" WHERE ("group", "payload") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "payload"`, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_child" WHERE "_sign" IN (-1, 1) GROUP BY "group", "payload", "_sign"`, rule_observers: ["nested/2"] },
-  { rel: "nested", kind: "set", table_name: "nested", delta_table_name: "__delta_nested", frontier_table_name: "__frontier_nested", next_frontier_table_name: "__next_frontier_nested", columns: ["group", "col2"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_nested" WHERE "_sign" IN (-1, 1) GROUP BY "group", "col2", "_sign"`, rule_observers: [] },
+  { rel: "child", kind: "set", table_name: "child", delta_table_name: "__delta_child", frontier_table_name: "__frontier_child", next_frontier_table_name: "__next_frontier_child", columns: ["group", "payload"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "child" ("group", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "payload"`, arrival_del_sql: `DELETE FROM "child" WHERE ("group", "payload") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "payload"`, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_child" WHERE "_sign" IN (-1, 1) GROUP BY "group", "payload", "_sign"`, rule_observers: ["nested/2"] },
+  { rel: "nested", kind: "set", table_name: "nested", delta_table_name: "__delta_nested", frontier_table_name: "__frontier_nested", next_frontier_table_name: "__next_frontier_nested", columns: ["group", "col2"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_nested" WHERE "_sign" IN (-1, 1) GROUP BY "group", "col2", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -266,6 +297,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -289,11 +322,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -321,7 +357,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "ordered_json_group_array_nested_json",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

@@ -251,9 +251,12 @@ fixture(host_free_query_leaves_a_derived_rel_unsubscribed,
 % `__rel` at all, so any such fixture is FINAL_WRONG by construction. Its
 % receipt is plunit catalog_g1:catalog_read_narrows_to_the_named_columns.
 
+% The rule is an edge rule (<+) on purpose: a level rule (<-) on a log rel
+% trips the clock checker at analyze time, before the namespace check this
+% fixture exists to pin ever runs.
 fixture(reserved_namespace_declared_rel,
   prog([ kind('__txt_reach'/2, log), keep('__txt_reach'/2, all) ],
-       [ ('__txt_reach'(From, To) <- edge(From, To)) ]),
+       [ ('__txt_reach'(From, To) <+ edge(From, To)) ]),
   [],
   [ [ +edge(a, b) ] ],
   []).

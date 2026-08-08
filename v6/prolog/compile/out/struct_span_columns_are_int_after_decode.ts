@@ -24,6 +24,7 @@ import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -40,6 +41,7 @@ import type {
   ISqlSeam,
   IStructRefColumns,
   IStructTypePlan,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -145,31 +147,45 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "node_fact": [null, null, "span"],
 };
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "def_start": [true, false],
+    "node_fact": [true, true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
-  `CREATE TABLE "node_fact" ("path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "def_start" ("path" INTEGER NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_def_start" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."offset" AS "offset", t."__refcount" AS "__refcount" FROM "def_start" t`,
+  `CREATE TABLE "node_fact" ("path" INTEGER NOT NULL, "name" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_node_fact" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."at" AS "at" FROM "node_fact" t`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL, UNIQUE ("end", "start"))`,
   `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "end", "start", json_object('end', t."end", 'start', t."start") AS "__rendered" FROM "span" t`,
-  `CREATE TEMP TABLE "__delta_def_start" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "offset" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_def_start" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "offset" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_def_start_sign" ON "__delta_def_start" ("_sign")`,
   `CREATE INDEX "__delta_def_start_group" ON "__delta_def_start" ("path", "offset")`,
-  `CREATE TEMP TABLE "__frontier_def_start" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "offset" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_def_start" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "offset" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_def_start_phase" ON "__frontier_def_start" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_def_start" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "offset" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_node_fact" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_def_start" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "offset" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_def_start" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."offset" AS "offset", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_def_start" t`,
+  `CREATE TEMP TABLE "__delta_node_fact" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "name" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_node_fact_sign" ON "__delta_node_fact" ("_sign")`,
   `CREATE INDEX "__delta_node_fact_group" ON "__delta_node_fact" ("path", "name", "at")`,
-  `CREATE TEMP TABLE "__frontier_node_fact" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_node_fact" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "name" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_node_fact_phase" ON "__frontier_node_fact" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_node_fact" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "name" TEXT NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_node_fact" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "name" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_node_fact" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."at" AS "at", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_node_fact" t`,
   `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
   `CREATE INDEX "__delta_span_group" ON "__delta_span" ("end", "start")`,
   `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "end" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_def_start" ("path" TEXT NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_def_start" ("path" INTEGER NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_def_start" ("path" INTEGER NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "def_start_zero" ON "def_start" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -225,15 +241,29 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    def_start: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "offset" FROM "def_start"`, rel_columns.def_start!, rel_column_types.def_start!),
-    node_fact: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "node_fact"`, rel_columns.node_fact!, rel_column_types.node_fact!),
+    def_start: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "offset" FROM "__txt_def_start"`, rel_columns.def_start!, rel_column_types.def_start!),
+    node_fact: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "__txt_node_fact"`, rel_columns.node_fact!, rel_column_types.node_fact!),
     span: select_rows(seam, `SELECT "end", "start" FROM "span"`, rel_columns.span!, rel_column_types.span!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    def_start: select_rows(seam, `SELECT "path", "offset" FROM "def_start"`, rel_columns.def_start!, rel_column_types.def_start!),
+    node_fact: select_rows(seam, `SELECT "path", "name", "at" FROM "node_fact"`, rel_columns.node_fact!, rel_column_types.node_fact!),
+    span: select_rows(seam, `SELECT "end", "start" FROM "span"`, rel_columns.span!, rel_column_types.span!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  def_start: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "offset" FROM "def_start"`,
-  node_fact: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "node_fact"`,
+  def_start: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "offset" FROM "__txt_def_start"`,
+  node_fact: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "__txt_node_fact"`,
   span: `SELECT "end", "start" FROM "span"`,
 };
 
@@ -265,8 +295,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "def_start", kind: "set", table_name: "def_start", delta_table_name: "__delta_def_start", frontier_table_name: "__frontier_def_start", next_frontier_table_name: "__next_frontier_def_start", columns: ["path", "offset"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "offset", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_def_start" WHERE "_sign" IN (-1, 1) GROUP BY "path", "offset", "_sign"`, rule_observers: [] },
-  { rel: "node_fact", kind: "log", table_name: "node_fact", delta_table_name: "__delta_node_fact", frontier_table_name: "__frontier_node_fact", next_frontier_table_name: "__next_frontier_node_fact", columns: ["path", "name", "at"], column_types: ["text", "text", "ref"], key_indices: [], arrival_add_sql: `INSERT INTO "node_fact" ("path", "name", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "name", "at"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "at", "_sign"`, rule_observers: ["def_start/2"] },
+  { rel: "def_start", kind: "set", table_name: "def_start", delta_table_name: "__delta_def_start", frontier_table_name: "__frontier_def_start", next_frontier_table_name: "__next_frontier_def_start", columns: ["path", "offset"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "offset", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_def_start" WHERE "_sign" IN (-1, 1) GROUP BY "path", "offset", "_sign"`, rule_observers: [] },
+  { rel: "node_fact", kind: "log", table_name: "node_fact", delta_table_name: "__delta_node_fact", frontier_table_name: "__frontier_node_fact", next_frontier_table_name: "__next_frontier_node_fact", columns: ["path", "name", "at"], column_types: ["text", "text", "ref"], key_indices: [], arrival_add_sql: `INSERT INTO "node_fact" ("path", "name", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "name", "at"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_node_fact" WHERE "_sign" IN (-1, 1) GROUP BY "path", "name", "at", "_sign"`, rule_observers: ["def_start/2"] },
   { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["end", "start"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("end", "start") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "end", "start"`, arrival_del_sql: `DELETE FROM "span" WHERE ("end", "start") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "end", "start"`, boundary_sql: `SELECT "end", "start", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "end", "start", "_sign"`, rule_observers: [] },
 ];
 
@@ -300,8 +330,10 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets),
+      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
     ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
@@ -326,14 +358,17 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS),
+      (targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS), TEXT_INTERN_PLAN,
     ).pipe(map((normalized) => { arrivals = normalized; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -361,7 +396,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "struct_span_columns_are_int_after_decode",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

@@ -19,10 +19,11 @@
 
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
-import { IncrementalRuntime } from "../runtime/1_incremental.ts";
+import { IncrementalRuntime, intern_then_execute } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -159,22 +161,36 @@ function departure_occurrences(seam: ISqlSeam, sql: string, columns: readonly st
   );
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "reading": [true, false],
+    "step": [true, false, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "reading" ("sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL, PRIMARY KEY ("sensor")) WITHOUT ROWID`,
-  `CREATE TABLE "step" ("sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_reading" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "reading" ("sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL, PRIMARY KEY ("sensor")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_reading" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."sensor") AS "sensor", t."previous" AS "previous" FROM "reading" t`,
+  `CREATE TABLE "step" ("sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_step" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."sensor") AS "sensor", t."previous" AS "previous", t."current" AS "current" FROM "step" t`,
+  `CREATE TEMP TABLE "__delta_reading" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_reading_sign" ON "__delta_reading" ("_sign")`,
   `CREATE INDEX "__delta_reading_group" ON "__delta_reading" ("sensor", "previous")`,
-  `CREATE TEMP TABLE "__frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_reading_phase" ON "__frontier_reading" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_reading" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."sensor") AS "sensor", t."previous" AS "previous", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_reading" t`,
   `CREATE TEMP TABLE "__departure_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_step" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_step" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_step_sign" ON "__delta_step" ("_sign")`,
   `CREATE INDEX "__delta_step_group" ON "__delta_step" ("sensor", "previous", "current")`,
-  `CREATE TEMP TABLE "__frontier_step" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_step" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_step_phase" ON "__frontier_step" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_step" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_step" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_step" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."sensor") AS "sensor", t."previous" AS "previous", t."current" AS "current", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_step" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -218,14 +234,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    reading: select_rows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous" FROM "reading"`, rel_columns.reading!, rel_column_types.reading!),
-    step: select_rows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous", "current" FROM "step"`, rel_columns.step!, rel_column_types.step!),
+    reading: select_rows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous" FROM "__txt_reading"`, rel_columns.reading!, rel_column_types.reading!),
+    step: select_rows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous", "current" FROM "__txt_step"`, rel_columns.step!, rel_column_types.step!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    reading: select_rows(seam, `SELECT "sensor", "previous" FROM "reading"`, rel_columns.reading!, rel_column_types.reading!),
+    step: select_rows(seam, `SELECT "sensor", "previous", "current" FROM "step"`, rel_columns.step!, rel_column_types.step!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  reading: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous" FROM "reading"`,
-  step: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous", "current" FROM "step"`,
+  reading: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous" FROM "__txt_reading"`,
+  step: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous", "current" FROM "__txt_step"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -255,20 +284,21 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "reading", kind: "set", table_name: "reading", delta_table_name: "__delta_reading", frontier_table_name: "__frontier_reading", next_frontier_table_name: "__next_frontier_reading", columns: ["sensor", "previous"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "reading" ("sensor", "previous") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("sensor") DO UPDATE SET "previous" = excluded."previous" RETURNING "sensor", "previous"`, arrival_del_sql: `DELETE FROM "reading" WHERE ("sensor", "previous") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "sensor", "previous"`, boundary_sql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_reading" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "previous", "_sign"`, departure_frontier_table_name: "__departure_frontier_reading", rule_observers: ["step/3"] },
-  { rel: "step", kind: "log", table_name: "step", delta_table_name: "__delta_step", frontier_table_name: "__frontier_step", next_frontier_table_name: "__next_frontier_step", columns: ["sensor", "previous", "current"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous", "current", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_step" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "previous", "current", "_sign"`, rule_observers: [] },
+  { rel: "reading", kind: "set", table_name: "reading", delta_table_name: "__delta_reading", frontier_table_name: "__frontier_reading", next_frontier_table_name: "__next_frontier_reading", columns: ["sensor", "previous"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "reading" ("sensor", "previous") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("sensor") DO UPDATE SET "previous" = excluded."previous" RETURNING "sensor", "previous"`, arrival_del_sql: `DELETE FROM "reading" WHERE ("sensor", "previous") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "sensor", "previous"`, boundary_sql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_reading" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "previous", "_sign"`, departure_frontier_table_name: "__departure_frontier_reading", rule_observers: ["step/3"] },
+  { rel: "step", kind: "log", table_name: "step", delta_table_name: "__delta_step", frontier_table_name: "__frontier_step", next_frontier_table_name: "__next_frontier_step", columns: ["sensor", "previous", "current"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "previous", "current", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_step" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "previous", "current", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "step", rule_id: "pairwise_reads_state_at_the_departure_tick:step/3#1", head_kind: "log", head_table_name: "step", head_delta_table_name: "__delta_step", head_columns: ["sensor", "previous", "current"], key_indices: [], project_sql: `SELECT d0."sensor" AS "sensor", d0."previous" AS "previous", b0."previous" AS "current" FROM "__departure_frontier_reading" d0, "reading" b0 WHERE d0."_phase" >= 0 AND b0."sensor" = d0."sensor" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "step", rule_id: "pairwise_reads_state_at_the_departure_tick:step/3#1", head_kind: "log", head_table_name: "step", head_delta_table_name: "__delta_step", head_columns: ["sensor", "previous", "current"], key_indices: [], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = d0."sensor") AS "sensor", d0."previous" AS "previous", b0."previous" AS "current" FROM "__departure_frontier_reading" d0, "reading" b0 WHERE d0."_phase" >= 0 AND b0."sensor" = (SELECT s."__id" FROM "__str" s WHERE s."content" = d0."sensor") ORDER BY d0."_phase", d0."_sequence"`, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT d0."sensor" FROM "__departure_frontier_reading" d0, "reading" b0 WHERE d0."_phase" >= 0 AND b0."sensor" = (SELECT s."__id" FROM "__str" s WHERE s."content" = d0."sensor")`] },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_STEP_0_PROJECT_SQL = `SELECT ?1 AS "sensor", ?2 AS "previous", b0."previous" AS "current" FROM "reading" b0 WHERE b0."sensor" = ?1`;
+const EDGE_STEP_0_PROJECT_SQL = `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1) AS "sensor", ?2 AS "previous", b0."previous" AS "current" FROM "reading" b0 WHERE b0."sensor" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1)`;
 const EDGE_STEP_0_WRITE_SQL = `INSERT INTO "step" ("sensor", "previous", "current") VALUES (?, ?, ?)`;
 const EDGE_STEP_0_HEAD_COLUMNS: readonly string[] = ["sensor", "previous", "current"];
+const EDGE_STEP_0_INTERN_SQL: readonly string[] = [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ?1 FROM "reading" b0 WHERE b0."sensor" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1)`];
 const EDGE_STEP_0_DEPARTURE_SQL = `SELECT "sensor", "previous" FROM "__departure_frontier_reading" ORDER BY "_phase", "_sequence"`;
 const EDGE_STEP_0_TRIGGER_COLUMNS: readonly string[] = ["sensor", "previous"];
 
@@ -312,17 +342,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      resolveStep_0Writes(seam, before, arrivals).pipe(
+      resolveStep_0Writes(seam, before.stored, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
     concatMap((deltas) => IncrementalRuntime.stage_departures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
   );
   // pairwise_reads_state_at_the_departure_tick: engine.pl process_occurrences -> level_closure -> boundary_deltas.
@@ -344,6 +376,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -379,7 +413,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "pairwise_reads_state_at_the_departure_tick",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

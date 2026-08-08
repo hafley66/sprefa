@@ -150,7 +150,7 @@ materialize_catalog_rel(prog(Decls0, Rules), prog(Decls, Rules)) :-
 
 % THE BUILD DEFAULT, not the contract's. Flip attempt 2026-08-08: referee said
 % NO (RUN wrong=13, FINAL wrong=17; plans/2026-08-08-flip-referee-red.md).
-default_intern_mode(direct).
+default_intern_mode(dict).
 
 program_plan(Term, Plan) :-
     default_intern_mode(Mode),

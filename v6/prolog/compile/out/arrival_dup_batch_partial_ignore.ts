@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,37 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "derived": [true],
+    "seen": [true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "derived" ("seen_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("seen_value")) WITHOUT ROWID`,
-  `CREATE TABLE "seen" ("value" TEXT NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_derived" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "derived" ("seen_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("seen_value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_derived" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."seen_value") AS "seen_value", t."__refcount" AS "__refcount" FROM "derived" t`,
+  `CREATE TABLE "seen" ("value" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "seen" t`,
+  `CREATE TEMP TABLE "__delta_derived" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_derived_sign" ON "__delta_derived" ("_sign")`,
   `CREATE INDEX "__delta_derived_group" ON "__delta_derived" ("seen_value")`,
-  `CREATE TEMP TABLE "__frontier_derived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_derived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_derived_phase" ON "__frontier_derived" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_derived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_derived" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_derived" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."seen_value") AS "seen_value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_derived" t`,
+  `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
   `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("value")`,
-  `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_derived" ("seen_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("seen_value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_derived" ("seen_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seen" t`,
+  `CREATE TEMP TABLE "__support_next_derived" ("seen_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("seen_value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_derived" ("seen_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "derived_zero" ON "derived" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -195,14 +211,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    derived: select_rows(seam, `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value" FROM "derived"`, rel_columns.derived!, rel_column_types.derived!),
-    seen: select_rows(seam, `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "seen"`, rel_columns.seen!, rel_column_types.seen!),
+    derived: select_rows(seam, `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value" FROM "__txt_derived"`, rel_columns.derived!, rel_column_types.derived!),
+    seen: select_rows(seam, `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_seen"`, rel_columns.seen!, rel_column_types.seen!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    derived: select_rows(seam, `SELECT "seen_value" FROM "derived"`, rel_columns.derived!, rel_column_types.derived!),
+    seen: select_rows(seam, `SELECT "value" FROM "seen"`, rel_columns.seen!, rel_column_types.seen!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  derived: `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value" FROM "derived"`,
-  seen: `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "seen"`,
+  derived: `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value" FROM "__txt_derived"`,
+  seen: `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_seen"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -232,8 +261,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "derived", kind: "set", table_name: "derived", delta_table_name: "__delta_derived", frontier_table_name: "__frontier_derived", next_frontier_table_name: "__next_frontier_derived", columns: ["seen_value"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_derived" WHERE "_sign" IN (-1, 1) GROUP BY "seen_value", "_sign"`, rule_observers: [] },
-  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["value"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seen" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "seen" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["derived/1"] },
+  { rel: "derived", kind: "set", table_name: "derived", delta_table_name: "__delta_derived", frontier_table_name: "__frontier_derived", next_frontier_table_name: "__next_frontier_derived", columns: ["seen_value"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_derived" WHERE "_sign" IN (-1, 1) GROUP BY "seen_value", "_sign"`, rule_observers: [] },
+  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["value"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seen" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "seen" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["derived/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -264,6 +293,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -287,11 +318,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -319,7 +353,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "arrival_dup_batch_partial_ignore",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

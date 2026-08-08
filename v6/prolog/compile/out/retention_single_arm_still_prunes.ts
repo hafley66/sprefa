@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -38,6 +39,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -154,21 +156,35 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "journal": [true],
+    "ping": [true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "journal" ("payload" TEXT NOT NULL)`,
-  `CREATE TABLE "ping" ("payload" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_journal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "journal" ("payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_journal" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "journal" t`,
+  `CREATE TABLE "ping" ("payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_ping" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "ping" t`,
+  `CREATE TEMP TABLE "__delta_journal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_journal_sign" ON "__delta_journal" ("_sign")`,
   `CREATE INDEX "__delta_journal_group" ON "__delta_journal" ("payload")`,
-  `CREATE TEMP TABLE "__frontier_journal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_journal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_journal_phase" ON "__frontier_journal" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_journal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_journal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_journal" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_journal" t`,
+  `CREATE TEMP TABLE "__delta_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_ping_sign" ON "__delta_ping" ("_sign")`,
   `CREATE INDEX "__delta_ping_group" ON "__delta_ping" ("payload")`,
-  `CREATE TEMP TABLE "__frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_ping_phase" ON "__frontier_ping" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_ping" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_ping" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_ping" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -209,14 +225,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    journal: select_rows(seam, `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "journal"`, rel_columns.journal!, rel_column_types.journal!),
-    ping: select_rows(seam, `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "ping"`, rel_columns.ping!, rel_column_types.ping!),
+    journal: select_rows(seam, `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_journal"`, rel_columns.journal!, rel_column_types.journal!),
+    ping: select_rows(seam, `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_ping"`, rel_columns.ping!, rel_column_types.ping!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    journal: select_rows(seam, `SELECT "payload" FROM "journal"`, rel_columns.journal!, rel_column_types.journal!),
+    ping: select_rows(seam, `SELECT "payload" FROM "ping"`, rel_columns.ping!, rel_column_types.ping!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  journal: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "journal"`,
-  ping: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "ping"`,
+  journal: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_journal"`,
+  ping: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_ping"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -246,8 +275,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "journal", kind: "log", table_name: "journal", delta_table_name: "__delta_journal", frontier_table_name: "__frontier_journal", next_frontier_table_name: "__next_frontier_journal", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_journal" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"`, rule_observers: [] },
-  { rel: "ping", kind: "log", table_name: "ping", delta_table_name: "__delta_ping", frontier_table_name: "__frontier_ping", next_frontier_table_name: "__next_frontier_ping", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "ping" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ping" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"`, rule_observers: ["journal/1"] },
+  { rel: "journal", kind: "log", table_name: "journal", delta_table_name: "__delta_journal", frontier_table_name: "__frontier_journal", next_frontier_table_name: "__next_frontier_journal", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_journal" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"`, rule_observers: [] },
+  { rel: "ping", kind: "log", table_name: "ping", delta_table_name: "__delta_ping", frontier_table_name: "__frontier_ping", next_frontier_table_name: "__next_frontier_ping", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "ping" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_ping" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"`, rule_observers: ["journal/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -305,18 +334,20 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      resolveJournal_0Writes(seam, before, arrivals).pipe(
+      resolveJournal_0Writes(seam, before.stored, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => apply_naive_retention(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // retention_single_arm_still_prunes: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -338,6 +369,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -374,7 +407,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "retention_single_arm_still_prunes",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

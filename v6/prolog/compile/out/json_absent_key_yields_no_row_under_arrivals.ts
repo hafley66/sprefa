@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,35 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "found": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "found" ("name" TEXT NOT NULL, "value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('missing'), ('present')`,
+  `CREATE TABLE "found" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_found" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."__refcount" AS "__refcount" FROM "found" t`,
   `CREATE TABLE "raw_doc" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_found" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_found" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_found_sign" ON "__delta_found" ("_sign")`,
   `CREATE INDEX "__delta_found_group" ON "__delta_found" ("name", "value")`,
-  `CREATE TEMP TABLE "__frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_found_phase" ON "__frontier_found" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_found" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_found" t`,
   `CREATE TEMP TABLE "__delta_raw_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_raw_doc_sign" ON "__delta_raw_doc" ("_sign")`,
   `CREATE INDEX "__delta_raw_doc_group" ON "__delta_raw_doc" ("body")`,
   `CREATE TEMP TABLE "__frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_raw_doc_phase" ON "__frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__support_next_found" ("name" TEXT NOT NULL, "value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_found" ("name" TEXT NOT NULL, "value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_found" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_found" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "found_zero" ON "found" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -187,8 +201,10 @@ const arrival_targets: readonly string[] = ["raw_doc"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "found", sql: `DELETE FROM "found"`, params: [] },
-  { rel: "found", sql: `INSERT OR IGNORE INTO "found" ("name", "value") SELECT 'present', json_extract(b0."body", '$."present"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL`, params: [] },
-  { rel: "found", sql: `INSERT OR IGNORE INTO "found" ("name", "value") SELECT 'missing', json_extract(b0."body", '$."missing"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL`, params: [] },
+  { rel: "found", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."body", '$."present"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL`, params: [] },
+  { rel: "found", sql: `INSERT OR IGNORE INTO "found" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'present'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."body", '$."present"')) FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL`, params: [] },
+  { rel: "found", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."body", '$."missing"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL`, params: [] },
+  { rel: "found", sql: `INSERT OR IGNORE INTO "found" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'missing'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."body", '$."missing"')) FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL`, params: [] },
 ];
 
 type Snapshot = {
@@ -198,13 +214,26 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    found: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "found"`, rel_columns.found!, rel_column_types.found!),
+    found: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_found"`, rel_columns.found!, rel_column_types.found!),
     raw_doc: select_rows(seam, `SELECT "body" FROM "raw_doc"`, rel_columns.raw_doc!, rel_column_types.raw_doc!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    found: select_rows(seam, `SELECT "name", "value" FROM "found"`, rel_columns.found!, rel_column_types.found!),
+    raw_doc: select_rows(seam, `SELECT "body" FROM "raw_doc"`, rel_columns.raw_doc!, rel_column_types.raw_doc!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  found: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "found"`,
+  found: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_found"`,
   raw_doc: `SELECT "body" FROM "raw_doc"`,
 };
 
@@ -235,7 +264,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "found", kind: "set", table_name: "found", delta_table_name: "__delta_found", frontier_table_name: "__frontier_found", next_frontier_table_name: "__next_frontier_found", columns: ["name", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_found" WHERE "_sign" IN (-1, 1) GROUP BY "name", "value", "_sign"`, rule_observers: [] },
+  { rel: "found", kind: "set", table_name: "found", delta_table_name: "__delta_found", frontier_table_name: "__frontier_found", next_frontier_table_name: "__next_frontier_found", columns: ["name", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_found" WHERE "_sign" IN (-1, 1) GROUP BY "name", "value", "_sign"`, rule_observers: [] },
   { rel: "raw_doc", kind: "set", table_name: "raw_doc", delta_table_name: "__delta_raw_doc", frontier_table_name: "__frontier_raw_doc", next_frontier_table_name: "__next_frontier_raw_doc", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw_doc" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["found/2"] },
 ];
 
@@ -243,15 +272,19 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "found", rule_id: "json_absent_key_yields_no_row_under_arrivals:found/2#1", head_delta_table_name: "__delta_found", head_columns: ["name", "value"], insert_sql: `INSERT OR IGNORE INTO "found" ("name", "value") SELECT DISTINCT 'present', json_extract(d0."body", '$."present"') FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_extract(d0."body", '$."present"') IS NOT NULL UNION ALL SELECT DISTINCT 'missing', json_extract(d0."body", '$."missing"') FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_extract(d0."body", '$."missing"') IS NOT NULL RETURNING "name", "value"`, select_sql: `SELECT "name", "value" FROM "found"`, recompute_sql: `DELETE FROM "found";
-INSERT OR IGNORE INTO "found" ("name", "value") SELECT 'present', json_extract(b0."body", '$."present"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL;
-INSERT OR IGNORE INTO "found" ("name", "value") SELECT 'missing', json_extract(b0."body", '$."missing"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_found"`, `INSERT INTO "__support_next_found" ("name", "value", "__refcount") SELECT "name", "value", sum("__refcount") FROM (SELECT 'present' AS "name", json_extract(b0."body", '$."present"') AS "value", count(*) AS "__refcount" FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL GROUP BY 'present', json_extract(b0."body", '$."present"') UNION ALL SELECT 'missing' AS "name", json_extract(b0."body", '$."missing"') AS "value", count(*) AS "__refcount" FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL GROUP BY 'missing', json_extract(b0."body", '$."missing"')) GROUP BY "name", "value"`, `UPDATE "found" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_found" n WHERE n."name" = h."name" AND n."value" = h."value"), 0)`, `INSERT INTO "__delta_found" ("_sign", "_sequence", "name", "value") SELECT -1, row_number() OVER () - 1, "name", "value" FROM "found" WHERE "__refcount" <= 0`, `DELETE FROM "found" WHERE "__refcount" <= 0`, `DELETE FROM "__new_found"`, `INSERT INTO "__new_found" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_found" n LEFT JOIN "found" h ON n."name" = h."name" AND n."value" = h."value" WHERE h."name" IS NULL`, `INSERT INTO "__delta_found" ("_sign", "_sequence", "name", "value") SELECT 1, "rowid" - 1, "name", "value" FROM "__new_found"`, `INSERT INTO "__frontier_found" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_found"`, `INSERT INTO "__next_frontier_found" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_found"`, `INSERT OR IGNORE INTO "found" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_found" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "found", rule_id: "json_absent_key_yields_no_row_under_arrivals:found/2#1", head_delta_table_name: "__delta_found", head_columns: ["name", "value"], insert_sql: `INSERT OR IGNORE INTO "found" ("name", "value") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'present'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(d0."body", '$."present"')) FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_extract(d0."body", '$."present"') IS NOT NULL UNION ALL SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'missing'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(d0."body", '$."missing"')) FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_extract(d0."body", '$."missing"') IS NOT NULL RETURNING "name", "value"`, select_sql: `SELECT "name", "value" FROM "found"`, recompute_sql: `DELETE FROM "found";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."body", '$."present"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL;
+INSERT OR IGNORE INTO "found" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'present'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."body", '$."present"')) FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."body", '$."missing"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL;
+INSERT OR IGNORE INTO "found" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'missing'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."body", '$."missing"')) FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_found"`, `INSERT INTO "__support_next_found" ("name", "value", "__refcount") SELECT "name", "value", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'present') AS "name", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."body", '$."present"')) AS "value", count(*) AS "__refcount" FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL GROUP BY (SELECT s."__id" FROM "__str" s WHERE s."content" = 'present'), json_extract(b0."body", '$."present"') UNION ALL SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'missing') AS "name", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."body", '$."missing"')) AS "value", count(*) AS "__refcount" FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL GROUP BY (SELECT s."__id" FROM "__str" s WHERE s."content" = 'missing'), json_extract(b0."body", '$."missing"')) GROUP BY "name", "value"`, `UPDATE "found" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_found" n WHERE n."name" = h."name" AND n."value" = h."value"), 0)`, `INSERT INTO "__delta_found" ("_sign", "_sequence", "name", "value") SELECT -1, row_number() OVER () - 1, "name", "value" FROM "found" WHERE "__refcount" <= 0`, `DELETE FROM "found" WHERE "__refcount" <= 0`, `DELETE FROM "__new_found"`, `INSERT INTO "__new_found" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_found" n LEFT JOIN "found" h ON n."name" = h."name" AND n."value" = h."value" WHERE h."name" IS NULL`, `INSERT INTO "__delta_found" ("_sign", "_sequence", "name", "value") SELECT 1, "rowid" - 1, "name", "value" FROM "__new_found"`, `INSERT INTO "__frontier_found" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_found"`, `INSERT INTO "__next_frontier_found" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_found"`, `INSERT OR IGNORE INTO "found" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_found" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(d0."body", '$."present"') FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_extract(d0."body", '$."present"') IS NOT NULL`, `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(d0."body", '$."missing"') FROM "__frontier_raw_doc" d0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_extract(d0."body", '$."missing"') IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."body", '$."present"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL`, `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."body", '$."missing"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL`] },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "found";
-INSERT OR IGNORE INTO "found" ("name", "value") SELECT 'present', json_extract(b0."body", '$."present"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL;
-INSERT OR IGNORE INTO "found" ("name", "value") SELECT 'missing', json_extract(b0."body", '$."missing"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."body", '$."present"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL;
+INSERT OR IGNORE INTO "found" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'present'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."body", '$."present"')) FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."present"') IS NOT NULL;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(b0."body", '$."missing"') FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL;
+INSERT OR IGNORE INTO "found" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'missing'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(b0."body", '$."missing"')) FROM "raw_doc" b0 WHERE json_type(b0."body", '$') = 'object' AND json_extract(b0."body", '$."missing"') IS NOT NULL`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -269,6 +302,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -292,11 +327,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -324,7 +362,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_absent_key_yields_no_row_under_arrivals",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

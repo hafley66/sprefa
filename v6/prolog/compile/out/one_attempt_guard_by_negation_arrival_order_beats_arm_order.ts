@@ -23,6 +23,7 @@ import { IncrementalRuntime, stage_ordered_frontiers } from "../runtime/1_increm
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,9 +155,20 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "dispatch_first": [false, true],
+  },
+};
+
 const ddl: readonly string[] = [
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('acked'), ('sealed')`,
   `CREATE TABLE "dispatch_ack" ("dispatch_id" INTEGER NOT NULL, PRIMARY KEY ("dispatch_id")) WITHOUT ROWID`,
-  `CREATE TABLE "dispatch_first" ("dispatch_id" INTEGER NOT NULL, "_ack_tag" TEXT NOT NULL)`,
+  `CREATE TABLE "dispatch_first" ("dispatch_id" INTEGER NOT NULL, "_ack_tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_dispatch_first" AS SELECT t."dispatch_id" AS "dispatch_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_ack_tag") AS "_ack_tag" FROM "dispatch_first" t`,
   `CREATE TABLE "dispatch_seal" ("sealed_id" INTEGER NOT NULL, PRIMARY KEY ("sealed_id")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_dispatch_ack" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_dispatch_ack_sign" ON "__delta_dispatch_ack" ("_sign")`,
@@ -163,12 +176,13 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_dispatch_ack" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_dispatch_ack_phase" ON "__frontier_dispatch_ack" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_dispatch_ack" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_dispatch_first" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_dispatch_first" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_dispatch_first_sign" ON "__delta_dispatch_first" ("_sign")`,
   `CREATE INDEX "__delta_dispatch_first_group" ON "__delta_dispatch_first" ("dispatch_id", "_ack_tag")`,
-  `CREATE TEMP TABLE "__frontier_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_dispatch_first_phase" ON "__frontier_dispatch_first" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "_ack_tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_dispatch_first" AS SELECT t."dispatch_id" AS "dispatch_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_ack_tag") AS "_ack_tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_dispatch_first" t`,
   `CREATE TEMP TABLE "__delta_dispatch_seal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_dispatch_seal_sign" ON "__delta_dispatch_seal" ("_sign")`,
   `CREATE INDEX "__delta_dispatch_seal_group" ON "__delta_dispatch_seal" ("sealed_id")`,
@@ -222,14 +236,28 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
-    dispatch_first: select_rows(seam, `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag" FROM "dispatch_first"`, rel_columns.dispatch_first!, rel_column_types.dispatch_first!),
+    dispatch_first: select_rows(seam, `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag" FROM "__txt_dispatch_first"`, rel_columns.dispatch_first!, rel_column_types.dispatch_first!),
     dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
+    dispatch_first: select_rows(seam, `SELECT "dispatch_id", "_ack_tag" FROM "dispatch_first"`, rel_columns.dispatch_first!, rel_column_types.dispatch_first!),
+    dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
   dispatch_ack: `SELECT "dispatch_id" FROM "dispatch_ack"`,
-  dispatch_first: `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag" FROM "dispatch_first"`,
+  dispatch_first: `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag" FROM "__txt_dispatch_first"`,
   dispatch_seal: `SELECT "sealed_id" FROM "dispatch_seal"`,
 };
 
@@ -262,23 +290,23 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "dispatch_ack", kind: "set", table_name: "dispatch_ack", delta_table_name: "__delta_dispatch_ack", frontier_table_name: "__frontier_dispatch_ack", next_frontier_table_name: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrival_del_sql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundary_sql: `SELECT "dispatch_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_sign"`, rule_observers: ["dispatch_first/2"] },
-  { rel: "dispatch_first", kind: "log", table_name: "dispatch_first", delta_table_name: "__delta_dispatch_first", frontier_table_name: "__frontier_dispatch_first", next_frontier_table_name: "__next_frontier_dispatch_first", columns: ["dispatch_id", "_ack_tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_first" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_ack_tag", "_sign"`, rule_observers: [] },
+  { rel: "dispatch_first", kind: "log", table_name: "dispatch_first", delta_table_name: "__delta_dispatch_first", frontier_table_name: "__frontier_dispatch_first", next_frontier_table_name: "__next_frontier_dispatch_first", columns: ["dispatch_id", "_ack_tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_dispatch_first" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_ack_tag", "_sign"`, rule_observers: [] },
   { rel: "dispatch_seal", kind: "set", table_name: "dispatch_seal", delta_table_name: "__delta_dispatch_seal", frontier_table_name: "__frontier_dispatch_seal", next_frontier_table_name: "__next_frontier_dispatch_seal", columns: ["sealed_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrival_del_sql: `DELETE FROM "dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundary_sql: `SELECT "sealed_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_seal" WHERE "_sign" IN (-1, 1) GROUP BY "sealed_id", "_sign"`, rule_observers: ["dispatch_first/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "dispatch_first", rule_id: "one_attempt_guard_by_negation_arrival_order_beats_arm_order:dispatch_first/2#1", head_kind: "log", head_table_name: "dispatch_first", head_delta_table_name: "__delta_dispatch_first", head_columns: ["dispatch_id", "_ack_tag"], key_indices: [], project_sql: `SELECT d0."dispatch_id" AS "dispatch_id", 'acked' AS "_ack_tag" FROM "__frontier_dispatch_ack" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = d0."dispatch_id") ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "dispatch_first", rule_id: "one_attempt_guard_by_negation_arrival_order_beats_arm_order:dispatch_first/2#2", head_kind: "log", head_table_name: "dispatch_first", head_delta_table_name: "__delta_dispatch_first", head_columns: ["dispatch_id", "_ack_tag"], key_indices: [], project_sql: `SELECT d0."sealed_id" AS "dispatch_id", 'sealed' AS "_ack_tag" FROM "__frontier_dispatch_seal" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = d0."sealed_id") ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "dispatch_first", rule_id: "one_attempt_guard_by_negation_arrival_order_beats_arm_order:dispatch_first/2#1", head_kind: "log", head_table_name: "dispatch_first", head_delta_table_name: "__delta_dispatch_first", head_columns: ["dispatch_id", "_ack_tag"], key_indices: [], project_sql: `SELECT d0."dispatch_id" AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acked') AS "_ack_tag" FROM "__frontier_dispatch_ack" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = d0."dispatch_id") ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "dispatch_first", rule_id: "one_attempt_guard_by_negation_arrival_order_beats_arm_order:dispatch_first/2#2", head_kind: "log", head_table_name: "dispatch_first", head_delta_table_name: "__delta_dispatch_first", head_columns: ["dispatch_id", "_ack_tag"], key_indices: [], project_sql: `SELECT d0."sealed_id" AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'sealed') AS "_ack_tag" FROM "__frontier_dispatch_seal" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = d0."sealed_id") ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_DISPATCH_FIRST_0_PROJECT_SQL = `SELECT ?1 AS "dispatch_id", 'acked' AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`;
+const EDGE_DISPATCH_FIRST_0_PROJECT_SQL = `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acked') AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`;
 const EDGE_DISPATCH_FIRST_0_WRITE_SQL = `INSERT INTO "dispatch_first" ("dispatch_id", "_ack_tag") VALUES (?, ?)`;
 const EDGE_DISPATCH_FIRST_0_HEAD_COLUMNS: readonly string[] = ["dispatch_id", "_ack_tag"];
 
-const EDGE_DISPATCH_FIRST_1_PROJECT_SQL = `SELECT ?1 AS "dispatch_id", 'sealed' AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`;
+const EDGE_DISPATCH_FIRST_1_PROJECT_SQL = `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'sealed') AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`;
 const EDGE_DISPATCH_FIRST_1_WRITE_SQL = `INSERT INTO "dispatch_first" ("dispatch_id", "_ack_tag") VALUES (?, ?)`;
 const EDGE_DISPATCH_FIRST_1_HEAD_COLUMNS: readonly string[] = ["dispatch_id", "_ack_tag"];
 
@@ -347,8 +375,8 @@ function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null 
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { trigger_rel: "dispatch_ack", trigger_kind: "arrival", head_rel: "dispatch_first", head_kind: "log", head_columns: ["dispatch_id", "_ack_tag"], key_indices: [], project_sql: `SELECT ?1 AS "dispatch_id", 'acked' AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, write_sql: `INSERT INTO "dispatch_first" ("dispatch_id", "_ack_tag") VALUES (?, ?)`, evolves_pre: false },
-  { trigger_rel: "dispatch_seal", trigger_kind: "arrival", head_rel: "dispatch_first", head_kind: "log", head_columns: ["dispatch_id", "_ack_tag"], key_indices: [], project_sql: `SELECT ?1 AS "dispatch_id", 'sealed' AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, write_sql: `INSERT INTO "dispatch_first" ("dispatch_id", "_ack_tag") VALUES (?, ?)`, evolves_pre: false },
+  { trigger_rel: "dispatch_ack", trigger_kind: "arrival", head_rel: "dispatch_first", head_kind: "log", head_columns: ["dispatch_id", "_ack_tag"], key_indices: [], project_sql: `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acked') AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, write_sql: `INSERT INTO "dispatch_first" ("dispatch_id", "_ack_tag") VALUES (?, ?)`, evolves_pre: false },
+  { trigger_rel: "dispatch_seal", trigger_kind: "arrival", head_rel: "dispatch_first", head_kind: "log", head_columns: ["dispatch_id", "_ack_tag"], key_indices: [], project_sql: `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'sealed') AS "_ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, write_sql: `INSERT INTO "dispatch_first" ("dispatch_id", "_ack_tag") VALUES (?, ?)`, evolves_pre: false },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
@@ -476,32 +504,36 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveDispatchFirst_0Writes(seam, before, arrivals), resolveDispatchFirst_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveDispatchFirst_0Writes(seam, before.stored, arrivals), resolveDispatchFirst_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // one_attempt_guard_by_negation_arrival_order_beats_arm_order: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
 
 function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => snapshot_ordered_pre(seam).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((mid) => ({ before, mid })))),
-    concatMap(({ before, mid }) => process_ordered_occurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
+    concatMap((before) => read_stored_snapshot(seam).pipe(map((mid) => ({ before, mid })))),
+    concatMap(({ before, mid }) => process_ordered_occurrences(seam, before.stored, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
     concatMap(({ before, mid, written }) => recompute_levels(seam).pipe(map(() => ({ before, mid, written })))),
   ).pipe(
-    concatMap(({ before, mid, written }) => read_snapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: build_deltas(before, after) })))),
-    concatMap(({ mid, after, written, deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after, deltas, written)).pipe(
+    concatMap(({ before, mid, written }) => read_snapshots(seam).pipe(map((after) => ({ mid, after, written, deltas: build_deltas(before.decoded, after.decoded), stored_deltas: build_deltas(before.stored, after.stored) })))),
+    concatMap(({ mid, after, written, deltas, stored_deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after.stored, stored_deltas, written)).pipe(
       map((post_write_carry): ITickDeltas => ({ rels: deltas.rels, carry_pending: deltas.carry_pending || post_write_carry })),
     )),
   );
@@ -524,6 +556,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -555,7 +589,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "one_attempt_guard_by_negation_arrival_order_beats_arm_order",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

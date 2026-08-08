@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,37 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "mean": [true, false],
+    "score": [true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "mean" ("group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
-  `CREATE TABLE "score" ("group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_mean" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "mean" ("group" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_mean" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value", t."__refcount" AS "__refcount" FROM "mean" t`,
+  `CREATE TABLE "score" ("group" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_score" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value" FROM "score" t`,
+  `CREATE TEMP TABLE "__delta_mean" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_mean_sign" ON "__delta_mean" ("_sign")`,
   `CREATE INDEX "__delta_mean_group" ON "__delta_mean" ("group", "value")`,
-  `CREATE TEMP TABLE "__frontier_mean" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TEMP TABLE "__frontier_mean" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_mean_phase" ON "__frontier_mean" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_mean" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE TEMP TABLE "__delta_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TEMP TABLE "__next_frontier_mean" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TEMP VIEW "__txt___delta_mean" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_mean" t`,
+  `CREATE TEMP TABLE "__delta_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_score_sign" ON "__delta_score" ("_sign")`,
   `CREATE INDEX "__delta_score_group" ON "__delta_score" ("group", "value")`,
-  `CREATE TEMP TABLE "__frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TEMP TABLE "__frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__frontier_score_phase" ON "__frontier_score" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" TEXT NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE TEMP TABLE "__agg_scope_mean" ("group" TEXT NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__avg_acc_mean" ("__group_1" TEXT NOT NULL, "__sum" REAL NOT NULL, "__count" INTEGER NOT NULL, PRIMARY KEY ("__group_1")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__next_frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TEMP VIEW "__txt___delta_score" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_score" t`,
+  `CREATE TEMP TABLE "__agg_scope_mean" ("group" INTEGER NOT NULL, PRIMARY KEY ("group")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__avg_acc_mean" ("__group_1" INTEGER NOT NULL, "__sum" REAL NOT NULL, "__count" INTEGER NOT NULL, PRIMARY KEY ("__group_1")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -186,9 +202,12 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["score"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "score", sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES (?, ?)`, params: ["a", 0.5] },
-  { rel: "score", sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES (?, ?)`, params: ["a", 1.5] },
-  { rel: "score", sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES (?, ?)`, params: ["b", 0.25] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["a"] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["a", 0.5] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["a"] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["a", 1.5] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["b"] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["b", 0.25] },
   { rel: "mean", sql: `DELETE FROM "__avg_acc_mean"`, params: [] },
   { rel: "mean", sql: `INSERT OR IGNORE INTO "__avg_acc_mean" ("__group_1", "__sum", "__count") SELECT "__group_1", sum("__value"), count(*) FROM (SELECT b0."group" AS "__group_1", b0."value" AS "__value" FROM "score" b0) contributions GROUP BY "__group_1"`, params: [] },
   { rel: "mean", sql: `DELETE FROM "mean"`, params: [] },
@@ -202,14 +221,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    mean: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value" FROM "mean"`, rel_columns.mean!, rel_column_types.mean!),
-    score: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value" FROM "score"`, rel_columns.score!, rel_column_types.score!),
+    mean: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value" FROM "__txt_mean"`, rel_columns.mean!, rel_column_types.mean!),
+    score: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value" FROM "__txt_score"`, rel_columns.score!, rel_column_types.score!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    mean: select_rows(seam, `SELECT "group", "value" FROM "mean"`, rel_columns.mean!, rel_column_types.mean!),
+    score: select_rows(seam, `SELECT "group", "value" FROM "score"`, rel_columns.score!, rel_column_types.score!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  mean: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value" FROM "mean"`,
-  score: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value" FROM "score"`,
+  mean: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value" FROM "__txt_mean"`,
+  score: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value" FROM "__txt_score"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -239,8 +271,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "mean", kind: "set", table_name: "mean", delta_table_name: "__delta_mean", frontier_table_name: "__frontier_mean", next_frontier_table_name: "__next_frontier_mean", columns: ["group", "value"], column_types: ["text", "float"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mean" WHERE "_sign" IN (-1, 1) GROUP BY "group", "value", "_sign"`, rule_observers: [] },
-  { rel: "score", kind: "set", table_name: "score", delta_table_name: "__delta_score", frontier_table_name: "__frontier_score", next_frontier_table_name: "__next_frontier_score", columns: ["group", "value"], column_types: ["text", "float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "score" ("group", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "value"`, arrival_del_sql: `DELETE FROM "score" WHERE ("group", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_score" WHERE "_sign" IN (-1, 1) GROUP BY "group", "value", "_sign"`, rule_observers: ["mean/2"] },
+  { rel: "mean", kind: "set", table_name: "mean", delta_table_name: "__delta_mean", frontier_table_name: "__frontier_mean", next_frontier_table_name: "__next_frontier_mean", columns: ["group", "value"], column_types: ["text", "float"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_mean" WHERE "_sign" IN (-1, 1) GROUP BY "group", "value", "_sign"`, rule_observers: [] },
+  { rel: "score", kind: "set", table_name: "score", delta_table_name: "__delta_score", frontier_table_name: "__frontier_score", next_frontier_table_name: "__next_frontier_score", columns: ["group", "value"], column_types: ["text", "float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "score" ("group", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "value"`, arrival_del_sql: `DELETE FROM "score" WHERE ("group", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_score" WHERE "_sign" IN (-1, 1) GROUP BY "group", "value", "_sign"`, rule_observers: ["mean/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -271,6 +303,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -294,11 +328,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -326,7 +363,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "float_avg_is_grouped",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

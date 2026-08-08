@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,34 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "field": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "field" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "field" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_field" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."__refcount" AS "__refcount" FROM "field" t`,
   `CREATE TABLE "raw_doc" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_field" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_field" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_field_sign" ON "__delta_field" ("_sign")`,
   `CREATE INDEX "__delta_field_group" ON "__delta_field" ("key", "value")`,
-  `CREATE TEMP TABLE "__frontier_field" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_field" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_field_phase" ON "__frontier_field" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_field" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_field" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_field" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_field" t`,
   `CREATE TEMP TABLE "__delta_raw_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_raw_doc_sign" ON "__delta_raw_doc" ("_sign")`,
   `CREATE INDEX "__delta_raw_doc_group" ON "__delta_raw_doc" ("body")`,
   `CREATE TEMP TABLE "__frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_raw_doc_phase" ON "__frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__support_next_field" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_field" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_field" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_field" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "field_zero" ON "field" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -188,7 +201,8 @@ const arrival_targets: readonly string[] = ["raw_doc"];
 const boot: readonly IBootStatement[] = [
   { rel: "raw_doc", sql: `INSERT OR IGNORE INTO "raw_doc" ("body") VALUES (?)`, params: ["{\"name\":\"cli\",\"owner\":\"octo\"}"] },
   { rel: "field", sql: `DELETE FROM "field"`, params: [] },
-  { rel: "field", sql: `INSERT OR IGNORE INTO "field" ("key", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, params: [] },
+  { rel: "field", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL UNION SELECT DISTINCT j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, params: [] },
+  { rel: "field", sql: `INSERT OR IGNORE INTO "field" ("key", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, params: [] },
 ];
 
 type Snapshot = {
@@ -198,13 +212,26 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    field: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "field"`, rel_columns.field!, rel_column_types.field!),
+    field: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_field"`, rel_columns.field!, rel_column_types.field!),
     raw_doc: select_rows(seam, `SELECT "body" FROM "raw_doc"`, rel_columns.raw_doc!, rel_column_types.raw_doc!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    field: select_rows(seam, `SELECT "key", "value" FROM "field"`, rel_columns.field!, rel_column_types.field!),
+    raw_doc: select_rows(seam, `SELECT "body" FROM "raw_doc"`, rel_columns.raw_doc!, rel_column_types.raw_doc!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  field: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "field"`,
+  field: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_field"`,
   raw_doc: `SELECT "body" FROM "raw_doc"`,
 };
 
@@ -235,7 +262,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "field", kind: "set", table_name: "field", delta_table_name: "__delta_field", frontier_table_name: "__frontier_field", next_frontier_table_name: "__next_frontier_field", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_field" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: [] },
+  { rel: "field", kind: "set", table_name: "field", delta_table_name: "__delta_field", frontier_table_name: "__frontier_field", next_frontier_table_name: "__next_frontier_field", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_field" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: [] },
   { rel: "raw_doc", kind: "set", table_name: "raw_doc", delta_table_name: "__delta_raw_doc", frontier_table_name: "__frontier_raw_doc", next_frontier_table_name: "__next_frontier_raw_doc", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw_doc" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["field/2"] },
 ];
 
@@ -243,13 +270,15 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "field", rule_id: "json_key_capture_binds_key_and_value:field/2#1", head_delta_table_name: "__delta_field", head_columns: ["key", "value"], insert_sql: `INSERT OR IGNORE INTO "field" ("key", "value") SELECT DISTINCT j0.key, j0.value FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL RETURNING "key", "value"`, select_sql: `SELECT "key", "value" FROM "field"`, recompute_sql: `DELETE FROM "field";
-INSERT OR IGNORE INTO "field" ("key", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_field"`, `INSERT INTO "__support_next_field" ("key", "value", "__refcount") SELECT "key", "value", sum("__refcount") FROM (SELECT j0.key AS "key", j0.value AS "value", count(*) AS "__refcount" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key, j0.value) GROUP BY "key", "value"`, `UPDATE "field" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_field" n WHERE n."key" = h."key" AND n."value" = h."value"), 0)`, `INSERT INTO "__delta_field" ("_sign", "_sequence", "key", "value") SELECT -1, row_number() OVER () - 1, "key", "value" FROM "field" WHERE "__refcount" <= 0`, `DELETE FROM "field" WHERE "__refcount" <= 0`, `DELETE FROM "__new_field"`, `INSERT INTO "__new_field" ("key", "value", "__refcount") SELECT n."key", n."value", n."__refcount" FROM "__support_next_field" n LEFT JOIN "field" h ON n."key" = h."key" AND n."value" = h."value" WHERE h."key" IS NULL`, `INSERT INTO "__delta_field" ("_sign", "_sequence", "key", "value") SELECT 1, "rowid" - 1, "key", "value" FROM "__new_field"`, `INSERT INTO "__frontier_field" ("_phase", "_sequence", "key", "value") SELECT ?, "rowid" - 1, "key", "value" FROM "__new_field"`, `INSERT INTO "__next_frontier_field" ("_phase", "_sequence", "key", "value") SELECT ?, "rowid" - 1, "key", "value" FROM "__new_field"`, `INSERT OR IGNORE INTO "field" ("key", "value", "__refcount") SELECT n."key", n."value", n."__refcount" FROM "__support_next_field" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "field", rule_id: "json_key_capture_binds_key_and_value:field/2#1", head_delta_table_name: "__delta_field", head_columns: ["key", "value"], insert_sql: `INSERT OR IGNORE INTO "field" ("key", "value") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL RETURNING "key", "value"`, select_sql: `SELECT "key", "value" FROM "field"`, recompute_sql: `DELETE FROM "field";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL UNION SELECT DISTINCT j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL;
+INSERT OR IGNORE INTO "field" ("key", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_field"`, `INSERT INTO "__support_next_field" ("key", "value", "__refcount") SELECT "key", "value", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key) AS "key", (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) AS "value", count(*) AS "__refcount" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key, j0.value) GROUP BY "key", "value"`, `UPDATE "field" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_field" n WHERE n."key" = h."key" AND n."value" = h."value"), 0)`, `INSERT INTO "__delta_field" ("_sign", "_sequence", "key", "value") SELECT -1, row_number() OVER () - 1, "key", "value" FROM "field" WHERE "__refcount" <= 0`, `DELETE FROM "field" WHERE "__refcount" <= 0`, `DELETE FROM "__new_field"`, `INSERT INTO "__new_field" ("key", "value", "__refcount") SELECT n."key", n."value", n."__refcount" FROM "__support_next_field" n LEFT JOIN "field" h ON n."key" = h."key" AND n."value" = h."value" WHERE h."key" IS NULL`, `INSERT INTO "__delta_field" ("_sign", "_sequence", "key", "value") SELECT 1, "rowid" - 1, "key", "value" FROM "__new_field"`, `INSERT INTO "__frontier_field" ("_phase", "_sequence", "key", "value") SELECT ?, "rowid" - 1, "key", "value" FROM "__new_field"`, `INSERT INTO "__next_frontier_field" ("_phase", "_sequence", "key", "value") SELECT ?, "rowid" - 1, "key", "value" FROM "__new_field"`, `INSERT OR IGNORE INTO "field" ("key", "value", "__refcount") SELECT n."key", n."value", n."__refcount" FROM "__support_next_field" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL UNION SELECT DISTINCT j0.value FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL UNION SELECT DISTINCT j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`] },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "field";
-INSERT OR IGNORE INTO "field" ("key", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL UNION SELECT DISTINCT j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL;
+INSERT OR IGNORE INTO "field" ("key", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -267,6 +296,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -290,11 +321,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -322,7 +356,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_key_capture_binds_key_and_value",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

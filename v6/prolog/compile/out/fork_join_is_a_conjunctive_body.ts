@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,30 +136,47 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "combined": [true, true],
+    "result_a": [true],
+    "result_b": [true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
-  `CREATE TABLE "result_a" ("value_a" TEXT NOT NULL, PRIMARY KEY ("value_a")) WITHOUT ROWID`,
-  `CREATE TABLE "result_b" ("value_b" TEXT NOT NULL, PRIMARY KEY ("value_b")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_combined" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "combined" ("value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_combined" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_a") AS "value_a", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_b") AS "value_b", t."__refcount" AS "__refcount" FROM "combined" t`,
+  `CREATE TABLE "result_a" ("value_a" INTEGER NOT NULL, PRIMARY KEY ("value_a")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_result_a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_a") AS "value_a" FROM "result_a" t`,
+  `CREATE TABLE "result_b" ("value_b" INTEGER NOT NULL, PRIMARY KEY ("value_b")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_result_b" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_b") AS "value_b" FROM "result_b" t`,
+  `CREATE TEMP TABLE "__delta_combined" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_combined_sign" ON "__delta_combined" ("_sign")`,
   `CREATE INDEX "__delta_combined_group" ON "__delta_combined" ("value_a", "value_b")`,
-  `CREATE TEMP TABLE "__frontier_combined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_combined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_combined_phase" ON "__frontier_combined" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_combined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_result_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_combined" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_combined" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_a") AS "value_a", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_b") AS "value_b", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_combined" t`,
+  `CREATE TEMP TABLE "__delta_result_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_result_a_sign" ON "__delta_result_a" ("_sign")`,
   `CREATE INDEX "__delta_result_a_group" ON "__delta_result_a" ("value_a")`,
-  `CREATE TEMP TABLE "__frontier_result_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_result_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_result_a_phase" ON "__frontier_result_a" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_result_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_result_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_result_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_result_a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_a") AS "value_a", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_result_a" t`,
+  `CREATE TEMP TABLE "__delta_result_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_result_b_sign" ON "__delta_result_b" ("_sign")`,
   `CREATE INDEX "__delta_result_b_group" ON "__delta_result_b" ("value_b")`,
-  `CREATE TEMP TABLE "__frontier_result_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_result_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_result_b_phase" ON "__frontier_result_b" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_result_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_combined" ("value_a" TEXT NOT NULL, "value_b" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_result_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_b" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_result_b" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_b") AS "value_b", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_result_b" t`,
+  `CREATE TEMP TABLE "__support_next_combined" ("value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_combined" ("value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "combined_zero" ON "combined" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -207,16 +226,30 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    combined: select_rows(seam, `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b" FROM "combined"`, rel_columns.combined!, rel_column_types.combined!),
-    result_a: select_rows(seam, `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a" FROM "result_a"`, rel_columns.result_a!, rel_column_types.result_a!),
-    result_b: select_rows(seam, `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b" FROM "result_b"`, rel_columns.result_b!, rel_column_types.result_b!),
+    combined: select_rows(seam, `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b" FROM "__txt_combined"`, rel_columns.combined!, rel_column_types.combined!),
+    result_a: select_rows(seam, `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a" FROM "__txt_result_a"`, rel_columns.result_a!, rel_column_types.result_a!),
+    result_b: select_rows(seam, `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b" FROM "__txt_result_b"`, rel_columns.result_b!, rel_column_types.result_b!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    combined: select_rows(seam, `SELECT "value_a", "value_b" FROM "combined"`, rel_columns.combined!, rel_column_types.combined!),
+    result_a: select_rows(seam, `SELECT "value_a" FROM "result_a"`, rel_columns.result_a!, rel_column_types.result_a!),
+    result_b: select_rows(seam, `SELECT "value_b" FROM "result_b"`, rel_columns.result_b!, rel_column_types.result_b!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  combined: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b" FROM "combined"`,
-  result_a: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a" FROM "result_a"`,
-  result_b: `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b" FROM "result_b"`,
+  combined: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b" FROM "__txt_combined"`,
+  result_a: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a" FROM "__txt_result_a"`,
+  result_b: `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b" FROM "__txt_result_b"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -247,9 +280,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "combined", kind: "set", table_name: "combined", delta_table_name: "__delta_combined", frontier_table_name: "__frontier_combined", next_frontier_table_name: "__next_frontier_combined", columns: ["value_a", "value_b"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_combined" WHERE "_sign" IN (-1, 1) GROUP BY "value_a", "value_b", "_sign"`, rule_observers: [] },
-  { rel: "result_a", kind: "set", table_name: "result_a", delta_table_name: "__delta_result_a", frontier_table_name: "__frontier_result_a", next_frontier_table_name: "__next_frontier_result_a", columns: ["value_a"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "result_a" ("value_a") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value_a"`, arrival_del_sql: `DELETE FROM "result_a" WHERE ("value_a") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value_a"`, boundary_sql: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_a" WHERE "_sign" IN (-1, 1) GROUP BY "value_a", "_sign"`, rule_observers: ["combined/2"] },
-  { rel: "result_b", kind: "set", table_name: "result_b", delta_table_name: "__delta_result_b", frontier_table_name: "__frontier_result_b", next_frontier_table_name: "__next_frontier_result_b", columns: ["value_b"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "result_b" ("value_b") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value_b"`, arrival_del_sql: `DELETE FROM "result_b" WHERE ("value_b") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value_b"`, boundary_sql: `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_result_b" WHERE "_sign" IN (-1, 1) GROUP BY "value_b", "_sign"`, rule_observers: ["combined/2"] },
+  { rel: "combined", kind: "set", table_name: "combined", delta_table_name: "__delta_combined", frontier_table_name: "__frontier_combined", next_frontier_table_name: "__next_frontier_combined", columns: ["value_a", "value_b"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_combined" WHERE "_sign" IN (-1, 1) GROUP BY "value_a", "value_b", "_sign"`, rule_observers: [] },
+  { rel: "result_a", kind: "set", table_name: "result_a", delta_table_name: "__delta_result_a", frontier_table_name: "__frontier_result_a", next_frontier_table_name: "__next_frontier_result_a", columns: ["value_a"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "result_a" ("value_a") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value_a"`, arrival_del_sql: `DELETE FROM "result_a" WHERE ("value_a") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value_a"`, boundary_sql: `SELECT CASE WHEN json_valid("value_a") AND json_type("value_a") = 'object' AND json_type("value_a", '$.fn') = 'text' AND json_type("value_a", '$.args') = 'array' THEN json_extract("value_a", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_a", '$.args')), '') || ')' ELSE "value_a" END AS "value_a", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_result_a" WHERE "_sign" IN (-1, 1) GROUP BY "value_a", "_sign"`, rule_observers: ["combined/2"] },
+  { rel: "result_b", kind: "set", table_name: "result_b", delta_table_name: "__delta_result_b", frontier_table_name: "__frontier_result_b", next_frontier_table_name: "__next_frontier_result_b", columns: ["value_b"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "result_b" ("value_b") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value_b"`, arrival_del_sql: `DELETE FROM "result_b" WHERE ("value_b") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value_b"`, boundary_sql: `SELECT CASE WHEN json_valid("value_b") AND json_type("value_b") = 'object' AND json_type("value_b", '$.fn') = 'text' AND json_type("value_b", '$.args') = 'array' THEN json_extract("value_b", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value_b", '$.args')), '') || ')' ELSE "value_b" END AS "value_b", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_result_b" WHERE "_sign" IN (-1, 1) GROUP BY "value_b", "_sign"`, rule_observers: ["combined/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -282,6 +315,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -305,11 +340,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -337,7 +375,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "fork_join_is_a_conjunctive_body",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

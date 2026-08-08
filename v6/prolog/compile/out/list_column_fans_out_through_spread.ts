@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,37 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "repo": [true, false],
+    "repo_tag": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "repo" ("name" TEXT NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")), PRIMARY KEY ("name", "tags")) WITHOUT ROWID`,
-  `CREATE TABLE "repo_tag" ("name" TEXT NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")))`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "repo" ("name" INTEGER NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")), PRIMARY KEY ("name", "tags")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."tags" AS "tags" FROM "repo" t`,
+  `CREATE TABLE "repo_tag" ("name" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_repo_tag" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "repo_tag" t`,
+  `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")))`,
   `CREATE INDEX "__delta_repo_sign" ON "__delta_repo" ("_sign")`,
   `CREATE INDEX "__delta_repo_group" ON "__delta_repo" ("name", "tags")`,
-  `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")))`,
+  `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")))`,
   `CREATE INDEX "__frontier_repo_phase" ON "__frontier_repo" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")))`,
-  `CREATE TEMP TABLE "__delta_repo_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags")))`,
+  `CREATE TEMP VIEW "__txt___delta_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."tags" AS "tags", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_repo" t`,
+  `CREATE TEMP TABLE "__delta_repo_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_repo_tag_sign" ON "__delta_repo_tag" ("_sign")`,
   `CREATE INDEX "__delta_repo_tag_group" ON "__delta_repo_tag" ("name", "tag")`,
-  `CREATE TEMP TABLE "__frontier_repo_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_repo_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_repo_tag_phase" ON "__frontier_repo_tag" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_repo_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_repo_tag" ("name" TEXT NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_repo_tag" ("name" TEXT NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_repo_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_repo_tag" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_repo_tag" t`,
+  `CREATE TEMP TABLE "__support_next_repo_tag" ("name" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_repo_tag" ("name" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "repo_tag_zero" ON "repo_tag" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -187,10 +203,13 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["repo"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "repo", sql: `INSERT OR IGNORE INTO "repo" ("name", "tags") VALUES (?, ?)`, params: ["cli", "[\"go\",\"rust\"]"] },
-  { rel: "repo", sql: `INSERT OR IGNORE INTO "repo" ("name", "tags") VALUES (?, ?)`, params: ["shell", "[]"] },
+  { rel: "repo", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
+  { rel: "repo", sql: `INSERT OR IGNORE INTO "repo" ("name", "tags") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["cli", "[\"go\",\"rust\"]"] },
+  { rel: "repo", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["shell"] },
+  { rel: "repo", sql: `INSERT OR IGNORE INTO "repo" ("name", "tags") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["shell", "[]"] },
   { rel: "repo_tag", sql: `DELETE FROM "repo_tag"`, params: [] },
-  { rel: "repo_tag", sql: `INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT b0."name", j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`, params: [] },
+  { rel: "repo_tag", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`, params: [] },
+  { rel: "repo_tag", sql: `INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT b0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`, params: [] },
 ];
 
 type Snapshot = {
@@ -200,14 +219,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    repo: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "tags" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
-    repo_tag: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "repo_tag"`, rel_columns.repo_tag!, rel_column_types.repo_tag!),
+    repo: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "tags" FROM "__txt_repo"`, rel_columns.repo!, rel_column_types.repo!),
+    repo_tag: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_repo_tag"`, rel_columns.repo_tag!, rel_column_types.repo_tag!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    repo: select_rows(seam, `SELECT "name", "tags" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
+    repo_tag: select_rows(seam, `SELECT "name", "tag" FROM "repo_tag"`, rel_columns.repo_tag!, rel_column_types.repo_tag!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  repo: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "tags" FROM "repo"`,
-  repo_tag: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "repo_tag"`,
+  repo: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "tags" FROM "__txt_repo"`,
+  repo_tag: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_repo_tag"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -237,21 +269,23 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "repo", kind: "set", table_name: "repo", delta_table_name: "__delta_repo", frontier_table_name: "__frontier_repo", next_frontier_table_name: "__next_frontier_repo", columns: ["name", "tags"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo" ("name", "tags") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "tags"`, arrival_del_sql: `DELETE FROM "repo" WHERE ("name", "tags") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "tags"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "tags", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo" WHERE "_sign" IN (-1, 1) GROUP BY "name", "tags", "_sign"`, rule_observers: ["repo_tag/2"] },
-  { rel: "repo_tag", kind: "set", table_name: "repo_tag", delta_table_name: "__delta_repo_tag", frontier_table_name: "__frontier_repo_tag", next_frontier_table_name: "__next_frontier_repo_tag", columns: ["name", "tag"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_tag" WHERE "_sign" IN (-1, 1) GROUP BY "name", "tag", "_sign"`, rule_observers: [] },
+  { rel: "repo", kind: "set", table_name: "repo", delta_table_name: "__delta_repo", frontier_table_name: "__frontier_repo", next_frontier_table_name: "__next_frontier_repo", columns: ["name", "tags"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo" ("name", "tags") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "tags"`, arrival_del_sql: `DELETE FROM "repo" WHERE ("name", "tags") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "tags"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "tags", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo" WHERE "_sign" IN (-1, 1) GROUP BY "name", "tags", "_sign"`, rule_observers: ["repo_tag/2"] },
+  { rel: "repo_tag", kind: "set", table_name: "repo_tag", delta_table_name: "__delta_repo_tag", frontier_table_name: "__frontier_repo_tag", next_frontier_table_name: "__next_frontier_repo_tag", columns: ["name", "tag"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_tag" WHERE "_sign" IN (-1, 1) GROUP BY "name", "tag", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "repo_tag", rule_id: "list_column_fans_out_through_spread:repo_tag/2#1", head_delta_table_name: "__delta_repo_tag", head_columns: ["name", "tag"], insert_sql: `INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT DISTINCT d0."name", j0.value FROM "__frontier_repo" d0, json_each(d0."tags") j0 WHERE d0."_phase" >= 0 AND json_type(d0."tags", '$') = 'array' AND j0.value IS NOT NULL RETURNING "name", "tag"`, select_sql: `SELECT "name", "tag" FROM "repo_tag"`, recompute_sql: `DELETE FROM "repo_tag";
-INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT b0."name", j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_repo_tag"`, `INSERT INTO "__support_next_repo_tag" ("name", "tag", "__refcount") SELECT "name", "tag", sum("__refcount") FROM (SELECT b0."name" AS "name", j0.value AS "tag", count(*) AS "__refcount" FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL GROUP BY b0."name", j0.value) GROUP BY "name", "tag"`, `UPDATE "repo_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_repo_tag" n WHERE n."name" = h."name" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_repo_tag" ("_sign", "_sequence", "name", "tag") SELECT -1, row_number() OVER () - 1, "name", "tag" FROM "repo_tag" WHERE "__refcount" <= 0`, `DELETE FROM "repo_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_repo_tag"`, `INSERT INTO "__new_repo_tag" ("name", "tag", "__refcount") SELECT n."name", n."tag", n."__refcount" FROM "__support_next_repo_tag" n LEFT JOIN "repo_tag" h ON n."name" = h."name" AND n."tag" = h."tag" WHERE h."name" IS NULL`, `INSERT INTO "__delta_repo_tag" ("_sign", "_sequence", "name", "tag") SELECT 1, "rowid" - 1, "name", "tag" FROM "__new_repo_tag"`, `INSERT INTO "__frontier_repo_tag" ("_phase", "_sequence", "name", "tag") SELECT ?, "rowid" - 1, "name", "tag" FROM "__new_repo_tag"`, `INSERT INTO "__next_frontier_repo_tag" ("_phase", "_sequence", "name", "tag") SELECT ?, "rowid" - 1, "name", "tag" FROM "__new_repo_tag"`, `INSERT OR IGNORE INTO "repo_tag" ("name", "tag", "__refcount") SELECT n."name", n."tag", n."__refcount" FROM "__support_next_repo_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "repo_tag", rule_id: "list_column_fans_out_through_spread:repo_tag/2#1", head_delta_table_name: "__delta_repo_tag", head_columns: ["name", "tag"], insert_sql: `INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT DISTINCT d0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) FROM "__frontier_repo" d0, json_each(d0."tags") j0 WHERE d0."_phase" >= 0 AND json_type(d0."tags", '$') = 'array' AND j0.value IS NOT NULL RETURNING "name", "tag"`, select_sql: `SELECT "name", "tag" FROM "repo_tag"`, recompute_sql: `DELETE FROM "repo_tag";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL;
+INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT b0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_repo_tag"`, `INSERT INTO "__support_next_repo_tag" ("name", "tag", "__refcount") SELECT "name", "tag", sum("__refcount") FROM (SELECT b0."name" AS "name", (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) AS "tag", count(*) AS "__refcount" FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL GROUP BY b0."name", j0.value) GROUP BY "name", "tag"`, `UPDATE "repo_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_repo_tag" n WHERE n."name" = h."name" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_repo_tag" ("_sign", "_sequence", "name", "tag") SELECT -1, row_number() OVER () - 1, "name", "tag" FROM "repo_tag" WHERE "__refcount" <= 0`, `DELETE FROM "repo_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_repo_tag"`, `INSERT INTO "__new_repo_tag" ("name", "tag", "__refcount") SELECT n."name", n."tag", n."__refcount" FROM "__support_next_repo_tag" n LEFT JOIN "repo_tag" h ON n."name" = h."name" AND n."tag" = h."tag" WHERE h."name" IS NULL`, `INSERT INTO "__delta_repo_tag" ("_sign", "_sequence", "name", "tag") SELECT 1, "rowid" - 1, "name", "tag" FROM "__new_repo_tag"`, `INSERT INTO "__frontier_repo_tag" ("_phase", "_sequence", "name", "tag") SELECT ?, "rowid" - 1, "name", "tag" FROM "__new_repo_tag"`, `INSERT INTO "__next_frontier_repo_tag" ("_phase", "_sequence", "name", "tag") SELECT ?, "rowid" - 1, "name", "tag" FROM "__new_repo_tag"`, `INSERT OR IGNORE INTO "repo_tag" ("name", "tag", "__refcount") SELECT n."name", n."tag", n."__refcount" FROM "__support_next_repo_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.value FROM "__frontier_repo" d0, json_each(d0."tags") j0 WHERE d0."_phase" >= 0 AND json_type(d0."tags", '$') = 'array' AND j0.value IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`] },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "repo_tag";
-INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT b0."name", j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.value FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL;
+INSERT OR IGNORE INTO "repo_tag" ("name", "tag") SELECT b0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.value) FROM "repo" b0, json_each(b0."tags") j0 WHERE json_type(b0."tags", '$') = 'array' AND j0.value IS NOT NULL`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -269,6 +303,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -292,11 +328,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -324,7 +363,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "list_column_fans_out_through_spread",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

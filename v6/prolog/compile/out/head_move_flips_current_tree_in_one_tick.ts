@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,17 +155,30 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "current_tree": [true, true],
+    "tree_file": [false, true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "current_tree" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "digest")) WITHOUT ROWID`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "current_tree" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "digest")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_current_tree" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."__refcount" AS "__refcount" FROM "current_tree" t`,
   `CREATE TABLE "head" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, PRIMARY KEY ("repo_id")) WITHOUT ROWID`,
   `CREATE TABLE "head_move" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE TABLE "tree_file" ("rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, PRIMARY KEY ("rev_id", "path")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_current_tree" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TABLE "tree_file" ("rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, PRIMARY KEY ("rev_id", "path")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_tree_file" AS SELECT t."rev_id" AS "rev_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest" FROM "tree_file" t`,
+  `CREATE TEMP TABLE "__delta_current_tree" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_current_tree_sign" ON "__delta_current_tree" ("_sign")`,
   `CREATE INDEX "__delta_current_tree_group" ON "__delta_current_tree" ("path", "digest")`,
-  `CREATE TEMP TABLE "__frontier_current_tree" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_current_tree" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_current_tree_phase" ON "__frontier_current_tree" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_current_tree" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_current_tree" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_current_tree" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_current_tree" t`,
   `CREATE TEMP TABLE "__delta_head" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_head_sign" ON "__delta_head" ("_sign")`,
   `CREATE INDEX "__delta_head_group" ON "__delta_head" ("repo_id", "rev_id")`,
@@ -176,14 +191,15 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_head_move_phase" ON "__frontier_head_move" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_tree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_tree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_tree_file_sign" ON "__delta_tree_file" ("_sign")`,
   `CREATE INDEX "__delta_tree_file_group" ON "__delta_tree_file" ("rev_id", "path", "digest")`,
-  `CREATE TEMP TABLE "__frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_tree_file_phase" ON "__frontier_tree_file" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_current_tree" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "digest")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_current_tree" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_tree_file" AS SELECT t."rev_id" AS "rev_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_tree_file" t`,
+  `CREATE TEMP TABLE "__support_next_current_tree" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "digest")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_current_tree" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "current_tree_zero" ON "current_tree" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -230,11 +246,21 @@ const arrival_targets: readonly string[] = ["head_move", "tree_file"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "head", sql: `INSERT OR IGNORE INTO "head" ("repo_id", "rev_id") VALUES (?, ?)`, params: [1, 100] },
-  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, ?, ?)`, params: [100, "src/a.rs", "sha_a1"] },
-  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, ?, ?)`, params: [100, "src/b.rs", "sha_b1"] },
-  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, ?, ?)`, params: [200, "src/a.rs", "sha_a2"] },
-  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, ?, ?)`, params: [200, "src/b.rs", "sha_b2"] },
-  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, ?, ?)`, params: [200, "src/c.rs", "sha_c1"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/a.rs"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["sha_a1"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [100, "src/a.rs", "sha_a1"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/b.rs"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["sha_b1"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [100, "src/b.rs", "sha_b1"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/a.rs"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["sha_a2"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [200, "src/a.rs", "sha_a2"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/b.rs"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["sha_b2"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [200, "src/b.rs", "sha_b2"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/c.rs"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["sha_c1"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [200, "src/c.rs", "sha_c1"] },
   { rel: "current_tree", sql: `DELETE FROM "current_tree"`, params: [] },
   { rel: "current_tree", sql: `INSERT OR IGNORE INTO "current_tree" ("path", "digest") SELECT b1."path", b1."digest" FROM "head" b0, "tree_file" b1 WHERE b1."rev_id" = b0."rev_id"`, params: [] },
 ];
@@ -248,18 +274,33 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    current_tree: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "current_tree"`, rel_columns.current_tree!, rel_column_types.current_tree!),
+    current_tree: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_current_tree"`, rel_columns.current_tree!, rel_column_types.current_tree!),
     head: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head"`, rel_columns.head!, rel_column_types.head!),
     head_move: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head_move"`, rel_columns.head_move!, rel_column_types.head_move!),
-    tree_file: select_rows(seam, `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "tree_file"`, rel_columns.tree_file!, rel_column_types.tree_file!),
+    tree_file: select_rows(seam, `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_tree_file"`, rel_columns.tree_file!, rel_column_types.tree_file!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    current_tree: select_rows(seam, `SELECT "path", "digest" FROM "current_tree"`, rel_columns.current_tree!, rel_column_types.current_tree!),
+    head: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head"`, rel_columns.head!, rel_column_types.head!),
+    head_move: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head_move"`, rel_columns.head_move!, rel_column_types.head_move!),
+    tree_file: select_rows(seam, `SELECT "rev_id", "path", "digest" FROM "tree_file"`, rel_columns.tree_file!, rel_column_types.tree_file!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  current_tree: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "current_tree"`,
+  current_tree: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_current_tree"`,
   head: `SELECT "repo_id", "rev_id" FROM "head"`,
   head_move: `SELECT "repo_id", "rev_id" FROM "head_move"`,
-  tree_file: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "tree_file"`,
+  tree_file: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_tree_file"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -290,10 +331,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "current_tree", kind: "set", table_name: "current_tree", delta_table_name: "__delta_current_tree", frontier_table_name: "__frontier_current_tree", next_frontier_table_name: "__next_frontier_current_tree", columns: ["path", "digest"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_current_tree" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, rule_observers: [] },
+  { rel: "current_tree", kind: "set", table_name: "current_tree", delta_table_name: "__delta_current_tree", frontier_table_name: "__frontier_current_tree", next_frontier_table_name: "__next_frontier_current_tree", columns: ["path", "digest"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_current_tree" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, rule_observers: [] },
   { rel: "head", kind: "set", table_name: "head", delta_table_name: "__delta_head", frontier_table_name: "__frontier_head", next_frontier_table_name: "__next_frontier_head", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, rule_observers: ["current_tree/2"] },
   { rel: "head_move", kind: "log", table_name: "head_move", delta_table_name: "__delta_head_move", frontier_table_name: "__frontier_head_move", next_frontier_table_name: "__next_frontier_head_move", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrival_del_sql: null, boundary_sql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, rule_observers: ["head/2"] },
-  { rel: "tree_file", kind: "set", table_name: "tree_file", delta_table_name: "__delta_tree_file", frontier_table_name: "__frontier_tree_file", next_frontier_table_name: "__next_frontier_tree_file", columns: ["rev_id", "path", "digest"], column_types: ["int", "text", "text"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "tree_file" ("rev_id", "path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("rev_id", "path") DO UPDATE SET "digest" = excluded."digest" RETURNING "rev_id", "path", "digest"`, arrival_del_sql: `DELETE FROM "tree_file" WHERE ("rev_id", "path", "digest") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "rev_id", "path", "digest"`, boundary_sql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_file" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "digest", "_sign"`, rule_observers: ["current_tree/2"] },
+  { rel: "tree_file", kind: "set", table_name: "tree_file", delta_table_name: "__delta_tree_file", frontier_table_name: "__frontier_tree_file", next_frontier_table_name: "__next_frontier_tree_file", columns: ["rev_id", "path", "digest"], column_types: ["int", "text", "text"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "tree_file" ("rev_id", "path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("rev_id", "path") DO UPDATE SET "digest" = excluded."digest" RETURNING "rev_id", "path", "digest"`, arrival_del_sql: `DELETE FROM "tree_file" WHERE ("rev_id", "path", "digest") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "rev_id", "path", "digest"`, boundary_sql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_tree_file" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "digest", "_sign"`, rule_observers: ["current_tree/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -351,17 +392,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      resolveHead_0Writes(seam, before, arrivals).pipe(
+      resolveHead_0Writes(seam, before.stored, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // head_move_flips_current_tree_in_one_tick: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -382,6 +425,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -416,7 +461,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "head_move_flips_current_tree_in_one_tick",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

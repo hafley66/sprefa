@@ -24,6 +24,7 @@ import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -40,6 +41,7 @@ import type {
   ISqlSeam,
   IStructRefColumns,
   IStructTypePlan,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -150,16 +152,34 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "span": ["file", null, null],
 };
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "found": [true, true],
+    "fpath": [true],
+    "located": [false, true],
+    "rawk": [true, true, false, false, true],
+    "repo": [true],
+  },
+};
+
 const ddl: readonly string[] = [
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "file" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("repo", "at"))`,
   `CREATE TEMP VIEW "__ref_file" AS SELECT t."__id", "repo", "at", json_object('repo', json((SELECT c."__rendered" FROM "__ref_repo" c WHERE c."__id" = t."repo")), 'at', json((SELECT c."__rendered" FROM "__ref_fpath" c WHERE c."__id" = t."at"))) AS "__rendered" FROM "file" t`,
-  `CREATE TABLE "found" ("path_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path_name", "kind")) WITHOUT ROWID`,
-  `CREATE TABLE "fpath" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__ref_fpath" AS SELECT t."__id", "name", json_object('name', t."name") AS "__rendered" FROM "fpath" t`,
-  `CREATE TABLE "located" ("span" INTEGER NOT NULL, "kind" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("span", "kind")) WITHOUT ROWID`,
-  `CREATE TABLE "rawk" ("repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "kind" TEXT NOT NULL, PRIMARY KEY ("repo_name", "path_name", "start", "end", "kind")) WITHOUT ROWID`,
-  `CREATE TABLE "repo" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__ref_repo" AS SELECT t."__id", "name", json_object('name', t."name") AS "__rendered" FROM "repo" t`,
+  `CREATE TABLE "found" ("path_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path_name", "kind")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_found" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path_name") AS "path_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."kind") AS "kind", t."__refcount" AS "__refcount" FROM "found" t`,
+  `CREATE TABLE "fpath" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__ref_fpath" AS SELECT t."__id", "name", json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name")) AS "__rendered" FROM "fpath" t`,
+  `CREATE TEMP VIEW "__txt_fpath" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__id" AS "__id", t."__refcount" AS "__refcount" FROM "fpath" t`,
+  `CREATE TABLE "located" ("span" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("span", "kind")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_located" AS SELECT t."span" AS "span", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."kind") AS "kind", t."__refcount" AS "__refcount" FROM "located" t`,
+  `CREATE TABLE "rawk" ("repo_name" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "kind" INTEGER NOT NULL, PRIMARY KEY ("repo_name", "path_name", "start", "end", "kind")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_rawk" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo_name") AS "repo_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path_name") AS "path_name", t."start" AS "start", t."end" AS "end", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."kind") AS "kind" FROM "rawk" t`,
+  `CREATE TABLE "repo" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__ref_repo" AS SELECT t."__id", "name", json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name")) AS "__rendered" FROM "repo" t`,
+  `CREATE TEMP VIEW "__txt_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__id" AS "__id", t."__refcount" AS "__refcount" FROM "repo" t`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("file", "start", "end"))`,
   `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "file", "start", "end", json_object('file', json((SELECT c."__rendered" FROM "__ref_file" c WHERE c."__id" = t."file")), 'start', t."start", 'end', t."end") AS "__rendered" FROM "span" t`,
   `CREATE TEMP TABLE "__delta_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
@@ -168,47 +188,52 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_file_phase" ON "__frontier_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_found" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_found" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_found_sign" ON "__delta_found" ("_sign")`,
   `CREATE INDEX "__delta_found_group" ON "__delta_found" ("path_name", "kind")`,
-  `CREATE TEMP TABLE "__frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_found_phase" ON "__frontier_found" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" TEXT NOT NULL, "kind" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_fpath" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_found" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_found" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path_name") AS "path_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."kind") AS "kind", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_found" t`,
+  `CREATE TEMP TABLE "__delta_fpath" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_fpath_sign" ON "__delta_fpath" ("_sign")`,
   `CREATE INDEX "__delta_fpath_group" ON "__delta_fpath" ("name")`,
-  `CREATE TEMP TABLE "__frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_fpath_phase" ON "__frontier_fpath" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_located" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "span" INTEGER NOT NULL, "kind" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_fpath" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_fpath" t`,
+  `CREATE TEMP TABLE "__delta_located" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "span" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_located_sign" ON "__delta_located" ("_sign")`,
   `CREATE INDEX "__delta_located_group" ON "__delta_located" ("span", "kind")`,
-  `CREATE TEMP TABLE "__frontier_located" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "span" INTEGER NOT NULL, "kind" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_located" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "span" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_located_phase" ON "__frontier_located" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_located" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "span" INTEGER NOT NULL, "kind" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_rawk" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "kind" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_located" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "span" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_located" AS SELECT t."span" AS "span", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."kind") AS "kind", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_located" t`,
+  `CREATE TEMP TABLE "__delta_rawk" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_rawk_sign" ON "__delta_rawk" ("_sign")`,
   `CREATE INDEX "__delta_rawk_group" ON "__delta_rawk" ("repo_name", "path_name", "start", "end", "kind")`,
-  `CREATE TEMP TABLE "__frontier_rawk" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "kind" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_rawk" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_rawk_phase" ON "__frontier_rawk" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_rawk" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "kind" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_rawk" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_rawk" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo_name") AS "repo_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path_name") AS "path_name", t."start" AS "start", t."end" AS "end", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."kind") AS "kind", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_rawk" t`,
+  `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_repo_sign" ON "__delta_repo" ("_sign")`,
   `CREATE INDEX "__delta_repo_group" ON "__delta_repo" ("name")`,
-  `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_repo_phase" ON "__frontier_repo" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_repo" t`,
   `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
   `CREATE INDEX "__delta_span_group" ON "__delta_span" ("file", "start", "end")`,
   `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_fpath" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_fpath" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_fpath" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_fpath" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "fpath_zero" ON "fpath" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_repo" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_repo" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_repo" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_repo" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "repo_zero" ON "repo" ("__refcount") WHERE "__refcount" <= 0`,
   `CREATE TEMP TABLE "__support_next_file" ("repo" INTEGER NOT NULL, "at" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("repo", "at")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_file" ("repo" INTEGER NOT NULL, "at" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
@@ -216,11 +241,11 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__support_next_span" ("file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("file", "start", "end")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_span" ("file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "span_zero" ON "span" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_located" ("span" INTEGER NOT NULL, "kind" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("span", "kind")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_located" ("span" INTEGER NOT NULL, "kind" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_located" ("span" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("span", "kind")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_located" ("span" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "located_zero" ON "located" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_found" ("path_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path_name", "kind")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_found" ("path_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_found" ("path_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path_name", "kind")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_found" ("path_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "found_zero" ON "found" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -316,22 +341,40 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     file: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = "repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = "at") AS "at" FROM "file"`, rel_columns.file!, rel_column_types.file!),
-    found: select_rows(seam, `SELECT CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "found"`, rel_columns.found!, rel_column_types.found!),
-    fpath: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "fpath"`, rel_columns.fpath!, rel_column_types.fpath!),
-    located: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "span") AS "span", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "located"`, rel_columns.located!, rel_column_types.located!),
-    rawk: select_rows(seam, `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "rawk"`, rel_columns.rawk!, rel_column_types.rawk!),
-    repo: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
+    found: select_rows(seam, `SELECT CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "__txt_found"`, rel_columns.found!, rel_column_types.found!),
+    fpath: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_fpath"`, rel_columns.fpath!, rel_column_types.fpath!),
+    located: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "span") AS "span", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "__txt_located"`, rel_columns.located!, rel_column_types.located!),
+    rawk: select_rows(seam, `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "__txt_rawk"`, rel_columns.rawk!, rel_column_types.rawk!),
+    repo: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_repo"`, rel_columns.repo!, rel_column_types.repo!),
     span: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = "file") AS "file", "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    file: select_rows(seam, `SELECT "repo", "at" FROM "file"`, rel_columns.file!, rel_column_types.file!),
+    found: select_rows(seam, `SELECT "path_name", "kind" FROM "found"`, rel_columns.found!, rel_column_types.found!),
+    fpath: select_rows(seam, `SELECT "name" FROM "fpath"`, rel_columns.fpath!, rel_column_types.fpath!),
+    located: select_rows(seam, `SELECT "span", "kind" FROM "located"`, rel_columns.located!, rel_column_types.located!),
+    rawk: select_rows(seam, `SELECT "repo_name", "path_name", "start", "end", "kind" FROM "rawk"`, rel_columns.rawk!, rel_column_types.rawk!),
+    repo: select_rows(seam, `SELECT "name" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
+    span: select_rows(seam, `SELECT "file", "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
   file: `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = "repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = "at") AS "at" FROM "file"`,
-  found: `SELECT CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "found"`,
-  fpath: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "fpath"`,
-  located: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "span") AS "span", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "located"`,
-  rawk: `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "rawk"`,
-  repo: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "repo"`,
+  found: `SELECT CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "__txt_found"`,
+  fpath: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_fpath"`,
+  located: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "span") AS "span", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "__txt_located"`,
+  rawk: `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "__txt_rawk"`,
+  repo: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_repo"`,
   span: `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = "file") AS "file", "start", "end" FROM "span"`,
 };
 
@@ -363,11 +406,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "file", kind: "set", table_name: "file", delta_table_name: "__delta_file", frontier_table_name: "__frontier_file", next_frontier_table_name: "__next_frontier_file", columns: ["repo", "at"], column_types: ["ref", "ref"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = "repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_file" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "at", "_sign"`, rule_observers: ["span/3"] },
-  { rel: "found", kind: "set", table_name: "found", delta_table_name: "__delta_found", frontier_table_name: "__frontier_found", next_frontier_table_name: "__next_frontier_found", columns: ["path_name", "kind"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_found" WHERE "_sign" IN (-1, 1) GROUP BY "path_name", "kind", "_sign"`, rule_observers: [] },
-  { rel: "fpath", kind: "set", table_name: "fpath", delta_table_name: "__delta_fpath", frontier_table_name: "__frontier_fpath", next_frontier_table_name: "__next_frontier_fpath", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fpath" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["file/2"] },
-  { rel: "located", kind: "set", table_name: "located", delta_table_name: "__delta_located", frontier_table_name: "__frontier_located", next_frontier_table_name: "__next_frontier_located", columns: ["span", "kind"], column_types: ["ref", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "span") AS "span", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_located" WHERE "_sign" IN (-1, 1) GROUP BY "span", "kind", "_sign"`, rule_observers: ["found/2"] },
-  { rel: "rawk", kind: "set", table_name: "rawk", delta_table_name: "__delta_rawk", frontier_table_name: "__frontier_rawk", next_frontier_table_name: "__next_frontier_rawk", columns: ["repo_name", "path_name", "start", "end", "kind"], column_types: ["text", "text", "int", "int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "rawk" ("repo_name", "path_name", "start", "end", "kind") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?) RETURNING "repo_name", "path_name", "start", "end", "kind"`, arrival_del_sql: `DELETE FROM "rawk" WHERE ("repo_name", "path_name", "start", "end", "kind") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?)) RETURNING "repo_name", "path_name", "start", "end", "kind"`, boundary_sql: `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rawk" WHERE "_sign" IN (-1, 1) GROUP BY "repo_name", "path_name", "start", "end", "kind", "_sign"`, rule_observers: ["file/2", "fpath/1", "located/2", "repo/1", "span/3"] },
-  { rel: "repo", kind: "set", table_name: "repo", delta_table_name: "__delta_repo", frontier_table_name: "__frontier_repo", next_frontier_table_name: "__next_frontier_repo", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["file/2"] },
+  { rel: "found", kind: "set", table_name: "found", delta_table_name: "__delta_found", frontier_table_name: "__frontier_found", next_frontier_table_name: "__next_frontier_found", columns: ["path_name", "kind"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_found" WHERE "_sign" IN (-1, 1) GROUP BY "path_name", "kind", "_sign"`, rule_observers: [] },
+  { rel: "fpath", kind: "set", table_name: "fpath", delta_table_name: "__delta_fpath", frontier_table_name: "__frontier_fpath", next_frontier_table_name: "__next_frontier_fpath", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fpath" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["file/2"] },
+  { rel: "located", kind: "set", table_name: "located", delta_table_name: "__delta_located", frontier_table_name: "__frontier_located", next_frontier_table_name: "__next_frontier_located", columns: ["span", "kind"], column_types: ["ref", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "span") AS "span", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_located" WHERE "_sign" IN (-1, 1) GROUP BY "span", "kind", "_sign"`, rule_observers: ["found/2"] },
+  { rel: "rawk", kind: "set", table_name: "rawk", delta_table_name: "__delta_rawk", frontier_table_name: "__frontier_rawk", next_frontier_table_name: "__next_frontier_rawk", columns: ["repo_name", "path_name", "start", "end", "kind"], column_types: ["text", "text", "int", "int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "rawk" ("repo_name", "path_name", "start", "end", "kind") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?) RETURNING "repo_name", "path_name", "start", "end", "kind"`, arrival_del_sql: `DELETE FROM "rawk" WHERE ("repo_name", "path_name", "start", "end", "kind") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]') FROM json_each(?)) RETURNING "repo_name", "path_name", "start", "end", "kind"`, boundary_sql: `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_rawk" WHERE "_sign" IN (-1, 1) GROUP BY "repo_name", "path_name", "start", "end", "kind", "_sign"`, rule_observers: ["file/2", "fpath/1", "located/2", "repo/1", "span/3"] },
+  { rel: "repo", kind: "set", table_name: "repo", delta_table_name: "__delta_repo", frontier_table_name: "__frontier_repo", next_frontier_table_name: "__next_frontier_repo", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["file/2"] },
   { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["file", "start", "end"], column_types: ["ref", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = "file") AS "file", "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "file", "start", "end", "_sign"`, rule_observers: ["located/2"] },
 ];
 
@@ -429,8 +472,10 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets),
+      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
     ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
@@ -455,14 +500,17 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS),
+      (targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS), TEXT_INTERN_PLAN,
     ).pipe(map((normalized) => { arrivals = normalized; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -490,7 +538,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "relation_depth3_many_rows",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

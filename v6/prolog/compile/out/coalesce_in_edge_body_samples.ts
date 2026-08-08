@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,22 +155,37 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "labelled": [false, true],
+    "name": [false, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "labelled" ("tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
-  `CREATE TABLE "name" ("tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL, PRIMARY KEY ("tree_id", "label")) WITHOUT ROWID`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('unnamed')`,
+  `CREATE TABLE "labelled" ("tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_labelled" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label" FROM "labelled" t`,
+  `CREATE TABLE "name" ("tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL, PRIMARY KEY ("tree_id", "label")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_name" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label" FROM "name" t`,
   `CREATE TABLE "ping" ("tree_id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_labelled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_labelled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_labelled_sign" ON "__delta_labelled" ("_sign")`,
   `CREATE INDEX "__delta_labelled_group" ON "__delta_labelled" ("tree_id", "label")`,
-  `CREATE TEMP TABLE "__frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_labelled_phase" ON "__frontier_labelled" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_name" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_labelled" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_labelled" t`,
+  `CREATE TEMP TABLE "__delta_name" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_name_sign" ON "__delta_name" ("_sign")`,
   `CREATE INDEX "__delta_name_group" ON "__delta_name" ("tree_id", "label")`,
-  `CREATE TEMP TABLE "__frontier_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_name_phase" ON "__frontier_name" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_name" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_name" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_name" t`,
   `CREATE TEMP TABLE "__delta_ping" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_ping_sign" ON "__delta_ping" ("_sign")`,
   `CREATE INDEX "__delta_ping_group" ON "__delta_ping" ("tree_id")`,
@@ -215,7 +232,8 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["name", "ping"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "name", sql: `INSERT OR IGNORE INTO "name" ("tree_id", "label") VALUES (?, ?)`, params: [1, "oak"] },
+  { rel: "name", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["oak"] },
+  { rel: "name", sql: `INSERT OR IGNORE INTO "name" ("tree_id", "label") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [1, "oak"] },
 ];
 
 type Snapshot = {
@@ -226,15 +244,29 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    labelled: select_rows(seam, `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "labelled"`, rel_columns.labelled!, rel_column_types.labelled!),
-    name: select_rows(seam, `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "name"`, rel_columns.name!, rel_column_types.name!),
+    labelled: select_rows(seam, `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "__txt_labelled"`, rel_columns.labelled!, rel_column_types.labelled!),
+    name: select_rows(seam, `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "__txt_name"`, rel_columns.name!, rel_column_types.name!),
     ping: select_rows(seam, `SELECT "tree_id" FROM "ping"`, rel_columns.ping!, rel_column_types.ping!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    labelled: select_rows(seam, `SELECT "tree_id", "label" FROM "labelled"`, rel_columns.labelled!, rel_column_types.labelled!),
+    name: select_rows(seam, `SELECT "tree_id", "label" FROM "name"`, rel_columns.name!, rel_column_types.name!),
+    ping: select_rows(seam, `SELECT "tree_id" FROM "ping"`, rel_columns.ping!, rel_column_types.ping!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  labelled: `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "labelled"`,
-  name: `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "name"`,
+  labelled: `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "__txt_labelled"`,
+  name: `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "__txt_name"`,
   ping: `SELECT "tree_id" FROM "ping"`,
 };
 
@@ -266,14 +298,14 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "labelled", kind: "log", table_name: "labelled", delta_table_name: "__delta_labelled", frontier_table_name: "__frontier_labelled", next_frontier_table_name: "__next_frontier_labelled", columns: ["tree_id", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_labelled" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "label", "_sign"`, rule_observers: [] },
-  { rel: "name", kind: "set", table_name: "name", delta_table_name: "__delta_name", frontier_table_name: "__frontier_name", next_frontier_table_name: "__next_frontier_name", columns: ["tree_id", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "name" ("tree_id", "label") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "label"`, arrival_del_sql: `DELETE FROM "name" WHERE ("tree_id", "label") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "label"`, boundary_sql: `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_name" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "label", "_sign"`, rule_observers: [] },
+  { rel: "labelled", kind: "log", table_name: "labelled", delta_table_name: "__delta_labelled", frontier_table_name: "__frontier_labelled", next_frontier_table_name: "__next_frontier_labelled", columns: ["tree_id", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_labelled" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "label", "_sign"`, rule_observers: [] },
+  { rel: "name", kind: "set", table_name: "name", delta_table_name: "__delta_name", frontier_table_name: "__frontier_name", next_frontier_table_name: "__next_frontier_name", columns: ["tree_id", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "name" ("tree_id", "label") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "label"`, arrival_del_sql: `DELETE FROM "name" WHERE ("tree_id", "label") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "label"`, boundary_sql: `SELECT "tree_id", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_name" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "label", "_sign"`, rule_observers: [] },
   { rel: "ping", kind: "log", table_name: "ping", delta_table_name: "__delta_ping", frontier_table_name: "__frontier_ping", next_frontier_table_name: "__next_frontier_ping", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "ping" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ping" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "_sign"`, rule_observers: ["labelled/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
   { head_rel: "labelled", rule_id: "coalesce_in_edge_body_samples:labelled/2#1", head_kind: "log", head_table_name: "labelled", head_delta_table_name: "__delta_labelled", head_columns: ["tree_id", "label"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", b0."label" AS "label" FROM "__frontier_ping" d0, "name" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "labelled", rule_id: "coalesce_in_edge_body_samples:labelled/2#2", head_kind: "log", head_table_name: "labelled", head_delta_table_name: "__delta_labelled", head_columns: ["tree_id", "label"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", 'unnamed' AS "label" FROM "__frontier_ping" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "name" n0 WHERE n0."tree_id" = d0."tree_id") ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "labelled", rule_id: "coalesce_in_edge_body_samples:labelled/2#2", head_kind: "log", head_table_name: "labelled", head_delta_table_name: "__delta_labelled", head_columns: ["tree_id", "label"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unnamed') AS "label" FROM "__frontier_ping" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "name" n0 WHERE n0."tree_id" = d0."tree_id") ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -283,7 +315,7 @@ const EDGE_LABELLED_0_PROJECT_SQL = `SELECT ?1 AS "tree_id", b0."label" AS "labe
 const EDGE_LABELLED_0_WRITE_SQL = `INSERT INTO "labelled" ("tree_id", "label") VALUES (?, ?)`;
 const EDGE_LABELLED_0_HEAD_COLUMNS: readonly string[] = ["tree_id", "label"];
 
-const EDGE_LABELLED_1_PROJECT_SQL = `SELECT ?1 AS "tree_id", 'unnamed' AS "label" WHERE NOT EXISTS (SELECT 1 FROM "name" n0 WHERE n0."tree_id" = ?1)`;
+const EDGE_LABELLED_1_PROJECT_SQL = `SELECT ?1 AS "tree_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unnamed') AS "label" WHERE NOT EXISTS (SELECT 1 FROM "name" n0 WHERE n0."tree_id" = ?1)`;
 const EDGE_LABELLED_1_WRITE_SQL = `INSERT INTO "labelled" ("tree_id", "label") VALUES (?, ?)`;
 const EDGE_LABELLED_1_HEAD_COLUMNS: readonly string[] = ["tree_id", "label"];
 
@@ -341,17 +373,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveLabelled_0Writes(seam, before, arrivals), resolveLabelled_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveLabelled_0Writes(seam, before.stored, arrivals), resolveLabelled_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // coalesce_in_edge_body_samples: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -372,6 +406,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -406,7 +442,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "coalesce_in_edge_body_samples",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,
