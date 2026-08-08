@@ -6101,3 +6101,26 @@ test(the_rail_reads_the_corpus_it_scans) :-
     Tables > 0.
 
 :- end_tests(interned_storage_rail).
+:- begin_tests(list_element_widening).
+
+% The array-ness CHECK the storage kind now survives to emit: a list column
+% DDL pins json_valid AND json_type = 'array', so SQLite rejects a non-list
+% document where it is written.
+test(list_column_ddl_carries_array_check) :-
+    column_def(dict, '"payloads"', list(json), Def),
+    sub_atom(Def, _, _, _, 'json_type("payloads") = \'array\''),
+    sub_atom(Def, _, _, _, 'json_valid("payloads")').
+
+% The /2 widening admits json and a nested list, and keeps the four scalars.
+test(list_storage_kind_survives_for_json_and_nested_elements) :-
+    type_plane:column_storage([], list(json), list(json)),
+    type_plane:column_storage([], list(list(text)), list(list(text))),
+    type_plane:column_storage([], list(text), list(text)).
+
+% A relation ref as the element keeps its distinct named refusal.
+test(list_of_relation_refs_keeps_its_refusal) :-
+    Types = [type_def(span, [start, end], [int, int])],
+    catch(type_plane:column_storage(Types, list(span), _), Thrown, true),
+    Thrown == unsupported_construct(list_of_relation_refs(span)).
+
+:- end_tests(list_element_widening).
