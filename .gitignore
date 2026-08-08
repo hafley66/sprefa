@@ -89,3 +89,5 @@ dist-local/
 
 # sed -i backups; a lane committed five of these through git add -A
 *.bak
+
+node_modules

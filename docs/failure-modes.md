@@ -1697,6 +1697,30 @@ sites but not against new code. **missing** = nothing.
   `dynamic-loading` tree naming `v6/tsv2/cli/0_inventory.ts` at
   `1dc4f934`, green after, with the same server and the same host.
 
+## 43. A tracked absolute-path symlink into the tree it lives in (node_modules ELOOP)
+
+- INCIDENT (2026-08-08 14:39): commit `9a5889a2` tracked `v6/tsv2/node_modules`
+  and `v6/dl/node_modules` as symlinks whose targets are ABSOLUTE paths into the
+  main tree. Checked out in the main tree itself, each becomes a self-pointing
+  symlink: `readlink` = its own path, ELOOP on read. The checkout destroyed both
+  real dependency directories in the main tree, and every worktree whose deps
+  linked there lost them mid-run (lane I-E hit it during a bench pass). Any
+  future checkout re-breaks the tree as long as the entries exist.
+- RCA: two defects in firing order. (1) A lane created the symlinks to share the
+  main tree's installed deps instead of running `pnpm install` in its worktree
+  — an absolute-path link into another working tree is a cross-tree tether, and
+  a checkout replays it anywhere. (2) The root `.gitignore` had no `node_modules/`
+  pattern (only `proofs/**/node_modules/`), so `git add -A` swept the symlink
+  into the commit and review read it as a one-line file.
+- FIX: `git rm --cached` both entries; root `.gitignore` gains `node_modules/`.
+  Main-tree repair was `rm` the two links + `pnpm install` in both packages.
+- RAIL: the `.gitignore` pattern itself — proven fail-pre-fix:
+  `git check-ignore v6/tsv2/node_modules` exits 1 before the pattern (trackable)
+  and 0 after (ignored), so the sweep that caused (2) cannot recur. Worktree
+  briefs already carry the pnpm-install step; a lane that symlinks instead of
+  installing violates the worktree-dispatch law's "working around a blocked
+  command" clause.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
