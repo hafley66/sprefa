@@ -1,0 +1,40 @@
+name: Release dl6
+
+on:
+  push:
+    tags:
+      - 'dl6-v*'
+
+permissions:
+  contents: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  release:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SWI-Prolog
+        run: brew install swi-prolog
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install dependencies
+        working-directory: v6/tsv2
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release bundle
+        run: bash scripts/release-local.sh
+
+      - name: Create GitHub release
+        run: |
+          tar -czf "dl6-${GITHUB_REF_NAME#dl6-}.tar.gz" -C dist-local .
+          gh release create "$GITHUB_REF_NAME" --generate-notes "dl6-${GITHUB_REF_NAME#dl6-}.tar.gz"
