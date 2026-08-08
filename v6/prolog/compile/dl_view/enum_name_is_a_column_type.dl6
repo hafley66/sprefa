@@ -1,0 +1,5 @@
+rel grade(ripe(sugar: int) ; green(days: int)).
+rel picked(id: int, g: grade).
+rel picked_tag(id: int, tag: text).
+
+picked_tag(Id, Tag) <- picked(Id, G), grade_tag(G, Tag).

@@ -183,12 +183,7 @@ expand_variant(RelName, VariantTerm, Decls, Rule) :-
     Rule = (TagRow <- VariantRow).
 
 variant_col_type(VariantRef, column(ColumnName, TypeName),
-                 col_type(VariantRef, ColumnName, StorageType)) :-
-    storage_type(TypeName, StorageType).
-
-storage_type(int, int) :- !.
-storage_type(text, text) :- !.
-storage_type(_, int).
+                 col_type(VariantRef, ColumnName, TypeName)).
 
 % Identity is the CONTENT, so the key skips position 1. A fieldless variant has
 % no content, and `PRIMARY KEY ()` is a syntax error, so its id carries it.

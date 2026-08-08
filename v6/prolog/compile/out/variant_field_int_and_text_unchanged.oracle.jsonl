@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"record_num":{"add":[[1,7]],"del":[]},"record_tag":{"add":[[1,"num"]],"del":[]}}}
+{"tick":2,"deltas":{"record_tag":{"add":[[2,"word"]],"del":[]},"record_word":{"add":[[2,"hi"]],"del":[]}}}
