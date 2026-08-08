@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"grade_ripe":{"add":[[401,12]],"del":[]},"grade_tag":{"add":[[401,"ripe"]],"del":[]}}}
+{"tick":2,"deltas":{"picked":{"add":[[101,401]],"del":[]},"picked_tag":{"add":[[101,"ripe"]],"del":[]}}}
+{"tick":3,"deltas":{"grade_ripe":{"add":[],"del":[[401,12]]},"grade_tag":{"add":[],"del":[[401,"ripe"]]},"picked_tag":{"add":[],"del":[[101,"ripe"]]}}}

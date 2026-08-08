@@ -21,6 +21,13 @@
     "final_detail": ""
   },
   {
+    "name": "enum_name_is_a_column_type",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "match_classify_response",
     "bucket": "identical",
     "detail": "",

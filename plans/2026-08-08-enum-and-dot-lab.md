@@ -224,8 +224,16 @@ that reaches the emitter.
 ```prolog
 rel grade(ripe(sugar: int) ; green(days: int)).
 rel picked(id: int, g: grade).      % column_type_unknown
-rel picked(id: int, g: grade_tag).  % column_type_unknown, and this table EXISTS
+rel picked(id: int, g: grade_tag).  % column_type_unknown
 ```
+
+CORRECTION, measured while fixing this: only the FIRST line is a defect. Naming
+the tag rel directly must keep refusing, because the tag rel is DERIVED and a
+reference column's arrival normalizes into an arrival for its target. Wiring it
+as a reference target produced a duplicated tag row, `[grade_tag(401,ripe),
+grade_tag(401,ripe)]`, which is the source-versus-derived mix the engine bans.
+An earlier draft of this doc called that second refusal a receipt for the
+defect; it is not.
 
 while a plain rel reference compiles:
 

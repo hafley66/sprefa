@@ -74,3 +74,32 @@ fixture(enum_decl_variant_name_collision_is_refused,
     [
         throws(unsupported_construct(enum_variant_name_collision(page)))
     ]).
+
+% An enum column carries the instance id, so the variant is read by joining the
+% tag rel. picked_tag/2 is the receipt that the reference is READABLE, and the
+% retraction tick proves the join tracks the variant leaving.
+fixture(enum_name_is_a_column_type,
+    prog(
+        [enum_decl(grade, (ripe(sugar: int) ; green(days: int))),
+         col_type(picked/2, id, int),
+         col_type(picked/2, g, grade),
+         col_type(picked_tag/2, id, int),
+         col_type(picked_tag/2, tag, text)],
+        [(picked_tag(Id, Tag) <- picked(Id, G), grade_tag(G, Tag))]),
+    [],
+    [
+        [+grade_ripe(401, 12)],
+        [+picked(101, 401)],
+        [-grade_ripe(401, 12)]
+    ],
+    [
+        final(grade_tag/2, []),
+        final(picked/2, [picked(101, 401)]),
+        final(picked_tag/2, []),
+        deltas(picked_tag/2, [
+            [],
+            [+picked_tag(101, ripe)],
+            [-picked_tag(101, ripe)]
+        ]),
+        ticks(3)
+    ]).
