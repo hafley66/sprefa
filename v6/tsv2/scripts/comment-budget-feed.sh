@@ -19,6 +19,9 @@ is_exempt_path() {
     *test*|*spec*|*fixture*|*golden*|*conformance*) return 0 ;;
     */LICENSE*|*/node_modules/*|*/target/*|*/dist/*) return 0 ;;
     */prolog/ARCH.pl) return 0 ;;
+    # Emitter output, tracked so a diff stays reviewable. Grading it grades
+    # emit_ts.pl's banner once per fixture, and no edit can fix that.
+    */compile/out/*|*/gen/*|*/gen_emitted/*|*/gen_served/*) return 0 ;;
   esac
   return 1
 }

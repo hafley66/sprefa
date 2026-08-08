@@ -14,6 +14,13 @@
     "final_detail": ""
   },
   {
+    "name": "enum_nullary_variant_boots_and_tags",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "match_classify_response",
     "bucket": "identical",
     "detail": "",

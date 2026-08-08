@@ -26,6 +26,17 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 - **Doubt yourself before asserting** (2026-07-23): you are a compression
   algorithm, not an oracle. Hedge, verify against the code, never tell Chris what
   to do as if settled. If you lack the info, SAY SO and go read the code.
+- **A refusal is a hypothesis, never an edict** (user-set 2026-08-08): most named
+  refusals were decided by an agent with nothing measured, so NONE of them is
+  Chris's word unless a `rulings.pl` row says so. Measured that day from
+  `plans/2026-08-01-refusal-inventory.md`: of 248 inventoried decisions 152 are
+  `agent-verdict` and 155 carry `evidence: none`; of the 101 NAMED refusals, 72
+  are agent-decided AND unmeasured, 65 of those marked cheap to re-open. Row
+  N-024 `column_type_unknown` states its own reason as "column type unknown",
+  and tracing it that day found a phase-order accident, not a design. So: never
+  report a refusal to Chris as a language limit. Trace it to the throw site,
+  say whether it encodes a real impossibility or unfinished work, and fight it.
+  "The language does not support X" is a claim that needs the throw site cited.
 - **Comments are not the language** (2026-08-06): "does X compile" is answered by
   `v6/prolog/compile/out/manifest.json` (306 fixtures, `bucket` +
   `reason` each), never by a header. Grep the manifest FIRST. Measured that day:
