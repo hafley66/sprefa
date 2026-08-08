@@ -1,0 +1,29 @@
+# Standalone crate: its own [workspace] table keeps cargo from walking up into
+# the v5 root workspace, so `cargo test` here stays isolated from the v5 tree.
+[workspace]
+
+[package]
+name = "boop"
+version = "0.1.0"
+edition = "2021"
+description = "cross-harness agent transcript reader: tail agent events from every harness on this machine as one stream"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# clap derive gives the self-describing --help, subcommand help, and shell
+# completions this CLI exists to have. Chosen by the user (build-vs-buy, fixed).
+clap = { version = "4", features = ["derive"] }
+# The transcripts are JSONL; this is the credible reader.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Application-level errors; this is a binary, not a library API.
+anyhow = "1"
+# Resolve the claude home dir without XDG project-dir machinery.
+dirs = "5"
+# Walk ~/.claude/projects/{encoded-cwd}/*.jsonl; can skip subtrees.
+walkdir = "2"
+
+[[bin]]
+name = "boop"
+path = "src/main.rs"
