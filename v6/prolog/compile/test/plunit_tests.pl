@@ -21,9 +21,10 @@
               [ refusal_inventory/1, refusal_message_clause_count/1 ]).
 :- use_module('../../strat', [ stratum_groups/2 ]).
 :- use_module('../../lower',
-              [ lower_program/2, compile_expr/6, compile_comparison/4,
+              [ lower_program/2, compile_expr/7, compile_comparison/4,
                 canonical_column_expr/2, level_ref_count_sql/5,
                 column_def/4, ir_column_class/4, uniform_text_encoding/1,
+                intern_write_sql/4,
                 catalog_ddl_contract/2,
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
@@ -3571,23 +3572,23 @@ test(oracle_comparison_recognizer_is_total) :-
 test(every_arithmetic_row_lowers_to_sql) :-
     forall(expression(Name/2, arithmetic, _, _, _),
            ( Expr =.. [Name, 1, 2],
-             compile_expr(direct, identity, Expr, [], Sql, Type),
+             compile_expr(direct, identity, Expr, [], Sql, Type, _),
              Type == int,
              atom(Sql) )).
 
 test(modulo_lowers_sign_corrected) :-
-    compile_expr(direct, identity, mod(7, 3), [], Sql, _),
+    compile_expr(direct, identity, mod(7, 3), [], Sql, _, _),
     Sql == '(((7 % 3) + 3) % 3)'.
 
 test(norm_lowers_to_ascii_character_filter) :-
-    compile_expr(direct, identity, norm('Route /V2: Café_42'), [], Sql, Type),
+    compile_expr(direct, identity, norm('Route /V2: Café_42'), [], Sql, Type, _),
     Type == text,
     once(sub_atom(Sql, _, _, _, 'WITH RECURSIVE "__norm_chars"')),
     once(sub_atom(Sql, _, _, _, 'unicode("c") BETWEEN 48 AND 57')).
 
 test(norm_refuses_integer_operand,
      [throws(unsupported_construct(text_operand_not_text(norm(7), 7, int)))]) :-
-    compile_expr(direct, identity, norm(7), [], _, _).
+    compile_expr(direct, identity, norm(7), [], _, _, _).
 
 test(regexp_is_a_guard_surface) :-
     body_surface_for_term(regexp(Text, "^a$"), regexp/2, guard, no_refs,
@@ -3676,9 +3677,9 @@ test(bool_and_float_storage_constraints_are_exact) :-
                     '"value" REAL NOT NULL CHECK (typeof("value") = \'real\' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)') )).
 
 test(float_division_and_avg_lower_to_sqlite_real_operations) :-
-    compile_expr(direct, identity, 5 / 2, [], IntDivision, int),
+    compile_expr(direct, identity, 5 / 2, [], IntDivision, int, _),
     assertion(IntDivision == '(5 / 2)'),
-    compile_expr(direct, identity, 5.0 / 2, [], FloatDivision, float),
+    compile_expr(direct, identity, 5.0 / 2, [], FloatDivision, float, _),
     assertion(FloatDivision == '(CAST(5.0 AS REAL) / 2)'),
     lowered_for('5_value_plane.pl', float_avg_is_grouped, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
@@ -4955,6 +4956,101 @@ test(boot_seed_binds_the_value_at_direct) :-
     interning_boot(direct, Boot),
     Boot = [ bootstmt(tagged, RowSql, [1, rust]) ],
     RowSql == 'INSERT OR IGNORE INTO "tagged" ("node", "tag") VALUES (?, ?)'.
+
+% ── built strings: intern on write, decode on read (§5.7 + §5.3 rule ONE,
+% lane I-K) ─────────────────────────────────────────────────────────────────
+%
+% FAIL-FIRST RECEIPTS, taken by making each decision predicate fail in turn.
+%   head_column_expr/6's interned arm  -> built_string_projection_interns_on_write
+%                                         built_string_intern_precedes_the_row_insert
+%   demanded_sql/5's `value` clause    -> interned_column_decodes_under_value_demand
+%                                         concat_over_a_text_column_reads_characters
+%   align_to_encoding/4's dict clause  -> a_characters_side_join_resolves_to_an_id
+% Each `_at_direct` twin stayed green through all three, which is the property
+% saying they pin direct-mode bytes rather than the mechanism.
+
+interning_level_inserts(Mode, Name, HeadName, InsertSqls) :-
+    once(( fixture_file('expressions.pl', File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
+           memberchk(levelstmt(HeadName/_, _, InsertSqls, _, _, _), LevelStatements) )).
+
+interning_column_bound([Variable-typed('b0."path"', text, dict)], Variable).
+
+% RED before the lowering landed: the head projected the raw `||` expression
+% into a column its own DDL declares INTEGER.
+test(built_string_projection_interns_on_write) :-
+    interning_level_inserts(dict, interpolation_desugars_to_concat, message,
+                            InsertSqls),
+    member(InsertSql, InsertSqls),
+    sub_atom(InsertSql, _, _, _, 'INSERT OR IGNORE INTO "message"'),
+    sub_atom(InsertSql, _, _, _,
+             '(SELECT s."__id" FROM "__str" s WHERE s."content" = (\'eprintln at \'').
+
+test(built_string_projection_stays_a_word_at_direct) :-
+    interning_level_inserts(direct, interpolation_desugars_to_concat, message,
+                            [InsertSql]),
+    sub_atom(InsertSql, _, _, _, '(\'eprintln at \' || b0."path"'),
+    \+ sub_atom(InsertSql, _, _, _, '__str').
+
+% §5.7.1: the dictionary row must exist before the head insert reads its id, so
+% the intern statement is the entry BEFORE the row insert, never after.
+test(built_string_intern_precedes_the_row_insert) :-
+    interning_level_inserts(dict, interpolation_desugars_to_concat, message,
+                            [InternSql, InsertSql]),
+    sub_atom(InternSql, 0, _, _,
+             'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT'),
+    sub_atom(InsertSql, 0, _, _, 'INSERT OR IGNORE INTO "message"').
+
+% The arm's own FROM and WHERE, verbatim in both statements: two different
+% row sets would intern one string and store the id of another.
+test(the_intern_statement_repeats_the_arms_from_and_where) :-
+    intern_write_sql(['(b0."a" || b0."b")'], '"hits" b0', '(b0."n" > 2)',
+                     InternSql),
+    InternSql == 'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b0."a" || b0."b") FROM "hits" b0 WHERE (b0."n" > 2)'.
+
+% Two built columns on one head are one statement, not two: UNION already
+% dedups and the arm runs once per side either way.
+test(two_built_columns_union_into_one_intern_statement) :-
+    intern_write_sql(['(b0."a")', '(b0."b")'], '"hits" b0', none, InternSql),
+    InternSql == 'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b0."a") FROM "hits" b0 UNION SELECT DISTINCT (b0."b") FROM "hits" b0'.
+
+% RED before this landed: `value` demand handed the id straight to `||`, so
+% concat built a string out of integers.
+test(interned_column_decodes_under_value_demand) :-
+    interning_column_bound(Bound, Variable),
+    compile_expr(dict, value, Variable, Bound, Sql, text, direct),
+    Sql == '(SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path")'.
+
+test(interned_column_keeps_its_id_under_identity_demand) :-
+    interning_column_bound(Bound, Variable),
+    compile_expr(dict, identity, Variable, Bound, Sql, text, dict),
+    Sql == 'b0."path"'.
+
+test(text_column_stays_a_column_at_direct) :-
+    compile_expr(direct, value, Variable,
+                 [Variable-typed('b0."path"', text, direct)], Sql, text, direct),
+    Sql == 'b0."path"'.
+
+test(concat_over_a_text_column_reads_characters) :-
+    interning_level_inserts(dict, interpolation_desugars_to_concat, message,
+                            InsertSqls),
+    member(InsertSql, InsertSqls),
+    sub_atom(InsertSql, _, _, _, 'INSERT OR IGNORE INTO "message"'),
+    sub_atom(InsertSql, _, _, _,
+             '\'eprintln at \' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path")'),
+    \+ sub_atom(InsertSql, _, _, _, '\'eprintln at \' || b0."path"').
+
+% A join whose two sides carry different encodings compares across the
+% dictionary; resolving the characters keeps the indexed column bare.
+test(a_characters_side_join_resolves_to_an_id) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, _, _, _, LevelStatements, _, _, _)),
+    member(levelstmt(_, _, InsertSqls, _, _, _), LevelStatements),
+    member(InsertSql, InsertSqls),
+    sub_atom(InsertSql, _, _, _,
+             'b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(').
 
 % ── the ingest door (contract §6) ───────────────────────────────────────────
 

@@ -9,11 +9,14 @@ type IClassName =
   | "decode-view"
   | "decode-read"
   | "decode-subquery"
+  | "value-decode"
   | "column-storage"
   | "ir-encoding"
   | "door-plan"
   | "door-call"
   | "literal-id"
+  | "built-id"
+  | "intern-write"
   | "literal-seed"
   | "seed-id"
   | "mode-stamp";
@@ -46,6 +49,10 @@ const DOOR_PLAN_CLOSE = /^\};$/;
  *  many lines as the literal does and ends at the template's own close. */
 const LITERAL_SEED = /INSERT OR IGNORE INTO "__str" \("content"\) VALUES/;
 
+/** §5.7.1 statement one, emitted beside the arm's own insert. `json_each` is the
+ *  door's plan line, which the door-plan state machine has already taken. */
+const INTERN_WRITE = /INSERT OR IGNORE INTO "__str" \("content"\) SELECT/;
+
 /** An unbalanced backtick count means the template is still open. */
 function templateStaysOpen(line: string): boolean {
   return ((line.match(/`/g) ?? []).length & 1) === 1;
@@ -59,13 +66,46 @@ function count(name: IClassName, by = 1): void {
   counts.set(name, row);
 }
 
+const ID_LOOKUP_OPEN = `(SELECT s."__id" FROM "__str" s WHERE s."content" = `;
+
+/** A `'` never appears inside an emitted literal (lower.pl:sql_literal/2 refuses
+ *  one), so a quoted run is delimited and its parens are not structure. */
+function matchingClose(text: string, open: number): number {
+  let depth = 0;
+  let quoted = false;
+  for (let index = open; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === "'") quoted = !quoted;
+    else if (!quoted && character === "(") depth += 1;
+    else if (!quoted && character === ")") {
+      depth -= 1;
+      if (depth === 0) return index;
+    }
+  }
+  return -1;
+}
+
+/** The id lookup wraps a balanced expression (a literal for a constant, an
+ *  arbitrary one for a built string), so a regex cannot find its end. */
+function stripIdLookups(text: string): string {
+  let out = "";
+  let index = 0;
+  for (;;) {
+    const start = text.indexOf(ID_LOOKUP_OPEN, index);
+    if (start === -1) return out + text.slice(index);
+    const end = matchingClose(text, start);
+    if (end === -1) return out + text.slice(index);
+    const inner = text.slice(start + ID_LOOKUP_OPEN.length, end);
+    count(inner.startsWith("'") ? "literal-id" : "built-id");
+    out += text.slice(index, start) + stripIdLookups(inner);
+    index = end + 1;
+  }
+}
+
 /** A seeded literal may carry a newline, so the id lookup that names it is not
- *  a line-shaped thing; these two run over the whole module first. */
+ *  a line-shaped thing; these run over the whole module first. */
 function canonicalDocument(text: string): string {
-  let out = text;
-  const literals = out.match(/\(SELECT s\."__id" FROM "__str" s WHERE s\."content" = '[^']*'\)/g);
-  if (literals !== null) count("literal-id", literals.length);
-  out = out.replace(/\(SELECT s\."__id" FROM "__str" s WHERE s\."content" = ('[^']*')\)/g, "$1");
+  let out = stripIdLookups(text);
 
   const seedSlots = out.match(/\(SELECT "__id" FROM "__str" WHERE "content" = \?\)/g);
   if (seedSlots !== null) count("seed-id", seedSlots.length);
@@ -83,6 +123,12 @@ function canonicalLine(line: string): string {
   const subqueries = out.match(/\(SELECT s\."content" FROM "__str" s WHERE s\."__id" = t\."[^"]+"\)/g);
   if (subqueries !== null) count("decode-subquery", subqueries.length);
   out = out.replace(/\(SELECT s\."content" FROM "__str" s WHERE s\."__id" = (t\."[^"]+")\)/g, "$1");
+
+  // Rule ONE's other half: a text column read under `value` demand, so the
+  // operand is a body alias or a trigger placeholder rather than the view's `t`.
+  const valueDecodes = out.match(/\(SELECT s\."content" FROM "__str" s WHERE s\."__id" = [^()']+?\)/g);
+  if (valueDecodes !== null) count("value-decode", valueDecodes.length);
+  out = out.replace(/\(SELECT s\."content" FROM "__str" s WHERE s\."__id" = ([^()']+?)\)/g, "$1");
 
   const IR_TEXT_DICT = /type: "text", storage: "integer", collation: null, encoding: \{ kind: "dict", rel: "__str" \}/g;
   const IR_TEXT_DIRECT = /type: "text", storage: "text", collation: "binary", encoding: \{ kind: "direct" \}/g;
@@ -106,6 +152,7 @@ function canonicalText(text: string): readonly string[] {
   const kept: string[] = [];
   let insideDoorPlan = false;
   let insideLiteralSeed = false;
+  let insideInternWrite = false;
   for (const line of canonicalDocument(text).split("\n")) {
     if (insideLiteralSeed) {
       count("literal-seed");
@@ -125,6 +172,16 @@ function canonicalText(text: string): readonly string[] {
     if (DOOR_PLAN_OPEN.test(line)) {
       count("door-plan");
       insideDoorPlan = true;
+      continue;
+    }
+    if (insideInternWrite) {
+      count("intern-write");
+      if (templateStaysOpen(line)) insideInternWrite = false;
+      continue;
+    }
+    if (INTERN_WRITE.test(line)) {
+      count("intern-write");
+      if (templateStaysOpen(line)) insideInternWrite = true;
       continue;
     }
     const matched = DROP_LINE.find(([pattern]) => pattern.test(line));
