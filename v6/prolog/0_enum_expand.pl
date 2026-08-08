@@ -19,7 +19,8 @@
 :- module(enum_expand,
           [ expand_enum_program/2,
             expand_enum_in_context/3,
-            enum_context/2 ]).
+            enum_context/2,
+            tag_rel_name/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -54,8 +55,29 @@ expand_enum_in_context(_Context, Program, Expanded) :-
 expand_enum_program(prog(SugaredDecls, OriginalRules),
                     prog(ExpandedDecls, ExpandedRules)) :-
     validate_enum_names(SugaredDecls),
-    expand_enum_decls(SugaredDecls, ExpandedDecls, TagRules),
+    expand_enum_decls(SugaredDecls, ExpandedDecls0, TagRules),
+    enum_tag_names(SugaredDecls, EnumToTag),
+    retarget_enum_column_types(EnumToTag, ExpandedDecls0, ExpandedDecls),
     append(OriginalRules, TagRules, ExpandedRules).
+
+enum_tag_names(SugaredDecls, EnumToTag) :-
+    findall(EnumName-TagName,
+            ( member(enum_decl(EnumName, _), SugaredDecls),
+              tag_rel_name(EnumName, TagName) ),
+            EnumToTag).
+
+% An enum column holds the instance id, so reading a variant is an ordinary join
+% on the tag rel. A ref would make the DERIVED tag rel an arrival target too.
+retarget_enum_column_types([], Decls, Decls) :- !.
+retarget_enum_column_types(EnumToTag, Decls0, Decls) :-
+    maplist(retarget_enum_column_type(EnumToTag), Decls0, Decls).
+
+retarget_enum_column_type(EnumToTag,
+                          col_type(Ref, Column, EnumName),
+                          col_type(Ref, Column, int)) :-
+    memberchk(EnumName-_, EnumToTag),
+    !.
+retarget_enum_column_type(_, Decl, Decl).
 
 validate_enum_names(Decls) :-
     plain_decl_names(Decls, PlainNames),

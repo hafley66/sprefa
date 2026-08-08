@@ -76,7 +76,9 @@ rel picked(id: int, g: grade).
 rel seen(id: int).
 seen(id) <- picked(id, g).'
 
-scenario enum_tag_as_column_type compiles \
+# The tag rel is DERIVED, and a reference column's arrival normalizes into an
+# arrival for its target, which a derived rel cannot take. Refusing is correct.
+scenario enum_tag_as_column_type column_type_unknown \
 'rel grade(ripe(sugar: int) ; green(days: int)).
 rel picked(id: int, g: grade_tag).
 rel seen(id: int).
