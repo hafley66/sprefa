@@ -194,6 +194,12 @@ pre_table_name(Name/_Arity, PreTable) :-
 departure_frontier_table_name(Name/_Arity, DepartureTable) :-
     format(atom(DepartureTable), '__departure_frontier_~w', [Name]).
 
+% The runtime fills the departure frontier from the tick's boundary delta,
+% whose rows already crossed the decoded text view: characters under any mode.
+trigger_read_mode(departure, _, direct) :- !.
+trigger_read_mode(ordered_departure, _, direct) :- !.
+trigger_read_mode(_, Mode, Mode).
+
 % The naive referee's read of that table: the departed rows in staged order,
 % one occurrence each. Built HERE and not in emit_ts.pl because every other
 % statement the emitter renders is lowered text it only quotes into a
@@ -2075,7 +2081,8 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     ),
     TriggerAtom =.. [_ | TriggerArgs],
     relplan_column_types(RelPlans, TriggerRef, TriggerBoundColumnTypes),
-    compile_trigger_bound(Mode, TriggerArgs, TriggerBoundColumnTypes, TriggerBound),
+    trigger_read_mode(TriggerKind, Mode, TriggerMode),
+    compile_trigger_bound(TriggerMode, TriggerArgs, TriggerBoundColumnTypes, TriggerBound),
     reference_trigger_samples(RelPlans, TriggerKind, TriggerAtom,
                               OtherAtoms, IdentityOtherAtoms),
     % maplist, NEVER findall (analyze.pl:ref_occurrence_args/3's own
@@ -2194,7 +2201,8 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     DeltaAlias = d0,
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     relplan_column_types(RelPlans, TriggerRef, TriggerColumnTypes),
-    compile_atom_args(Mode, TriggerArgs, TriggerColumns, TriggerColumnTypes, DeltaAlias, [],
+    trigger_read_mode(TriggerKind, Mode, TriggerMode),
+    compile_atom_args(TriggerMode, TriggerArgs, TriggerColumns, TriggerColumnTypes, DeltaAlias, [],
                       TriggerBound, TriggerWhereParts),
     maplist(where_text, TriggerWhereParts, TriggerWhereTexts),
     maplist(other_atom_use, OtherAtoms, OtherUses),
@@ -4369,16 +4377,19 @@ delta_ddl(Mode, DepartureRefs, RelPlan, Ddl) :-
     RelPlan = relplan(Ref, _, Columns, _, ColumnTypes),
     delta_ddl(Mode, RelPlan, BaseDdl),
     (   memberchk(Ref, DepartureRefs)
-    ->  departure_frontier_ddl(Mode, Ref, Columns, ColumnTypes, DepartureDdl),
+    ->  departure_frontier_ddl(Ref, Columns, ColumnTypes, DepartureDdl),
         append(BaseDdl, DepartureDdl, Ddl)
     ;   Ddl = BaseDdl
     ).
 
-departure_frontier_ddl(Mode, Ref, Columns, ColumnTypes, [TableDdl]) :-
+% Columns match what the runtime stages, not what the rel stores: the staged
+% rows are the boundary delta's, so trigger_read_mode/3 decides the encoding.
+departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl]) :-
     departure_frontier_table_name(Ref, DepartureTable),
     quote_ident(DepartureTable, QuotedDepartureTable),
+    trigger_read_mode(departure, dict, FrontierMode),
     maplist(quote_ident, Columns, QuotedColumns),
-    maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
+    maplist(column_def(FrontierMode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     format(atom(TableDdl),
            'CREATE TEMP TABLE ~w ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, ~w)',

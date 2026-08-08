@@ -5272,6 +5272,101 @@ test(mode_travels_in_the_plan) :-
     DirectPlan = plan(_, _, _, _, _, _, _, direct),
     DefaultPlan = plan(_, _, _, _, _, _, _, DefaultMode).
 
+% ── the departure frontier reads characters (trigger_read_mode/3) ───────────
+%
+% FAIL-FIRST RECEIPTS, taken by deleting each trigger_read_mode/3 cut clause
+% in turn (departure then falls through to the program's mode).
+%   departure_frontier_ddl/4's call   -> departure_frontier_stays_characters_at_dict
+%   edge_delta_project_sql/12's call  -> departure_delta_join_resolves_the_frontier_side
+%                                        departure_delta_projection_interns_the_head_column
+%   edge_statement_single/10's call   -> departure_placeholder_resolves_in_the_projection
+% Every `_at_direct` twin stayed green through all three.
+
+interning_departure_edge(Mode, Base, Name, HeadName, EdgeStatement) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, lowered(_, _, _, EdgeStatements, _, _, _, _)),
+           member(EdgeStatement, EdgeStatements),
+           EdgeStatement = edgestmt(HeadName/_, _, _, _, _, _, _, departure, _) )).
+
+interning_departure_ddl(Mode, Base, Name, Table, Ddl) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, lowered(_, Statements, _, _, _, _, _, _)),
+           member(Ddl, Statements),
+           sub_atom(Ddl, _, _, _, Table) )).
+
+% RED before this landed: the frontier declared INTEGER while the runtime
+% staged the boundary delta's characters into it.
+test(departure_frontier_stays_characters_at_dict) :-
+    interning_departure_ddl(dict, 'engine_core.pl',
+                            pairwise_reads_state_at_the_departure_tick,
+                            '__departure_frontier_reading', Ddl),
+    Ddl == 'CREATE TEMP TABLE "__departure_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)'.
+
+test(departure_frontier_is_unchanged_at_direct) :-
+    interning_departure_ddl(direct, 'engine_core.pl',
+                            pairwise_reads_state_at_the_departure_tick,
+                            '__departure_frontier_reading', Ddl),
+    Ddl == 'CREATE TEMP TABLE "__departure_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sensor" TEXT NOT NULL, "previous" INTEGER NOT NULL)'.
+
+% RED before this landed: `b0."sensor" = d0."sensor"` compared an id against
+% characters, so the arm returned zero rows and `step` never fired.
+test(departure_delta_join_resolves_the_frontier_side) :-
+    interning_departure_edge(dict, 'engine_core.pl',
+                             pairwise_reads_state_at_the_departure_tick, step,
+                             edgestmt(_, _, _, _, _, _, DeltaProjectSql, _, _)),
+    sub_atom(DeltaProjectSql, _, _, _,
+             'b0."sensor" = (SELECT s."__id" FROM "__str" s WHERE s."content" = d0."sensor")'),
+    \+ sub_atom(DeltaProjectSql, _, _, _, 'b0."sensor" = d0."sensor"').
+
+% The stored column keeps its bare id on its own side of the comparison.
+test(departure_delta_join_leaves_the_stored_column_bare_at_direct) :-
+    interning_departure_edge(direct, 'engine_core.pl',
+                             pairwise_reads_state_at_the_departure_tick, step,
+                             edgestmt(_, _, _, _, _, _, DeltaProjectSql, _, _)),
+    sub_atom(DeltaProjectSql, _, _, _, 'b0."sensor" = d0."sensor"'),
+    \+ sub_atom(DeltaProjectSql, _, _, _, '__str').
+
+% RED before this landed: characters went into `closed_at."item"`, whose own
+% DDL declares INTEGER, and the boundary view decoded them to NULL.
+test(departure_delta_projection_interns_the_head_column) :-
+    interning_departure_edge(dict, 'engine_core.pl',
+                             departed_fires_next_tick_on_retraction, closed_at,
+                             edgestmt(_, _, _, _, _, _, DeltaProjectSql, _, _)),
+    sub_atom(DeltaProjectSql, 0, _, _,
+             'SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = d0."item") AS "item"').
+
+test(departure_delta_projection_is_a_column_at_direct) :-
+    interning_departure_edge(direct, 'engine_core.pl',
+                             departed_fires_next_tick_on_retraction, closed_at,
+                             edgestmt(_, _, _, _, _, _, DeltaProjectSql, _, _)),
+    sub_atom(DeltaProjectSql, 0, _, _, 'SELECT d0."item" AS "item"').
+
+% The per-occurrence arm binds the SAME frontier rows through placeholders, so
+% it carries the same resolution the delta arm does.
+test(departure_placeholder_resolves_in_the_projection) :-
+    interning_departure_edge(dict, 'engine_core.pl',
+                             keyed_replace_departs_the_old_row, replaced_value,
+                             edgestmt(_, _, _, _, ProjectSql, _, _, _, _)),
+    ProjectSql == 'SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1) AS "key", (SELECT s."__id" FROM "__str" s WHERE s."content" = ?2) AS "old_value"'.
+
+test(departure_placeholder_is_a_bind_at_direct) :-
+    interning_departure_edge(direct, 'engine_core.pl',
+                             keyed_replace_departs_the_old_row, replaced_value,
+                             edgestmt(_, _, _, _, ProjectSql, _, _, _, _)),
+    ProjectSql == 'SELECT ?1 AS "key", ?2 AS "old_value"'.
+
+% An ARRIVAL placeholder stays bare: the ingest door interned it already, and
+% resolving it a second time would look an id up as if it were characters.
+test(an_arrival_placeholder_is_not_resolved_at_dict) :-
+    interning_edge_statement(dict, 'engine_core.pl',
+                             keyed_replace_departs_the_old_row, latest,
+                             edgestmt(_, _, _, _, ProjectSql, _, _, arrival, _)),
+    ProjectSql == 'SELECT ?1 AS "key", ?2 AS "value"'.
+
 :- end_tests(interning).
 % ═══ Door A: `use "path".` module system (use_resolve.pl + use_item/3) ══════
 % The parse-count rail catches a re-parsing loader end-state equality hides.
