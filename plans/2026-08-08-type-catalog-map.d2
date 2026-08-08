@@ -1,0 +1,56 @@
+direction: right
+
+classes: {
+  ok: { style.fill: "#d3f9d8"; style.stroke: "#2f9e44"; style.font-color: "#1b1b1b" }
+  gap: { style.fill: "#ffe3e3"; style.stroke: "#e03131"; style.stroke-dash: 4; style.font-color: "#1b1b1b" }
+  cold: { style.fill: "#fff3bf"; style.stroke: "#f08c00"; style.font-color: "#1b1b1b" }
+  stage: { style.fill: "#f8f9fa"; style.stroke: "#868e96" }
+  store: { shape: cylinder; style.fill: "#d3f9d8"; style.stroke: "#2f9e44" }
+}
+
+CAT: "__rel  -  the catalog IS a table (lower.pl:646)" { class: stage
+  P: "primitive rows\nid 1..5 = text int float bool json\nlower.pl:729" { class: ok }
+  M: "module row\nh_id = sha256(name)[0:16]" { class: ok }
+  R: "rel rows\nh_id . h_schema . h_rule" { class: ok }
+  C: "column rows\nordinal + type_id" { class: ok }
+  Z: "catalog_type_id(_, 0)\nlower.pl:771\nref / struct / list all -> 0" { class: gap }
+}
+
+DOOR: "the read door, already unlocked" { class: stage
+  ALLOW: "dl6 rule body MAY read __rel\ncompile.pl:252" { class: ok }
+  DENY: "writing __rel refused\nreserved_rel_namespace" { class: ok }
+  NOBODY: "fixtures that do it: 0" { class: cold }
+}
+
+TP: "0_type_plane.pl  -  884 lines, the type IR" { class: stage
+  OUT: "type -> json\ntype_canonical_json/4\nrelation_value_object/4" { class: ok }
+  INB: "json -> type\nnormalize_relation_reference_rows/3\ncanonicalize_world_rows/3" { class: ok }
+}
+
+USE: "consumers" { class: stage
+  RP: "ReloadPlanner\nreads h_schema / h_rule\nreloadPlan.ts:31" { class: ok }
+  CLAP: "emit_rust.pl -> clap CLI\nDOES NOT EXIST\nanticipated lower.pl:4135" { class: gap }
+  SELF: "dl6 querying its own rels\nno fixture, no blocker" { class: gap }
+}
+
+ENG: "the red-green machine, built" { class: stage
+  DRED: "DRed ping / pong\nIDredPlan types.ts:208\n1_incremental.ts:619-811" { class: ok }
+  MOD: "rel module / imports\nmodule_dirty derived\nNOT WRITTEN" { class: gap }
+}
+
+DB: "SQLite" { class: store }
+
+CAT.P -> CAT.C: "type_id"
+CAT.M -> CAT.R -> CAT.C
+CAT.C -> CAT.Z: "every non-primitive"
+CAT -> DB
+DB -> DOOR.ALLOW
+DOOR.ALLOW -> DOOR.NOBODY: "unexercised" { style.stroke-dash: 4 }
+DOOR.ALLOW -> USE.SELF
+CAT.R -> USE.RP: "h_schema is the early cutoff" { style.stroke: "#2f9e44" }
+CAT.C -> USE.CLAP: "arity + type_id would spell the flags" { style.stroke-dash: 4; style.stroke: "#e03131" }
+CAT.Z -> USE.CLAP: "blocks it: no struct types" { style.stroke: "#e03131" }
+TP.OUT -> USE.SELF
+TP.INB -> CAT.C
+ENG.DRED -> ENG.MOD: "aim it here" { style.stroke: "#e03131"; style.bold: true }
+ENG.MOD -> USE.RP: "invalidation becomes a derived rel" { style.stroke-dash: 4 }
