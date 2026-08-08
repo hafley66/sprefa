@@ -1,0 +1,60 @@
+vars: { d2-config: { layout-engine: dagre; theme-id: 0; pad: 20 } }
+direction: right
+
+title: "json-canvas 1.0 — jsoncanvas.org, Obsidian, MIT, open-sourced 2024" {
+  near: top-center
+  shape: text
+  style.font-size: 24
+  style.bold: true
+}
+
+doc: ".canvas file =\none JSON object,\ntwo arrays" {
+  style.fill: "#fff8c5"
+}
+
+nodes: "nodes[]" {
+  common: "every node:\nid, x, y, width, height,\ncolor (preset \"1\"-\"6\" or hex)"
+  tnode: "type: text\nmarkdown in .text"
+  fnode: "type: file\n.file path (+ .subpath\nto a heading/block)"
+  lnode: "type: link\n.url embeds a page"
+  gnode: "type: group\nspatial frame; .label,\n.background image"
+  common -> tnode
+  common -> fnode
+  common -> lnode
+  common -> gnode
+}
+
+edges: "edges[]" {
+  e: "id, fromNode, toNode\nfromSide/toSide: top|right|bottom|left\nfromEnd/toEnd: none|arrow (default: ->)\nlabel, color"
+}
+
+doc -> nodes
+doc -> edges
+
+ex: "smallest useful canvas" {
+  code: |`json
+    {
+      "nodes": [
+        {"id":"a","type":"text","text":"# hello",
+         "x":0,"y":0,"width":200,"height":80},
+        {"id":"b","type":"file","file":"notes/idea.md",
+         "x":300,"y":0,"width":300,"height":200}
+      ],
+      "edges": [
+        {"id":"e1","fromNode":"a","toNode":"b",
+         "fromSide":"right","toSide":"left","label":"links to"}
+      ]
+    }
+  `| { style.fill: "#f6f8fa" }
+}
+
+nodes -> ex
+edges -> ex
+
+delta: "vs d2" {
+  t: "explicit x/y per node: NO layout engine, positions are authored\ngroups frame by GEOMETRY (bounding box), not by id nesting\nz-order = array order\nno classes/styles beyond color; markdown inside text nodes\nso: stable coords for free (the tween problem d2 has), zero auto-layout (the thing d2 gives)" {
+    shape: text
+  }
+}
+
+ex -> delta

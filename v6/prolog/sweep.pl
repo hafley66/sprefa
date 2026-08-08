@@ -11,7 +11,7 @@
 :- use_module(library(apply)).
 :- use_module(library(filesex)).
 :- use_module(compile, [ program_plan/3, default_intern_mode/1 ]).
-:- use_module(lower, [ lower_program/2, boot_statements/5 ]).
+:- use_module(lower, [ lower_program/2, boot_statements/6 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
 :- use_module('conformance/body', [ rel_ref/2 ]).
 :- use_module('0_type_plane',
@@ -101,9 +101,9 @@ sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason
         ( program_plan(Term-Bindings, Options, Plan),
           lower_program(Plan, Lowered),
           Term = fixture(Name, _Prog, Initial, Schedule, _Expectations),
-          Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+          Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
           Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-          boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements),
+          boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, BootStatements),
           call(emit_ts:emit_program, Name, Plan, Lowered, BootStatements, Text),
           out_dir(OutDir),
           format(atom(TsPath), '~w/~w.ts', [OutDir, Name]),

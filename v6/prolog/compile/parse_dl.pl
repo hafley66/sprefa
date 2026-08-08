@@ -146,12 +146,8 @@ parse_failure(Reason) :-
     furthest_line_col(Line, Column),
     throw(dl_parse_error(Reason, position(Line, Column))).
 
-% A suffix is identified by how many codes remain in it, so the furthest mark
-% is a MINIMUM remaining count and needs no arithmetic per call. The one thing
-% this predicate may not do is walk the input: it runs at every DCG
-% alternative, so anything proportional to file size here is quadratic.
-% nb_current, not nb_getval: use_item/3 lexes outside any parse_dl_source, and
-% with the globals unset nb_getval throws where marking should be a no-op.
+% Runs at every DCG alternative: the remaining-code count IS the mark, and any work proportional to file size here goes quadratic.
+% nb_current, not nb_getval: use_item/3 lexes outside parse_dl_source, where the globals are unset and nb_getval would throw.
 mark_furthest(Suffix) :-
     length(Suffix, RemainingLength),
     nb_current(parse_furthest_remaining, FurthestRemaining),

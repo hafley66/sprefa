@@ -1,5 +1,5 @@
 :- module(dbg_bisect, []).
-:- use_module(lower, [lower_program/2, boot_statements/5]).
+:- use_module(lower, [lower_program/2, boot_statements/6]).
 :- use_module(emit_ts, [emit_program/5]).
 main :-
     F='conformance/fixtures/affinity_drop.pl',
@@ -11,7 +11,7 @@ main :-
     writeln(d_destructure),
     Plan = plan(_, prog(Decls,_), RelPlans, _, _, _, _),
     Lowered = lowered(_,_,_,_,LevelStmts,_,_,_),
-    boot_statements(Decls, RelPlans, [], LevelStmts, Boot), writeln(e_boot),
+    boot_statements(Mode, Decls, RelPlans, [], LevelStmts, Boot), writeln(e_boot),
     writeln(about_to_emit),
     catch(call(emit_ts:emit_program, Name, Plan, Lowered, Boot, Text), E, (print_term(E,[portrait(true)]),nl,fail)), writeln(f_emit),
     string(Text), writeln(g_string).

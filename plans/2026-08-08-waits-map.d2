@@ -1,0 +1,58 @@
+vars: { d2-config: { layout-engine: dagre; theme-id: 0; pad: 24 } }
+direction: right
+
+classes: {
+  word: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#6f5500" }
+  lane: { style.fill: "#ddf4ff"; style.stroke: "#0969da"; style.font-color: "#0a3069" }
+  gate: { style.fill: "#dafbe1"; style.stroke: "#1a7f37"; style.font-color: "#116329" }
+  idea: { style.fill: "#ffeff7"; style.stroke: "#bf3989"; style.font-color: "#99286e" }
+  mess: { style.fill: "#ffebe9"; style.stroke: "#cf222e"; style.font-color: "#82071e" }
+  info: { style.stroke-dash: 4; style.font-size: 14 }
+}
+
+intern: "interning (v6, the live arc)" {
+  ik: "I-K built strings: your routing word\nopus (my read: carries the Bound typed/2\nencoding redesign) vs flash tighter brief.\n17 modules still write built strings raw.\nside question: terra second race entry here?" { class: word }
+  fence: "eq_lit fence word:\nA) one sentence in offload contract\n(executor interns via dict(R) it already gets)\nB) new IR node eq_dict_lit.\n0 corpus modules affected either way" { class: word }
+  flip: "THE FLIP: default_intern_mode -> dict.\nreferee = 211 sweep EXECUTING\nunder dict, wrong=0" { class: gate }
+  speed: "collect the speed: I-E rowid+unique\nheads (sub-1000 grid), bench rerun,\n1.7-2.0x, FACTS update" { class: lane }
+}
+
+rust: "rust track (waits on tsv2 settling, your tsv2-first word)" {
+  contract: "offload contract 2.4:\nIR-as-JSON settled.\njson ops fenced OUT of IR today\n(decode goal refuses the arm, lower.pl:3303)" { class: lane }
+  track: "P1-B TS referee -> P1-C executor+CLI\n-> P1-D-T transport lab -> P1-D seam\n-> P1-E forced sweep" { class: lane }
+  endgame: "ENDGAME (yes'd): per-program\nrust codegen vs differential-dataflow\non retraction schedules" { class: idea }
+}
+
+lang: "language + tool gaps" {
+  split: "string split/substr primitive:\nonly concat+regexp exist, so\npath-prefix / ancestor-dir work\nhas no in-language spelling" { class: word }
+  scanjson: "scan-into-json: pre/1 + := a document\nrefused (lower.pl:489). lift or keep\njson write-only through json_group_array?" { class: word }
+  gaps: "extract gap backlog G1-G9 (PR #23):\nSQL-in-template family, namespace defs bug,\ncross-package resolve, .dl6 front-end.\ncrate stays FROZEN; gaps become\nprograms or fact families later" { class: lane }
+}
+
+v5w: "v5 parked words (each = one word from you)" {
+  disk: "disk: rm 3 orphan roots (1.86GB)\n+ drop rel_port_of_reach + VACUUM (15.5MB)" { class: word }
+  lazy: "lazy-rel-tier: cold rels drop\ntable+3 index kinds, recompute on read.\n873MB db, 57% indexes. a real lane" { class: word }
+  small: "smaller: filesize rail (29 files >500),\ninstant dom-match rewrite" { class: word }
+}
+
+hyg: "repo hygiene" {
+  uu: "main-tree UU files: parse_dl.pl +\nplunit_tests.pl unmerged index entries,\nresolved content unstaged, owner unknown.\nBLOCKS local main commits/pulls\n(why everything lands via lane PRs)" { class: mess }
+  stale: "stale root REPORT.md tracked on main\n(old unread-rel lane, base e1a9696f).\ndelete candidate, your word" { class: mess }
+  tag: "first dl6-v* tag: one command,\nproves PR #21 release CI end to end" { class: word }
+}
+
+canvas: "canvas universe (instant + anim, you work it elsewhere)" {
+  glue: "the missing glue (lanes proved the rest):\nsnapshot d2 at each git rev -> decode svg\nbase64 ids+rects -> cytoscape preset\n-> diff by id -> keyed enter/move/exit.\nanim has cytoscape, transition.ts, from-git" { class: idea }
+  server: "amendment server: AI calls add-node/\nlink-edge/relabel verbs, d2/json-canvas\nis storage, renderer animates the diff.\nentity = row id, groups addressable" { class: idea }
+}
+
+intern.ik -> intern.flip: "last blocker" { style.bold: true }
+intern.flip -> intern.speed: "then"
+intern.fence -> rust.contract: "option A lands here" { class: info }
+lang.scanjson -> rust.contract: "if lifted, IR grammar\nmust decide json too" { class: info }
+rust.track -> rust.endgame: "then"
+intern.speed -> rust.track: "tsv2 'settled' opens this" { class: info }
+canvas.server -> intern: "entity=rowid rides the same\nsurrogate-id dictionary law" { class: info }
+v5w.lazy -> intern.speed: "same principle: stop paying\nfor what nobody reads" { class: info }
+hyg.tag -> intern.flip: "tag AFTER flip = the\nrelease worth shipping" { class: info }
+lang.gaps -> canvas.glue: "future: extract facts\ndrawn as live boards" { class: info }

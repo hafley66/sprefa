@@ -410,11 +410,11 @@ compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
     run_compile_phase(lower,
                       lower_program(Plan, Lowered),
                       LowerMeasurement),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     run_compile_phase(
         boot,
-        boot_statements(Decls, RelPlans, Initial, LevelStatements,
+        boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements,
                         BootStatements),
         BootMeasurement),
     run_compile_phase(

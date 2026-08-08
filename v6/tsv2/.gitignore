@@ -14,3 +14,4 @@ gen_emitted/golden-flex.ts
 # the same reason the compile-speed gate never rewrites its own baseline. The
 # gated numbers live in scripts/scale-floor-reference.json, which IS tracked.
 goldens/scale-floor-history.jsonl
+gen_emitted/

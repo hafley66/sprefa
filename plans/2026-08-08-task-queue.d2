@@ -44,8 +44,8 @@ s2: "2. contract rev 3.1 (planner)" {
 }
 
 s3: "3. remaining interning lanes (two-pass each)" {
-  ic: "I-C literals: quoted strings intern at boot, reads + writes" {
-    class: lane
+  ic: "I-C literals MERGED PR #22 (cfbe10f3):\nread+write+boot-seed closed, 802 lookups, 423 seed pairs" {
+    class: side
     ex: |`sql
       -- before: id = text, matches NOTHING
       WHERE "kind" = 'warning'
@@ -129,7 +129,7 @@ s7: "7. endgame" {
 }
 
 anytime: "anytime, no dependency" {
-  ci: "release-workflow CI:\nflash lane dispatched" { class: lane }
+  ci: "release-workflow CI:\nMERGED PR #21 (0e89b556),\nfires on first dl6-v* tag" { class: side }
   pack: "pack1 follow-ups: libexec\nlayout, module trim,\nbun:sqlite" { class: side }
   debur: "debur: dead recompute code,\ngen-index flip (coordinator)" { class: lane }
 }

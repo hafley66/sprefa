@@ -6,6 +6,9 @@ set -eu
 
 repo_root=$(git rev-parse --show-toplevel)
 cd "$repo_root/v6"
+# A hook exports an ABSOLUTE GIT_DIR, and in a linked worktree that makes
+# `git ls-files` print repo-root paths while cwd is v6/. Re-discover from cwd.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 out="INDEX.md"
 
 {

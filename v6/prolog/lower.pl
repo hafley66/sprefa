@@ -24,7 +24,7 @@
 %                        referee. DeltaTable and BoundarySql carry P1's
 %                        tick-local change stream.
 %
-% plus boot_statements/5, a SEPARATE list of bootstmt(Rel, Sql, Params) (needs
+% plus boot_statements/6, a SEPARATE list of bootstmt(Rel, Sql, Params) (needs
 % Initial, which plan/6 does not carry, plus LevelStatements for the t=0
 % level closure -- PHASE C2 RULING 2, boot_level_recompute_statements/2).
 %
@@ -119,7 +119,7 @@
 % inside one group is refused at strat.pl:topo_order_group/2.
 
 :- module(lower,
-          [ lower_program/2, boot_statements/5, relplan_kind/3,
+          [ lower_program/2, boot_statements/6, relplan_kind/3,
             % The interning contract's mode vocabulary. compile.pl resolves
             % the compile option into the atom the plan term carries.
             intern_mode/2, interned_column/2, string_dictionary_table/1,
@@ -127,8 +127,9 @@
             % Both halves of the storage decision, exported so one test can
             % compare the DDL's answer against the IR's on ONE run.
             column_def/4, ir_column_class/4, uniform_text_encoding/1,
-            compile_expr/4, compile_comparison/3,
-            canonical_column_expr/2, level_ref_count_sql/5, level_dred_plan/4,
+            compile_expr/7, compile_comparison/4,
+            intern_write_sql/4,
+            canonical_column_expr/2, level_ref_count_sql/5, level_dred_plan/5,
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
             % 2). emit_ts.pl renders both the relation-plan field and the
             % departure arm's SELECT, and the name has exactly one definition.
@@ -263,10 +264,8 @@ relplan_kind(RelPlans, Ref, Kind) :- memberchk(relplan(Ref, Kind, _, _, _), RelP
 relplan_column_types(RelPlans, Ref, ColumnTypes) :- memberchk(relplan(Ref, _, _, _, ColumnTypes), RelPlans).
 
 % ═══ pattern-argument compiler (level-rule bodies; unchanged from round 1) ══
-% compile_pattern_arg(Arg, ColumnExpr, Bound0, Bound, WhereParts, Mode)
-% Mode = bind (level positive atom, may introduce new bindings) | check
-% (negated atom, read-only: never introduces a binding, an unbound var there
-% imposes no condition -- negation-as-failure over an unconstrained position).
+% Binding = bind | check; a check (negated atom) never introduces a binding, so
+% an unbound var there imposes no condition.
 
 % EXPRESSION LIFT: a Bound entry is now typed(Sql, int|text), not bare Sql.
 % lower.pl has to know a bound variable's SQL TYPE, not only its text, for
@@ -276,26 +275,38 @@ relplan_column_types(RelPlans, Ref, ColumnTypes) :- memberchk(relplan(Ref, _, _,
 % INTEGER-affinity column and a TEXT one silently applies affinity conversion
 % where the oracle's ==/2 is term identity. Carrying the type beside the text
 % is what lets each of those be a NAMED refusal instead of a silent answer.
-compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound0, Bound, WhereParts, Mode) :-
+compile_pattern_arg(Mode, Arg, ColumnExpr, ColumnType, Bound0, Bound, WhereParts, Binding) :-
+    column_encoding(Mode, ColumnType, Encoding),
     ( var(Arg)
-    -> ( bound_lookup(Bound0, Arg, typed(Existing, ExistingType))
+    -> ( bound_lookup(Bound0, Arg, typed(Existing, ExistingType, ExistingEncoding))
        -> join_column_types_agree(ColumnExpr, ColumnType, Existing, ExistingType),
-          WhereParts = [pair(ColumnExpr, Existing)], Bound = Bound0
-       ; Mode == bind
-       -> WhereParts = [], Bound = [Arg-typed(ColumnExpr, ColumnType) | Bound0]
+          aligned_pair(Encoding, ColumnExpr, ExistingEncoding, Existing,
+                       AlignedColumn, AlignedExisting),
+          WhereParts = [pair(AlignedColumn, AlignedExisting)], Bound = Bound0
+       ; Binding == bind
+       -> WhereParts = [], Bound = [Arg-typed(ColumnExpr, ColumnType, Encoding) | Bound0]
        ; WhereParts = [], Bound = Bound0
        )
     ; Arg = bool_lit(_)
-    -> WhereParts = [lit(ColumnExpr, Arg)], Bound = Bound0
+    -> WhereParts = [lit(ColumnExpr, Arg, Encoding)], Bound = Bound0
     ; compound(Arg)
     -> Arg =.. [Functor | SubArgs],
        FnCheck = pair_lit(ColumnExpr, Functor),
-       compile_sub_args(SubArgs, ColumnExpr, 0, Bound0, Bound, MoreWhere, Mode),
+       compile_sub_args(Mode, SubArgs, ColumnExpr, 0, Bound0, Bound, MoreWhere, Binding),
        WhereParts = [FnCheck | MoreWhere]
     ; atomic(Arg)
-    -> WhereParts = [lit(ColumnExpr, Arg)], Bound = Bound0
+    -> WhereParts = [lit(ColumnExpr, Arg, Encoding)], Bound = Bound0
     ; throw(unsupported_construct(pattern_arg(Arg)))
     ).
+
+% A json_extract-bound variable carries characters while a stored text column
+% under dict carries an id; the characters resolve so both sides are ids.
+aligned_pair(LeftEncoding, LeftSql, RightEncoding, RightSql, AlignedLeft, AlignedRight) :-
+    align_to_encoding(RightEncoding, LeftEncoding, LeftSql, AlignedLeft),
+    align_to_encoding(LeftEncoding, RightEncoding, RightSql, AlignedRight).
+
+align_to_encoding(dict, direct, Sql, Aligned) :- !, interned_id_sql(Sql, Aligned).
+align_to_encoding(_, _, Sql, Sql).
 
 % A shared variable across two columns of DIFFERENT storage type is the same
 % TEXT-collapse hazard as a cross-type comparison, one hop out: engine.pl
@@ -323,12 +334,12 @@ join_column_types_agree(ColumnExpr, ColumnType, Existing, ExistingType) :-
 % A destructured sub-argument comes back through json_extract, whose result
 % carries no declared column type at all -- typed text, matching the
 % inline-flat compound punt (PHASE C2 RULING 1).
-compile_sub_args([], _, _, Bound, Bound, [], _).
-compile_sub_args([SubArg | Rest], ParentExpr, Index, Bound0, Bound, WhereParts, Mode) :-
+compile_sub_args(_, [], _, _, Bound, Bound, [], _).
+compile_sub_args(Mode, [SubArg | Rest], ParentExpr, Index, Bound0, Bound, WhereParts, Binding) :-
     format(atom(SubExpr), 'json_extract(~w, \'$.args[~w]\')', [ParentExpr, Index]),
-    compile_pattern_arg(SubArg, SubExpr, text, Bound0, Bound1, HereWhere, Mode),
+    compile_pattern_arg(direct, SubArg, SubExpr, text, Bound0, Bound1, HereWhere, Binding),
     NextIndex is Index + 1,
-    compile_sub_args(Rest, ParentExpr, NextIndex, Bound1, Bound, MoreWhere, Mode),
+    compile_sub_args(Mode, Rest, ParentExpr, NextIndex, Bound1, Bound, MoreWhere, Binding),
     append(HereWhere, MoreWhere, WhereParts).
 
 % NOTE the two distinct names: the head pattern's pair value (PairExpr) must
@@ -344,27 +355,29 @@ where_text(pair(Left, Right), Text) :- format(atom(Text), '~w = ~w', [Left, Righ
 where_text(pair_lit(Left, Functor), Text) :-
     sql_literal(Functor, Quoted),
     format(atom(Text), 'json_extract(~w, \'$.fn\') = ~w', [Left, Quoted]).
-where_text(lit(Left, Value), Text) :- sql_literal(Value, Quoted), format(atom(Text), '~w = ~w', [Left, Quoted]).
+where_text(lit(Left, Value, Encoding), Text) :-
+    column_literal_sql(Encoding, Value, Resolved),
+    format(atom(Text), '~w = ~w', [Left, Resolved]).
 
 % ═══ positive body-atom compilation (level rules only, round 2: edge rules
 % no longer use this -- see compile_trigger_bound/2 below) ═══════════════
 
-compile_positive_uses(RelPlans, Uses, Bound0, Bound, FromParts, WhereTexts) :-
-    compile_positive_uses(RelPlans, Uses, 0, Bound0, Bound, FromParts, WhereParts),
+compile_positive_uses(Mode, RelPlans, Uses, Bound0, Bound, FromParts, WhereTexts) :-
+    compile_positive_uses(Mode, RelPlans, Uses, 0, Bound0, Bound, FromParts, WhereParts),
     maplist(where_text, WhereParts, WhereTexts).
 
-compile_positive_uses(_, [], _, Bound, Bound, [], []).
-compile_positive_uses(RelPlans, [use(Ref, Args, pos, Source) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
+compile_positive_uses(_, _, [], _, Bound, Bound, [], []).
+compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
     positive_use_table(Source, Ref, Table), quote_ident(Table, QuotedTable),
     format(atom(Alias), 'b~w', [Index]),
     format(atom(From), '~w ~w', [QuotedTable, Alias]),
     relplan_columns(RelPlans, Ref, Columns),
     relplan_column_types(RelPlans, Ref, ColumnTypes),
-    compile_atom_args(Args, Columns, ColumnTypes, Alias, Bound0, FieldBound, HereWhere),
+    compile_atom_args(Mode, Args, Columns, ColumnTypes, Alias, Bound0, FieldBound, HereWhere),
     bind_reference_target_identity(RelPlans, Ref, Args, Alias,
                                    FieldBound, Bound1),
     NextIndex is Index + 1,
-    compile_positive_uses(RelPlans, Rest, NextIndex, Bound1, Bound, MoreFrom, MoreWhere),
+    compile_positive_uses(Mode, RelPlans, Rest, NextIndex, Bound1, Bound, MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
 positive_use_table(pre, Ref, Table) :- !, pre_table_name(Ref, Table).
@@ -383,29 +396,29 @@ bind_reference_target_identity(RelPlans, Name/Arity, Args, Alias,
     length(Args, Arity),
     Atom =.. [Name | Args],
     format(atom(IdExpr), '~w."__id"', [Alias]),
-    Bound = [Atom-typed(IdExpr, ref(Name)) | Bound0].
+    Bound = [Atom-typed(IdExpr, ref(Name), direct) | Bound0].
 bind_reference_target_identity(_, _, _, _, Bound, Bound).
 
-compile_atom_args([], [], [], _, Bound, Bound, []).
-compile_atom_args([Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
+compile_atom_args(_, [], [], [], _, Bound, Bound, []).
+compile_atom_args(Mode, [Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
                   Alias, Bound0, Bound, WhereParts) :-
     format(atom(ColumnExpr), '~w."~w"', [Alias, Column]),
-    compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound0, Bound1, HereWhere, bind),
-    compile_atom_args(RestArgs, RestColumns, RestTypes, Alias, Bound1, Bound, MoreWhere),
+    compile_pattern_arg(Mode, Arg, ColumnExpr, ColumnType, Bound0, Bound1, HereWhere, bind),
+    compile_atom_args(Mode, RestArgs, RestColumns, RestTypes, Alias, Bound1, Bound, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
 % ═══ negative body-atom compilation (NOT EXISTS; unchanged from round 1) ════
 
-compile_negative_uses(RelPlans, Uses, Bound, NegTexts) :-
-    compile_negative_uses(RelPlans, Uses, 0, Bound, NegTexts).
+compile_negative_uses(Mode, RelPlans, Uses, Bound, NegTexts) :-
+    compile_negative_uses(Mode, RelPlans, Uses, 0, Bound, NegTexts).
 
-compile_negative_uses(_, [], _, _, []).
-compile_negative_uses(RelPlans, [use(Ref, Args, neg, _) | Rest], Index, Bound, [Text | More]) :-
+compile_negative_uses(_, _, [], _, _, []).
+compile_negative_uses(Mode, RelPlans, [use(Ref, Args, neg, _) | Rest], Index, Bound, [Text | More]) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     format(atom(Alias), 'n~w', [Index]),
     relplan_columns(RelPlans, Ref, Columns),
     relplan_column_types(RelPlans, Ref, ColumnTypes),
-    compile_negative_atom_args(Args, Columns, ColumnTypes, Alias, Bound, WhereParts),
+    compile_negative_atom_args(Mode, Args, Columns, ColumnTypes, Alias, Bound, WhereParts),
     maplist(where_text, WhereParts, WhereTexts),
     ( WhereTexts == []
     -> format(atom(Text), 'NOT EXISTS (SELECT 1 FROM ~w ~w)', [QuotedTable, Alias])
@@ -413,14 +426,14 @@ compile_negative_uses(RelPlans, [use(Ref, Args, neg, _) | Rest], Index, Bound, [
       format(atom(Text), 'NOT EXISTS (SELECT 1 FROM ~w ~w WHERE ~w)', [QuotedTable, Alias, Joined])
     ),
     NextIndex is Index + 1,
-    compile_negative_uses(RelPlans, Rest, NextIndex, Bound, More).
+    compile_negative_uses(Mode, RelPlans, Rest, NextIndex, Bound, More).
 
-compile_negative_atom_args([], [], [], _, _, []).
-compile_negative_atom_args([Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
+compile_negative_atom_args(_, [], [], [], _, _, []).
+compile_negative_atom_args(Mode, [Arg | RestArgs], [Column | RestColumns], [ColumnType | RestTypes],
                            Alias, Bound, WhereParts) :-
     format(atom(ColumnExpr), '~w."~w"', [Alias, Column]),
-    compile_pattern_arg(Arg, ColumnExpr, ColumnType, Bound, _BoundUnused, HereWhere, check),
-    compile_negative_atom_args(RestArgs, RestColumns, RestTypes, Alias, Bound, MoreWhere),
+    compile_pattern_arg(Mode, Arg, ColumnExpr, ColumnType, Bound, _BoundUnused, HereWhere, check),
+    compile_negative_atom_args(Mode, RestArgs, RestColumns, RestTypes, Alias, Bound, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
 % ═══ head expression compilation (unchanged from round 1; reused for BOTH
@@ -455,53 +468,60 @@ compile_negative_atom_args([Arg | RestArgs], [Column | RestColumns], [ColumnType
 %        operand appears. SQLite instead coerces silently ('not_a_number' + 1
 %        evaluates to 1), so a text operand would produce a wrong row with no
 %        signal at all. Refused by name.
-compile_expr(Expr, Bound, Sql, Type) :-
+
+% Demand (contract §5.3): `identity` positions store and compare ids, `value`
+% positions read the characters. Encoding says which one Sql came out as.
+compile_expr(Mode, Demand, Expr, Bound, Sql, Type, Encoding) :-
     ( var(Expr)
-    -> ( bound_lookup(Bound, Expr, typed(Sql, Type))
-       -> true
+    -> ( bound_lookup(Bound, Expr, typed(BoundSql, Type, BoundEncoding))
+       -> demanded_sql(Demand, BoundEncoding, BoundSql, Sql, Encoding)
        ;  throw(unsupported_construct(unbound_head_var(Expr))) )
     ; Expr = bool_lit(_)
-    -> sql_literal(Expr, Sql), Type = bool
+    -> sql_literal(Expr, Sql), Type = bool, Encoding = direct
     ; compound(Expr),
-      bound_lookup(Bound, Expr, typed(Sql, Type))
-    -> true
+      bound_lookup(Bound, Expr, typed(BoundSql, Type, BoundEncoding))
+    -> demanded_sql(Demand, BoundEncoding, BoundSql, Sql, Encoding)
     ; integer(Expr)
-    -> sql_literal(Expr, Sql), Type = int
+    -> sql_literal(Expr, Sql), Type = int, Encoding = direct
     ; float(Expr)
-    -> sql_literal(Expr, Sql), Type = float
+    -> sql_literal(Expr, Sql), Type = float, Encoding = direct
     ; atomic(Expr)
-    -> sql_literal(Expr, Sql), Type = text
+    -> text_literal_sql(Mode, Demand, Expr, Sql, Encoding), Type = text
     ; Expr = concat(Parts)
-    -> compile_concat_parts(Parts, Bound, Expr, PartSqls),
+    -> compile_concat_parts(Mode, Parts, Bound, Expr, PartSqls),
        atomic_list_concat(PartSqls, ' || ', Joined),
        format(atom(Sql), '(~w)', [Joined]),
-       Type = text
+       Type = text, Encoding = direct
     ; text_scalar_expr(Expr, Function, Argument)
-    -> compile_text_operand(Argument, Bound, Expr, ArgumentSql),
+    -> compile_text_operand(Mode, Argument, Bound, Expr, ArgumentSql),
        text_scalar_sql(Function, ArgumentSql, Sql),
-       Type = text
+       Type = text, Encoding = direct
     ; arithmetic_expr(Expr, Operator, Left, Right)
-    -> compile_numeric_operand(Operator, Left, Bound, Expr, LeftSql, LeftType),
-       compile_numeric_operand(Operator, Right, Bound, Expr, RightSql, RightType),
+    -> compile_numeric_operand(Mode, Operator, Left, Bound, Expr, LeftSql, LeftType),
+       compile_numeric_operand(Mode, Operator, Right, Bound, Expr, RightSql, RightType),
        arithmetic_sql(Operator, LeftSql, RightSql, LeftType, RightType, Sql),
-       arithmetic_result_type(Operator, LeftType, RightType, Type)
+       arithmetic_result_type(Operator, LeftType, RightType, Type),
+       Encoding = direct
     ; json_value_expr(Expr)
     -> throw(unsupported_construct(json_value_expression(Expr)))
     ; compound(Expr)
     -> Expr =.. [Functor | SubArgs],
-       maplist(compile_term_sub_expr(Bound), SubArgs, SubSqls),
+       maplist(compile_term_sub_expr(Mode, Bound), SubArgs, SubSqls),
        ( SubSqls == []
        -> format(atom(Sql), 'json_object(\'fn\', \'~w\', \'args\', json_array())', [Functor])
        ; atomic_list_concat(SubSqls, ', ', Joined),
          format(atom(Sql), 'json_object(\'fn\', \'~w\', \'args\', json_array(~w))', [Functor, Joined])
        ),
-       Type = text
+       Type = text, Encoding = direct
     ; throw(unsupported_construct(head_expr(Expr)))
     ).
 
-compile_term_sub_expr(Bound, Arg, Sql) :- compile_expr(Arg, Bound, Sql, _Type).
+% Rule ONE's other half: a text COLUMN under `value` demand is an id, and
+% concat/norm/regexp/ORDER BY need the characters behind it.
+demanded_sql(value, dict, IdSql, Sql, direct) :- !, dictionary_content_sql(IdSql, Sql).
+demanded_sql(_, Encoding, Sql, Sql, Encoding).
 
-compile_expr_bound(Bound, Arg, Sql) :- compile_expr(Arg, Bound, Sql, _Type).
+compile_term_sub_expr(Mode, Bound, Arg, Sql) :- compile_expr(Mode, value, Arg, Bound, Sql, _Type, _Encoding).
 
 % The operator inventory is registry.pl's expression/5 (rank R5 of
 % plans/2026-07-29-prolog-org-review.md), not a local list.
@@ -513,8 +533,8 @@ text_scalar_expr(Expr, Function, Argument) :-
     compound(Expr), Expr =.. [Function, Argument],
     expression(Function/1, text_scalar, _, _, _).
 
-compile_text_operand(Operand, Bound, Whole, Sql) :-
-    compile_expr(Operand, Bound, Sql, Type),
+compile_text_operand(Mode, Operand, Bound, Whole, Sql) :-
+    compile_expr(Mode, value, Operand, Bound, Sql, Type, _Encoding),
     ( Type == text
     -> true
     ;  throw(unsupported_construct(text_operand_not_text(Whole, Operand, Type)))
@@ -553,18 +573,18 @@ json_value_expr(Expr) :- compound(Expr), Expr = {}(_), !.
 json_value_expr(Expr) :- is_list(Expr), Expr \== [], !.
 json_value_expr(Expr) :- compound(Expr), Expr = [_ | _].
 
-compile_int_operand(Operand, Bound, Whole, Sql) :-
-    compile_expr(Operand, Bound, Sql, Type),
+compile_int_operand(Mode, Operand, Bound, Whole, Sql) :-
+    compile_expr(Mode, identity, Operand, Bound, Sql, Type, _Encoding),
     ( Type == int
     -> true
     ;  throw(unsupported_construct(arith_operand_not_int(Whole, Operand, Type)))
     ).
 
-compile_numeric_operand(mod, Operand, Bound, Whole, Sql, int) :-
+compile_numeric_operand(Mode, mod, Operand, Bound, Whole, Sql, int) :-
     !,
-    compile_int_operand(Operand, Bound, Whole, Sql).
-compile_numeric_operand(_, Operand, Bound, Whole, Sql, Type) :-
-    compile_expr(Operand, Bound, Sql, Type),
+    compile_int_operand(Mode, Operand, Bound, Whole, Sql).
+compile_numeric_operand(Mode, _, Operand, Bound, Whole, Sql, Type) :-
+    compile_expr(Mode, identity, Operand, Bound, Sql, Type, _Encoding),
     ( memberchk(Type, [int, float])
     -> true
     ; throw(unsupported_construct(arith_operand_not_number(Whole, Operand, Type)))
@@ -597,15 +617,15 @@ arithmetic_result_type(_, int, int, int).
 % engine.pl text_piece/2 throws non_display_in_concat on a compound piece;
 % an int piece auto-converts (atomic_list_concat), which SQLite's `||` also
 % does. Only the compound case needs refusing.
-compile_concat_parts(Parts, _, Whole, _) :-
+compile_concat_parts(_, Parts, _, Whole, _) :-
     \+ is_list(Parts),
     throw(unsupported_construct(concat_not_a_list(Whole))).
-compile_concat_parts(Parts, Bound, Whole, PartSqls) :-
+compile_concat_parts(Mode, Parts, Bound, Whole, PartSqls) :-
     is_list(Parts),
-    maplist(compile_concat_part(Bound, Whole), Parts, PartSqls).
+    maplist(compile_concat_part(Mode, Bound, Whole), Parts, PartSqls).
 
-compile_concat_part(Bound, Whole, Part, Sql) :-
-    compile_expr(Part, Bound, Sql, Type),
+compile_concat_part(Mode, Bound, Whole, Part, Sql) :-
+    compile_expr(Mode, value, Part, Bound, Sql, Type, _Encoding),
     ( memberchk(Type, [int, text])
     -> true
     ;  throw(unsupported_construct(concat_non_display_piece(Whole, Part)))
@@ -620,8 +640,8 @@ compile_concat_part(Bound, Whole, Part, Sql) :-
 % which is unification, so an already-bound left side filters) and compiles
 % to an equality condition.
 
-compile_guard_goals(Goals, Bound0, Bound, WhereTexts) :-
-    foldl(compile_guard_goal, Goals, Bound0-[], Bound-ReversedTexts),
+compile_guard_goals(Mode, Goals, Bound0, Bound, WhereTexts) :-
+    foldl(compile_guard_goal(Mode), Goals, Bound0-[], Bound-ReversedTexts),
     reverse(ReversedTexts, WhereTexts).
 
 % The one SQL text now/1 reads. `__tick` is a one-row counter table the
@@ -795,28 +815,31 @@ double_single_quotes([Code | Rest], [Code | More]) :- double_single_quotes(Rest,
 % TODO(g2): conformance/ticklog.pl needs the same seed only once a FIXTURE derives from a catalog row; a DDL-time seed emits no delta at any tick, so g1 alone cannot diverge from the oracle.
 % TODO(g3): __catalog_annotation(target_id, name, value) is the ONLY future DDL statement here, because nesting, generics and column types all land as rows in the table above.
 
-compile_guard_goal(Goal, Bound0-Texts0, Bound-Texts) :-
+compile_guard_goal(Mode, Goal, Bound0-Texts0, Bound-Texts) :-
     ( regexp_goal(Goal)
-    -> compile_regexp_goal(Goal, Bound0, Text),
+    -> compile_regexp_goal(Mode, Goal, Bound0, Text),
        Bound = Bound0, Texts = [Text | Texts0]
     ; tick_goal(Goal, Variable)
     -> tick_column_sql(TickSql),
        ( \+ bound_lookup(Bound0, Variable, _)
-       -> Bound = [Variable-typed(TickSql, int) | Bound0], Texts = Texts0
-       ;  compile_expr(Variable, Bound0, VariableSql, _),
+       -> Bound = [Variable-typed(TickSql, int, direct) | Bound0], Texts = Texts0
+       ;  compile_expr(Mode, identity, Variable, Bound0, VariableSql, _, _Encoding),
           format(atom(Text), '~w = ~w', [VariableSql, TickSql]),
           Bound = Bound0, Texts = [Text | Texts0]
        )
     ;  bind_goal(Goal, Variable, Expr)
-    -> compile_expr(Expr, Bound0, Sql, Type),
+    -> compile_expr(Mode, identity, Expr, Bound0, Sql, Type, Encoding),
        ( var(Variable), \+ bound_lookup(Bound0, Variable, _)
-       -> Bound = [Variable-typed(Sql, Type) | Bound0], Texts = Texts0
-       ;  compile_expr(Variable, Bound0, VariableSql, _VariableType),
-          format(atom(Text), '~w = ~w', [VariableSql, Sql]),
+       -> Bound = [Variable-typed(Sql, Type, Encoding) | Bound0], Texts = Texts0
+       ;  compile_expr(Mode, identity, Variable, Bound0, VariableSql, _VariableType,
+                       VariableEncoding),
+          aligned_pair(VariableEncoding, VariableSql, Encoding, Sql,
+                       AlignedVariable, AlignedValue),
+          format(atom(Text), '~w = ~w', [AlignedVariable, AlignedValue]),
           Bound = Bound0, Texts = [Text | Texts0]
        )
     ;  guard_goal(Goal)
-    -> compile_comparison(Goal, Bound0, Text),
+    -> compile_comparison(Mode, Goal, Bound0, Text),
        Bound = Bound0, Texts = [Text | Texts0]
     ;  throw(unsupported_construct(guard_goal_shape(Goal)))
     ).
@@ -825,8 +848,8 @@ regexp_goal(Goal) :-
     body_surface_for_term(Goal, regexp/2, guard, no_refs,
                           wrapper(expr_pair, lower), _).
 
-compile_regexp_goal(regexp(Operand, Pattern), Bound, Text) :-
-    compile_expr(Operand, Bound, OperandSql, OperandType),
+compile_regexp_goal(Mode, regexp(Operand, Pattern), Bound, Text) :-
+    compile_expr(Mode, value, Operand, Bound, OperandSql, OperandType, _Encoding),
     ( OperandType == text
     -> true
     ;  throw(unsupported_construct(regexp_operand_not_text(Operand, OperandType)))
@@ -845,12 +868,14 @@ compile_regexp_goal(regexp(Operand, Pattern), Bound, Text) :-
 % SQLite's `=` between an INTEGER column and a TEXT one applies affinity and
 % can answer TRUE. Both cases are refused by name rather than lowered to an
 % operator that means something else.
-compile_comparison(Goal, Bound, Text) :-
+compile_comparison(Mode, Goal, Bound, Text) :-
     Goal =.. [Operator, Left, Right],
-    compile_expr(Left, Bound, LeftSql, LeftType),
-    compile_expr(Right, Bound, RightSql, RightType),
+    compile_expr(Mode, identity, Left, Bound, LeftSql, LeftType, LeftEncoding),
+    compile_expr(Mode, identity, Right, Bound, RightSql, RightType, RightEncoding),
     comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql),
-    format(atom(Text), '(~w ~w ~w)', [LeftSql, OperatorSql, RightSql]).
+    aligned_pair(LeftEncoding, LeftSql, RightEncoding, RightSql,
+                 AlignedLeft, AlignedRight),
+    format(atom(Text), '(~w ~w ~w)', [AlignedLeft, OperatorSql, AlignedRight]).
 
 % Family, SQL text and type rule all come from registry.pl's expression/5
 % (rank R5). The two type rules are named there: both_int for the ordered
@@ -885,13 +910,49 @@ check_comparison_types(same_type, Goal, LeftType, RightType) :-
                   comparison_type_mismatch(Goal, LeftType, RightType)))
     ).
 
-head_select_list(Head, Bound, ColumnAliases, SelectExprs) :-
+% BuiltValues is the content SQL of every head position that had to be interned
+% on write (contract §5.7): the caller owes each one an intern statement.
+head_select_list(Mode, ColumnTypes, Head, Bound, ColumnAliases, SelectExprs,
+                 BuiltValues) :-
     Head =.. [_ | Args],
-    maplist(compile_expr_bound(Bound), Args, SelectExprs0),
+    maplist(head_column_expr(Mode, Bound), Args, ColumnTypes, SelectExprs0,
+            BuiltGroups),
+    append(BuiltGroups, BuiltValues),
     ( is_list(ColumnAliases)
     -> maplist(alias_select_expr, SelectExprs0, ColumnAliases, SelectExprs)
     ; SelectExprs = SelectExprs0
     ).
+
+head_column_expr(Mode, Bound, Arg, ColumnType, SelectExpr, Built) :-
+    compile_expr(Mode, identity, Arg, Bound, Sql, _Type, Encoding),
+    (   column_encoding(Mode, ColumnType, dict), Encoding == direct
+    ->  interned_id_sql(Sql, SelectExpr), Built = [Sql]
+    ;   SelectExpr = Sql, Built = []
+    ).
+
+intern_write_statements([], _, _, []) :- !.
+intern_write_statements(BuiltValues, FromSql, WhereSql, [InternSql]) :-
+    intern_write_sql(BuiltValues, FromSql, WhereSql, InternSql).
+
+% Statement one of §5.7.1: every built string the arm will produce, set-based,
+% reusing the arm's own FROM and WHERE so the two see identical input.
+intern_write_sql(BuiltValues, FromSql, WhereSql, InternSql) :-
+    maplist(intern_write_arm(FromSql, WhereSql), BuiltValues, Arms),
+    atomic_list_concat(Arms, ' UNION ', ArmsSql),
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(InternSql), 'INSERT OR IGNORE INTO ~w ("content") ~w',
+           [QuotedDictionary, ArmsSql]).
+
+intern_write_arm(none, none, ValueSql, Arm) :- !,
+    format(atom(Arm), 'SELECT ~w', [ValueSql]).
+intern_write_arm(none, WhereSql, ValueSql, Arm) :- !,
+    format(atom(Arm), 'SELECT ~w WHERE ~w', [ValueSql, WhereSql]).
+intern_write_arm(FromSql, none, ValueSql, Arm) :- !,
+    format(atom(Arm), 'SELECT DISTINCT ~w FROM ~w', [ValueSql, FromSql]).
+intern_write_arm(FromSql, WhereSql, ValueSql, Arm) :-
+    format(atom(Arm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
+           [ValueSql, FromSql, WhereSql]).
 
 alias_select_expr(Expr, Alias, AliasedExpr) :- format(atom(AliasedExpr), '~w AS "~w"', [Expr, Alias]).
 
@@ -914,6 +975,11 @@ string_dictionary_table('__str').
 intern_ddl(dict, [ 'CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)' ]) :- !.
 intern_ddl(_, []).
 
+% column_encoding(+Mode, +DeclaredType, -Encoding)
+%   dict: the SQL holds an "__str" id. direct: it holds the characters.
+column_encoding(Mode, ColumnType, dict) :- interned_column(Mode, ColumnType), !.
+column_encoding(_, _, direct).
+
 any_interned_column(Mode, ColumnTypes) :-
     member(ColumnType, ColumnTypes),
     interned_column(Mode, ColumnType),
@@ -925,6 +991,85 @@ program_intern_ddl(Mode, RelPlans, Ddl) :-
     ->  intern_ddl(Mode, Ddl)
     ;   Ddl = []
     ).
+
+% ═══ text constants in the id space (contract §5.3, rule two) ══════════════
+
+% Splicing the id itself would make the emitted text a function of the
+% database. EXPLAIN puts the lookup behind `Once`: one probe per STATEMENT.
+text_literal_sql(Mode, identity, Literal, Sql, dict) :-
+    interned_column(Mode, text),
+    !,
+    interned_literal_sql(Literal, Sql).
+text_literal_sql(_, _, Literal, Sql, direct) :- sql_literal(Literal, Sql).
+
+interned_literal_sql(Literal, Sql) :-
+    sql_literal(Literal, Quoted),
+    interned_id_sql(Quoted, Sql).
+
+% The one id-lookup spelling, shared by the constant path and the built-string
+% path so the seed reader below cannot drift from either.
+interned_id_sql(ContentSql, Sql) :-
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(Sql), '(SELECT s."__id" FROM ~w s WHERE s."content" = ~w)',
+           [QuotedDictionary, ContentSql]).
+
+% A text COLUMN under `value` demand holds an id; the string functions need
+% the characters (contract §5.3, rule one).
+dictionary_content_sql(IdSql, Sql) :-
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(Sql), '(SELECT s."content" FROM ~w s WHERE s."__id" = ~w)',
+           [QuotedDictionary, IdSql]).
+
+% A literal no stored row holds resolves to no id, so the comparison matches
+% nothing -- the correct answer, and the reason the read side needs no seed.
+column_literal_sql(dict, Literal, Sql) :- !, interned_literal_sql(Literal, Sql).
+column_literal_sql(_, Literal, Sql) :- sql_literal(Literal, Sql).
+
+% A WRITE side needs the row to exist: an interned head column is NOT NULL, so
+% an unseeded literal would resolve to NULL and lose the row.
+literal_seed_ddl(Mode, Lowered, Ddl) :-
+    (   interned_column(Mode, text),
+        interned_literals(Lowered, Literals),
+        Literals \== []
+    ->  maplist(sql_literal, Literals, Quoted),
+        maplist(values_row, Quoted, Rows),
+        atomic_list_concat(Rows, ', ', RowsSql),
+        string_dictionary_table(Dictionary),
+        quote_ident(Dictionary, QuotedDictionary),
+        format(atom(Sql), 'INSERT OR IGNORE INTO ~w ("content") VALUES ~w',
+               [QuotedDictionary, RowsSql]),
+        Ddl = [Sql]
+    ;   Ddl = []
+    ).
+
+values_row(Quoted, Row) :- format(atom(Row), '(~w)', [Quoted]).
+
+% Read back out of the SQL the lowering just wrote, never recomputed from the
+% rules: one spelling produced them, so one reader cannot drift from it.
+interned_literals(Lowered, Literals) :-
+    findall(Literal, term_interned_literal(Lowered, Literal), Found),
+    sort(Found, Literals).
+
+term_interned_literal(Term, Literal) :-
+    (   atom(Term)
+    ->  atom_interned_literal(Term, Literal)
+    ;   compound(Term),
+        arg(_, Term, Argument),
+        term_interned_literal(Argument, Literal)
+    ).
+
+% sql_literal/2 refuses a quote inside a literal, so `')` terminates the
+% content at its first occurrence and no escape grammar is involved.
+atom_interned_literal(Atom, Literal) :-
+    interned_literal_sql('', Probe),
+    sub_atom(Probe, 0, OpeningLength, 2, Opening),
+    sub_atom(Atom, Start, OpeningLength, _, Opening),
+    After is Start + OpeningLength,
+    sub_atom(Atom, After, _, 0, Tail),
+    once(sub_atom(Tail, ContentLength, 2, _, '\')')),
+    sub_atom(Tail, 0, ContentLength, _, Literal).
 
 % ═══ the decode view, returned in its table's own Ddls list ═════════════════
 % One clause builds both from one Columns/ColumnTypes pair, so they cannot drift.
@@ -1831,20 +1976,20 @@ placeholders(N, ['?' | Rest]) :- N > 0, N1 is N - 1, placeholders(N1, Rest).
 % to round 2's text for every already-IDENTICAL marked_single fixture
 % (verified via the plunit SQL-text snapshot tests, unchanged).
 
-edge_statements_for_rule(EdgeHeadedRefs, RelPlans, (Head <+ Body),
+edge_statements_for_rule(Mode, EdgeHeadedRefs, RelPlans, (Head <+ Body),
                          EdgeStatements) :-
     edge_trigger_shape(Body, Shape),
     ( Shape = marked_single(TriggerAtom)
     -> rel_ref(TriggerAtom, TriggerRef),
        ( relplan_kind(RelPlans, TriggerRef, log) -> true
        ; throw(unsupported_construct(edge_trigger_not_log(TriggerRef))) ),
-       edge_statement_single(RelPlans, Head, TriggerAtom, [], [], [], [],
+       edge_statement_single(Mode, RelPlans, Head, TriggerAtom, [], [], [], [],
                              arrival, EdgeStmt),
        EdgeStatements = [EdgeStmt]
     ; Shape = unmarked_conjunction(Atoms)
     -> findall(EdgeStmt,
                ( select(TriggerAtom, Atoms, OtherAtoms),
-                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
+                 edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms,
                                        [], [], [], arrival, EdgeStmt) ),
                EdgeStatements)
     ; Shape = sampled_conjunction(TriggerAtoms, SampleAtoms, PreAtoms,
@@ -1853,7 +1998,7 @@ edge_statements_for_rule(EdgeHeadedRefs, RelPlans, (Head <+ Body),
        findall(EdgeStmt,
                ( select(TriggerAtom, TriggerAtoms, OtherTriggerAtoms),
                  append(OtherTriggerAtoms, SampleAtoms, OtherAtoms),
-                 edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms,
+                 edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms,
                                        PreAtoms, NegAtoms, GuardGoals,
                                        ArrivalKind, EdgeStmt) ),
                EdgeStatements)
@@ -1869,7 +2014,7 @@ edge_statements_for_rule(EdgeHeadedRefs, RelPlans, (Head <+ Body),
        ( PreAtoms == [] -> DepartureKind = departure
        ; DepartureKind = ordered_departure
        ),
-       edge_statement_single(RelPlans, Head, FinalizeAtom, OtherAtoms, PreAtoms,
+       edge_statement_single(Mode, RelPlans, Head, FinalizeAtom, OtherAtoms, PreAtoms,
                              NegAtoms, GuardGoals, DepartureKind, EdgeStmt),
        EdgeStatements = [EdgeStmt]
     ).
@@ -1914,7 +2059,7 @@ arrival_trigger_kind(_EdgeHeadedRefs, _PreAtoms, _NegAtoms, arrival).
 % too, since a Log head's resolver must NOT collapse multiple derived rows
 % into one Map entry the way a Set head's last-write-wins fold does (every
 % key would otherwise be the same empty `[]`).
-edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
+edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
                       NegAtoms, GuardGoals, TriggerKind,
                       edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns,
                                ProjectSql, WriteSql, DeltaProjectSql,
@@ -1929,7 +2074,7 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     ),
     TriggerAtom =.. [_ | TriggerArgs],
     relplan_column_types(RelPlans, TriggerRef, TriggerBoundColumnTypes),
-    compile_trigger_bound(TriggerArgs, TriggerBoundColumnTypes, TriggerBound),
+    compile_trigger_bound(Mode, TriggerArgs, TriggerBoundColumnTypes, TriggerBound),
     reference_trigger_samples(RelPlans, TriggerKind, TriggerAtom,
                               OtherAtoms, IdentityOtherAtoms),
     % maplist, NEVER findall (analyze.pl:ref_occurrence_args/3's own
@@ -1943,15 +2088,16 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     maplist(other_atom_use, IdentityOtherAtoms, OtherUses),
     maplist(pre_atom_use, PreAtoms, PreUses),
     append(OtherUses, PreUses, PositiveUses),
-    compile_positive_uses(RelPlans, PositiveUses, TriggerBound, PositiveBound,
+    compile_positive_uses(Mode, RelPlans, PositiveUses, TriggerBound, PositiveBound,
                           FromParts, PositiveWhereTexts),
-    compile_guard_goals(GuardGoals, PositiveBound, Bound, GuardWhereTexts),
+    compile_guard_goals(Mode, GuardGoals, PositiveBound, Bound, GuardWhereTexts),
     maplist(negated_atom_use, NegAtoms, NegUses),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
     append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
     ( FromParts == [] -> FromSql = none ; atomic_list_concat(FromParts, ', ', FromSql) ),
     ( WhereTexts == [] -> WhereSql = none ; atomic_list_concat(WhereTexts, ' AND ', WhereSql) ),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     % Aliased AS HeadColumns (not `none`, unlike a level rule's SELECT,
     % which has an explicit INSERT column list and does not need aliases):
     % the emitter reads one projected row back via named column access
@@ -1959,7 +2105,7 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     % aliases by string surgery on an alias-free SELECT would be unsafe --
     % a json_object(...) expression's OWN internal commas would look
     % identical to expression-list separators to any naive re-splitter.
-    head_select_list(Head, Bound, HeadColumns, SelectExprs),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, _BuiltValues),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     % A FROM-less SELECT with a WHERE is the guard-only arm (every body goal
     % past the trigger is a comparison, a bind or a NOT EXISTS): SQLite
@@ -1973,7 +2119,7 @@ edge_statement_single(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     -> format(atom(ProjectSql), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
     ; format(atom(ProjectSql), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
     ),
-    edge_delta_project_sql(RelPlans, Head, TriggerAtom, IdentityOtherAtoms,
+    edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, IdentityOtherAtoms,
                            PreAtoms, NegAtoms, GuardGoals, HeadColumns,
                            TriggerKind, DeltaProjectSql),
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
@@ -2031,10 +2177,12 @@ reference_target_ref(RelPlans, Name/_Arity) :-
 member_same_term(Term, [Candidate | _]) :- Term == Candidate, !.
 member_same_term(Term, [_ | Rest]) :- member_same_term(Term, Rest).
 
-edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
+edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
                        NegAtoms, GuardGoals, HeadColumns, TriggerKind,
                        DeltaProjectSql) :-
     rel_ref(TriggerAtom, TriggerRef),
+    rel_ref(Head, HeadRef),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     TriggerAtom =.. [_ | TriggerArgs],
     (   memberchk(TriggerKind, [departure, ordered_departure])
     ->  departure_frontier_table_name(TriggerRef, FrontierTable)
@@ -2044,18 +2192,18 @@ edge_delta_project_sql(RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     DeltaAlias = d0,
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     relplan_column_types(RelPlans, TriggerRef, TriggerColumnTypes),
-    compile_atom_args(TriggerArgs, TriggerColumns, TriggerColumnTypes, DeltaAlias, [],
+    compile_atom_args(Mode, TriggerArgs, TriggerColumns, TriggerColumnTypes, DeltaAlias, [],
                       TriggerBound, TriggerWhereParts),
     maplist(where_text, TriggerWhereParts, TriggerWhereTexts),
     maplist(other_atom_use, OtherAtoms, OtherUses),
     maplist(pre_atom_use, PreAtoms, PreUses),
     append(OtherUses, PreUses, PositiveUses),
-    compile_positive_uses(RelPlans, PositiveUses, TriggerBound, PositiveBound,
+    compile_positive_uses(Mode, RelPlans, PositiveUses, TriggerBound, PositiveBound,
                           OtherFromParts, OtherWhereTexts),
-    compile_guard_goals(GuardGoals, PositiveBound, Bound, GuardWhereTexts),
+    compile_guard_goals(Mode, GuardGoals, PositiveBound, Bound, GuardWhereTexts),
     maplist(negated_atom_use, NegAtoms, NegUses),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
-    head_select_list(Head, Bound, HeadColumns, SelectExprs),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, _BuiltValues),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w ~w', [QuotedFrontierTable, DeltaAlias]),
     append([DeltaFrom], OtherFromParts, FromParts),
@@ -2082,15 +2230,18 @@ negated_atom_use(Atom, use(Ref, Args, neg, unmarked)) :- rel_ref(Atom, Ref), Ato
 % as the bind args UNCHANGED, so a head expression can reference the same
 % trigger argument more than once (?1 reused) without the emitter needing
 % to reorder or duplicate anything.
-compile_trigger_bound(TriggerArgs, TriggerColumnTypes, Bound) :-
-    compile_trigger_bound(TriggerArgs, TriggerColumnTypes, 1, Bound).
-compile_trigger_bound([], [], _, []).
-compile_trigger_bound([Arg | Rest], [ColumnType | RestTypes], Index,
-                      [Arg-typed(Placeholder, ColumnType) | MoreBound]) :-
+% The door interns an arrival's text columns before the resolver binds them
+% (§6), so a placeholder carries the same id a stored column does.
+compile_trigger_bound(Mode, TriggerArgs, TriggerColumnTypes, Bound) :-
+    compile_trigger_bound(Mode, TriggerArgs, TriggerColumnTypes, 1, Bound).
+compile_trigger_bound(_, [], [], _, []).
+compile_trigger_bound(Mode, [Arg | Rest], [ColumnType | RestTypes], Index,
+                      [Arg-typed(Placeholder, ColumnType, Encoding) | MoreBound]) :-
     ( var(Arg) -> true ; throw(unsupported_construct(trigger_arg_not_var(Arg))) ),
+    column_encoding(Mode, ColumnType, Encoding),
     format(atom(Placeholder), '?~w', [Index]),
     NextIndex is Index + 1,
-    compile_trigger_bound(Rest, RestTypes, NextIndex, MoreBound).
+    compile_trigger_bound(Mode, Rest, RestTypes, NextIndex, MoreBound).
 
 nth1_list([], _, []).
 nth1_list([Position | Rest], List, [Element | More]) :- nth1(Position, List, Element), nth1_list(Rest, List, More).
@@ -2137,10 +2288,11 @@ level_statement_group(Mode, RelPlans, HeadRef-Rules,
                                 RefCountSql, AggregateSql)) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     format(atom(DeleteSql), 'DELETE FROM ~w', [QuotedHeadTable]),
-    maplist(level_insert_sql(RelPlans, HeadRef), Rules, InsertSqls),
+    maplist(level_insert_statements(Mode, RelPlans, HeadRef), Rules, InsertGroups),
+    append(InsertGroups, InsertSqls),
     partition(rule_is_aggregate, Rules, AggregateRules, PlainRules),
     ( AggregateRules == []
-    -> level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql),
+    -> level_delta_insert_sql(Mode, RelPlans, HeadRef, Rules, DeltaInsertSql),
        level_ref_count_sql(Mode, RelPlans, HeadRef, Rules, RefCountSql),
        AggregateSql = none
     ;  PlainRules \== []
@@ -2154,8 +2306,8 @@ level_statement_group(Mode, RelPlans, HeadRef-Rules,
        DeltaInsertSql = none,
        RefCountSql = none,
        (   avg_aggregate_rules(AggregateRules)
-       ->  level_avg_sql(RelPlans, HeadRef, AggregateRules, AggregateSql)
-       ;   level_aggregate_sql(RelPlans, HeadRef, AggregateRules, AggregateSql)
+       ->  level_avg_sql(Mode, RelPlans, HeadRef, AggregateRules, AggregateSql)
+       ;   level_aggregate_sql(Mode, RelPlans, HeadRef, AggregateRules, AggregateSql)
        )
     ).
 
@@ -2199,7 +2351,7 @@ avg_aggregate_rules(Rules) :-
 % the tick log. Over-approximating the scope is therefore SAFE (a wasted
 % recompute, invisible); under-approximating would not be, which is why the
 % seed arms carry no guard conditions at all.
-level_aggregate_sql(RelPlans, HeadRef, Rules,
+level_aggregate_sql(Mode, RelPlans, HeadRef, Rules,
                     aggsql(ScopeColumns, ScopeTypes, ScopeClearSql, ScopeSeedSqls,
                            DeleteScopedSql, InsertScopedSqls)) :-
     aggregate_scope_columns(RelPlans, HeadRef, Rules, ScopeColumns, ScopeTypes),
@@ -2208,12 +2360,12 @@ level_aggregate_sql(RelPlans, HeadRef, Rules,
     format(atom(ScopeClearSql), 'DELETE FROM ~w', [QuotedScopeTable]),
     findall(SeedSql,
             ( member(Rule, Rules),
-              aggregate_scope_seed_sql(RelPlans, ScopeColumns, QuotedScopeTable,
+              aggregate_scope_seed_sql(Mode, RelPlans, ScopeColumns, QuotedScopeTable,
                                        Rule, SeedSql) ),
             ScopeSeedSqls),
     aggregate_delete_scoped_sql(RelPlans, HeadRef, ScopeColumns,
                                 QuotedScopeTable, DeleteScopedSql),
-    maplist(aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns,
+    maplist(aggregate_insert_scoped_sql(Mode, RelPlans, HeadRef, ScopeColumns,
                                         QuotedScopeTable),
             Rules, InsertScopedSqls).
 
@@ -2223,7 +2375,7 @@ level_aggregate_sql(RelPlans, HeadRef, Rules,
 % source relation during the delta path. The refresh statements are scoped to
 % groups touched by this tick. Boot uses the same source query without the
 % tick-local delta predicate.
-level_avg_sql(RelPlans, HeadRef, Rules,
+level_avg_sql(Mode, RelPlans, HeadRef, Rules,
               avgsql(ScopeColumns, ScopeTypes, ScopeClearSql, ScopeSeedSqls,
                      DeleteScopedSql, InsertScopedSqls, BootSqls)) :-
     aggregate_scope_columns(RelPlans, HeadRef, Rules, ScopeColumns, ScopeTypes),
@@ -2232,12 +2384,12 @@ level_avg_sql(RelPlans, HeadRef, Rules,
     format(atom(ScopeClearSql), 'DELETE FROM ~w', [QuotedScopeTable]),
     findall(SeedSql,
             ( member(Rule, Rules),
-              aggregate_scope_seed_sql(RelPlans, ScopeColumns, QuotedScopeTable,
+              aggregate_scope_seed_sql(Mode, RelPlans, ScopeColumns, QuotedScopeTable,
                                        Rule, SeedSql) ),
             ScopeMarkers),
     avg_accumulator_table_name(HeadRef, AccumulatorTable),
     quote_ident(AccumulatorTable, QuotedAccumulatorTable),
-    avg_refresh_sqls(RelPlans, HeadRef, Rules, ScopeColumns,
+    avg_refresh_sqls(Mode, RelPlans, HeadRef, Rules, ScopeColumns,
                      QuotedScopeTable, QuotedAccumulatorTable,
                      RefreshSqls),
     avg_accumulator_seed_sql(ScopeColumns, QuotedScopeTable,
@@ -2252,7 +2404,7 @@ level_avg_sql(RelPlans, HeadRef, Rules,
                           QuotedAccumulatorTable, Template, InsertScopedSql),
     InsertScopedSqls = [InsertScopedSql],
     format(atom(ClearAccumulatorSql), 'DELETE FROM ~w', [QuotedAccumulatorTable]),
-    avg_boot_refresh_sqls(RelPlans, HeadRef, Rules, QuotedAccumulatorTable,
+    avg_boot_refresh_sqls(Mode, RelPlans, HeadRef, Rules, QuotedAccumulatorTable,
                           BootRefreshSqls),
     avg_boot_insert_sql(RelPlans, HeadRef, QuotedAccumulatorTable, Template,
                         BootInsertSql),
@@ -2265,25 +2417,25 @@ level_avg_sql(RelPlans, HeadRef, Rules,
 avg_accumulator_table_name(Name/_Arity, Table) :-
     format(atom(Table), '__avg_acc_~w', [Name]).
 
-avg_refresh_sqls(RelPlans, HeadRef, Rules, ScopeColumns,
+avg_refresh_sqls(Mode, RelPlans, HeadRef, Rules, ScopeColumns,
                  QuotedScopeTable, QuotedAccumulatorTable, Sqls) :-
-    maplist(avg_refresh_sql(RelPlans, HeadRef, ScopeColumns,
+    maplist(avg_refresh_sql(Mode, RelPlans, HeadRef, ScopeColumns,
                             QuotedScopeTable, QuotedAccumulatorTable),
             Rules, Sqls).
 
-avg_boot_refresh_sqls(RelPlans, HeadRef, Rules, QuotedAccumulatorTable, Sqls) :-
-    maplist(avg_boot_refresh_sql(RelPlans, HeadRef, QuotedAccumulatorTable),
+avg_boot_refresh_sqls(Mode, RelPlans, HeadRef, Rules, QuotedAccumulatorTable, Sqls) :-
+    maplist(avg_boot_refresh_sql(Mode, RelPlans, HeadRef, QuotedAccumulatorTable),
             Rules, Sqls).
 
-avg_refresh_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+avg_refresh_sql(Mode, RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
                 QuotedAccumulatorTable, Rule, Sql) :-
-    avg_delta_rows_sql(RelPlans, HeadRef, Rule, DeltaRowsSql),
+    avg_delta_rows_sql(Mode, RelPlans, HeadRef, Rule, DeltaRowsSql),
     avg_accumulator_scope_predicate(ScopeColumns, QuotedScopeTable, 'a', ScopeSql),
     avg_accumulator_update_sql(QuotedAccumulatorTable, ScopeColumns, DeltaRowsSql,
                                ScopeSql, Sql).
 
-avg_boot_refresh_sql(RelPlans, HeadRef, QuotedAccumulatorTable, Rule, Sql) :-
-    avg_body_rows_sql(RelPlans, HeadRef, Rule, BodyRowsSql),
+avg_boot_refresh_sql(Mode, RelPlans, HeadRef, QuotedAccumulatorTable, Rule, Sql) :-
+    avg_body_rows_sql(Mode, RelPlans, HeadRef, Rule, BodyRowsSql),
     avg_accumulator_boot_update_sql(QuotedAccumulatorTable, BodyRowsSql, Sql).
 
 avg_accumulator_seed_sql(['_all'], QuotedScopeTable,
@@ -2311,17 +2463,17 @@ avg_scope_seed_projection([Column | Rest], Position, [QuotedColumn | More]) :-
 % The body projection is deliberately a two-column relation: group key plus
 % numeric contribution. Keeping the projection explicit makes the accumulator
 % update independent of the public head's derived average column.
-avg_body_rows_sql(RelPlans, _HeadRef, (Head <- Body), Sql) :-
+avg_body_rows_sql(Mode, RelPlans, _HeadRef, (Head <- Body), Sql) :-
     aggregate_head_template(Head, Template),
     memberchk(agg(avg, ValueExpr), Template),
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
-    aggregate_group_exprs(Template, Bound, GroupExprs),
-    compile_expr(ValueExpr, Bound, ValueSql, ValueType),
+    compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
+    aggregate_group_exprs(Mode, Template, Bound, GroupExprs),
+    compile_expr(Mode, identity, ValueExpr, Bound, ValueSql, ValueType, _Encoding),
     memberchk(ValueType, [int, float]),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
@@ -2334,7 +2486,7 @@ avg_body_rows_sql(RelPlans, _HeadRef, (Head <- Body), Sql) :-
 % The delta path updates sum and count from the staged signed rows. This keeps
 % the source relation out of the maintenance query: the source scan belongs
 % only to boot, while each tick searches the delta rows for affected groups.
-avg_delta_rows_sql(RelPlans, _HeadRef, (Head <- Body), Sql) :-
+avg_delta_rows_sql(Mode, RelPlans, _HeadRef, (Head <- Body), Sql) :-
     aggregate_head_template(Head, Template),
     memberchk(agg(avg, ValueExpr), Template),
     body_ref_uses(Body, Uses),
@@ -2344,13 +2496,13 @@ avg_delta_rows_sql(RelPlans, _HeadRef, (Head <- Body), Sql) :-
     quote_ident(DeltaTable, QuotedDeltaTable),
     relplan_columns(RelPlans, DeltaRef, DeltaColumns),
     relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
-    compile_atom_args(DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
+    compile_atom_args(Mode, DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
                       Bound0, DeltaWhereParts),
     maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     JsonFromParts = [],
-    aggregate_group_exprs(Template, Bound, GroupExprs),
-    compile_expr(ValueExpr, Bound, ValueSql, ValueType),
+    aggregate_group_exprs(Mode, Template, Bound, GroupExprs),
+    compile_expr(Mode, identity, ValueExpr, Bound, ValueSql, ValueType, _Encoding),
     memberchk(ValueType, [int, float]),
     append([DeltaWhereTexts, GuardWhereTexts], WhereTexts0),
     avg_group_projection(GroupExprs, 1, GroupProjectionParts),
@@ -2533,7 +2685,7 @@ aggregate_scope_columns(RelPlans, HeadRef, [Rule | _], ScopeColumns, ScopeTypes)
 % by name (aggregate_group_not_delta_local) rather than silently seeding an
 % incomplete scope -- an UNDER-approximated scope would leave a stale
 % aggregate row behind with no delta at all.
-aggregate_scope_seed_sql(RelPlans, ScopeColumns, QuotedScopeTable, (Head <- Body),
+aggregate_scope_seed_sql(Mode, RelPlans, ScopeColumns, QuotedScopeTable, (Head <- Body),
                          SeedSql) :-
     aggregate_head_template(Head, Template),
     body_ref_uses(Body, Uses),
@@ -2543,10 +2695,10 @@ aggregate_scope_seed_sql(RelPlans, ScopeColumns, QuotedScopeTable, (Head <- Body
     quote_ident(DeltaTable, QuotedDeltaTable),
     relplan_columns(RelPlans, DeltaRef, DeltaColumns),
     relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
-    compile_atom_args(DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
+    compile_atom_args(Mode, DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
                       DeltaBound, DeltaWhereParts),
     maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
-    aggregate_scope_group_exprs(Template, DeltaBound, Head, GroupExprs),
+    aggregate_scope_group_exprs(Mode, Template, DeltaBound, Head, GroupExprs),
     atomic_list_concat(GroupExprs, ', ', GroupSql),
     maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
     atomic_list_concat(QuotedScopeColumns, ', ', ScopeColumnsSql),
@@ -2556,11 +2708,11 @@ aggregate_scope_seed_sql(RelPlans, ScopeColumns, QuotedScopeTable, (Head <- Body
            'INSERT OR IGNORE INTO ~w (~w) SELECT DISTINCT ~w FROM ~w d0 WHERE ~w',
            [QuotedScopeTable, ScopeColumnsSql, GroupSql, QuotedDeltaTable, WhereSql]).
 
-aggregate_scope_group_exprs(Template, DeltaBound, Head, GroupExprs) :-
+aggregate_scope_group_exprs(Mode, Template, DeltaBound, Head, GroupExprs) :-
     aggregate_group_positions(Template, Positions),
     ( Positions == []
     -> GroupExprs = ['0']
-    ;  catch(aggregate_group_exprs(Template, DeltaBound, GroupExprs),
+    ;  catch(aggregate_group_exprs(Mode, Template, DeltaBound, GroupExprs),
              unsupported_construct(unbound_head_var(_)),
              throw(unsupported_construct(aggregate_group_not_delta_local(Head))))
     ).
@@ -2583,7 +2735,7 @@ aggregate_delete_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
                QuotedScopeTable, HeadColumnsSql])
     ).
 
-aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
+aggregate_insert_scoped_sql(Mode, RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
                             (Head <- Body), InsertScopedSql) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
@@ -2593,10 +2745,10 @@ aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
-    aggregate_group_exprs(Template, Bound, GroupExprs),
+    compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
+    aggregate_group_exprs(Mode, Template, Bound, GroupExprs),
     maplist(quote_ident, ScopeColumns, QuotedScopeColumns),
     atomic_list_concat(QuotedScopeColumns, ', ', ScopeColumnsSql),
     ( ScopeColumns == ['_all']
@@ -2609,7 +2761,7 @@ aggregate_insert_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
            AllWhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
     atomic_list_concat(AllFromParts, ', ', FromSql),
-    aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts,
+    aggregate_select_statement(Mode, Head, Template, Bound, FromSql, AllWhereTexts,
                                SelectStatement),
     format(atom(InsertScopedSql), 'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
            [QuotedHeadTable, HeadColumnsSql, SelectStatement, HeadColumnsSql]).
@@ -2700,15 +2852,15 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
     atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
     format(atom(ClearSql), 'DELETE FROM ~w', [QuotedRefCountTable]),
     ( rules_read_head_recursively(HeadRef, Rules)
-    -> recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules,
+    -> recursive_ref_count_seed_sql(Mode, RelPlans, HeadRef, Rules,
                                   QuotedRefCountTable, HeadColumns,
                                   HeadColumnsSql, SeedSql),
-       level_expand_plan(RelPlans, HeadRef, Rules, ExpandPlan),
-       ( level_dred_plan(RelPlans, HeadRef, Rules, DredPlan0)
+       level_expand_plan(Mode, RelPlans, HeadRef, Rules, ExpandPlan),
+       ( level_dred_plan(Mode, RelPlans, HeadRef, Rules, DredPlan0)
        -> DredPlan = DredPlan0
        ;  DredPlan = none
        )
-    ;  counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
+    ;  counted_ref_count_seed_sql(Mode, RelPlans, Rules, QuotedRefCountTable,
                                 HeadColumnsSql, SeedSql),
        ExpandPlan = none,
        DredPlan = none
@@ -2765,21 +2917,21 @@ qualified_column_list(Columns, Alias, Sql) :-
             Parts),
     atomic_list_concat(Parts, ', ', Sql).
 
-counted_ref_count_seed_sql(RelPlans, Rules, QuotedRefCountTable,
+counted_ref_count_seed_sql(Mode, RelPlans, Rules, QuotedRefCountTable,
                          HeadColumnsSql, SeedSql) :-
-    maplist(level_ref_count_arm(RelPlans), Rules, RefCountArms),
+    maplist(level_ref_count_arm(Mode, RelPlans), Rules, RefCountArms),
     atomic_list_concat(RefCountArms, ' UNION ALL ', RefCountUnionSql),
     format(atom(SeedSql),
            'INSERT INTO ~w (~w, "__refcount") SELECT ~w, sum("__refcount") FROM (~w) GROUP BY ~w',
            [QuotedRefCountTable, HeadColumnsSql, HeadColumnsSql,
             RefCountUnionSql, HeadColumnsSql]).
 
-recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules, QuotedRefCountTable,
+recursive_ref_count_seed_sql(Mode, RelPlans, HeadRef, Rules, QuotedRefCountTable,
                            HeadColumns, HeadColumnsSql, SeedSql) :-
     partition(rule_reads_head(HeadRef), Rules, RecursiveRules, BaseRules),
     maplist(check_single_recursive_read(HeadRef), RecursiveRules),
-    maplist(level_recursive_arm(RelPlans), BaseRules, BaseArms0),
-    maplist(level_recursive_arm(RelPlans), RecursiveRules, RecursiveArms),
+    maplist(level_recursive_arm(Mode, RelPlans), BaseRules, BaseArms0),
+    maplist(level_recursive_arm(Mode, RelPlans), RecursiveRules, RecursiveArms),
     ( BaseArms0 == []
     -> empty_recursive_anchor(HeadColumns, EmptyAnchor),
        BaseArms = [EmptyAnchor]
@@ -2797,7 +2949,7 @@ recursive_ref_count_seed_sql(RelPlans, HeadRef, Rules, QuotedRefCountTable,
 
 % rx `expand` spelling of the recursive seed: same fixpoint as the CTE, and
 % the refCount table's WITHOUT ROWID key keeps downstream scan order identical.
-level_expand_plan(RelPlans, HeadRef, Rules,
+level_expand_plan(Mode, RelPlans, HeadRef, Rules,
                   expandplan(ClearASql, ClearBSql, SeedSqls,
                              HopABSql, HopBASql, AbsorbASql, AbsorbBSql)) :-
     partition(rule_reads_head(HeadRef), Rules, RecursiveRules, BaseRules),
@@ -2812,12 +2964,12 @@ level_expand_plan(RelPlans, HeadRef, Rules,
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     format(atom(ClearASql), 'DELETE FROM ~w', [QuotedTableA]),
     format(atom(ClearBSql), 'DELETE FROM ~w', [QuotedTableB]),
-    maplist(expand_seed_sql(RelPlans, QuotedTableA, HeadColumnsSql),
+    maplist(expand_seed_sql(Mode, RelPlans, QuotedTableA, HeadColumnsSql),
             BaseRules, SeedSqls),
-    expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedTableA,
+    expand_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedTableA,
                    QuotedTableB, QuotedRefCountTable, HeadColumns,
                    HeadColumnsSql, HopABSql),
-    expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedTableB,
+    expand_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedTableB,
                    QuotedTableA, QuotedRefCountTable, HeadColumns,
                    HeadColumnsSql, HopBASql),
     expand_absorb_sql(QuotedRefCountTable, QuotedTableA, HeadColumnsSql, AbsorbASql),
@@ -2828,20 +2980,20 @@ expand_table_name(Name/_Arity, a, TableName) :-
 expand_table_name(Name/_Arity, b, TableName) :-
     format(atom(TableName), '__expand_b_~w', [Name]).
 
-expand_seed_sql(RelPlans, QuotedWaveTable, HeadColumnsSql, Rule, SeedSql) :-
-    level_recursive_arm(RelPlans, Rule, BaseArm),
+expand_seed_sql(Mode, RelPlans, QuotedWaveTable, HeadColumnsSql, Rule, SeedSql) :-
+    level_recursive_arm(Mode, RelPlans, Rule, BaseArm),
     format(atom(SeedSql),
            'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM (~w)',
            [QuotedWaveTable, HeadColumnsSql, HeadColumnsSql, BaseArm]).
 
 % The WITH clause shadows the head's table name with the source wavefront, so
 % the recursive arm text is reused verbatim; only frontier rows feed the hop.
-expand_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedFromTable,
+expand_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedFromTable,
                QuotedIntoTable, QuotedRefCountTable, HeadColumns,
                HeadColumnsSql, HopSql) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
-    maplist(level_recursive_arm(RelPlans), RecursiveRules, RecursiveArms),
+    maplist(level_recursive_arm(Mode, RelPlans), RecursiveRules, RecursiveArms),
     atomic_list_concat(RecursiveArms, ' UNION ALL ', ArmsSql),
     qualified_equalities(HeadColumns, x, n, EqualityParts),
     atomic_list_concat(EqualityParts, ' AND ', EqualitySql),
@@ -2881,7 +3033,7 @@ dred_rule_admissible(Body) :-
     include(is_positive_use, Uses, PosUses),
     PosUses \== [].
 
-level_dred_plan(RelPlans, HeadRef, Rules,
+level_dred_plan(Mode, RelPlans, HeadRef, Rules,
                 dredplan(ClearPingSql, ClearPongSql, ClearConeSql,
                          AssertSeedSqls, AssertHopABSql, AssertHopBASql,
                          CommitASql, CommitBSql, ArrivalASql, ArrivalBSql,
@@ -2912,12 +3064,12 @@ level_dred_plan(RelPlans, HeadRef, Rules,
     dred_present_probe(HeadColumns, QuotedCone, ConePresentSql),
     findall(SeedSql,
             ( member(Rule, Rules),
-              dred_seed_sql(RelPlans, Rule, QuotedPing, HeadColumnsSql,
+              dred_seed_sql(Mode, RelPlans, Rule, QuotedPing, HeadColumnsSql,
                             HeadAbsentSql, 1, SeedSql) ),
             AssertSeedSqls),
-    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
+    dred_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
                  HeadColumnsSql, HeadAbsentSql, AssertHopABSql),
-    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
+    dred_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
                  HeadColumnsSql, HeadAbsentSql, AssertHopBASql),
     dred_commit_sql(QuotedHeadTable, QuotedPing, HeadColumnsSql, CommitASql),
     dred_commit_sql(QuotedHeadTable, QuotedPong, HeadColumnsSql, CommitBSql),
@@ -2925,12 +3077,12 @@ level_dred_plan(RelPlans, HeadRef, Rules,
     dred_arrival_sql(QuotedNew, QuotedPong, HeadColumnsSql, ArrivalBSql),
     findall(RetractSeedSql,
             ( member(Rule, Rules),
-              dred_seed_sql(RelPlans, Rule, QuotedPing, HeadColumnsSql,
+              dred_seed_sql(Mode, RelPlans, Rule, QuotedPing, HeadColumnsSql,
                             HeadPresentSql, -1, RetractSeedSql) ),
             DredSeedSqls),
-    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
+    dred_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
                  HeadColumnsSql, ConeAbsentSql, DredHopABSql),
-    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
+    dred_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
                  HeadColumnsSql, ConeAbsentSql, DredHopBASql),
     dred_commit_sql(QuotedCone, QuotedPing, HeadColumnsSql, ConeAbsorbASql),
     dred_commit_sql(QuotedCone, QuotedPong, HeadColumnsSql, ConeAbsorbBSql),
@@ -2944,12 +3096,12 @@ level_dred_plan(RelPlans, HeadRef, Rules,
            [QuotedHeadTable, HeadColumnsSql, HeadColumnsSql, QuotedCone]),
     findall(RederiveSql,
             ( member(Rule, Rules),
-              dred_rederive_seed_sql(RelPlans, Rule, QuotedPing, QuotedCone,
+              dred_rederive_seed_sql(Mode, RelPlans, Rule, QuotedPing, QuotedCone,
                                      HeadColumns, HeadColumnsSql, RederiveSql) ),
             RederiveSeedSqls),
-    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
+    dred_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedPing, QuotedPong,
                  HeadColumnsSql, ConePresentSql, ReviveHopABSql),
-    dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
+    dred_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedPong, QuotedPing,
                  HeadColumnsSql, ConePresentSql, ReviveHopBASql),
     dred_cone_drop_sql(QuotedCone, QuotedPing, HeadColumnsSql, ConeDropASql),
     dred_cone_drop_sql(QuotedCone, QuotedPong, HeadColumnsSql, ConeDropBSql),
@@ -2988,9 +3140,9 @@ dred_cone_drop_sql(QuotedCone, QuotedWaveTable, HeadColumnsSql, DropSql) :-
 
 % One seed per (rule, changed atom position). At sign -1 the OTHER atoms read
 % live-or-retracted: a derivation using two retracted atoms hides otherwise.
-dred_seed_sql(RelPlans, Rule, QuotedPing, HeadColumnsSql, ProbeSql, Sign,
+dred_seed_sql(Mode, RelPlans, Rule, QuotedPing, HeadColumnsSql, ProbeSql, Sign,
               SeedSql) :-
-    level_recursive_arm_parts(RelPlans, Rule, PosUses, PosFromParts,
+    level_recursive_arm_parts(Mode, RelPlans, Rule, PosUses, PosFromParts,
                               JsonFromParts, WhereTexts, SelectSql, _RawExprs),
     rule_head_ref(Rule, HeadRef),
     nth0(Index, PosUses, use(Ref, _, pos, _)),
@@ -3063,19 +3215,19 @@ dred_column_list(RelPlans, Ref, ColumnsSql) :-
 
 % ProbeSql is what stops the walk: head-absent for assert, cone-absent for
 % over-delete, cone-present for revive.
-dred_hop_sql(RelPlans, HeadRef, RecursiveRules, QuotedFrontier, QuotedInto,
+dred_hop_sql(Mode, RelPlans, HeadRef, RecursiveRules, QuotedFrontier, QuotedInto,
              HeadColumnsSql, ProbeSql, HopSql) :-
     findall(ArmSql,
             ( member(Rule, RecursiveRules),
-              dred_hop_arm(RelPlans, HeadRef, Rule, QuotedFrontier, ArmSql) ),
+              dred_hop_arm(Mode, RelPlans, HeadRef, Rule, QuotedFrontier, ArmSql) ),
             ArmSqls),
     atomic_list_concat(ArmSqls, ' UNION ALL ', ArmsSql),
     format(atom(HopSql),
            'INSERT OR IGNORE INTO ~w (~w) SELECT ~w FROM (~w) x WHERE ~w',
            [QuotedInto, HeadColumnsSql, HeadColumnsSql, ArmsSql, ProbeSql]).
 
-dred_hop_arm(RelPlans, HeadRef, Rule, QuotedFrontier, ArmSql) :-
-    level_recursive_arm_parts(RelPlans, Rule, PosUses, PosFromParts,
+dred_hop_arm(Mode, RelPlans, HeadRef, Rule, QuotedFrontier, ArmSql) :-
+    level_recursive_arm_parts(Mode, RelPlans, Rule, PosUses, PosFromParts,
                               JsonFromParts, WhereTexts, SelectSql, _RawExprs),
     nth0(SelfIndex, PosUses, use(HeadRef, _, pos, _)),
     !,
@@ -3099,9 +3251,9 @@ dred_replace_nth0(Index, List, Replacement, Replaced) :-
 
 % Cone-driven, and written as a flat join rather than a wrapped subquery so
 % sqlite can start from the cone instead of materializing the whole arm.
-dred_rederive_seed_sql(RelPlans, Rule, QuotedPing, QuotedCone, HeadColumns,
+dred_rederive_seed_sql(Mode, RelPlans, Rule, QuotedPing, QuotedCone, HeadColumns,
                        HeadColumnsSql, RederiveSql) :-
-    level_recursive_arm_parts(RelPlans, Rule, _PosUses, PosFromParts,
+    level_recursive_arm_parts(Mode, RelPlans, Rule, _PosUses, PosFromParts,
                               JsonFromParts, WhereTexts, SelectSql, RawExprs),
     append(PosFromParts, JsonFromParts, ArmFromParts),
     format(atom(ConeFrom), '~w c', [QuotedCone]),
@@ -3126,7 +3278,7 @@ level_fixpoint_ir(Mode, RelPlans, HeadRef, Rules,
                   fixpointir(Storage, Assert, Dred, Revive, Expand)) :-
     dred_plan_admissible(Rules),
     fixpoint_ir_columns(RelPlans, HeadRef, Columns, ColumnTypes),
-    maplist(ir_rule_arm(RelPlans), Rules, AllParts),
+    maplist(ir_rule_arm(Mode, RelPlans), Rules, AllParts),
     include(ir_parts_read_head(HeadRef), AllParts, RecursiveParts),
     RecursiveParts \== [],
     exclude(ir_parts_read_head(HeadRef), AllParts, BaseParts),
@@ -3295,13 +3447,13 @@ ir_rel_sources(PosUses, Sources) :-
 
 % Reads the SAME Bound and where-parts compile_positive_uses/7 hands
 % level_recursive_arm_parts/8; anything outside the grammar fails the head.
-ir_rule_arm(RelPlans, Rule, armparts(PosUses, Equalities, Filters, Project)) :-
+ir_rule_arm(Mode, RelPlans, Rule, armparts(PosUses, Equalities, Filters, Project)) :-
     Rule = (Head <- Body),
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     conjunction_goals(Body, AllGoals),
     \+ ( member(Goal, AllGoals), is_decode_goal(Goal) ),
-    compile_positive_uses(RelPlans, PosUses, 0, [], Bound, _FromParts,
+    compile_positive_uses(Mode, RelPlans, PosUses, 0, [], Bound, _FromParts,
                           WhereParts),
     ir_column_dict(RelPlans, PosUses, 0, Dict),
     ir_bound(Bound, Dict, IrBound0),
@@ -3334,7 +3486,7 @@ ir_dict_lookup([ircol(Key, Ir) | Rest], ColumnExpr, Found) :-
 % A VARIABLE outside the expression grammar refuses the arm; a compound key is
 % the reference-identity slot, and an arm that reads one refuses at ir_expr/4.
 ir_bound([], _, []).
-ir_bound([Key-typed(Sql, Type) | Rest], Dict, IrBound) :-
+ir_bound([Key-typed(Sql, Type, _) | Rest], Dict, IrBound) :-
     (   ir_dict_lookup(Dict, Sql, Ir)
     ->  IrBound = [Key-irtyped(Ir, Type) | More]
     ;   nonvar(Key),
@@ -3348,7 +3500,7 @@ ir_atom_conditions([pair(Left, Right) | Rest], Dict,
     ir_dict_lookup(Dict, Left, IrLeft),
     ir_dict_lookup(Dict, Right, IrRight),
     ir_atom_conditions(Rest, Dict, Equalities, Filters).
-ir_atom_conditions([lit(Left, Value) | Rest], Dict, Equalities,
+ir_atom_conditions([lit(Left, Value, _) | Rest], Dict, Equalities,
                    [eq_lit(IrLeft, Literal) | Filters]) :-
     ir_dict_lookup(Dict, Left, IrLeft),
     ir_literal(Value, Literal),
@@ -3456,8 +3608,8 @@ null_column_expr(Column, Expr) :-
     quote_ident(Column, QuotedColumn),
     format(atom(Expr), 'NULL AS ~w', [QuotedColumn]).
 
-level_recursive_arm(RelPlans, Rule, RecursiveArm) :-
-    level_recursive_arm_parts(RelPlans, Rule, _PosUses, PosFromParts,
+level_recursive_arm(Mode, RelPlans, Rule, RecursiveArm) :-
+    level_recursive_arm_parts(Mode, RelPlans, Rule, _PosUses, PosFromParts,
                               JsonFromParts, AllWhereTexts, SelectSql,
                               _RawExprs),
     append(PosFromParts, JsonFromParts, AllFromParts),
@@ -3472,38 +3624,40 @@ level_recursive_arm(RelPlans, Rule, RecursiveArm) :-
 
 % PosFromParts stays index-aligned with PosUses: the plans below swap ONE entry
 % for a delta or wavefront read. RawExprs is the head value list, alias-free.
-level_recursive_arm_parts(RelPlans, Rule, PosUses, PosFromParts, JsonFromParts,
+level_recursive_arm_parts(Mode, RelPlans, Rule, PosUses, PosFromParts, JsonFromParts,
                           AllWhereTexts, SelectSql, RawExprs) :-
     Rule = (Head <- Body),
     rule_head_ref(Rule, HeadRef),
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    compile_positive_uses(RelPlans, PosUses, [], Bound0, PosFromParts,
+    compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0, PosFromParts,
                           PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
-    head_select_list(Head, Bound, HeadColumns, SelectExprs),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, _BuiltValues),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    head_select_list(Head, Bound, none, RawExprs).
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, RawExprs, _).
 
-level_ref_count_arm(RelPlans, Rule, RefCountArm) :-
+level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm) :-
     Rule = (Head <- Body),
     rule_head_ref(Rule, HeadRef),
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
     atomic_list_concat(AllFromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
-    head_select_list(Head, Bound, HeadColumns, AliasedSelectExprs),
-    ref_count_group_exprs(Head, Bound, GroupExprs),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, _BuiltValues),
+    ref_count_group_exprs(Mode, Head, Bound, GroupExprs),
     atomic_list_concat(AliasedSelectExprs, ', ', SelectSql),
     atomic_list_concat(GroupExprs, ', ', GroupSql),
     ( AllWhereTexts == []
@@ -3523,12 +3677,12 @@ level_ref_count_arm(RelPlans, Rule, RefCountArm) :-
 % atom, and compound head expression retains its existing emitted SQL bytes.
 % Shared by the ref-count arm and both aggregate grouping arms
 % (scoped-delta insert + recompute) so the SQLite grammar fact lives once.
-ref_count_group_exprs(Head, Bound, GroupExprs) :-
+ref_count_group_exprs(Mode, Head, Bound, GroupExprs) :-
     Head =.. [_ | Args],
-    maplist(group_expr(Bound), Args, GroupExprs).
+    maplist(group_expr(Mode, Bound), Args, GroupExprs).
 
-group_expr(Bound, Arg, GroupExpr) :-
-    compile_expr(Arg, Bound, Sql, _Type),
+group_expr(Mode, Bound, Arg, GroupExpr) :-
+    compile_expr(Mode, identity, Arg, Bound, Sql, _Type, _Encoding),
     ( sql_bare_integer(Sql)
     -> format(atom(GroupExpr), '(~w + 0)', [Sql])
     ;  GroupExpr = Sql
@@ -3551,28 +3705,38 @@ qualified_equalities([Column | Rest], LeftAlias, RightAlias,
            [LeftAlias, QuotedColumn, RightAlias, QuotedColumn]),
     qualified_equalities(Rest, LeftAlias, RightAlias, More).
 
-level_insert_sql(RelPlans, HeadRef, (Head <- Body), InsertSql) :-
+% Statements, not one statement: an arm that builds a string owes the dictionary
+% an INSERT before the row insert reads an id back out of it (§5.7.1).
+level_insert_statements(Mode, RelPlans, HeadRef, Rule, Statements) :-
+    level_insert_sql(Mode, RelPlans, HeadRef, Rule, InsertSql, InternSqls),
+    append(InternSqls, [InsertSql], Statements).
+
+level_insert_sql(Mode, RelPlans, HeadRef, (Head <- Body), InsertSql, InternSqls) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
     ( PosUses == [] -> throw(unsupported_construct(level_rule_no_positive_body(HeadRef))) ; true ),
-    compile_positive_uses(RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
+    compile_positive_uses(Mode, RelPlans, PosUses, [], Bound0, FromParts, PosWhereTexts),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
     atomic_list_concat(AllFromParts, ', ', FromSql),
     ( aggregate_head_template(Head, Template)
-    -> aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement)
-    ;  head_select_list(Head, Bound, none, SelectExprs),
+    -> aggregate_select_statement(Mode, Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement),
+       InternSqls = []
+    ;  head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues),
        atomic_list_concat(SelectExprs, ', ', SelectSql),
        ( AllWhereTexts == []
-       -> format(atom(SelectStatement), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
+       -> WhereSql = none,
+          format(atom(SelectStatement), 'SELECT ~w FROM ~w', [SelectSql, FromSql])
        ; atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
          format(atom(SelectStatement), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
-       )
+       ),
+       intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls)
     ),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
@@ -3593,13 +3757,13 @@ level_insert_sql(RelPlans, HeadRef, (Head <- Body), InsertSql) :-
 % later comparison may read, which is the same left-to-right obligation
 % engine.pl's solve/2 has and the same order compile_positive_uses/6 ->
 % guards already establishes one level up.
-compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts) :-
+compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts) :-
     conjunction_goals(Body, AllGoals),
     include(is_decode_goal, AllGoals, DecodeGoals),
     body_guard_goals(Body, GuardGoals),
     compile_json_decodes(DecodeGoals, 0, _, Bound0, Bound1,
                          JsonFromParts, DecodeWhereTexts),
-    compile_guard_goals(GuardGoals, Bound1, Bound, OtherWhereTexts),
+    compile_guard_goals(Mode, GuardGoals, Bound1, Bound, OtherWhereTexts),
     append(DecodeWhereTexts, OtherWhereTexts, GuardWhereTexts).
 
 % ═══ decode/2 over a `json` column : json1 SQL ══════════════════════════════
@@ -3659,7 +3823,7 @@ compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts) :-
 compile_json_decodes([], Index, Index, Bound, Bound, [], []).
 compile_json_decodes([decode(Source, Pattern) | Rest], Index0, Index,
                      Bound0, Bound, FromParts, WhereTexts) :-
-    (   bound_lookup(Bound0, Source, typed(SourceSql, SourceType))
+    (   bound_lookup(Bound0, Source, typed(SourceSql, SourceType, _))
     ->  true
     ;   throw(unsupported_construct(decode_source_not_bound(Source)))
     ),
@@ -3712,15 +3876,16 @@ json_path_segment(Key, Segment) :-
 json_pattern_sql(Pattern, Position, Index, Index, Bound0, Bound, [], WhereTexts) :-
     var(Pattern), !,
     json_value_sql(Position, ValueSql),
-    (   bound_lookup(Bound0, Pattern, typed(Existing, _))
+    (   bound_lookup(Bound0, Pattern, typed(Existing, _, ExistingEncoding))
     ->  Bound = Bound0,
-        format(atom(Equality), '~w = ~w', [ValueSql, Existing]),
+        aligned_pair(direct, ValueSql, ExistingEncoding, Existing, AlignedValue, AlignedExisting),
+        format(atom(Equality), '~w = ~w', [AlignedValue, AlignedExisting]),
         WhereTexts = [Equality]
     ;   % text, not json: this is the same reading compile_sub_args/7 already
         % gives a destructured value -- json_extract's result carries no
         % declared column type, so calling it text is what lets it flow into
         % an ordinary text head column without a cross-type join refusal.
-        Bound = [Pattern-typed(ValueSql, text) | Bound0],
+        Bound = [Pattern-typed(ValueSql, text, direct) | Bound0],
         format(atom(NotNull), '~w IS NOT NULL', [ValueSql]),
         WhereTexts = [NotNull]
     ).
@@ -3748,11 +3913,12 @@ json_pattern_sql(Typed, Position, Index, Index, Bound0, Bound, [], WhereTexts) :
     json_value_sql(Position, ValueSql),
     json_type_sql(Position, TypeSql),
     format(atom(TypeGuard), '~w = ''~w''', [TypeSql, JsonTypeName]),
-    (   bound_lookup(Bound0, Hole, typed(Existing, _))
+    (   bound_lookup(Bound0, Hole, typed(Existing, _, ExistingEncoding))
     ->  Bound = Bound0,
-        format(atom(Equality), '~w = ~w', [ValueSql, Existing]),
+        aligned_pair(direct, ValueSql, ExistingEncoding, Existing, AlignedValue, AlignedExisting),
+        format(atom(Equality), '~w = ~w', [AlignedValue, AlignedExisting]),
         WhereTexts = [TypeGuard, Equality]
-    ;   Bound = [Hole-typed(ValueSql, Type) | Bound0],
+    ;   Bound = [Hole-typed(ValueSql, Type, direct) | Bound0],
         WhereTexts = [TypeGuard]
     ).
 % The empty object: open with no members, so it asserts object-ness and
@@ -3838,11 +4004,12 @@ json_member_sql($(KeyHole), Sub, Position, Index0, Index, Bound0, Bound,
     format(atom(MemberBase), '~w.value', [Alias]),
     format(atom(MemberType), '~w.type', [Alias]),
     Index1 is Index0 + 1,
-    (   bound_lookup(Bound0, KeyHole, typed(ExistingKey, _))
+    (   bound_lookup(Bound0, KeyHole, typed(ExistingKey, _, ExistingKeyEncoding))
     ->  Bound1 = Bound0,
-        format(atom(KeyText), '~w = ~w', [KeySql, ExistingKey]),
+        aligned_pair(direct, KeySql, ExistingKeyEncoding, ExistingKey, AlignedKey, AlignedExistingKey),
+        format(atom(KeyText), '~w = ~w', [AlignedKey, AlignedExistingKey]),
         KeyWhere = [KeyText]
-    ;   Bound1 = [KeyHole-typed(KeySql, text) | Bound0],
+    ;   Bound1 = [KeyHole-typed(KeySql, text, direct) | Bound0],
         KeyWhere = []
     ),
     json_pattern_sql(Sub, jsonpos(MemberBase, ['$'], MemberType),
@@ -3905,11 +4072,11 @@ brace_pattern_pairs(Key: Sub, [Key-Sub]).
 %   min/max   min_list/2 and max_list/2 accept NUMBERS ONLY -- they fail
 %             outright on an atom -- so a non-int aggregated expression is a
 %             named refusal here rather than a silent lexicographic min.
-aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement) :-
+aggregate_select_statement(Mode, Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement) :-
     Head =.. [_ | Args],
-    aggregate_select_exprs(Template, Args, Bound, SelectExprs),
+    aggregate_select_exprs(Mode, Template, Args, Bound, SelectExprs),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    aggregate_group_exprs(Template, Bound, GroupExprs),
+    aggregate_group_exprs(Mode, Template, Bound, GroupExprs),
     ( AllWhereTexts == []
     -> WhereClause = ''
     ;  atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
@@ -3924,60 +4091,60 @@ aggregate_select_statement(Head, Template, Bound, FromSql, AllWhereTexts, Select
            'SELECT ~w FROM ~w~w~w HAVING count(*) > 0',
            [SelectSql, FromSql, WhereClause, GroupClause]).
 
-aggregate_select_exprs([], [], _, []).
-aggregate_select_exprs([TemplateArg | RestTemplate], [_Arg | RestArgs], Bound,
+aggregate_select_exprs(_, [], [], _, []).
+aggregate_select_exprs(Mode, [TemplateArg | RestTemplate], [_Arg | RestArgs], Bound,
                        [Sql | RestSqls]) :-
-    aggregate_select_expr(TemplateArg, Bound, Sql),
-    aggregate_select_exprs(RestTemplate, RestArgs, Bound, RestSqls).
+    aggregate_select_expr(Mode, TemplateArg, Bound, Sql),
+    aggregate_select_exprs(Mode, RestTemplate, RestArgs, Bound, RestSqls).
 
-aggregate_select_expr(plain(Expr), Bound, Sql) :- !,
-    compile_expr(Expr, Bound, Sql, _Type).
-aggregate_select_expr(agg(count, _Expr), _Bound, 'count(*)') :- !.
-aggregate_select_expr(agg(sum, Expr), Bound, Sql) :- !,
-    compile_aggregate_number_operand(sum, Expr, Bound, InnerSql, _),
+aggregate_select_expr(Mode, plain(Expr), Bound, Sql) :- !,
+    compile_expr(Mode, identity, Expr, Bound, Sql, _Type, _Encoding).
+aggregate_select_expr(_, agg(count, _Expr), _Bound, 'count(*)') :- !.
+aggregate_select_expr(Mode, agg(sum, Expr), Bound, Sql) :- !,
+    compile_aggregate_number_operand(Mode, sum, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'sum(~w)', [InnerSql]).
-aggregate_select_expr(agg(avg, Expr), Bound, Sql) :- !,
-    compile_aggregate_number_operand(avg, Expr, Bound, InnerSql, _),
+aggregate_select_expr(Mode, agg(avg, Expr), Bound, Sql) :- !,
+    compile_aggregate_number_operand(Mode, avg, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'avg(~w)', [InnerSql]).
-aggregate_select_expr(agg(min, Expr), Bound, Sql) :- !,
-    compile_aggregate_number_operand(min, Expr, Bound, InnerSql, _),
+aggregate_select_expr(Mode, agg(min, Expr), Bound, Sql) :- !,
+    compile_aggregate_number_operand(Mode, min, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'min(~w)', [InnerSql]).
-aggregate_select_expr(agg(max, Expr), Bound, Sql) :- !,
-    compile_aggregate_number_operand(max, Expr, Bound, InnerSql, _),
+aggregate_select_expr(Mode, agg(max, Expr), Bound, Sql) :- !,
+    compile_aggregate_number_operand(Mode, max, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'max(~w)', [InnerSql]).
-aggregate_select_expr(agg(json_group_array, Expr), Bound, Sql) :- !,
-    compile_expr(Expr, Bound, ValueSql, ValueType),
+aggregate_select_expr(Mode, agg(json_group_array, Expr), Bound, Sql) :- !,
+    compile_expr(Mode, value, Expr, Bound, ValueSql, ValueType, _Encoding),
     json_group_array_value_sql(ValueType, ValueSql, AggregateValueSql),
     format(atom(Sql), 'json_group_array(~w ORDER BY ~w)',
            [AggregateValueSql, ValueSql]).
-aggregate_select_expr(agg(json_group_array_ordered, ValueExpr-OrdinalExpr),
+aggregate_select_expr(Mode, agg(json_group_array_ordered, ValueExpr-OrdinalExpr),
                       Bound, Sql) :- !,
-    compile_expr(ValueExpr, Bound, ValueSql, ValueType),
-    compile_aggregate_ordinal_operand(OrdinalExpr, Bound, OrdinalSql),
+    compile_expr(Mode, value, ValueExpr, Bound, ValueSql, ValueType, _Encoding),
+    compile_aggregate_ordinal_operand(Mode, OrdinalExpr, Bound, OrdinalSql),
     json_group_array_value_sql(ValueType, ValueSql, AggregateValueSql),
     format(atom(Sql), 'json_group_array(~w ORDER BY ~w)',
            [AggregateValueSql, OrdinalSql]).
-aggregate_select_expr(agg(group_concat(Sep), Expr), Bound, Sql) :- !,
-    compile_expr(Expr, Bound, ValueSql, _),
+aggregate_select_expr(Mode, agg(group_concat(Sep), Expr), Bound, Sql) :- !,
+    compile_expr(Mode, value, Expr, Bound, ValueSql, _, _Encoding),
     compile_aggregate_text_separator(Sep, SeparatorSql),
     format(atom(Sql), 'group_concat(~w, ~w ORDER BY ~w)',
            [ValueSql, SeparatorSql, ValueSql]).
-aggregate_select_expr(agg(group_concat_ordered(Sep), ValueExpr-OrdinalExpr),
+aggregate_select_expr(Mode, agg(group_concat_ordered(Sep), ValueExpr-OrdinalExpr),
                       Bound, Sql) :- !,
-    compile_expr(ValueExpr, Bound, ValueSql, _),
+    compile_expr(Mode, value, ValueExpr, Bound, ValueSql, _, _Encoding),
     compile_aggregate_text_separator(Sep, SeparatorSql),
-    compile_aggregate_ordinal_operand(OrdinalExpr, Bound, OrdinalSql),
+    compile_aggregate_ordinal_operand(Mode, OrdinalExpr, Bound, OrdinalSql),
     format(atom(Sql), 'group_concat(~w, ~w ORDER BY ~w)',
            [ValueSql, SeparatorSql, OrdinalSql]).
-aggregate_select_expr(agg(Kind, _), _, _) :-
+aggregate_select_expr(_, agg(Kind, _), _, _) :-
     throw(unsupported_construct(aggregate_kind_not_lowered(Kind))).
 
 json_group_array_value_sql(json, ValueSql, AggregateValueSql) :- !,
     format(atom(AggregateValueSql), 'json(~w)', [ValueSql]).
 json_group_array_value_sql(_, ValueSql, ValueSql).
 
-compile_aggregate_ordinal_operand(Expr, Bound, Sql) :-
-    compile_expr(Expr, Bound, Sql, Type),
+compile_aggregate_ordinal_operand(Mode, Expr, Bound, Sql) :-
+    compile_expr(Mode, identity, Expr, Bound, Sql, Type, _Encoding),
     ( Type == int
     -> true
     ;  throw(unsupported_construct(aggregate_ordinal_not_int(Expr, Type)))
@@ -3989,16 +4156,16 @@ compile_aggregate_text_separator(Sep, Sql) :-
     ;  throw(unsupported_construct(aggregate_separator_not_constant(Sep)))
     ).
 
-compile_aggregate_number_operand(Kind, Expr, Bound, Sql, Type) :-
-    compile_expr(Expr, Bound, Sql, Type),
+compile_aggregate_number_operand(Mode, Kind, Expr, Bound, Sql, Type) :-
+    compile_expr(Mode, identity, Expr, Bound, Sql, Type, _Encoding),
     ( memberchk(Type, [int, float])
     -> true
     ;  throw(unsupported_construct(aggregate_operand_not_number(Kind, Expr, Type)))
     ).
 
-aggregate_group_exprs(Template, Bound, GroupExprs) :-
+aggregate_group_exprs(Mode, Template, Bound, GroupExprs) :-
     findall(GroupExpr,
-            ( member(plain(Expr), Template), group_expr(Bound, Expr, GroupExpr) ),
+            ( member(plain(Expr), Template), group_expr(Mode, Bound, Expr, GroupExpr) ),
             GroupExprs).
 
 % The head columns an aggregate rule GROUPS BY, as SQL text, reused by the
@@ -4008,31 +4175,31 @@ aggregate_group_positions(Template, Positions) :-
             ( nth1(Position, Template, TemplateArg), TemplateArg = plain(_) ),
             Positions).
 
-level_delta_insert_sql(RelPlans, HeadRef, Rules, DeltaInsertSql) :-
+level_delta_insert_sql(Mode, RelPlans, HeadRef, Rules, DeltaInsertSql) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
-    level_rules_delta_arms(RelPlans, Rules, DeltaArms),
+    level_rules_delta_arms(Mode, RelPlans, Rules, DeltaArms),
     atomic_list_concat(DeltaArms, ' UNION ALL ', DeltaSelectSql),
     format(atom(DeltaInsertSql),
            'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
            [QuotedHeadTable, HeadColumnsSql, DeltaSelectSql, HeadColumnsSql]).
 
-level_rules_delta_arms(_, [], []).
-level_rules_delta_arms(RelPlans, [Rule | Rest], DeltaArms) :-
-    level_rule_delta_arms(RelPlans, Rule, RuleArms),
-    level_rules_delta_arms(RelPlans, Rest, RestArms),
+level_rules_delta_arms(_, _, [], []).
+level_rules_delta_arms(Mode, RelPlans, [Rule | Rest], DeltaArms) :-
+    level_rule_delta_arms(Mode, RelPlans, Rule, RuleArms),
+    level_rules_delta_arms(Mode, RelPlans, Rest, RestArms),
     append(RuleArms, RestArms, DeltaArms).
 
-level_rule_delta_arms(RelPlans, (Head <- Body), DeltaArms) :-
+level_rule_delta_arms(Mode, RelPlans, (Head <- Body), DeltaArms) :-
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    level_positive_delta_arms(RelPlans, Head, Body, PosUses, NegUses, PosUses, DeltaArms).
+    level_positive_delta_arms(Mode, RelPlans, Head, Body, PosUses, NegUses, PosUses, DeltaArms).
 
-level_positive_delta_arms(_, _, _, [], _, _, []).
+level_positive_delta_arms(_, _, _, _, [], _, _, []).
 % STRUCT-AS-ROWS: a dictionary atom gets NO delta arm, and needs none. A
 % dictionary row is created only by interning a value some ARRIVING row
 % carries, and interning runs before that tick's arrival statements, so every
@@ -4042,16 +4209,16 @@ level_positive_delta_arms(_, _, _, [], _, _, []).
 % create (a dictionary is storage plane: no delta table, no frontier, no
 % boundary), so this is the same fact stated twice: dictionaries do not move
 % on their own.
-level_positive_delta_arms(RelPlans, Head, Body, [_ | RestPositions], NegUses, PosUses,
+level_positive_delta_arms(Mode, RelPlans, Head, Body, [_ | RestPositions], NegUses, PosUses,
                           Arms) :-
     length(RestPositions, RemainingCount),
     length(PosUses, PositiveCount),
     Position is PositiveCount - RemainingCount - 1,
     nth0_select(Position, PosUses, DeltaUse, OtherPosUses),
-    level_positive_delta_arms(RelPlans, Head, Body, RestPositions, NegUses, PosUses, RestArms),
+    level_positive_delta_arms(Mode, RelPlans, Head, Body, RestPositions, NegUses, PosUses, RestArms),
     (   dictionary_use(DeltaUse)
     ->  Arms = RestArms
-    ;   level_delta_select_arm(RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses, DeltaArm),
+    ;   level_delta_select_arm(Mode, RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses, DeltaArm),
         Arms = [DeltaArm | RestArms]
     ).
 
@@ -4072,23 +4239,25 @@ nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
 % oracle tick 3 is empty, actual added the row back. Every statement family
 % that reproduces a rule body has to reproduce its guards; compile_body_guards/4
 % is the single place that happens.
-level_delta_select_arm(RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos, _),
+level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos, _),
                        OtherPosUses, NegUses, DeltaArm) :-
     frontier_table_name(DeltaRef, FrontierTable),
     quote_ident(FrontierTable, QuotedFrontierTable),
+    rel_ref(Head, HeadRef),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     relplan_columns(RelPlans, DeltaRef, DeltaColumns),
     relplan_column_types(RelPlans, DeltaRef, DeltaColumnTypes),
-    compile_atom_args(DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
+    compile_atom_args(Mode, DeltaArgs, DeltaColumns, DeltaColumnTypes, d0, [],
                       DeltaFieldBound, DeltaWhereParts),
     delta_reference_identity(RelPlans, DeltaRef, DeltaArgs, DeltaColumns,
                              DeltaFieldBound, DeltaBound,
                              IdentityFromParts, IdentityWhereTexts),
     maplist(where_text, DeltaWhereParts, DeltaWhereTexts),
-    compile_positive_uses(RelPlans, OtherPosUses, DeltaBound, Bound0,
+    compile_positive_uses(Mode, RelPlans, OtherPosUses, DeltaBound, Bound0,
                           OtherFromParts, OtherWhereTexts),
-    compile_body_guards(Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
-    compile_negative_uses(RelPlans, NegUses, Bound, NegWhereTexts),
-    head_select_list(Head, Bound, none, SelectExprs),
+    compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
+    compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, _BuiltValues),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w d0', [QuotedFrontierTable]),
     append([[DeltaFrom], IdentityFromParts, OtherFromParts, JsonFromParts],
@@ -4114,7 +4283,7 @@ delta_reference_identity(RelPlans, Name/Arity, Args, Columns,
             Equalities),
     length(Args, Arity),
     Atom =.. [Name | Args],
-    Bound = [Atom-typed('r0."__id"', ref(Name)) | Bound0].
+    Bound = [Atom-typed('r0."__id"', ref(Name), direct) | Bound0].
 delta_reference_identity(_, _, _, _, Bound, Bound, [], []).
 
 is_positive_use(use(_, _, pos, _)).
@@ -4407,15 +4576,15 @@ canonical_column_expr(Column, Expr) :-
 % it runs `boot` after DDL and before the tick fold, confirmed by that
 % script's own header comment.
 
-boot_seed_statement(Decls, Types, relplan(Ref, log, Columns, _, ColumnTypes), Initial, Statements) :- !,
-    boot_rows_statements(Decls, Types, 'INSERT INTO', Ref, Columns, ColumnTypes, Initial, Statements).
-boot_seed_statement(Decls, Types, relplan(Ref, set, Columns, _, ColumnTypes), Initial, Statements) :-
-    boot_rows_statements(Decls, Types, 'INSERT OR IGNORE INTO', Ref, Columns, ColumnTypes, Initial, Statements).
+boot_seed_statement(Mode, Decls, Types, relplan(Ref, log, Columns, _, ColumnTypes), Initial, Statements) :- !,
+    boot_rows_statements(Mode, Decls, Types, 'INSERT INTO', Ref, Columns, ColumnTypes, Initial, Statements).
+boot_seed_statement(Mode, Decls, Types, relplan(Ref, set, Columns, _, ColumnTypes), Initial, Statements) :-
+    boot_rows_statements(Mode, Decls, Types, 'INSERT OR IGNORE INTO', Ref, Columns, ColumnTypes, Initial, Statements).
 
-boot_rows_statements(Decls, Types, Insert, Ref, Columns, ColumnTypes, Initial, Statements) :-
+boot_rows_statements(Mode, Decls, Types, Insert, Ref, Columns, ColumnTypes, Initial, Statements) :-
     findall(Group,
             ( member(Row, Initial), rel_ref(Row, Ref), Row =.. [_ | Values],
-              boot_row_statements(Decls, Types, Insert, Ref, Columns, ColumnTypes, Values, Group) ),
+              boot_row_statements(Mode, Decls, Types, Insert, Ref, Columns, ColumnTypes, Values, Group) ),
             Groups),
     append(Groups, Statements).
 
@@ -4426,27 +4595,29 @@ boot_rows_statements(Decls, Types, Insert, Ref, Columns, ColumnTypes, Initial, S
 % ref parameter is a `SELECT "__id" ... WHERE <declared key>` subquery rather
 % than a bind. Arrivals take the same shape at runtime; this is the same plan
 % with the values known at compile time.
-boot_row_statements(Decls, Types, Insert, Ref, Columns, ColumnTypes, Values, Statements) :-
+boot_row_statements(Mode, Decls, Types, Insert, Ref, Columns, ColumnTypes, Values, Statements) :-
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-    boot_column_slots(Decls, Types, ColumnTypes, Values, Descs, InternStatements),
+    boot_column_slots(Mode, Decls, Types, ColumnTypes, Values, Descs, InternStatements),
     maplist(slot_desc_slot, Descs, Slots),
     slot_desc_params(Descs, Params),
     atomic_list_concat(Slots, ', ', SlotsSql),
     format(atom(Sql), '~w ~w (~w) VALUES (~w)', [Insert, QuotedTable, ColumnsSql, SlotsSql]),
     append(InternStatements, [bootstmt(Sql, Params)], Statements).
 
-boot_column_slots(_, _, [], [], [], []).
-boot_column_slots(Decls, Types, [ColumnType | ColumnTypes], [Value | Values],
+boot_column_slots(_, _, _, [], [], [], []).
+boot_column_slots(Mode, Decls, Types, [ColumnType | ColumnTypes], [Value | Values],
                   [Desc | Descs], Statements) :-
-    boot_column_slot(Decls, Types, ColumnType, Value, Desc, Group),
-    boot_column_slots(Decls, Types, ColumnTypes, Values, Descs, More),
+    boot_column_slot(Mode, Decls, Types, ColumnType, Value, Desc, Group),
+    boot_column_slots(Mode, Decls, Types, ColumnTypes, Values, Descs, More),
     append(Group, More, Statements).
 
-boot_column_slot(Decls, Types, ColumnType, Value, slot_desc(Slot, Params), Statements) :-
+boot_column_slot(Mode, Decls, Types, ColumnType, Value, slot_desc(Slot, Params), Statements) :-
     (   ColumnType = ref(TypeName)
-    ->  struct_intern_statements(Decls, Types, TypeName, Value, Slot, Params, Statements)
+    ->  struct_intern_statements(Mode, Decls, Types, TypeName, Value, Slot, Params, Statements)
+    ;   interned_column(Mode, ColumnType)
+    ->  text_intern_boot_statements(Value, Slot, Params, Statements)
     ;   % A json column stores canonical JSON TEXT, so an Initial seed row
         % binds the rendered text rather than the raw braces term. Same
         % canonicalizer, same reason as the arrival seam.
@@ -4455,6 +4626,16 @@ boot_column_slot(Decls, Types, ColumnType, Value, slot_desc(Slot, Params), State
         Slot = '?', Params = [Text], Statements = []
     ;   Slot = '?', Params = [Value], Statements = []
     ).
+
+% An Initial row bypasses the arrival door entirely, so under dict its text
+% values reach an INTEGER column with nothing having interned them.
+text_intern_boot_statements(Value, Slot, [Value], [bootstmt(InternSql, [Value])]) :-
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(InternSql),
+           'INSERT OR IGNORE INTO ~w ("content") VALUES (?)', [QuotedDictionary]),
+    format(atom(Slot),
+           '(SELECT "__id" FROM ~w WHERE "content" = ?)', [QuotedDictionary]).
 
 slot_desc_slot(slot_desc(Slot, _), Slot).
 
@@ -4466,10 +4647,10 @@ slot_desc_params([slot_desc(_, Params) | Rest], All) :-
 % Post-order: every referenced target insert precedes its parent's insert, so
 % a parent's ref column can resolve by declared key against a row that already
 % exists. The current type-cycle refusal is what makes this terminate.
-struct_intern_statements(Decls, Types, TypeName, Value, LookupSlot, LookupParams, Statements) :-
+struct_intern_statements(Mode, Decls, Types, TypeName, Value, LookupSlot, LookupParams, Statements) :-
     type_definition(Types, TypeName, Columns, ColumnTypes),
     type_field_values(Types, TypeName, Value, FieldValues),
-    boot_column_slots(Decls, Types, ColumnTypes, FieldValues, Descs, ChildStatements),
+    boot_column_slots(Mode, Decls, Types, ColumnTypes, FieldValues, Descs, ChildStatements),
     maplist(slot_desc_slot, Descs, Slots),
     slot_desc_params(Descs, Params),
     quote_ident(TypeName, QuotedTable),
@@ -4522,7 +4703,7 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % maplist collects a GROUP per rule and flattens, rather than assuming
     % one-to-one.
     maplist(check_edge_rule_relation_values(LoweringTypes, RelPlans), EdgeRules),
-    maplist(edge_statements_for_rule(EdgeHeadedRefs, RelPlans), EdgeRules,
+    maplist(edge_statements_for_rule(Mode, EdgeHeadedRefs, RelPlans), EdgeRules,
             EdgeStatementGroups),
     append(EdgeStatementGroups, EdgeStatements),
     % STRUCT-AS-ROWS: level bodies are compiled against RelPlans PLUS the
@@ -4568,9 +4749,14 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     % topological order, so a program's storage plane exists before any table
     % whose columns point into it.
     program_intern_ddl(Mode, RelPlans, InternDdl),
-    append([InternDdl, RelationDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl,
-            PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl], Ddl),
-    maplist(delta_statement(Mode), RelPlans, DeltaStatements).
+    maplist(delta_statement(Mode), RelPlans, DeltaStatements),
+    append([RelationDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl,
+            PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl], BodyDdl),
+    literal_seed_ddl(Mode,
+                     seeded(BodyDdl, ArrivalStatements, EdgeStatements,
+                            LevelStatements, DeltaStatements),
+                     SeedDdl),
+    append([InternDdl, SeedDdl, BodyDdl], Ddl).
 
 arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
 
@@ -4583,16 +4769,16 @@ arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Re
 % (head_move_flips_current_tree_in_one_tick) only reached compilation once
 % unmarked edge triggers were accepted, and its "before" snapshot was empty
 % at tick 1 without this.
-boot_statements(Decls, RelPlans, Initial, LevelStatements, BootStatements) :-
+boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, BootStatements) :-
     type_definitions(Decls, Types),
-    maplist(boot_seed_statement_for(Decls, Types, Initial), RelPlans, SeedGroups),
+    maplist(boot_seed_statement_for(Mode, Decls, Types, Initial), RelPlans, SeedGroups),
     append(SeedGroups, SeedStatements),
     boot_level_recompute_statements(LevelStatements, LevelBootStatements),
     append(SeedStatements, LevelBootStatements, BootStatements).
 
-boot_seed_statement_for(Decls, Types, Initial, RelPlan, Statements) :-
+boot_seed_statement_for(Mode, Decls, Types, Initial, RelPlan, Statements) :-
     RelPlan = relplan(Name/_, _, _, _, _),
-    boot_seed_statement(Decls, Types, RelPlan, Initial, Statements0),
+    boot_seed_statement(Mode, Decls, Types, RelPlan, Initial, Statements0),
     tag_boot_statements(Name, Statements0, Statements).
 
 % Every boot statement names the rel it exists for, which is what the emitted

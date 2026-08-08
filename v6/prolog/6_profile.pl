@@ -24,7 +24,7 @@
                 dl6_seeded_form/3
               ]).
 :- use_module('compile/parse_dl', [parse_dl_file/4]).
-:- use_module(lower, [lower_program/2, boot_statements/5]).
+:- use_module(lower, [lower_program/2, boot_statements/6]).
 :- use_module(emit_ts, [emit_program/5]).
 
 compile_dl6_profiled(File, OutFile) :-
@@ -55,10 +55,10 @@ compile_dl6_profiled(File, OutFile, LogStream) :-
     phase(LogStream, File, 3, lower,
           lower_program(Plan, Lowered),
           LowerMeasurement),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     phase(LogStream, File, 4, boot,
-          boot_statements(Decls, RelPlans, Initial, LevelStatements,
+          boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements,
                           BootStatements),
           BootMeasurement),
     phase(LogStream, File, 5, emit,

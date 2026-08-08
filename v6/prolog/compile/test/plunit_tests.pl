@@ -21,9 +21,10 @@
               [ refusal_inventory/1, refusal_message_clause_count/1 ]).
 :- use_module('../../strat', [ stratum_groups/2 ]).
 :- use_module('../../lower',
-              [ lower_program/2, compile_expr/4, compile_comparison/3,
+              [ lower_program/2, compile_expr/7, compile_comparison/4,
                 canonical_column_expr/2, level_ref_count_sql/5,
                 column_def/4, ir_column_class/4, uniform_text_encoding/1,
+                intern_write_sql/4,
                 catalog_ddl_contract/2,
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
@@ -62,7 +63,7 @@
                 % plan compiles to, asserted by the incremental_mode unit.
                 incremental_program_safe/4, reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
-:- use_module('../../lower', [ boot_statements/5 ]).
+:- use_module('../../lower', [ boot_statements/6 ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
 % the oracle/compiler split, because the review's central claim is that
@@ -309,9 +310,9 @@ test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(batched_increments_both_count, Plan, Lowered, Boot, Text),
     findall(At,
             sub_atom(Text, At, _, _, 'DELETE FROM "__pre_counter"'),
@@ -690,9 +691,9 @@ test(fixpoint_ir_emits_beside_the_sql_fields) :-
            program_plan(Term-Bindings, Plan),
            lower_program(Plan, Lowered) )),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(flagship_flow_reach_over_resolved_edges, Plan, Lowered, Boot,
                  Text),
     once(sub_atom(Text, _, _, _,
@@ -1252,9 +1253,9 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
                   (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
     program_plan(fixture(freeze, Prog, [], [], [])-[], Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(freeze, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.apply_levels_before_edges')),
     once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recompute_levels_before_edges')),
@@ -2005,9 +2006,9 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
               key([1, 2]), [text, int, text, ref(span)]),
       RelPlans),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), _, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), _, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(
       host_declared_struct_output_parses_and_lowers_as_ref,
       Plan, Lowered, Boot, Text),
@@ -2120,9 +2121,9 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _, 'export const host_plans')),
     % PHASE 2 (runtime bridge arc): the two named refusals are gone; both world
@@ -2166,9 +2167,9 @@ test(query_plan_carries_columns_and_bound_positions) :-
               Program, [], [], [])-Bindings,
       Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(query_plan_carries_columns_and_bound_positions,
                  Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _,
@@ -3571,23 +3572,23 @@ test(oracle_comparison_recognizer_is_total) :-
 test(every_arithmetic_row_lowers_to_sql) :-
     forall(expression(Name/2, arithmetic, _, _, _),
            ( Expr =.. [Name, 1, 2],
-             compile_expr(Expr, [], Sql, Type),
+             compile_expr(direct, identity, Expr, [], Sql, Type, _),
              Type == int,
              atom(Sql) )).
 
 test(modulo_lowers_sign_corrected) :-
-    compile_expr(mod(7, 3), [], Sql, _),
+    compile_expr(direct, identity, mod(7, 3), [], Sql, _, _),
     Sql == '(((7 % 3) + 3) % 3)'.
 
 test(norm_lowers_to_ascii_character_filter) :-
-    compile_expr(norm('Route /V2: Café_42'), [], Sql, Type),
+    compile_expr(direct, identity, norm('Route /V2: Café_42'), [], Sql, Type, _),
     Type == text,
     once(sub_atom(Sql, _, _, _, 'WITH RECURSIVE "__norm_chars"')),
     once(sub_atom(Sql, _, _, _, 'unicode("c") BETWEEN 48 AND 57')).
 
 test(norm_refuses_integer_operand,
      [throws(unsupported_construct(text_operand_not_text(norm(7), 7, int)))]) :-
-    compile_expr(norm(7), [], _, _).
+    compile_expr(direct, identity, norm(7), [], _, _, _).
 
 test(regexp_is_a_guard_surface) :-
     body_surface_for_term(regexp(Text, "^a$"), regexp/2, guard, no_refs,
@@ -3622,7 +3623,7 @@ test(every_comparison_row_lowers_to_its_sql_operator) :-
     forall(( expression(Name/2, Family, _, infix(SqlOperator), _),
              memberchk(Family, [ordered_comparison, identity_comparison]) ),
            ( Goal =.. [Name, 1, 2],
-             compile_comparison(Goal, [], Text),
+             compile_comparison(direct, Goal, [], Text),
              atomic_list_concat(['(1 ', SqlOperator, ' 2)'], Expected),
              Text == Expected )).
 
@@ -3676,9 +3677,9 @@ test(bool_and_float_storage_constraints_are_exact) :-
                     '"value" REAL NOT NULL CHECK (typeof("value") = \'real\' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)') )).
 
 test(float_division_and_avg_lower_to_sqlite_real_operations) :-
-    compile_expr(5 / 2, [], IntDivision, int),
+    compile_expr(direct, identity, 5 / 2, [], IntDivision, int, _),
     assertion(IntDivision == '(5 / 2)'),
-    compile_expr(5.0 / 2, [], FloatDivision, float),
+    compile_expr(direct, identity, 5.0 / 2, [], FloatDivision, float, _),
     assertion(FloatDivision == '(CAST(5.0 AS REAL) / 2)'),
     lowered_for('5_value_plane.pl', float_avg_is_grouped, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
@@ -4866,6 +4867,191 @@ test(text_literal_filter_fences_the_ir_at_dict) :-
                                     DictIr)),
     DictIr == none.
 
+% ── text literals in the id space (contract §5.3 rule two, lane I-C) ────────
+
+interning_literal_relplans([
+        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
+                [int, int, bool, ref(node_rel), text]),
+        relplan(tagged/2, set, [node, tag], none, [int, text])
+    ]).
+
+interning_literal_seed_sql(Mode, Rules, SeedSql) :-
+    interning_literal_relplans(RelPlans),
+    level_ref_count_sql(Mode, RelPlans, tagged/2, Rules,
+                        refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, _,
+                                    _, _)).
+
+interning_read_rules([ (tagged(Parent, done) <-
+                            edge_row(Parent, _, _, _, rust)) ]).
+
+% RED before the lowering landed: the seed named `b0."label" = 'rust'` at BOTH
+% modes, comparing a dictionary id against a word.
+test(text_literal_read_resolves_through_the_dictionary) :-
+    interning_read_rules(Rules),
+    interning_literal_seed_sql(dict, Rules, SeedSql),
+    sub_atom(SeedSql, _, _, _,
+             'b0."label" = (SELECT s."__id" FROM "__str" s WHERE s."content" = \'rust\')'),
+    \+ sub_atom(SeedSql, _, _, _, 'b0."label" = \'rust\'').
+
+test(text_literal_read_stays_a_word_at_direct) :-
+    interning_read_rules(Rules),
+    interning_literal_seed_sql(direct, Rules, SeedSql),
+    sub_atom(SeedSql, _, _, _, 'b0."label" = \'rust\''),
+    \+ sub_atom(SeedSql, _, _, _, '__str').
+
+% RED before the lowering landed: the projection wrote the word `done` into a
+% column its own DDL declares INTEGER, and affinity stored it silently.
+test(text_literal_write_projects_an_id) :-
+    interning_read_rules(Rules),
+    interning_literal_seed_sql(dict, Rules, SeedSql),
+    sub_atom(SeedSql, _, _, _,
+             '(SELECT s."__id" FROM "__str" s WHERE s."content" = \'done\')').
+
+test(text_literal_write_projects_a_word_at_direct) :-
+    interning_read_rules(Rules),
+    interning_literal_seed_sql(direct, Rules, SeedSql),
+    sub_atom(SeedSql, _, _, _, '\'done\'').
+
+% A `value` position reads the characters, so the constant inside a built
+% string is NOT an id; that is the whole point of the demand word.
+test(text_literal_in_a_concat_keeps_its_characters) :-
+    interning_literal_seed_sql(dict,
+        [ (tagged(Parent, concat([done, '-', Label])) <-
+               edge_row(Parent, _, _, _, Label)) ],
+        SeedSql),
+    sub_atom(SeedSql, _, _, _, '(\'done\' || \'-\' ||'),
+    \+ sub_atom(SeedSql, _, _, _, '__str" s WHERE s."content" = \'done\'').
+
+% Every literal the module resolved is seeded, or the write side resolves to
+% NULL against a NOT NULL column and the row is silently lost.
+test(every_resolved_literal_is_seeded) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, Ddl, _, _, _, _, _, _)),
+    ddl_containing(Ddl, 'CREATE TABLE "__str"', _),
+    forall(( member(Statement, Ddl),
+             sub_atom(Statement, _, _, _, '__str" s WHERE s."content" = ') ),
+           ( ddl_containing(Ddl, 'INSERT OR IGNORE INTO "__str" ("content") VALUES',
+                            _) )).
+
+% ── the boot seed (contract §23, the silent TEXT-into-INTEGER write) ────────
+
+interning_boot_relplans([ relplan(tagged/2, set, [node, tag], none,
+                                  [int, text]) ]).
+
+interning_boot(Mode, Boot) :-
+    interning_boot_relplans(RelPlans),
+    boot_statements(Mode, [], RelPlans, [tagged(1, rust)], [], Boot).
+
+% RED before this landed: the only boot statement was
+% `INSERT OR IGNORE INTO "tagged" ("node", "tag") VALUES (?, ?)` with params
+% [1, rust], writing the word into an INTEGER column on every Initial section.
+test(boot_seed_interns_before_it_writes_the_row) :-
+    interning_boot(dict, Boot),
+    Boot = [ bootstmt(tagged, InternSql, [rust]),
+             bootstmt(tagged, RowSql, [1, rust]) ],
+    InternSql == 'INSERT OR IGNORE INTO "__str" ("content") VALUES (?)',
+    RowSql == 'INSERT OR IGNORE INTO "tagged" ("node", "tag") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))'.
+
+test(boot_seed_binds_the_value_at_direct) :-
+    interning_boot(direct, Boot),
+    Boot = [ bootstmt(tagged, RowSql, [1, rust]) ],
+    RowSql == 'INSERT OR IGNORE INTO "tagged" ("node", "tag") VALUES (?, ?)'.
+
+% ── built strings: intern on write, decode on read (§5.7 + §5.3 rule ONE,
+% lane I-K) ─────────────────────────────────────────────────────────────────
+%
+% FAIL-FIRST RECEIPTS, taken by making each decision predicate fail in turn.
+%   head_column_expr/6's interned arm  -> built_string_projection_interns_on_write
+%                                         built_string_intern_precedes_the_row_insert
+%   demanded_sql/5's `value` clause    -> interned_column_decodes_under_value_demand
+%                                         concat_over_a_text_column_reads_characters
+%   align_to_encoding/4's dict clause  -> a_characters_side_join_resolves_to_an_id
+% Each `_at_direct` twin stayed green through all three, which is the property
+% saying they pin direct-mode bytes rather than the mechanism.
+
+interning_level_inserts(Mode, Name, HeadName, InsertSqls) :-
+    once(( fixture_file('expressions.pl', File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
+           memberchk(levelstmt(HeadName/_, _, InsertSqls, _, _, _), LevelStatements) )).
+
+interning_column_bound([Variable-typed('b0."path"', text, dict)], Variable).
+
+% RED before the lowering landed: the head projected the raw `||` expression
+% into a column its own DDL declares INTEGER.
+test(built_string_projection_interns_on_write) :-
+    interning_level_inserts(dict, interpolation_desugars_to_concat, message,
+                            InsertSqls),
+    member(InsertSql, InsertSqls),
+    sub_atom(InsertSql, _, _, _, 'INSERT OR IGNORE INTO "message"'),
+    sub_atom(InsertSql, _, _, _,
+             '(SELECT s."__id" FROM "__str" s WHERE s."content" = (\'eprintln at \'').
+
+test(built_string_projection_stays_a_word_at_direct) :-
+    interning_level_inserts(direct, interpolation_desugars_to_concat, message,
+                            [InsertSql]),
+    sub_atom(InsertSql, _, _, _, '(\'eprintln at \' || b0."path"'),
+    \+ sub_atom(InsertSql, _, _, _, '__str').
+
+% §5.7.1: the dictionary row must exist before the head insert reads its id, so
+% the intern statement is the entry BEFORE the row insert, never after.
+test(built_string_intern_precedes_the_row_insert) :-
+    interning_level_inserts(dict, interpolation_desugars_to_concat, message,
+                            [InternSql, InsertSql]),
+    sub_atom(InternSql, 0, _, _,
+             'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT'),
+    sub_atom(InsertSql, 0, _, _, 'INSERT OR IGNORE INTO "message"').
+
+% The arm's own FROM and WHERE, verbatim in both statements: two different
+% row sets would intern one string and store the id of another.
+test(the_intern_statement_repeats_the_arms_from_and_where) :-
+    intern_write_sql(['(b0."a" || b0."b")'], '"hits" b0', '(b0."n" > 2)',
+                     InternSql),
+    InternSql == 'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b0."a" || b0."b") FROM "hits" b0 WHERE (b0."n" > 2)'.
+
+% Two built columns on one head are one statement, not two: UNION already
+% dedups and the arm runs once per side either way.
+test(two_built_columns_union_into_one_intern_statement) :-
+    intern_write_sql(['(b0."a")', '(b0."b")'], '"hits" b0', none, InternSql),
+    InternSql == 'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b0."a") FROM "hits" b0 UNION SELECT DISTINCT (b0."b") FROM "hits" b0'.
+
+% RED before this landed: `value` demand handed the id straight to `||`, so
+% concat built a string out of integers.
+test(interned_column_decodes_under_value_demand) :-
+    interning_column_bound(Bound, Variable),
+    compile_expr(dict, value, Variable, Bound, Sql, text, direct),
+    Sql == '(SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path")'.
+
+test(interned_column_keeps_its_id_under_identity_demand) :-
+    interning_column_bound(Bound, Variable),
+    compile_expr(dict, identity, Variable, Bound, Sql, text, dict),
+    Sql == 'b0."path"'.
+
+test(text_column_stays_a_column_at_direct) :-
+    compile_expr(direct, value, Variable,
+                 [Variable-typed('b0."path"', text, direct)], Sql, text, direct),
+    Sql == 'b0."path"'.
+
+test(concat_over_a_text_column_reads_characters) :-
+    interning_level_inserts(dict, interpolation_desugars_to_concat, message,
+                            InsertSqls),
+    member(InsertSql, InsertSqls),
+    sub_atom(InsertSql, _, _, _, 'INSERT OR IGNORE INTO "message"'),
+    sub_atom(InsertSql, _, _, _,
+             '\'eprintln at \' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path")'),
+    \+ sub_atom(InsertSql, _, _, _, '\'eprintln at \' || b0."path"').
+
+% A join whose two sides carry different encodings compares across the
+% dictionary; resolving the characters keeps the indexed column bare.
+test(a_characters_side_join_resolves_to_an_id) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, _, _, _, LevelStatements, _, _, _)),
+    member(levelstmt(_, _, InsertSqls, _, _, _), LevelStatements),
+    member(InsertSql, InsertSqls),
+    sub_atom(InsertSql, _, _, _,
+             'b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(').
+
 % ── the ingest door (contract §6) ───────────────────────────────────────────
 
 interning_emitted(Mode, Base, Name, Text) :-
@@ -4874,9 +5060,9 @@ interning_emitted(Mode, Base, Name, Text) :-
            program_plan(Term-Bindings, [intern(Mode)], Plan),
            lower_program(Plan, Lowered),
            Term = fixture(_, _, Initial, _, _),
-           Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+           Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
            Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-           boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+           boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
            emit_program(Name, Plan, Lowered, Boot, Text) )).
 
 % A `__ref_<type>` target table carries text columns inside its own UNIQUE key,
