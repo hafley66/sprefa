@@ -1,5 +1,22 @@
 # d2 boards animated through git time (user idea, 2026-08-08)
 
+HOME NOTE (user, end of session): these ideas belong to ~/projects/instant
+(daily driver; anim is v4 of its own journey; rect-vs-canvas layout and
+state mgmt already labbed there; user's own rxjs lazy proxy signals =
+rxjs + signal + immer style). Canonical copy:
+instant/plans/2026-08-08-canvas-state-ideas.md. This file stays as the
+sprefa-side record because half the pins (dl6 CLI emitters, user-mind
+queries, entity=rowid) ARE sprefa: "oh yea this is sprefa lol."
+
+## Shell pipe into panel state (user, same conversation)
+
+A shell query/pipe step that takes any command's output and routes it into
+the STATE CALL for the panel it controls: `... | into panel:tasks` writes
+the panel's store slot, panel re-renders reactively. The pipe is just
+another writer to the central store; panels subscribe. With the dl6-CLI
+idea above, the pipe target is a source rel and the panel is a derived-rel
+view — the shell becomes one more ingest door.
+
 User's spec, written down verbatim-in-spirit before any research:
 
 ## The idea
@@ -83,6 +100,76 @@ derived state -> view, where a view can be a canvas node OR an auto table.
 nearest neighbors are Polotno (JSON design docs), Fabric.js/Konva canvas JSON,
 Excalidraw/tldraw JSON (vector scenes), OpenRaster .ora (layered raster,
 XML+PNG zip), ag-psd (PSD <-> JS objects).
+
+## Legend as enforced schema (user, same conversation)
+
+The board is the state surface for BOTH the AI and other users. The legend
+stops being decoration: it renders as a sticky/popover widget,
+expand/collapse. The law: any new semantic mapping (a class, a color, a
+shape meaning) REQUIRES a new legend entry before use — the renderer refuses
+or flags an unregistered class. d2 already has the raw material: the
+`classes:` block IS the machine-readable legend; the widget is generated
+from it, and the rail is "no class used that classes: does not declare."
+Same shape as the engine's registry.pl surface table and the magic-rel ban:
+vocabulary lives in ONE declared place, use without declaration is a defect.
+Side effect: AI amendments through the server (see amendment API above)
+must ship the legend entry in the same call when they mint a new category —
+the schema grows only through the front door.
+
+## Tabs carry cwd identity, past process death (user, same conversation)
+
+Every tab/session node on the board knows its cwd — including sessions whose
+process is gone. The source already exists: the bus registry
+(~/.agent/mail/registry.json) records agent -> {sessionId, harness, tmux,
+cwd} at dispatch time, so cwd is a durable fact about the lane, never a
+live-process probe. Board consequence: a tab node's cwd is part of its
+identity; two tabs with different cwds are different process roots (ties to
+the textbox-cwd inference idea above — the roots get drawn one day).
+
+## Session-fact extractor: the bus + AI analytics as one rust crate (user)
+
+The observation: everyone keeps rebuilding the same local-AI read tools —
+the bus (instant/scripts/bus.ts + ~/.agent/mail ndjson/registry), transcript
+search (cass), opencode.db readers (sessions/tokens/cost), claude-code
+session jsonl readers, chat_log tooling, tmux ctx capture. Wanted: ONE
+"fucking aces" rust library with sprefa-extract's exact virtues — per-source
+pure readers, JSONL facts out, no daemon, frozen boundary law (index what is
+written; programs interpret). Sources it would cover: bus ndjson, registry
+json, opencode sqlite, claude jsonl transcripts, tmux panes. Then bus-the-CLI
+and every analytics view become thin programs over facts, same as .dl
+programs over extract facts.
+GATE before any lane: the build-vs-buy law. Research candidates first
+(existing session-log parsers, sqlite readers, agent-observability tools) and
+write the candidate-by-candidate analysis; the bespoke crate has to earn it.
+
+REVISION (user, same conversation): or skip the hand crate — write it in
+dl6, and grow dl6 until a whole CLI compiles OUT of it. The emitter family
+becomes rust (clap), ts, bash; order ts -> rust first. The dl6 program is
+the spec: source rel decls = the readers, derived rels = the analytics,
+declared query/command surface = subcommands and flags, and the emitter
+packages the lot as a real CLI binary. This nests inside the existing
+roadmap instead of beside it: emit_ts.pl is the ts emitter today, P1-C
+already grows a one-shot CLI, and the endgame is per-program rust codegen —
+CLI emission is that same endgame pointed at a user-facing binary instead of
+a fixpoint executor. The session-fact readers then live as dl6 source rels
+(bus ndjson, registry, opencode.db, claude jsonl), and "everyone's local AI
+tool" becomes one .dl6 file per tool.
+
+## User-mind as a query (user, same conversation)
+
+The ability for an agent (or another user) to know someone's context on
+demand: what they looked at historically, their interactions, previous
+turns, in which session and cwd. The reframe: "get user mind" is JUST A
+QUERY over user-context facts sitting in one central store (a db). No
+special memory system — the session-fact readers above (bus, registry,
+opencode.db, claude jsonl, tmux) land everything in the store, and dl6 is
+the turnkey layer: derived rels like recent_focus(user, file, tick),
+turn_in(session, cwd, ts), looked_at(user, path, count) answer "what is
+Chris thinking about" the same way in_dir answers path facts. Cross-session
+resume, "ask the other session what it did," and the board's tab nodes all
+become the same query surface. Privacy edge is real and named: whose
+transcripts enter the store and who may query them is a decision, not a
+default.
 
 ## Lane verdicts (pass 1, flash4, 2026-08-08; coordinator spot-verified)
 
