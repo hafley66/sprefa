@@ -244,9 +244,14 @@ function intern_crossing_failure(program: IServedProgram, tableNames: readonly s
   if (databaseIsInterned === program_builds_dictionary(program)) return null;
   const databaseMode = databaseIsInterned ? "dict" : "direct";
   return new Error(
-    `intern mode crossing: module "${program.name}" was built intern(${program.internMode}) ` +
-      `and this database was built intern(${databaseMode}). Recompile the module in the ` +
-      `database's mode, or rebuild the database from its source.`,
+    `intern mode crossing, and honey, no. 💅 WHAT: module "${program.name}" strutted in wearing ` +
+      `intern(${program.internMode}) but this database is serving intern(${databaseMode}) — one of ` +
+      `them speaks integer ids, the other speaks raw strings, and that situationship ends in NULL ` +
+      `every single time. WHY: the dictionary is baked into every table shape at compile time; a ` +
+      `runtime toggle cannot un-declare a column type. HOW TO FIX: recompile the module at ` +
+      `intern(${databaseMode}) to match this database, or rebuild the database from source at ` +
+      `intern(${program.internMode}) to match the module. Pick a lane, gorgeous — both are ` +
+      `fabulous, they are just not each other's.`,
   );
 }
 

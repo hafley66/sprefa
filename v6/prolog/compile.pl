@@ -148,8 +148,8 @@ materialize_catalog_rel(prog(Decls0, Rules), prog(Decls, Rules)) :-
     ;   Decls = Decls0
     ).
 
-% THE BUILD DEFAULT, not the contract's. §15.3 asks for dict; a dict module
-% is only runnable once the door, the literal lowering and intern-on-write land.
+% THE BUILD DEFAULT, not the contract's. Flip attempt 2026-08-08: referee said
+% NO (RUN wrong=13, FINAL wrong=17; plans/2026-08-08-flip-referee-red.md).
 default_intern_mode(direct).
 
 program_plan(Term, Plan) :-

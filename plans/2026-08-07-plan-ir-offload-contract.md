@@ -228,6 +228,11 @@ expr( concat([Expr])                   ).  % lower.pl:591-612, always text
 % filter: the closed predicate grammar phase 1 admits
 filter( cmp(Op, Expr, Expr)            ).  % lower.pl:829-847, Op in {<,=<,>,>=,==,\==}
 filter( eq_lit(Expr, Literal)          ).  % lower.pl:338
+%   eq_lit at intern(dict) (user word 2026-08-08, option A): a lit(text(V))
+%   compared against a column whose colclass encoding is dict(R) resolves
+%   through R — the executor interns V and compares ids. No new IR node.
+%   Until an executor implements that sentence, the compiler fences such
+%   walks out of the IR entirely (lower.pl interned_literals_absent/2).
 
 % probe(Kind, Target): a walk's admission test
 probe( absent,  head | cone | ref_count ).  % lower.pl:2795-2799, :2686
