@@ -57,6 +57,7 @@ capped "${SWEEP_ORACLE_BUDGET_S:-900}" "stage 2 oracle dump" \
 
 echo ""
 echo "=== stage 3: copy compiled modules into gen_emitted/, run the diff ==="
+mkdir -p gen_emitted
 compiled_names=$(capped "${SWEEP_MANIFEST_BUDGET_S:-300}" "stage 3 manifest read" node -e '
   const fs = require("node:fs");
   const manifest = JSON.parse(fs.readFileSync("'"$COMPILE_OUT"'/manifest.json", "utf8"));
