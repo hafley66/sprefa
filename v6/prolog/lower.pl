@@ -297,8 +297,11 @@ compile_pattern_arg(Mode, Arg, ColumnExpr, ColumnType, Bound0, Bound, WhereParts
     -> WhereParts = [lit(ColumnExpr, Arg, Encoding)], Bound = Bound0
     ; compound(Arg)
     -> Arg =.. [Functor | SubArgs],
-       FnCheck = pair_lit(ColumnExpr, Functor),
-       compile_sub_args(Mode, SubArgs, ColumnExpr, 0, Bound0, Bound, MoreWhere, Binding),
+       % json_extract reads the term's characters, so the operand is `value`
+       % demand: over a dict column's id every path answers NULL.
+       demanded_sql(value, Encoding, ColumnExpr, TermExpr, _TermEncoding),
+       FnCheck = pair_lit(TermExpr, Functor),
+       compile_sub_args(Mode, SubArgs, TermExpr, 0, Bound0, Bound, MoreWhere, Binding),
        WhereParts = [FnCheck | MoreWhere]
     ; atomic(Arg)
     -> WhereParts = [lit(ColumnExpr, Arg, Encoding)], Bound = Bound0

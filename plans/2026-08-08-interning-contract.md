@@ -361,9 +361,9 @@ sweeps rather than against reading: every `where_text/2` call site, and every
 | 11 | **text literal comparison**: `where_text(lit(Left, Value))` emits `<col> = 'literal'` | `lower.pl:340`, reached from all six `where_text/2` call sites (`:347`, `:402`, `:1900`, `:2200`, `:2399`, `:3905`); IR twin `eq_lit(IrLeft, Literal)` at `:3171` | text compared to text | **INTEGER id compared to a TEXT literal.** SQLite applies the column's INTEGER affinity: a non-numeric literal stays text and matches nothing; a numeric-looking literal (`= '42'`) coerces and matches whichever row holds id 42 | **BREAKS, silently, both ways.** 12 modules, 114 occurrences in `out/*.ts`. Patient zero: `backslash_in_string_literal_survives_both_doors` |
 | 12 | **text literal PROJECTION into a head column**: `head_select_list/4` -> `compile_expr` -> `sql_literal` | `lower.pl:881-889` | writes `'warning'` into a TEXT column | writes `'warning'` into an INTEGER column; affinity stores it and the row is unfindable | **BREAKS, and it is a WRITE.** 26 modules. The red team found the read side; this is its write-side twin, found while closing it |
 | 13 | **computed text projected into a head column**: `concat`, `norm`, `json_extract` in head position | `lower.pl:591-612`, `:522-525` | writes a fresh string | the value is not in the dictionary and cannot be looked up inside the statement that computes it | **NOT FIXED BY A DECODE.** The column falls back to `direct` automatically (§3.1), with the reason recorded |
-| 14 | `where_text(pair_lit(Left, Functor))`: `json_extract(<col>,'$.fn') = 'functor'` | `lower.pl:337-339` | | | **SAFE.** The operand is a `json`-typed column, and `json` is never interned (§3.1) |
+| 14 | `where_text(pair_lit(Left, Functor))`: `json_extract(<col>,'$.fn') = 'functor'`, plus `compile_sub_args/8`'s `json_extract(<col>,'$.args[N]')` twin | `lower.pl:360-366`, `:343-349`, both fed by `compile_pattern_arg/8`'s compound branch (`:298-306`) | | | **BREAKS.** *(rev 3.2, lane-D correction: this row read SAFE on the grounds that "the operand is a `json`-typed column, and `json` is never interned". Measured false. A rel-term demand key is a `text` column holding a compound term, and `text` IS the interned type, so `json_extract` gets an INTEGER id and every path answers NULL. 5 modules: `switch_as_keyed_replace`, `merge_policy`, `exhaust_policy`, `concat_program_queue`, `zombie_scope_negative_case_a2b`, each losing its whole `*_view` rel with no refusal.)* The operand is `value` demand under §5.3 rule one and takes the decode; a `json`-typed column still takes none, because `column_encoding/3` answers `direct` for it under both modes |
 
-### 5.3 The two rules that fix rows 2, 3, 5, 6, 7, 11, 12
+### 5.3 The two rules that fix rows 2, 3, 5, 6, 7, 11, 12, 14
 
 > **An expression whose declared operand type is `text` reads the value through
 > `__str`. An expression that only needs identity (`==`, `\==`, join equality,
@@ -383,8 +383,10 @@ text_operand_sql(ColumnSql, Encoding, Demand, Sql).
 ```
 
 Callers, exhaustively: `compile_regexp_goal/3` (`lower.pl:820`),
-`text_scalar_rendering/3` (`:522`), the concat arm (`:591-612`), and the two
-`ORDER BY` renderings at `:3770` and `:3781`. `aggregate_select_expr/3`'s
+`text_scalar_rendering/3` (`:522`), the concat arm (`:591-612`), the two
+`ORDER BY` renderings at `:3770` and `:3781`, and (rev 3.2, row 14)
+`compile_pattern_arg/8`'s compound branch, which decodes ONCE and hands the
+characters to both the `'$.fn'` guard and every `'$.args[N]'` sub-argument. `aggregate_select_expr/3`'s
 ORDER BY is the value under `value` demand while the aggregated value itself is
 also `value` demand, so both operands decode and the emitted text stays one
 expression.
