@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,30 +136,45 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "maybe_text_some": [false, true],
+    "maybe_text_tag": [false, true],
+  },
+};
+
 const ddl: readonly string[] = [
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('none'), ('some')`,
   `CREATE TABLE "maybe_text_none" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "maybe_text_some" ("id" INTEGER NOT NULL, "value" TEXT NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TABLE "maybe_text_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "maybe_text_some" ("id" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_maybe_text_some" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "maybe_text_some" t`,
+  `CREATE TABLE "maybe_text_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_maybe_text_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "maybe_text_tag" t`,
   `CREATE TEMP TABLE "__delta_maybe_text_none" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_maybe_text_none_sign" ON "__delta_maybe_text_none" ("_sign")`,
   `CREATE INDEX "__delta_maybe_text_none_group" ON "__delta_maybe_text_none" ("id")`,
   `CREATE TEMP TABLE "__frontier_maybe_text_none" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_maybe_text_none_phase" ON "__frontier_maybe_text_none" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_maybe_text_none" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_maybe_text_some" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_maybe_text_some" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_maybe_text_some_sign" ON "__delta_maybe_text_some" ("_sign")`,
   `CREATE INDEX "__delta_maybe_text_some_group" ON "__delta_maybe_text_some" ("id", "value")`,
-  `CREATE TEMP TABLE "__frontier_maybe_text_some" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_maybe_text_some" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_maybe_text_some_phase" ON "__frontier_maybe_text_some" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_maybe_text_some" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_maybe_text_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_maybe_text_some" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_maybe_text_some" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_maybe_text_some" t`,
+  `CREATE TEMP TABLE "__delta_maybe_text_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_maybe_text_tag_sign" ON "__delta_maybe_text_tag" ("_sign")`,
   `CREATE INDEX "__delta_maybe_text_tag_group" ON "__delta_maybe_text_tag" ("id", "tag")`,
-  `CREATE TEMP TABLE "__frontier_maybe_text_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_maybe_text_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_maybe_text_tag_phase" ON "__frontier_maybe_text_tag" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_maybe_text_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_maybe_text_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_maybe_text_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_maybe_text_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_maybe_text_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_maybe_text_tag" t`,
+  `CREATE TEMP TABLE "__support_next_maybe_text_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_maybe_text_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "maybe_text_tag_zero" ON "maybe_text_tag" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -200,8 +217,8 @@ const arrival_targets: readonly string[] = ["maybe_text_none", "maybe_text_some"
 
 const boot: readonly IBootStatement[] = [
   { rel: "maybe_text_tag", sql: `DELETE FROM "maybe_text_tag"`, params: [] },
-  { rel: "maybe_text_tag", sql: `INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", 'none' FROM "maybe_text_none" b0`, params: [] },
-  { rel: "maybe_text_tag", sql: `INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", 'some' FROM "maybe_text_some" b0`, params: [] },
+  { rel: "maybe_text_tag", sql: `INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "maybe_text_none" b0`, params: [] },
+  { rel: "maybe_text_tag", sql: `INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') FROM "maybe_text_some" b0`, params: [] },
 ];
 
 type Snapshot = {
@@ -213,15 +230,29 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     maybe_text_none: select_rows(seam, `SELECT "id" FROM "maybe_text_none"`, rel_columns.maybe_text_none!, rel_column_types.maybe_text_none!),
-    maybe_text_some: select_rows(seam, `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "maybe_text_some"`, rel_columns.maybe_text_some!, rel_column_types.maybe_text_some!),
-    maybe_text_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "maybe_text_tag"`, rel_columns.maybe_text_tag!, rel_column_types.maybe_text_tag!),
+    maybe_text_some: select_rows(seam, `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_maybe_text_some"`, rel_columns.maybe_text_some!, rel_column_types.maybe_text_some!),
+    maybe_text_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_maybe_text_tag"`, rel_columns.maybe_text_tag!, rel_column_types.maybe_text_tag!),
   });
+}
+
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    maybe_text_none: select_rows(seam, `SELECT "id" FROM "maybe_text_none"`, rel_columns.maybe_text_none!, rel_column_types.maybe_text_none!),
+    maybe_text_some: select_rows(seam, `SELECT "id", "value" FROM "maybe_text_some"`, rel_columns.maybe_text_some!, rel_column_types.maybe_text_some!),
+    maybe_text_tag: select_rows(seam, `SELECT "id", "tag" FROM "maybe_text_tag"`, rel_columns.maybe_text_tag!, rel_column_types.maybe_text_tag!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
 }
 
 const final_select: Record<string, string> = {
   maybe_text_none: `SELECT "id" FROM "maybe_text_none"`,
-  maybe_text_some: `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "maybe_text_some"`,
-  maybe_text_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "maybe_text_tag"`,
+  maybe_text_some: `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_maybe_text_some"`,
+  maybe_text_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_maybe_text_tag"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -253,23 +284,23 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "maybe_text_none", kind: "set", table_name: "maybe_text_none", delta_table_name: "__delta_maybe_text_none", frontier_table_name: "__frontier_maybe_text_none", next_frontier_table_name: "__next_frontier_maybe_text_none", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "maybe_text_none" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "maybe_text_none" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_maybe_text_none" WHERE "_sign" IN (-1, 1) GROUP BY "id", "_sign"`, rule_observers: ["maybe_text_tag/2"] },
-  { rel: "maybe_text_some", kind: "set", table_name: "maybe_text_some", delta_table_name: "__delta_maybe_text_some", frontier_table_name: "__frontier_maybe_text_some", next_frontier_table_name: "__next_frontier_maybe_text_some", columns: ["id", "value"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "maybe_text_some" ("id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id" RETURNING "id", "value"`, arrival_del_sql: `DELETE FROM "maybe_text_some" WHERE ("id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "value"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_maybe_text_some" WHERE "_sign" IN (-1, 1) GROUP BY "id", "value", "_sign"`, rule_observers: ["maybe_text_tag/2"] },
-  { rel: "maybe_text_tag", kind: "set", table_name: "maybe_text_tag", delta_table_name: "__delta_maybe_text_tag", frontier_table_name: "__frontier_maybe_text_tag", next_frontier_table_name: "__next_frontier_maybe_text_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_maybe_text_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
+  { rel: "maybe_text_some", kind: "set", table_name: "maybe_text_some", delta_table_name: "__delta_maybe_text_some", frontier_table_name: "__frontier_maybe_text_some", next_frontier_table_name: "__next_frontier_maybe_text_some", columns: ["id", "value"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "maybe_text_some" ("id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id" RETURNING "id", "value"`, arrival_del_sql: `DELETE FROM "maybe_text_some" WHERE ("id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "value"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_maybe_text_some" WHERE "_sign" IN (-1, 1) GROUP BY "id", "value", "_sign"`, rule_observers: ["maybe_text_tag/2"] },
+  { rel: "maybe_text_tag", kind: "set", table_name: "maybe_text_tag", delta_table_name: "__delta_maybe_text_tag", frontier_table_name: "__frontier_maybe_text_tag", next_frontier_table_name: "__next_frontier_maybe_text_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_maybe_text_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "maybe_text_tag", rule_id: "enum_nullary_variant_boots_and_tags:maybe_text_tag/2#1", head_delta_table_name: "__delta_maybe_text_tag", head_columns: ["id", "tag"], insert_sql: `INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT DISTINCT d0."id", 'none' FROM "__frontier_maybe_text_none" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'some' FROM "__frontier_maybe_text_some" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, select_sql: `SELECT "id", "tag" FROM "maybe_text_tag"`, recompute_sql: `DELETE FROM "maybe_text_tag";
-INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", 'none' FROM "maybe_text_none" b0;
-INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", 'some' FROM "maybe_text_some" b0`, support_sql: [`DELETE FROM "__support_next_maybe_text_tag"`, `INSERT INTO "__support_next_maybe_text_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'none' AS "tag", count(*) AS "__refcount" FROM "maybe_text_none" b0 GROUP BY b0."id", 'none' UNION ALL SELECT b0."id" AS "id", 'some' AS "tag", count(*) AS "__refcount" FROM "maybe_text_some" b0 GROUP BY b0."id", 'some') GROUP BY "id", "tag"`, `UPDATE "maybe_text_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_maybe_text_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_maybe_text_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "maybe_text_tag" WHERE "__refcount" <= 0`, `DELETE FROM "maybe_text_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_maybe_text_tag"`, `INSERT INTO "__new_maybe_text_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_maybe_text_tag" n LEFT JOIN "maybe_text_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_maybe_text_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_maybe_text_tag"`, `INSERT INTO "__frontier_maybe_text_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_maybe_text_tag"`, `INSERT INTO "__next_frontier_maybe_text_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_maybe_text_tag"`, `INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_maybe_text_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "maybe_text_tag", rule_id: "enum_nullary_variant_boots_and_tags:maybe_text_tag/2#1", head_delta_table_name: "__delta_maybe_text_tag", head_columns: ["id", "tag"], insert_sql: `INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT DISTINCT d0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "__frontier_maybe_text_none" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') FROM "__frontier_maybe_text_some" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, select_sql: `SELECT "id", "tag" FROM "maybe_text_tag"`, recompute_sql: `DELETE FROM "maybe_text_tag";
+INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "maybe_text_none" b0;
+INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') FROM "maybe_text_some" b0`, support_sql: [`DELETE FROM "__support_next_maybe_text_tag"`, `INSERT INTO "__support_next_maybe_text_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') AS "tag", count(*) AS "__refcount" FROM "maybe_text_none" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') UNION ALL SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') AS "tag", count(*) AS "__refcount" FROM "maybe_text_some" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some')) GROUP BY "id", "tag"`, `UPDATE "maybe_text_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_maybe_text_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_maybe_text_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "maybe_text_tag" WHERE "__refcount" <= 0`, `DELETE FROM "maybe_text_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_maybe_text_tag"`, `INSERT INTO "__new_maybe_text_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_maybe_text_tag" n LEFT JOIN "maybe_text_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_maybe_text_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_maybe_text_tag"`, `INSERT INTO "__frontier_maybe_text_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_maybe_text_tag"`, `INSERT INTO "__next_frontier_maybe_text_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_maybe_text_tag"`, `INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_maybe_text_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "maybe_text_tag";
-INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", 'none' FROM "maybe_text_none" b0;
-INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", 'some' FROM "maybe_text_some" b0`;
+INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "maybe_text_none" b0;
+INSERT OR IGNORE INTO "maybe_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') FROM "maybe_text_some" b0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -289,6 +320,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -312,11 +345,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -344,7 +380,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "enum_nullary_variant_boots_and_tags",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

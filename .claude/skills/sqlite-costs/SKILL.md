@@ -7,7 +7,8 @@ description: The measured cost constants of SQLite on this machine — btree wri
 
 Apple M2 Pro, :memory:, libsql 0.5.29 / rusqlite bundled. Sources:
 sqlite_raw/REPORT.md, REPORT-BATCH.md, REPORT-TAIL.md,
-intern_bench/REPORT-INTERN.md, dl6/FACTS*.md.
+intern_bench/REPORT-INTERN.md, dl6/FACTS*.md,
+head_shape/ (2026-08-08, the head-shape A/B on the post-intern flagship).
 
 ## Write rates by structure (the ladder that decides designs)
 | structure | rate | note |
@@ -36,8 +37,18 @@ intern_bench/REPORT-INTERN.md, dl6/FACTS*.md.
   (6,565 vs 6,777 ms / 10M rows); btree page work dominates key width.
 - Pragmas on :memory: are no-ops (journal/sync/cache); page_size=16384 is the
   one real effect (~100 MB RSS on 10M rows).
-- WITHOUT ROWID vs rowid+unique: 16% slower fixpoint, 2.2x less memory
-  (pairs stored once, not table+index).
+- WITHOUT ROWID BEATS rowid+UNIQUE on a fixpoint head, both sides measured on
+  the SAME algorithm: rowid+UNIQUE is 5.4-7.6% SLOWER and 2.4x fatter (35.5 vs
+  15.0 MB grid, 360 vs 148 MB chain), because it stores every key twice, table
+  plus index. True with TEXT keys and still true with INTEGER keys after
+  interning, so the dictionary flip does not move this call. The old "16%
+  slower fixpoint, 2.2x less memory" line compared two different ALGORITHMS,
+  not two storage shapes: a rowid-range delta against a ping/pong wavefront.
+  The rowid-range delta is worth 17-53%, and it is the DELTA that requires a
+  rowid, never the storage on its own.
+- Interned INTEGER keys vs raw TEXT keys, whole fixpoint on the 4-column
+  flagship head: 1.69-1.94x faster, 9.0-9.4x smaller on disk. The 1.7-2.0x in
+  the ladder above is the insert alone; the fixpoint holds the same band.
 - Recursive CTE vs statement loop: loop wins wide frontiers ~1.3x, loses on
   deep-thin chains; shape-dependent, both banked.
 
