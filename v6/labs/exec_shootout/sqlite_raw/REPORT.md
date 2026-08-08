@@ -160,6 +160,8 @@ Time spread across every pragma set is 5% on grid and 6% on chain, inside run-to
 5. The checksum fold is 23% of wall time on the 10M cases even after the group_concat trick, and it is driver overhead the rust engines do not pay the same way. Fixpoint ms, the contract number, excludes it.
 6. Storage choice is a memory/speed fork with no free option: rowid plus unique index is the fastest fixpoint and the fattest (454 MB on chain), WITHOUT ROWID is 16% slower and 2.2x leaner (203 MB).
 
+   **CORRECTED 2026-08-08 (head_shape lab).** Finding 6 conflated storage with delta mechanism. The 16% came from `loop_range_rowid` against `loop_notexists_wor`, which differ in BOTH the head shape and the delta (rowid range vs ping/pong frontiers). The same table's own clean isolate reads the other way: `loop_notexists_rowid` 13,275 ms against `loop_notexists_wor` 11,406 ms on chain, identical algorithm, so rowid+UNIQUE is 16.4% SLOWER than WITHOUT ROWID. Both ratios round to 16% in opposite directions, which is how the skill line lost its sign. Re-derived on the 4-column flagship head: rowid+UNIQUE is 5.4-7.6% slower and 2.4x fatter, and the rowid-range delta is worth 17-53% on its own. WITHOUT ROWID wins the storage question; the rowid buys the DELTA, not the fixpoint.
+
 ## Reproducing
 
 ```

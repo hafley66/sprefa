@@ -775,7 +775,7 @@ interning alone does not require the rel to grow an `__id`.
 | table family | shape after task #4 | why |
 |---|---|---|
 | non-recursive set rel | **WITHOUT ROWID**, PK now all-INTEGER | the fastest insert on the ladder: `4-col WITHOUT ROWID PK, INTEGER ~3.3M -> 2.9M rows/s` vs `rowid table + UNIQUE index ~1.34M rows/s` (`sqlite-costs`). It also collects the measured 1.68-1.99x TEXT->INTEGER win directly |
-| recursive level head with a non-null `fixpointIr` | **rowid + UNIQUE**, the arm `lower.pl:930` already writes | `REPORT-SUBSEC.md` "Why sub-1,000 requires a restructure": the rowid-range delta needs append + range read, and on a WITHOUT ROWID head it cannot recover the floor (measured 1,123 ms bare loop, still above the ~1,001 ms floor) |
+| recursive level head with a non-null `fixpointIr` | ~~**rowid + UNIQUE**~~ **WITHOUT ROWID stays** (lane I-E, measured) | two errors in the original cell, both closed by `plans/2026-08-08-interning-ie-report.md`. There is no such arm: `lower.pl:930` is `head_select_list/7`, and `rel_ddl/6` gives rowid+UNIQUE only to a `declared_type_name` rel, never to a level-headed one. And the direction is backwards: on the same wavefront the emitter runs, rowid+UNIQUE is 5.4-7.6% SLOWER and 2.4x fatter. The `REPORT-SUBSEC.md` floor argument is about the rowid-range DELTA, a separate restructure that replaces the ping/pong walk and moves `_sequence` for every program |
 | wave / ping / pong / cone (`lower.pl:3803-3807`, `:3820-3825`) | **WITHOUT ROWID stays** | their PK-order scan IS ordering law property 2 (offload contract §4.2). Flipping them changes `_sequence` for every program |
 | refCount head `__support_*` (`lower.pl:3838-3840`) | **WITHOUT ROWID stays** | same; it is what makes `FillNewSql` key_major |
 | `__new_<rel>` (`lower.pl:3841-3847`) | **plain rowid, unchanged** | its rowid IS `_sequence` |
@@ -783,13 +783,31 @@ interning alone does not require the rel to grow an `__id`.
 | `__str` | rowid+unique by construction | §3.2 |
 | Log rels (`lower.pl:900-908`) | plain rowid, unchanged | duplicate rows must physically coexist |
 
-**Open measurement, flagged rather than asserted.** `sqlite-costs` carries the
-line `WITHOUT ROWID vs rowid+unique: 16% slower fixpoint, 2.2x less memory
-(pairs stored once, not table+index)`. Which side owns which number is not
-stated in the skill, and the ladder above it reads the other way on pure insert.
-Lane I-E's FIRST task is to re-derive that constant on the flagship TEXT-keyed
-shape before flipping any head, and to write the direction into the skill. Do
-not flip a head on the strength of an ambiguous constant.
+**Measurement CLOSED, 2026-08-08, lane I-E. No head flips.** The ambiguous
+`sqlite-costs` line has a direction now, and it is the opposite of what this
+section assumed. Measured on the 4-column flagship head (`flow_reach`, all
+columns INTEGER after THE FLIP), ping/pong wavefront held identical on both
+sides so storage is the only variable:
+
+| case | WITHOUT ROWID | rowid+UNIQUE | rowid+UNIQUE penalty | db bytes WOR : rowid |
+|---|---|---|---|---|
+| grid_10000 | 1,296 ms | 1,387 ms | +7.0% | 15.0 : 35.5 MB |
+| chain_10000 | 13,083 ms | 14,076 ms | +7.6% | 148.4 : 360.2 MB |
+| layered_10000 | 14,598 ms | 15,385 ms | +5.4% | 143.8 : 353.8 MB |
+
+Why the constant was ambiguous: BOTH ratios round to 16% and they point in
+opposite directions. `loop_range_rowid` vs `loop_notexists_wor` is 11,406 /
+9,798 = 1.164, and `loop_notexists_rowid` vs `loop_notexists_wor` is 13,275 /
+11,406 = 1.164. The first pair differs in the DELTA (rowid range vs ping/pong)
+and the second in the STORAGE. `sqlite_raw/REPORT.md` finding 6 quoted the
+first and attributed it to the second; the skill inherited the sign error.
+
+**The rowid buys the delta, never the fixpoint.** The rowid-range delta is
+worth 17-53% where it applies, and it is the only reason to want a rowid head.
+Adopting it means replacing the ping/pong walk, which is ordering law property
+2, so it stays a separate restructure with its own `_sequence` receipt and is
+not licensed by this contract. Interning does not change the call: WITHOUT
+ROWID wins with TEXT keys and still wins with INTEGER keys.
 
 ---
 

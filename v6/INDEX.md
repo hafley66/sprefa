@@ -47,7 +47,7 @@
 | [labs/exec_shootout/intern_bench/REPORT-INTERN.md](labs/exec_shootout/intern_bench/REPORT-INTERN.md) | 146 | P0-A: TEXT-key interning cost, measured |
 | [labs/exec_shootout/sqlite_raw/REPORT-BATCH.md](labs/exec_shootout/sqlite_raw/REPORT-BATCH.md) | 147 | REPORT-BATCH: can batching or storage tricks beat the sqlite floor? |
 | [labs/exec_shootout/sqlite_raw/REPORT-TAIL.md](labs/exec_shootout/sqlite_raw/REPORT-TAIL.md) | 92 | REPORT-TAIL: phase-1 tail alone, measured on real data with no walk |
-| [labs/exec_shootout/sqlite_raw/REPORT.md](labs/exec_shootout/sqlite_raw/REPORT.md) | 183 | sqlite_raw: what the medium can do with zero reactive machinery |
+| [labs/exec_shootout/sqlite_raw/REPORT.md](labs/exec_shootout/sqlite_raw/REPORT.md) | 185 | sqlite_raw: what the medium can do with zero reactive machinery |
 | [plans/2026-07-19-reactive-style-port.md](plans/2026-07-19-reactive-style-port.md) | 429 | Reactive style port — design doc |
 | [plans/2026-07-19-v6-crate-map.md](plans/2026-07-19-v6-crate-map.md) | 382 | V6 crate map — boundaries, the math, and the size budget |
 | [plans/2026-07-19-v6-daemon.md](plans/2026-07-19-v6-daemon.md) | 129 | V6 daemon — one process, every protocol, library-first |
@@ -651,7 +651,7 @@
 123:## Checksum fold race
 138:## Pragma sweep
 154:## What failed, what surprised
-163:## Reproducing
+165:## Reproducing
 ```
 
 ### plans/2026-07-19-reactive-style-port.md

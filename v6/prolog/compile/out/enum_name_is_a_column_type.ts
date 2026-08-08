@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,12 +136,25 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "grade_tag": [false, true],
+    "picked_tag": [false, true],
+  },
+};
+
 const ddl: readonly string[] = [
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('green'), ('ripe')`,
   `CREATE TABLE "grade_green" ("id" INTEGER NOT NULL, "days" INTEGER NOT NULL, PRIMARY KEY ("days")) WITHOUT ROWID`,
   `CREATE TABLE "grade_ripe" ("id" INTEGER NOT NULL, "sugar" INTEGER NOT NULL, PRIMARY KEY ("sugar")) WITHOUT ROWID`,
-  `CREATE TABLE "grade_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "grade_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_grade_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "grade_tag" t`,
   `CREATE TABLE "picked" ("id" INTEGER NOT NULL, "g" INTEGER NOT NULL, PRIMARY KEY ("id", "g")) WITHOUT ROWID`,
-  `CREATE TABLE "picked_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "picked_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_picked_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "picked_tag" t`,
   `CREATE TEMP TABLE "__delta_grade_green" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "days" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_grade_green_sign" ON "__delta_grade_green" ("_sign")`,
   `CREATE INDEX "__delta_grade_green_group" ON "__delta_grade_green" ("id", "days")`,
@@ -152,29 +167,31 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_grade_ripe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "sugar" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_grade_ripe_phase" ON "__frontier_grade_ripe" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_grade_ripe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "sugar" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_grade_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_grade_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_grade_tag_sign" ON "__delta_grade_tag" ("_sign")`,
   `CREATE INDEX "__delta_grade_tag_group" ON "__delta_grade_tag" ("id", "tag")`,
-  `CREATE TEMP TABLE "__frontier_grade_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_grade_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_grade_tag_phase" ON "__frontier_grade_tag" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_grade_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_grade_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_grade_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_grade_tag" t`,
   `CREATE TEMP TABLE "__delta_picked" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "g" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_picked_sign" ON "__delta_picked" ("_sign")`,
   `CREATE INDEX "__delta_picked_group" ON "__delta_picked" ("id", "g")`,
   `CREATE TEMP TABLE "__frontier_picked" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "g" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_picked_phase" ON "__frontier_picked" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_picked" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "g" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_picked_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_picked_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_picked_tag_sign" ON "__delta_picked_tag" ("_sign")`,
   `CREATE INDEX "__delta_picked_tag_group" ON "__delta_picked_tag" ("id", "tag")`,
-  `CREATE TEMP TABLE "__frontier_picked_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_picked_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_picked_tag_phase" ON "__frontier_picked_tag" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_picked_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_grade_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_grade_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_picked_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_picked_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_picked_tag" t`,
+  `CREATE TEMP TABLE "__support_next_grade_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_grade_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "grade_tag_zero" ON "grade_tag" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_picked_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_picked_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_picked_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_picked_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "picked_tag_zero" ON "picked_tag" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -230,8 +247,8 @@ const arrival_targets: readonly string[] = ["grade_green", "grade_ripe", "picked
 
 const boot: readonly IBootStatement[] = [
   { rel: "grade_tag", sql: `DELETE FROM "grade_tag"`, params: [] },
-  { rel: "grade_tag", sql: `INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", 'ripe' FROM "grade_ripe" b0`, params: [] },
-  { rel: "grade_tag", sql: `INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", 'green' FROM "grade_green" b0`, params: [] },
+  { rel: "grade_tag", sql: `INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ripe') FROM "grade_ripe" b0`, params: [] },
+  { rel: "grade_tag", sql: `INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'green') FROM "grade_green" b0`, params: [] },
   { rel: "picked_tag", sql: `DELETE FROM "picked_tag"`, params: [] },
   { rel: "picked_tag", sql: `INSERT OR IGNORE INTO "picked_tag" ("id", "tag") SELECT b0."id", b1."tag" FROM "picked" b0, "grade_tag" b1 WHERE b1."id" = b0."g"`, params: [] },
 ];
@@ -248,18 +265,34 @@ function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     grade_green: select_rows(seam, `SELECT "id", "days" FROM "grade_green"`, rel_columns.grade_green!, rel_column_types.grade_green!),
     grade_ripe: select_rows(seam, `SELECT "id", "sugar" FROM "grade_ripe"`, rel_columns.grade_ripe!, rel_column_types.grade_ripe!),
-    grade_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "grade_tag"`, rel_columns.grade_tag!, rel_column_types.grade_tag!),
+    grade_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_grade_tag"`, rel_columns.grade_tag!, rel_column_types.grade_tag!),
     picked: select_rows(seam, `SELECT "id", "g" FROM "picked"`, rel_columns.picked!, rel_column_types.picked!),
-    picked_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "picked_tag"`, rel_columns.picked_tag!, rel_column_types.picked_tag!),
+    picked_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_picked_tag"`, rel_columns.picked_tag!, rel_column_types.picked_tag!),
   });
+}
+
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    grade_green: select_rows(seam, `SELECT "id", "days" FROM "grade_green"`, rel_columns.grade_green!, rel_column_types.grade_green!),
+    grade_ripe: select_rows(seam, `SELECT "id", "sugar" FROM "grade_ripe"`, rel_columns.grade_ripe!, rel_column_types.grade_ripe!),
+    grade_tag: select_rows(seam, `SELECT "id", "tag" FROM "grade_tag"`, rel_columns.grade_tag!, rel_column_types.grade_tag!),
+    picked: select_rows(seam, `SELECT "id", "g" FROM "picked"`, rel_columns.picked!, rel_column_types.picked!),
+    picked_tag: select_rows(seam, `SELECT "id", "tag" FROM "picked_tag"`, rel_columns.picked_tag!, rel_column_types.picked_tag!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
 }
 
 const final_select: Record<string, string> = {
   grade_green: `SELECT "id", "days" FROM "grade_green"`,
   grade_ripe: `SELECT "id", "sugar" FROM "grade_ripe"`,
-  grade_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "grade_tag"`,
+  grade_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_grade_tag"`,
   picked: `SELECT "id", "g" FROM "picked"`,
-  picked_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "picked_tag"`,
+  picked_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_picked_tag"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -293,26 +326,26 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "grade_green", kind: "set", table_name: "grade_green", delta_table_name: "__delta_grade_green", frontier_table_name: "__frontier_grade_green", next_frontier_table_name: "__next_frontier_grade_green", columns: ["id", "days"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "grade_green" ("id", "days") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("days") DO UPDATE SET "id" = excluded."id" RETURNING "id", "days"`, arrival_del_sql: `DELETE FROM "grade_green" WHERE ("id", "days") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "days"`, boundary_sql: `SELECT "id", "days", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grade_green" WHERE "_sign" IN (-1, 1) GROUP BY "id", "days", "_sign"`, rule_observers: ["grade_tag/2"] },
   { rel: "grade_ripe", kind: "set", table_name: "grade_ripe", delta_table_name: "__delta_grade_ripe", frontier_table_name: "__frontier_grade_ripe", next_frontier_table_name: "__next_frontier_grade_ripe", columns: ["id", "sugar"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "grade_ripe" ("id", "sugar") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("sugar") DO UPDATE SET "id" = excluded."id" RETURNING "id", "sugar"`, arrival_del_sql: `DELETE FROM "grade_ripe" WHERE ("id", "sugar") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "sugar"`, boundary_sql: `SELECT "id", "sugar", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grade_ripe" WHERE "_sign" IN (-1, 1) GROUP BY "id", "sugar", "_sign"`, rule_observers: ["grade_tag/2"] },
-  { rel: "grade_tag", kind: "set", table_name: "grade_tag", delta_table_name: "__delta_grade_tag", frontier_table_name: "__frontier_grade_tag", next_frontier_table_name: "__next_frontier_grade_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grade_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: ["picked_tag/2"] },
+  { rel: "grade_tag", kind: "set", table_name: "grade_tag", delta_table_name: "__delta_grade_tag", frontier_table_name: "__frontier_grade_tag", next_frontier_table_name: "__next_frontier_grade_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_grade_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: ["picked_tag/2"] },
   { rel: "picked", kind: "set", table_name: "picked", delta_table_name: "__delta_picked", frontier_table_name: "__frontier_picked", next_frontier_table_name: "__next_frontier_picked", columns: ["id", "g"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "picked" ("id", "g") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "g"`, arrival_del_sql: `DELETE FROM "picked" WHERE ("id", "g") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "g"`, boundary_sql: `SELECT "id", "g", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_picked" WHERE "_sign" IN (-1, 1) GROUP BY "id", "g", "_sign"`, rule_observers: ["picked_tag/2"] },
-  { rel: "picked_tag", kind: "set", table_name: "picked_tag", delta_table_name: "__delta_picked_tag", frontier_table_name: "__frontier_picked_tag", next_frontier_table_name: "__next_frontier_picked_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_picked_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
+  { rel: "picked_tag", kind: "set", table_name: "picked_tag", delta_table_name: "__delta_picked_tag", frontier_table_name: "__frontier_picked_tag", next_frontier_table_name: "__next_frontier_picked_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_picked_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "grade_tag", rule_id: "enum_name_is_a_column_type:grade_tag/2#1", head_delta_table_name: "__delta_grade_tag", head_columns: ["id", "tag"], insert_sql: `INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT DISTINCT d0."id", 'ripe' FROM "__frontier_grade_ripe" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'green' FROM "__frontier_grade_green" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, select_sql: `SELECT "id", "tag" FROM "grade_tag"`, recompute_sql: `DELETE FROM "grade_tag";
-INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", 'ripe' FROM "grade_ripe" b0;
-INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", 'green' FROM "grade_green" b0`, support_sql: [`DELETE FROM "__support_next_grade_tag"`, `INSERT INTO "__support_next_grade_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'ripe' AS "tag", count(*) AS "__refcount" FROM "grade_ripe" b0 GROUP BY b0."id", 'ripe' UNION ALL SELECT b0."id" AS "id", 'green' AS "tag", count(*) AS "__refcount" FROM "grade_green" b0 GROUP BY b0."id", 'green') GROUP BY "id", "tag"`, `UPDATE "grade_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_grade_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_grade_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "grade_tag" WHERE "__refcount" <= 0`, `DELETE FROM "grade_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_grade_tag"`, `INSERT INTO "__new_grade_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_grade_tag" n LEFT JOIN "grade_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_grade_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_grade_tag"`, `INSERT INTO "__frontier_grade_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_grade_tag"`, `INSERT INTO "__next_frontier_grade_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_grade_tag"`, `INSERT OR IGNORE INTO "grade_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_grade_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "grade_tag", rule_id: "enum_name_is_a_column_type:grade_tag/2#1", head_delta_table_name: "__delta_grade_tag", head_columns: ["id", "tag"], insert_sql: `INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT DISTINCT d0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ripe') FROM "__frontier_grade_ripe" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'green') FROM "__frontier_grade_green" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, select_sql: `SELECT "id", "tag" FROM "grade_tag"`, recompute_sql: `DELETE FROM "grade_tag";
+INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ripe') FROM "grade_ripe" b0;
+INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'green') FROM "grade_green" b0`, support_sql: [`DELETE FROM "__support_next_grade_tag"`, `INSERT INTO "__support_next_grade_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ripe') AS "tag", count(*) AS "__refcount" FROM "grade_ripe" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ripe') UNION ALL SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'green') AS "tag", count(*) AS "__refcount" FROM "grade_green" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'green')) GROUP BY "id", "tag"`, `UPDATE "grade_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_grade_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_grade_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "grade_tag" WHERE "__refcount" <= 0`, `DELETE FROM "grade_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_grade_tag"`, `INSERT INTO "__new_grade_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_grade_tag" n LEFT JOIN "grade_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_grade_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_grade_tag"`, `INSERT INTO "__frontier_grade_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_grade_tag"`, `INSERT INTO "__next_frontier_grade_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_grade_tag"`, `INSERT OR IGNORE INTO "grade_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_grade_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
   { head_rel: "picked_tag", rule_id: "enum_name_is_a_column_type:picked_tag/2#1", head_delta_table_name: "__delta_picked_tag", head_columns: ["id", "tag"], insert_sql: `INSERT OR IGNORE INTO "picked_tag" ("id", "tag") SELECT DISTINCT d0."id", b0."tag" FROM "__frontier_picked" d0, "grade_tag" b0 WHERE d0."_phase" >= 0 AND b0."id" = d0."g" UNION ALL SELECT DISTINCT b0."id", d0."tag" FROM "__frontier_grade_tag" d0, "picked" b0 WHERE d0."_phase" >= 0 AND b0."g" = d0."id" RETURNING "id", "tag"`, select_sql: `SELECT "id", "tag" FROM "picked_tag"`, recompute_sql: `DELETE FROM "picked_tag";
 INSERT OR IGNORE INTO "picked_tag" ("id", "tag") SELECT b0."id", b1."tag" FROM "picked" b0, "grade_tag" b1 WHERE b1."id" = b0."g"`, support_sql: [`DELETE FROM "__support_next_picked_tag"`, `INSERT INTO "__support_next_picked_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", b1."tag" AS "tag", count(*) AS "__refcount" FROM "picked" b0, "grade_tag" b1 WHERE b1."id" = b0."g" GROUP BY b0."id", b1."tag") GROUP BY "id", "tag"`, `UPDATE "picked_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_picked_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_picked_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "picked_tag" WHERE "__refcount" <= 0`, `DELETE FROM "picked_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_picked_tag"`, `INSERT INTO "__new_picked_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_picked_tag" n LEFT JOIN "picked_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_picked_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_picked_tag"`, `INSERT INTO "__frontier_picked_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_picked_tag"`, `INSERT INTO "__next_frontier_picked_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_picked_tag"`, `INSERT OR IGNORE INTO "picked_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_picked_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "grade_tag";
-INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", 'ripe' FROM "grade_ripe" b0;
-INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", 'green' FROM "grade_green" b0;
+INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ripe') FROM "grade_ripe" b0;
+INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'green') FROM "grade_green" b0;
 DELETE FROM "picked_tag";
 INSERT OR IGNORE INTO "picked_tag" ("id", "tag") SELECT b0."id", b1."tag" FROM "picked" b0, "grade_tag" b1 WHERE b1."id" = b0."g"`;
   return seam.runner.executeMultiple(seam.db, sql);
@@ -338,6 +371,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -361,11 +396,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -393,7 +431,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "enum_name_is_a_column_type",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,
