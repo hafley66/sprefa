@@ -1,0 +1,73 @@
+direction: right
+
+classes: {
+  ok: {
+    style.fill: "#d3f9d8"
+    style.stroke: "#2f9e44"
+    style.font-color: "#1b1b1b"
+  }
+  gap: {
+    style.fill: "#ffe3e3"
+    style.stroke: "#e03131"
+    style.stroke-dash: 4
+    style.font-color: "#1b1b1b"
+  }
+  store: {
+    shape: cylinder
+    style.fill: "#d3f9d8"
+    style.stroke: "#2f9e44"
+  }
+  stage: {
+    style.fill: "#f8f9fa"
+    style.stroke: "#868e96"
+  }
+}
+
+IN: 1 inputs { class: stage
+  SRC: entry .dl6 text { class: ok }
+  DIG: "source_digest\n0_compile.ts:99" { class: ok }
+}
+
+RES: 2 resolve { class: stage
+  USE: "expand_uses/6\nuse_resolve.pl:43" { class: ok }
+}
+
+CMP: 3 compile - swipl { class: stage
+  SWI: compile_dl6/3 { class: ok }
+  EMT: "emitted .ts + __rel\nh_id . h_schema . h_rule" { class: ok }
+}
+
+DEC: 4 decide { class: stage
+  PLN: "ReloadPlanner.plan\nreloadPlan.ts:31" { class: ok }
+}
+
+SWP: 5 swap { class: stage
+  SW: "switchMap\n4_http.ts:508" { class: ok }
+  DB: "SQLite\nddl replay" { class: store }
+}
+
+RUN: 6 run { class: stage
+  TCK: "IncrementalRuntime\ntick loop" { class: ok }
+  CH: "channels: tick effect\nbind watch rule" { class: ok }
+}
+
+IN.SRC -> IN.DIG -> CMP.SWI -> CMP.EMT -> DEC.PLN -> SWP.SW -> SWP.DB -> RUN.TCK -> RUN.CH
+RES.USE -> CMP.SWI: "A5 - never called" { style.stroke-dash: 4; style.stroke: "#e03131" }
+
+G8: "8. digest keys WHOLE entry\none edit rebuilds all" { class: gap }
+G2: "2. A5 wire expand_uses\n+ root_dir opt" { class: gap }
+G3: "3. fixture fs seam\n9 use fixtures red" { class: gap }
+G4: "4. A4 mangle_rel_path/3\n0_dot_expand.pl:62" { class: gap }
+G5: "5. B3 run the plan\nrm is_already_exists 3_engine.ts:224" { class: gap }
+G6: "6. B4 --allow-drop\nthrough POST /program" { class: gap }
+G1: "1. sprefa:reload\nIReloadOutcome unpublished" { class: gap }
+G7: "7. rel module/imports\nmodule_dirty = salsa" { class: gap }
+
+G8 -> IN.DIG
+G2 -> RES.USE
+G7 -> RES.USE
+G3 -> CMP.SWI
+G4 -> CMP.EMT
+G5 -> SWP.SW
+G6 -> SWP.SW
+G1 -> RUN.CH

@@ -1,0 +1,52 @@
+direction: right
+
+classes: {
+  now: { style.fill: "#d3f9d8"; style.stroke: "#2f9e44"; style.font-color: "#1b1b1b" }
+  move: { style.fill: "#e7f5ff"; style.stroke: "#1971c2"; style.font-color: "#1b1b1b" }
+  next: { style.fill: "#ffe066"; style.stroke: "#f08c00"; style.bold: true; style.font-color: "#1b1b1b" }
+  ask: { style.fill: "#ffe3e3"; style.stroke: "#e03131"; style.stroke-dash: 4; style.font-color: "#1b1b1b" }
+  stage: { style.fill: "#f8f9fa"; style.stroke: "#868e96" }
+}
+
+HAVE: "the position" { class: stage
+  CAT: "__rel readable, 11 cols\n5 primitives only" { class: now }
+  TP: "0_type_plane.pl\nlist(T), ref(Name), json out+in" { class: now }
+  DRED: "DRed engine, ping/pong" { class: now }
+}
+
+FIX: "make the catalog type-complete" { class: stage
+  M1: "1. two-pass ids\nref(Name) -> target rel_id\nlower.pl:736-762" { class: next }
+  M2: "2. synthetic list row\nkind=list, type_id=element" { class: move }
+  M6: "6. enum row before erasure\n0_enum_expand.pl" { class: move }
+  M3: "3. fixture reads __rel\nthe conformance anchor" { class: move }
+}
+
+WORD: "needs your word, not code" { class: stage
+  M4: "4. optional / nullable\nNO SPELLING EXISTS" { class: ask }
+  M5: "5. doc text on decls\n+ __rel.doc column" { class: ask }
+}
+
+OUT: "emitters - one query + one template each" { class: stage
+  M7: "7. emit_json_schema.pl" { class: move }
+  M8: "8. emit_openapi.pl" { class: move }
+  M9: "9. emit_rust.pl\nclap + serde" { class: move }
+}
+
+IN: "the other machine" { class: stage
+  M10: "10. import openapi -> .dl6\nWRITES SOURCE TEXT\nnot rows - budget separately" { class: ask }
+}
+
+HAVE.CAT -> FIX.M1
+HAVE.TP -> FIX.M1
+FIX.M1 -> FIX.M2
+FIX.M1 -> FIX.M3
+FIX.M1 -> FIX.M6
+FIX.M2 -> OUT.M7
+FIX.M6 -> OUT.M7: "oneOf" { style.stroke-dash: 4 }
+OUT.M7 -> OUT.M8
+FIX.M2 -> OUT.M9
+WORD.M4 -> OUT.M8: "required" { style.stroke: "#e03131" }
+WORD.M4 -> OUT.M9: "Option<T>" { style.stroke: "#e03131" }
+WORD.M5 -> OUT.M8: "description" { style.stroke: "#e03131" }
+FIX -> IN.M10: "target vocabulary" { style.stroke-dash: 4 }
+HAVE.DRED -> FIX.M3: "invalidation reuses this" { style.stroke-dash: 4 }
