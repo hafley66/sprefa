@@ -21,7 +21,7 @@
               [ refusal_inventory/1, refusal_message_clause_count/1 ]).
 :- use_module('../../strat', [ stratum_groups/2 ]).
 :- use_module('../../lower',
-              [ lower_program/2, compile_expr/4, compile_comparison/3,
+              [ lower_program/2, compile_expr/6, compile_comparison/4,
                 canonical_column_expr/2, level_ref_count_sql/5,
                 column_def/4, ir_column_class/4, uniform_text_encoding/1,
                 catalog_ddl_contract/2,
@@ -59,7 +59,7 @@
                 % plan compiles to, asserted by the incremental_mode unit.
                 incremental_program_safe/4, reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
-:- use_module('../../lower', [ boot_statements/5 ]).
+:- use_module('../../lower', [ boot_statements/6 ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
 % the oracle/compiler split, because the review's central claim is that
@@ -306,9 +306,9 @@ test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(batched_increments_both_count, Plan, Lowered, Boot, Text),
     findall(At,
             sub_atom(Text, At, _, _, 'DELETE FROM "__pre_counter"'),
@@ -687,9 +687,9 @@ test(fixpoint_ir_emits_beside_the_sql_fields) :-
            program_plan(Term-Bindings, Plan),
            lower_program(Plan, Lowered) )),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(flagship_flow_reach_over_resolved_edges, Plan, Lowered, Boot,
                  Text),
     once(sub_atom(Text, _, _, _,
@@ -1249,9 +1249,9 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
                   (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
     program_plan(fixture(freeze, Prog, [], [], [])-[], Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(freeze, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.apply_levels_before_edges')),
     once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recompute_levels_before_edges')),
@@ -2002,9 +2002,9 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
               key([1, 2]), [text, int, text, ref(span)]),
       RelPlans),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), _, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), _, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(
       host_declared_struct_output_parses_and_lowers_as_ref,
       Plan, Lowered, Boot, Text),
@@ -2117,9 +2117,9 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _, 'export const host_plans')),
     % PHASE 2 (runtime bridge arc): the two named refusals are gone; both world
@@ -2163,9 +2163,9 @@ test(query_plan_carries_columns_and_bound_positions) :-
               Program, [], [], [])-Bindings,
       Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
     emit_program(query_plan_carries_columns_and_bound_positions,
                  Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _,
@@ -3568,23 +3568,23 @@ test(oracle_comparison_recognizer_is_total) :-
 test(every_arithmetic_row_lowers_to_sql) :-
     forall(expression(Name/2, arithmetic, _, _, _),
            ( Expr =.. [Name, 1, 2],
-             compile_expr(Expr, [], Sql, Type),
+             compile_expr(direct, identity, Expr, [], Sql, Type),
              Type == int,
              atom(Sql) )).
 
 test(modulo_lowers_sign_corrected) :-
-    compile_expr(mod(7, 3), [], Sql, _),
+    compile_expr(direct, identity, mod(7, 3), [], Sql, _),
     Sql == '(((7 % 3) + 3) % 3)'.
 
 test(norm_lowers_to_ascii_character_filter) :-
-    compile_expr(norm('Route /V2: Café_42'), [], Sql, Type),
+    compile_expr(direct, identity, norm('Route /V2: Café_42'), [], Sql, Type),
     Type == text,
     once(sub_atom(Sql, _, _, _, 'WITH RECURSIVE "__norm_chars"')),
     once(sub_atom(Sql, _, _, _, 'unicode("c") BETWEEN 48 AND 57')).
 
 test(norm_refuses_integer_operand,
      [throws(unsupported_construct(text_operand_not_text(norm(7), 7, int)))]) :-
-    compile_expr(norm(7), [], _, _).
+    compile_expr(direct, identity, norm(7), [], _, _).
 
 test(regexp_is_a_guard_surface) :-
     body_surface_for_term(regexp(Text, "^a$"), regexp/2, guard, no_refs,
@@ -3619,7 +3619,7 @@ test(every_comparison_row_lowers_to_its_sql_operator) :-
     forall(( expression(Name/2, Family, _, infix(SqlOperator), _),
              memberchk(Family, [ordered_comparison, identity_comparison]) ),
            ( Goal =.. [Name, 1, 2],
-             compile_comparison(Goal, [], Text),
+             compile_comparison(direct, Goal, [], Text),
              atomic_list_concat(['(1 ', SqlOperator, ' 2)'], Expected),
              Text == Expected )).
 
@@ -3673,9 +3673,9 @@ test(bool_and_float_storage_constraints_are_exact) :-
                     '"value" REAL NOT NULL CHECK (typeof("value") = \'real\' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)') )).
 
 test(float_division_and_avg_lower_to_sqlite_real_operations) :-
-    compile_expr(5 / 2, [], IntDivision, int),
+    compile_expr(direct, identity, 5 / 2, [], IntDivision, int),
     assertion(IntDivision == '(5 / 2)'),
-    compile_expr(5.0 / 2, [], FloatDivision, float),
+    compile_expr(direct, identity, 5.0 / 2, [], FloatDivision, float),
     assertion(FloatDivision == '(CAST(5.0 AS REAL) / 2)'),
     lowered_for('5_value_plane.pl', float_avg_is_grouped, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
@@ -4871,9 +4871,9 @@ interning_emitted(Mode, Base, Name, Text) :-
            program_plan(Term-Bindings, [intern(Mode)], Plan),
            lower_program(Plan, Lowered),
            Term = fixture(_, _, Initial, _, _),
-           Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, _),
+           Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
            Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-           boot_statements(Decls, RelPlans, Initial, LevelStatements, Boot),
+           boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
            emit_program(Name, Plan, Lowered, Boot, Text) )).
 
 % A `__ref_<type>` target table carries text columns inside its own UNIQUE key,
