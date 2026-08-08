@@ -417,7 +417,7 @@ test(canonical_column_expr_shape) :-
 test(switch_as_keyed_replace_delta_sql_open_scope) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
-    memberchk(deltastmt(open_scope/2, SelectSql, __delta_open_scope, BoundarySql), DeltaStatements),
+    memberchk(deltastmt(open_scope/2, SelectSql, __delta_open_scope, BoundarySql, _), DeltaStatements),
     once(sub_atom(SelectSql, _, _, _, 'FROM "open_scope"')),
     once(sub_atom(SelectSql, _, _, _, 'json_valid("target")')),
     once(sub_atom(SelectSql, _, _, _, 'json_valid("session_id")')),
@@ -429,7 +429,7 @@ test(switch_as_keyed_replace_delta_sql_open_scope) :-
 test(switch_as_keyed_replace_delta_sql_route_change_log) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
-    memberchk(deltastmt(route_change/2, SelectSql, __delta_route_change, _), DeltaStatements),
+    memberchk(deltastmt(route_change/2, SelectSql, __delta_route_change, _, _), DeltaStatements),
     once(sub_atom(SelectSql, _, _, _, 'FROM "route_change"')),
     once(sub_atom(SelectSql, _, _, _, 'json_valid("route_id")')),
     once(sub_atom(SelectSql, _, _, _, 'AS "route_id"')).
@@ -4711,6 +4711,12 @@ interning_lowered(Mode, Name, Lowered) :-
            program_plan(Term-Bindings, [intern(Mode)], Plan),
            lower_program(Plan, Lowered) )).
 
+interning_lowered_in(Base, Mode, Name, Lowered) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, Lowered) )).
+
 ddl_containing(Ddl, Needle, Statement) :-
     member(Statement, Ddl),
     sub_atom(Statement, _, _, _, Needle).
@@ -4785,7 +4791,7 @@ test(boundary_reads_go_through_the_view) :-
     interning_lowered(dict, switch_as_keyed_replace,
                       lowered(_, _, _, _, _, DeltaStatements, RelPlans, _)),
     forall(interned_relplan(RelPlans, Name, _, _),
-           ( memberchk(deltastmt(Name/_, SelectSql, _, BoundarySql), DeltaStatements),
+           ( memberchk(deltastmt(Name/_, SelectSql, _, BoundarySql, _), DeltaStatements),
              format(atom(SnapshotFrom), 'FROM "__txt_~w"', [Name]),
              sub_atom(SelectSql, _, _, _, SnapshotFrom),
              format(atom(DeltaFrom), 'FROM "__txt___delta_~w"', [Name]),
@@ -4795,7 +4801,7 @@ test(boundary_reads_name_the_table_at_direct) :-
     interning_lowered(direct, switch_as_keyed_replace,
                       lowered(_, _, _, _, _, DeltaStatements, RelPlans, _)),
     forall(interned_relplan(RelPlans, Name, _, _),
-           ( memberchk(deltastmt(Name/_, SelectSql, _, _), DeltaStatements),
+           ( memberchk(deltastmt(Name/_, SelectSql, _, _, _), DeltaStatements),
              format(atom(SnapshotFrom), 'FROM "~w"', [Name]),
              sub_atom(SelectSql, _, _, _, SnapshotFrom) )).
 
@@ -5436,6 +5442,66 @@ test(the_scoped_aggregate_insert_has_no_intern_at_direct) :-
                               _, aggsql(_, _, _, _, _, [InsertScopedSql], InternSqls)),
     InternSqls == [],
     \+ sub_atom(InsertScopedSql, _, _, _, '__str').
+
+% RED before this landed: `place."file"` held the characters `a.rs` in an
+% INTEGER column and `__ref_place`'s rendering decoded it to null.
+test(a_struct_target_row_crosses_the_ingest_plan_at_dict) :-
+    interning_emitted(dict, '4_struct_values.pl',
+                      struct_nested_value_renders_whole_tree, Text),
+    once(sub_atom(Text, _, _, _,
+                  '(targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,')).
+
+test(a_struct_target_row_takes_no_ingest_plan_at_direct) :-
+    interning_emitted(direct, '4_struct_values.pl',
+                      struct_nested_value_renders_whole_tree, Text),
+    once(sub_atom(Text, _, _, _, '(targets) => apply_arrivals(seam, targets),')),
+    \+ sub_atom(Text, _, _, _, 'TEXT_INTERN_PLAN').
+
+% read_snapshot decodes for the tick log. An occurrence row is bound BACK into
+% an emitted statement, so its plane is the stored one.
+test(the_stored_snapshot_reads_the_table_not_the_view) :-
+    interning_emitted(dict, '8_json_flex.pl',
+                      json_typed_capture_folds_into_a_keyed_int_total, Text),
+    once(sub_atom(Text, _, _, _, 'function read_stored_snapshot(seam: ISqlSeam)')),
+    once(sub_atom(Text, _, _, _, 'SELECT "repo", "stars" FROM "star_event"')).
+
+test(the_stored_select_carries_no_decode) :-
+    interning_lowered_in('8_json_flex.pl', dict,
+                         json_typed_capture_folds_into_a_keyed_int_total,
+                         lowered(_, _, _, _, _, DeltaStatements, _, _)),
+    memberchk(deltastmt(star_event/2, _, _, _, StoredSelectSql), DeltaStatements),
+    StoredSelectSql == 'SELECT "repo", "stars" FROM "star_event"'.
+
+test(the_occurrence_plane_reads_the_stored_snapshot) :-
+    interning_emitted(dict, '8_json_flex.pl',
+                      json_typed_capture_folds_into_a_keyed_int_total, Text),
+    once(sub_atom(Text, _, _, _,
+                  'process_ordered_occurrences(seam, before.stored, mid, arrivals)')),
+    once(sub_atom(Text, _, _, _,
+                  'ordered_carry_additions(mid, after.stored, stored_deltas, written)')).
+
+test(the_tick_log_still_reads_the_decoded_snapshot) :-
+    interning_emitted(dict, '8_json_flex.pl',
+                      json_typed_capture_folds_into_a_keyed_int_total, Text),
+    once(sub_atom(Text, _, _, _, 'build_deltas(before.decoded, after.decoded)')).
+
+test(there_is_no_stored_snapshot_at_direct) :-
+    interning_emitted(direct, '8_json_flex.pl',
+                      json_typed_capture_folds_into_a_keyed_int_total, Text),
+    \+ sub_atom(Text, _, _, _, 'read_stored_snapshot'),
+    once(sub_atom(Text, _, _, _,
+                  'process_ordered_occurrences(seam, before, mid, arrivals)')).
+
+% The naive door binds the same rows one arm at a time, so its resolver takes
+% the plane the ordered loop takes.
+test(an_edge_resolver_reads_the_stored_snapshot_at_dict) :-
+    interning_emitted(dict, 'scopes.pl', switch_as_keyed_replace, Text),
+    once(sub_atom(Text, _, _, _, 'Writes(seam, before.stored, arrivals)')).
+
+test(an_edge_resolver_reads_the_one_snapshot_at_direct) :-
+    interning_emitted(direct, 'scopes.pl', switch_as_keyed_replace, Text),
+    \+ sub_atom(Text, _, _, _, 'before.stored'),
+    once(sub_atom(Text, _, _, _, 'Writes(seam, before, arrivals)')).
 
 :- end_tests(interning).
 % ═══ Door A: `use "path".` module system (use_resolve.pl + use_item/3) ══════

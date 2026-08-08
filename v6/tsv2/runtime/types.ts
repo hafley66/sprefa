@@ -364,6 +364,9 @@ export interface IStructPlane {
     ref_columns: IStructRefColumns,
     arrivals: IArrivalBatch,
     apply_targets?: (arrivals: IArrivalBatch) => Observable<unknown>,
+    /** Absent at `intern(direct)`; present interns each target row's own text
+     *  columns, which no arrival door ever sees. */
+    text_plan?: ITextInternPlan,
   ): Observable<IArrivalBatch>;
   /** Canonical JSON: sorted object keys, no whitespace. Transient wire and
    * boundary comparison encoding; never a stored relation payload. */
