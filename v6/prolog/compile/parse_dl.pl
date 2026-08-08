@@ -62,7 +62,10 @@
             % The line/column pair is read lazily, only when a diagnostic asks,
             % so a successful compile never pays for it.
             statement_location_for_reason/3,
-            statement_location_for_reference/4
+            statement_location_for_reference/4,
+            % use_resolve.pl:expand_uses/6 peels `use "path".` off an entry
+            % file before the remainder is parsed as a Core program.
+            use_item/3
           ]).
 
 :- set_prolog_flag(back_quotes, codes).
@@ -147,9 +150,11 @@ parse_failure(Reason) :-
 % is a MINIMUM remaining count and needs no arithmetic per call. The one thing
 % this predicate may not do is walk the input: it runs at every DCG
 % alternative, so anything proportional to file size here is quadratic.
+% nb_current, not nb_getval: use_item/3 lexes outside any parse_dl_source, and
+% with the globals unset nb_getval throws where marking should be a no-op.
 mark_furthest(Suffix) :-
     length(Suffix, RemainingLength),
-    nb_getval(parse_furthest_remaining, FurthestRemaining),
+    nb_current(parse_furthest_remaining, FurthestRemaining),
     RemainingLength < FurthestRemaining,
     !,
     nb_setval(parse_furthest_remaining, RemainingLength).
@@ -539,6 +544,19 @@ get_or_make_var(Name, Vars0, Var, Vars) :-
     -> Var = Existing, Vars = Vars0
     ; Vars = [Name-Var | Vars0]
     ).
+
+% ═══ module import: `use "path".` ═══════════════════════════════════════════
+% `use` stays a plain identifier, so neither the lexer nor statement/6 changes.
+
+%! use_item(-Item, +S0, -S) is semidet.
+%  Runs before parse_dl_source, on one line at a time, never on a whole file.
+use_item(use(Text), S0, S) :-
+    skip_ws(S0, S1),
+    word(`use`, S1, S2),
+    skip_ws(S2, S3),
+    string_lit(Text, S3, S4),
+    skip_ws(S4, S5),
+    S5 = [0'. | S].
 
 % ═══ statement dispatch ══════════════════════════════════════════════════════
 

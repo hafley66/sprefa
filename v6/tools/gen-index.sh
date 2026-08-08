@@ -19,7 +19,7 @@ out="INDEX.md"
     echo
     echo "| file | lines | title |"
     echo "|---|--:|---|"
-    git ls-files -- '*.md' | grep -v '^INDEX.md$' | sort | while read -r rel; do
+    env -u GIT_DIR -u GIT_WORK_TREE git ls-files -- '*.md' | grep -v '^INDEX.md$' | sort | while read -r rel; do
         lines=$(wc -l < "$rel" | tr -d ' ')
         h1=$(grep -m1 -E '^# ' "$rel" 2>/dev/null | sed 's/^# //' | sed 's/|/\\|/g')
         printf '| [%s](%s) | %s | %s |\n' "$rel" "$rel" "$lines" "$h1"
@@ -27,7 +27,7 @@ out="INDEX.md"
     echo
     echo "## Full header index"
     echo
-    git ls-files -- '*.md' | grep -v '^INDEX.md$' | sort | while read -r rel; do
+    env -u GIT_DIR -u GIT_WORK_TREE git ls-files -- '*.md' | grep -v '^INDEX.md$' | sort | while read -r rel; do
         echo "### $rel"
         echo '```'
         grep -nE '^#{1,3} ' "$rel" 2>/dev/null | sed 's/\t/ /g' || true

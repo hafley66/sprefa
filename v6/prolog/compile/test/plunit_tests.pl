@@ -40,7 +40,10 @@
 % checks the line table against a prefix walk at every index of a text; going
 % through parse_dl/4 alone only reaches the positions a refusal happens to land
 % on.
-:- use_module('../../compile/parse_dl', [ parse_dl/4, remaining_line_column/3 ]).
+:- use_module('../../compile/parse_dl', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
+:- use_module('../../use_resolve',
+              [ expand_uses/6, include_roots/2, resolve_use_path/3,
+                reset_parse_counts/0, parse_count/2 ]).
 :- use_module('../../0_cst_query', [ parse_cst_query/2 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
 :- use_module('../../print_dl', [ print_dl_program/3, print_term/5 ]).
@@ -4984,3 +4987,177 @@ test(mode_travels_in_the_plan) :-
     DefaultPlan = plan(_, _, _, _, _, _, _, DefaultMode).
 
 :- end_tests(interning).
+% ═══ Door A: `use "path".` module system (use_resolve.pl + use_item/3) ══════
+% The parse-count rail catches a re-parsing loader end-state equality hides.
+
+make_use_fixture(Dir, Files) :-
+    make_use_dir(Dir),
+    maplist(write_use_file(Dir), Files).
+
+make_use_dir(Dir) :-
+    tmp_file(use_loader, Seed),
+    atomic_list_concat([Seed, '_m'], Dir),
+    make_directory_path(Dir).
+
+write_use_file(Dir, Name=Content) :-
+    atomic_list_concat([Dir, '/', Name], Path),
+    open(Path, write, S),
+    format(S, "~s", [Content]),
+    close(S).
+
+use_entry(Dir, Name, Entry) :- atomic_list_concat([Dir, '/', Name], Entry).
+
+assert_parsed_once(Dir, Name) :-
+    atomic_list_concat([Dir, '/', Name], Path),
+    absolute_file_name(Path, Canonical, [expand(true)]),
+    parse_count(Canonical, 1).
+
+% FAIL-FIRST RECEIPT: with a bare catch/3 and no Refused marker, all four
+% refusal cases below passed against a loader that threw nothing at all,
+% because `length(Chain, 3)` on an unbound Chain invents a 3-element list and
+% `Text = "nope.dl6"` on an unbound Text just binds it.
+use_refusal(Entry, Pattern, Refused) :-
+    catch(( expand_uses(Entry, [], [], _, _, _), Refused = no_refusal ),
+          Pattern,
+          Refused = refused).
+
+:- begin_tests(use_module_system).
+
+test(use_item_parses_a_sibling_path) :-
+    string_codes("use \"lib.dl6\".", Codes),
+    use_item(use("lib.dl6"), Codes, []).
+
+test(include_roots_prefix_is_entry_dir) :-
+    include_roots('/tmp/foo/main.dl6', Roots),
+    Roots = [Dir | _],
+    Dir == '/tmp/foo'.
+
+test(resolve_use_path_finds_sibling) :-
+    make_use_fixture(Dir, ["x.dl6" = "rel x(key:int).\n"]),
+    use_entry(Dir, 'main.dl6', Entry),
+    include_roots(Entry, Roots),
+    resolve_use_path(Roots, "x.dl6", AbsPath),
+    file_base_name(AbsPath, 'x.dl6').
+
+test(use_absent_program_is_unchanged) :-
+    make_use_fixture(Dir, ["m.dl6" = "rel top(z:int).\ntop(1).\n"]),
+    use_entry(Dir, 'm.dl6', Entry),
+    expand_uses(Entry, [], [], _, prog(Decls, Rules), _),
+    memberchk(col_type(top/1, z, int), Decls),
+    Rules = [_].
+
+test(use_one_sibling_splices_before_own) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel lib(k:int).\nlib(7).\n",
+          "main.dl6" = "use \"lib.dl6\".\nrel main(z:int).\nmain(1).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, prog(Decls, _), Table),
+    append([col_type(lib/1, k, int), col_type(main/1, z, int)], _, Decls),
+    maplist(arg(1), Table, Paths),
+    length(Paths, 2).
+
+test(use_chain_three_deep_keeps_load_order) :-
+    make_use_fixture(Dir,
+        [ "c.dl6" = "rel c(w:int).\nc(1).\n",
+          "b.dl6" = "use \"c.dl6\".\nrel b(y:int).\nb(2).\n",
+          "a.dl6" = "use \"b.dl6\".\nrel a(x:int).\na(3).\n",
+          "main.dl6" = "use \"a.dl6\".\nrel top(z:int).\ntop(4).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    reset_parse_counts,
+    expand_uses(Entry, [], [], _, prog(_, _), Table),
+    maplist(arg(1), Table, Paths),
+    maplist(file_base_name, Paths, Bases),
+    Bases = ['c.dl6', 'b.dl6', 'a.dl6', 'main.dl6'],
+    maplist(assert_parsed_once(Dir), ['c.dl6', 'b.dl6', 'a.dl6', 'main.dl6']).
+
+test(use_diamond_parses_each_file_once) :-
+    make_use_fixture(Dir,
+        [ "shared.dl6" = "rel shared(k:int).\nshared(9).\n",
+          "ia.dl6" = "use \"shared.dl6\".\nrel ia(p:int).\nia(1).\n",
+          "ib.dl6" = "use \"shared.dl6\".\nrel ib(q:int).\nib(2).\n",
+          "top.dl6" = "use \"ia.dl6\".\nuse \"ib.dl6\".\nrel top(r:int).\ntop(3).\n" ]),
+    use_entry(Dir, 'top.dl6', Entry),
+    reset_parse_counts,
+    expand_uses(Entry, [], [], _, prog(_, _), Table),
+    maplist(assert_parsed_once(Dir), ['shared.dl6', 'ia.dl6', 'ib.dl6', 'top.dl6']),
+    maplist(arg(1), Table, Paths),
+    length(Paths, 4).
+
+test(use_same_rel_same_cols_dedups) :-
+    make_use_fixture(Dir,
+        [ "ea.dl6" = "rel same(shared_name:int).\n",
+          "eb.dl6" = "rel same(shared_name:int).\n",
+          "top.dl6" = "use \"ea.dl6\".\nuse \"eb.dl6\".\nrel top(z:int).\ntop(1).\n" ]),
+    use_entry(Dir, 'top.dl6', Entry),
+    expand_uses(Entry, [], [], _, prog(Decls, _), _),
+    findall(col_type(same/1, shared_name, _), member(col_type(same/1, shared_name, _), Decls), C),
+    length(C, 1).
+
+test(use_cycle_refuses_naming_the_chain) :-
+    make_use_fixture(Dir,
+        [ "a.dl6" = "use \"b.dl6\".\nrel a(x:int).\n",
+          "b.dl6" = "use \"a.dl6\".\nrel b(y:int).\n" ]),
+    use_entry(Dir, 'a.dl6', Entry),
+    use_refusal(Entry, use_cycle(Chain), Refused),
+    Refused == refused,
+    length(Chain, 3).
+
+test(use_self_refuses) :-
+    make_use_fixture(Dir, ["self.dl6" = "use \"self.dl6\".\nrel s(w:int).\n"]),
+    use_entry(Dir, 'self.dl6', Entry),
+    use_refusal(Entry, use_cycle([Self]), Refused),
+    Refused == refused,
+    file_base_name(Self, 'self.dl6').
+
+test(use_missing_file_refuses_naming_the_roots) :-
+    make_use_fixture(Dir, ["m.dl6" = "use \"nope.dl6\".\nrel top(z:int).\n"]),
+    use_entry(Dir, 'm.dl6', Entry),
+    use_refusal(Entry, use_path_unresolved(Text, Roots), Refused),
+    Refused == refused,
+    Text == "nope.dl6",
+    Roots == [Dir].
+
+test(use_same_rel_conflicting_cols_refuses) :-
+    make_use_fixture(Dir,
+        [ "ca.dl6" = "rel cf(v:int).\n",
+          "cb.dl6" = "rel cf(v:text).\n",
+          "top.dl6" = "use \"ca.dl6\".\nuse \"cb.dl6\".\nrel top(z:int).\ntop(1).\n" ]),
+    use_entry(Dir, 'top.dl6', Entry),
+    use_refusal(Entry, rel_col_conflict(cf/1, PathA, PathB), Refused),
+    Refused == refused,
+    file_base_name(PathA, 'ca.dl6'),
+    file_base_name(PathB, 'cb.dl6').
+
+% SOLUTION COUNT on the door expand_uses/6 declares det. FAIL-FIRST RECEIPT:
+% take_line/3 plus an uncut split_codes_lines_/3 base clause made this
+% aggregate_all run until `Stack limit (1.0Gb) exceeded`, one full core for 6.5
+% minutes in a swipl that outlived its cap and orphaned to PPID 1.
+test(expand_uses_yields_exactly_one_solution) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel lib(k:int).\nlib(7).\n",
+          "main.dl6" = "use \"lib.dl6\".\nrel main(z:int).\nmain(1).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    aggregate_all(count, expand_uses(Entry, [], [], _, _, _), Solutions),
+    Solutions == 1.
+
+% FAIL-FIRST RECEIPT: string_no_mark/3 reached quoted_chars/4, whose escape
+% clause marks position, so this threw existence_error(variable,
+% parse_furthest_remaining) instead of parsing -- mark_furthest ran with no
+% parse in flight.
+test(use_item_reads_a_path_carrying_an_escape) :-
+    string_codes("use \"a\\nb.dl6\".", Codes),
+    use_item(use(Text), Codes, []),
+    string_codes(Text, [0'a, 0'\n, 0'b, 0'., 0'd, 0'l, 0'6]).
+
+% FAIL-FIRST RECEIPT: dropping the `use` line outright reported the bad
+% statement at position(2,1) while it sits on line 3 of the file on disk.
+test(stripped_use_lines_keep_the_remainder_on_its_own_file_line) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel lib(k:int).\n",
+          "main.dl6" = "use \"lib.dl6\".\nrel main(z:int).\n@@@\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    catch(expand_uses(Entry, [], [], _, _, _), Error, true),
+    Error = dl_parse_error(_, position(Line, _)),
+    Line == 3.
+
+:- end_tests(use_module_system).
