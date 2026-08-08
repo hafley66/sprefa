@@ -4402,7 +4402,7 @@ is_negative_use(use(_, _, neg, _)).
 % identically, not a TypeScript-specific rendering choice.
 
 delta_statement(Mode, relplan(Ref, _Kind, Columns, _, ColumnTypes),
-                deltastmt(Ref, SelectSql, DeltaTable, BoundarySql)) :-
+                deltastmt(Ref, SelectSql, DeltaTable, BoundarySql, StoredSelectSql)) :-
     table_name(Ref, Table),
     text_read_table(Mode, Table, ColumnTypes, ReadTable),
     quote_ident(ReadTable, QuotedTable),
@@ -4414,6 +4414,9 @@ delta_statement(Mode, relplan(Ref, _Kind, Columns, _, ColumnTypes),
     quote_ident(DeltaReadTable, QuotedDeltaTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', GroupColumnsSql),
+    quote_ident(Table, QuotedStoredTable),
+    format(atom(StoredSelectSql), 'SELECT ~w FROM ~w',
+           [GroupColumnsSql, QuotedStoredTable]),
     format(atom(BoundarySql),
            'SELECT ~w, "_sign" AS "__sign", count(*) AS "__count" FROM ~w WHERE "_sign" IN (-1, 1) GROUP BY ~w, "_sign"',
            [ColumnsSql, QuotedDeltaTable, GroupColumnsSql]).

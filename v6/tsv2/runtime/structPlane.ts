@@ -20,6 +20,7 @@
 
 import { concatMap, map, of, type Observable } from "rxjs";
 
+import { TextPlane } from "./textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -29,6 +30,7 @@ import type {
   IStructPlane,
   IStructTypePlan,
   IStructRefColumns,
+  ITextInternPlan,
 } from "./types.ts";
 
 /** Sorted object keys, no whitespace: the ruled cross-target encoding
@@ -170,6 +172,7 @@ export const StructPlane: IStructPlane = {
     ref_columns: IStructRefColumns,
     arrivals: IArrivalBatch,
     apply_targets?: (arrivals: IArrivalBatch) => Observable<unknown>,
+    text_plan?: ITextInternPlan,
   ): Observable<IArrivalBatch> {
     if (types.length === 0 || arrivals.length === 0) return of(arrivals);
     const by_name = new Map(types.map((plan) => [plan.name, plan]));
@@ -191,7 +194,7 @@ export const StructPlane: IStructPlane = {
     const pending = types.filter((plan) => per_type.has(plan.name));
     return pending.reduce<Observable<unknown>>(
       (chain, plan) => chain.pipe(concatMap(() =>
-        intern_one_type(seam, plan, per_type.get(plan.name)!, ids, apply_targets)
+        intern_one_type(seam, plan, per_type.get(plan.name)!, ids, apply_targets, text_plan)
       )),
       of(undefined),
     ).pipe(
@@ -210,31 +213,54 @@ function intern_one_type(
   bucket: ReadonlyMap<string, ICollected>,
   ids: Map<string, number>,
   apply_targets: ((arrivals: IArrivalBatch) => Observable<unknown>) | undefined,
+  text_plan: ITextInternPlan | undefined,
 ): Observable<unknown> {
-  const lookup_to_semantic = new Map<string, string>();
-  const tuple_by_key = new Map<string, string>();
-  const tuples = [...bucket.entries()].map(([semantic, collected]) => {
-    const fields = collected.fields.map((field) =>
+  const semantics = [...bucket.keys()];
+  const rows = [...bucket.values()].map((collected) =>
+    collected.fields.map((field) =>
       typeof field === "object" && field !== null && "child_semantic" in field
         ? id_for(ids, field.child_semantic)
         : field
-    );
+    ) as IRow
+  );
+  const arrivals: IArrivalBatch = rows.map((row): IArrivalRow => ({
+    rel: plan.name,
+    sign: "add",
+    row,
+  }));
+  // The arrival door never sees a target row, and the preflight, insert and
+  // key lookup all read one tuple, so its text columns intern before encoding.
+  const staged = text_plan === undefined
+    ? of(arrivals)
+    : TextPlane.intern(seam, text_plan, arrivals);
+  return staged.pipe(
+    concatMap((interned) => intern_target_rows(seam, plan, semantics, interned, ids, apply_targets)),
+  );
+}
+
+function intern_target_rows(
+  seam: ISqlSeam,
+  plan: IStructTypePlan,
+  semantics: readonly string[],
+  arrivals: IArrivalBatch,
+  ids: Map<string, number>,
+  apply_targets: ((arrivals: IArrivalBatch) => Observable<unknown>) | undefined,
+): Observable<unknown> {
+  const lookup_to_semantic = new Map<string, string>();
+  const tuple_by_key = new Map<string, string>();
+  const tuples = arrivals.map((arrival, index) => {
+    const fields = arrival.row;
     const tuple = JSON.stringify(fields);
-    const key = JSON.stringify(plan.key_indices.map((index) => fields[index]));
+    const key = JSON.stringify(plan.key_indices.map((position) => fields[position]));
     const prior = tuple_by_key.get(key);
     if (prior !== undefined && prior !== tuple) {
       throw new Error(`relation_reference_conflict(${plan.name}, ${key}, ${prior}, ${tuple})`);
     }
     tuple_by_key.set(key, tuple);
-    lookup_to_semantic.set(tuple, semantic);
+    lookup_to_semantic.set(tuple, semantics[index]!);
     return fields;
   });
   const encoded = JSON.stringify(tuples);
-  const arrivals: IArrivalBatch = tuples.map((row) => ({
-    rel: plan.name,
-    sign: "add",
-    row,
-  }));
   return seam.runner.execute(seam.db, { sql: plan.conflict_sql, args: [encoded] }).pipe(
     map((result) => {
       if (result.rows.length === 0) return undefined;

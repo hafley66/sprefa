@@ -123,7 +123,7 @@ level_sql_pair(levelstmt(_, DeleteSql, InsertSqls, _), [DeleteSql | InsertSqls])
 % the same way, so ordering matches the oracle by construction, not luck).
 snapshot_all(DbFile, DeltaStatements, RelPlans, ByRef) :-
     findall(Ref-Terms,
-            ( member(deltastmt(Ref, SelectSql, _, _), DeltaStatements),
+            ( member(deltastmt(Ref, SelectSql, _, _, _), DeltaStatements),
               query_json(DbFile, SelectSql, Rows),
               memberchk(relplan(Ref, _, Columns, _, _), RelPlans),
               ref_table_name(Ref, Name),
