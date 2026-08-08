@@ -298,16 +298,6 @@
 212:## N/A and disqualification reasons
 ```
 
-### bench-cli/out/STANDINGS.md
-```
-1:# bench-cli standings
-17:## Reference validity (ruling `bench_reference = proven_engine_reference`)
-50:## Real programs
-52:### callgraph_derivation
-62:## Scale shapes
-65:## N/A and disqualification reasons
-```
-
 ### dl/fixtures/ghcacher-findings.md
 ```
 1:# ghcacher expression in v6 dl — findings + grading receipts
@@ -1141,6 +1131,19 @@
 651:## Frontier (deferred, with the evidence that will resolve each)
 ```
 
+### plans/2026-07-25-async-to-rxjs-targets.md
+```
+1:# async -> rxjs: remaining targets
+9:## The one legitimate async seam
+18:## Tier 1 — real control flow, convert to observables
+30:## Tier 2 — pass-through delegations, mechanical type flip only
+42:## Tier 3 — the public contract
+50:## Traps
+59:## Duplication ledger — delete these
+86:## Where the shared code goes
+117:## Adjacent, not yet ruled on
+```
+
 ### plans/2026-07-25-sql-builder-build-vs-buy.md
 ```
 1:# SQL query-builder / templating: build-vs-buy for `lowerSql.ts`
@@ -1396,14 +1399,6 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md
