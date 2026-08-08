@@ -13,6 +13,9 @@ type IClassName =
   | "ir-encoding"
   | "door-plan"
   | "door-call"
+  | "literal-id"
+  | "literal-seed"
+  | "seed-id"
   | "mode-stamp";
 
 interface IInternClassCount {
@@ -39,12 +42,34 @@ const DROP_LINE: readonly (readonly [RegExp, IClassName])[] = [
 const DOOR_PLAN_OPEN = /^export const TEXT_INTERN_PLAN/;
 const DOOR_PLAN_CLOSE = /^\};$/;
 
+/** A seeded literal may itself contain a newline, so the DDL entry spans as
+ *  many lines as the literal does and ends at the template's own close. */
+const LITERAL_SEED = /INSERT OR IGNORE INTO "__str" \("content"\) VALUES/;
+
+/** An unbalanced backtick count means the template is still open. */
+function templateStaysOpen(line: string): boolean {
+  return ((line.match(/`/g) ?? []).length & 1) === 1;
+}
+
 const counts = new Map<IClassName, IInternClassCount>();
 
 function count(name: IClassName, by = 1): void {
   const row = counts.get(name) ?? { name, count: 0 };
   row.count += by;
   counts.set(name, row);
+}
+
+/** A seeded literal may carry a newline, so the id lookup that names it is not
+ *  a line-shaped thing; these two run over the whole module first. */
+function canonicalDocument(text: string): string {
+  let out = text;
+  const literals = out.match(/\(SELECT s\."__id" FROM "__str" s WHERE s\."content" = '[^']*'\)/g);
+  if (literals !== null) count("literal-id", literals.length);
+  out = out.replace(/\(SELECT s\."__id" FROM "__str" s WHERE s\."content" = ('[^']*')\)/g, "$1");
+
+  const seedSlots = out.match(/\(SELECT "__id" FROM "__str" WHERE "content" = \?\)/g);
+  if (seedSlots !== null) count("seed-id", seedSlots.length);
+  return out.replace(/\(SELECT "__id" FROM "__str" WHERE "content" = \?\)/g, "?");
 }
 
 /** Every rewrite here is one named class; a line that still differs after all
@@ -80,7 +105,18 @@ function canonicalLine(line: string): string {
 function canonicalText(text: string): readonly string[] {
   const kept: string[] = [];
   let insideDoorPlan = false;
-  for (const line of text.split("\n")) {
+  let insideLiteralSeed = false;
+  for (const line of canonicalDocument(text).split("\n")) {
+    if (insideLiteralSeed) {
+      count("literal-seed");
+      if (templateStaysOpen(line)) insideLiteralSeed = false;
+      continue;
+    }
+    if (LITERAL_SEED.test(line)) {
+      count("literal-seed");
+      if (templateStaysOpen(line)) insideLiteralSeed = true;
+      continue;
+    }
     if (insideDoorPlan) {
       count("door-plan");
       if (DOOR_PLAN_CLOSE.test(line)) insideDoorPlan = false;

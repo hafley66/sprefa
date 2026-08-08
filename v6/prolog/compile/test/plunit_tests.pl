@@ -4863,6 +4863,96 @@ test(text_literal_filter_fences_the_ir_at_dict) :-
                                     DictIr)),
     DictIr == none.
 
+% ── text literals in the id space (contract §5.3 rule two, lane I-C) ────────
+
+interning_literal_relplans([
+        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
+                [int, int, bool, ref(node_rel), text]),
+        relplan(tagged/2, set, [node, tag], none, [int, text])
+    ]).
+
+interning_literal_seed_sql(Mode, Rules, SeedSql) :-
+    interning_literal_relplans(RelPlans),
+    level_ref_count_sql(Mode, RelPlans, tagged/2, Rules,
+                        refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, _,
+                                    _, _)).
+
+interning_read_rules([ (tagged(Parent, done) <-
+                            edge_row(Parent, _, _, _, rust)) ]).
+
+% RED before the lowering landed: the seed named `b0."label" = 'rust'` at BOTH
+% modes, comparing a dictionary id against a word.
+test(text_literal_read_resolves_through_the_dictionary) :-
+    interning_read_rules(Rules),
+    interning_literal_seed_sql(dict, Rules, SeedSql),
+    sub_atom(SeedSql, _, _, _,
+             'b0."label" = (SELECT s."__id" FROM "__str" s WHERE s."content" = \'rust\')'),
+    \+ sub_atom(SeedSql, _, _, _, 'b0."label" = \'rust\'').
+
+test(text_literal_read_stays_a_word_at_direct) :-
+    interning_read_rules(Rules),
+    interning_literal_seed_sql(direct, Rules, SeedSql),
+    sub_atom(SeedSql, _, _, _, 'b0."label" = \'rust\''),
+    \+ sub_atom(SeedSql, _, _, _, '__str').
+
+% RED before the lowering landed: the projection wrote the word `done` into a
+% column its own DDL declares INTEGER, and affinity stored it silently.
+test(text_literal_write_projects_an_id) :-
+    interning_read_rules(Rules),
+    interning_literal_seed_sql(dict, Rules, SeedSql),
+    sub_atom(SeedSql, _, _, _,
+             '(SELECT s."__id" FROM "__str" s WHERE s."content" = \'done\')').
+
+test(text_literal_write_projects_a_word_at_direct) :-
+    interning_read_rules(Rules),
+    interning_literal_seed_sql(direct, Rules, SeedSql),
+    sub_atom(SeedSql, _, _, _, '\'done\'').
+
+% A `value` position reads the characters, so the constant inside a built
+% string is NOT an id; that is the whole point of the demand word.
+test(text_literal_in_a_concat_keeps_its_characters) :-
+    interning_literal_seed_sql(dict,
+        [ (tagged(Parent, concat([done, '-', Label])) <-
+               edge_row(Parent, _, _, _, Label)) ],
+        SeedSql),
+    sub_atom(SeedSql, _, _, _, '(\'done\' || \'-\' ||'),
+    \+ sub_atom(SeedSql, _, _, _, '__str" s WHERE s."content" = \'done\'').
+
+% Every literal the module resolved is seeded, or the write side resolves to
+% NULL against a NOT NULL column and the row is silently lost.
+test(every_resolved_literal_is_seeded) :-
+    interning_lowered(dict, switch_as_keyed_replace,
+                      lowered(_, Ddl, _, _, _, _, _, _)),
+    ddl_containing(Ddl, 'CREATE TABLE "__str"', _),
+    forall(( member(Statement, Ddl),
+             sub_atom(Statement, _, _, _, '__str" s WHERE s."content" = ') ),
+           ( ddl_containing(Ddl, 'INSERT OR IGNORE INTO "__str" ("content") VALUES',
+                            _) )).
+
+% ── the boot seed (contract §23, the silent TEXT-into-INTEGER write) ────────
+
+interning_boot_relplans([ relplan(tagged/2, set, [node, tag], none,
+                                  [int, text]) ]).
+
+interning_boot(Mode, Boot) :-
+    interning_boot_relplans(RelPlans),
+    boot_statements(Mode, [], RelPlans, [tagged(1, rust)], [], Boot).
+
+% RED before this landed: the only boot statement was
+% `INSERT OR IGNORE INTO "tagged" ("node", "tag") VALUES (?, ?)` with params
+% [1, rust], writing the word into an INTEGER column on every Initial section.
+test(boot_seed_interns_before_it_writes_the_row) :-
+    interning_boot(dict, Boot),
+    Boot = [ bootstmt(tagged, InternSql, [rust]),
+             bootstmt(tagged, RowSql, [1, rust]) ],
+    InternSql == 'INSERT OR IGNORE INTO "__str" ("content") VALUES (?)',
+    RowSql == 'INSERT OR IGNORE INTO "tagged" ("node", "tag") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))'.
+
+test(boot_seed_binds_the_value_at_direct) :-
+    interning_boot(direct, Boot),
+    Boot = [ bootstmt(tagged, RowSql, [1, rust]) ],
+    RowSql == 'INSERT OR IGNORE INTO "tagged" ("node", "tag") VALUES (?, ?)'.
+
 % ── the ingest door (contract §6) ───────────────────────────────────────────
 
 interning_emitted(Mode, Base, Name, Text) :-
