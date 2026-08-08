@@ -2366,7 +2366,7 @@ avg_aggregate_rules(Rules) :-
 % seed arms carry no guard conditions at all.
 level_aggregate_sql(Mode, RelPlans, HeadRef, Rules,
                     aggsql(ScopeColumns, ScopeTypes, ScopeClearSql, ScopeSeedSqls,
-                           DeleteScopedSql, InsertScopedSqls)) :-
+                           DeleteScopedSql, InsertScopedSqls, InternSqls)) :-
     aggregate_scope_columns(RelPlans, HeadRef, Rules, ScopeColumns, ScopeTypes),
     aggregate_scope_table_name(HeadRef, ScopeTable),
     quote_ident(ScopeTable, QuotedScopeTable),
@@ -2380,7 +2380,9 @@ level_aggregate_sql(Mode, RelPlans, HeadRef, Rules,
                                 QuotedScopeTable, DeleteScopedSql),
     maplist(aggregate_insert_scoped_sql(Mode, RelPlans, HeadRef, ScopeColumns,
                                         QuotedScopeTable),
-            Rules, InsertScopedSqls).
+            Rules, InsertScopedPairs),
+    pairs_keys_values(InsertScopedPairs, InsertScopedSqls, InternGroups),
+    append(InternGroups, InternSqls).
 
 % AVG is decomposed at the storage seam. The accumulator table holds one
 % REAL sum and one INTEGER count per live group; the public head stores only
@@ -2749,9 +2751,10 @@ aggregate_delete_scoped_sql(RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
     ).
 
 aggregate_insert_scoped_sql(Mode, RelPlans, HeadRef, ScopeColumns, QuotedScopeTable,
-                            (Head <- Body), InsertScopedSql) :-
+                            (Head <- Body), InsertScopedSql-InternSqls) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
     aggregate_head_template(Head, Template),
@@ -2774,16 +2777,16 @@ aggregate_insert_scoped_sql(Mode, RelPlans, HeadRef, ScopeColumns, QuotedScopeTa
            AllWhereTexts),
     append(FromParts, JsonFromParts, AllFromParts),
     atomic_list_concat(AllFromParts, ', ', FromSql),
-    aggregate_select_statement(Mode, Head, Template, Bound, FromSql, AllWhereTexts,
-                               SelectStatement),
+    aggregate_select_statement(Mode, HeadColumnTypes, Head, Template, Bound, FromSql,
+                               AllWhereTexts, SelectStatement, InternSqls),
     format(atom(InsertScopedSql), 'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
            [QuotedHeadTable, HeadColumnsSql, SelectStatement, HeadColumnsSql]).
 
-% The scope columns and their storage types ride inside the aggsql/6 term
+% The scope columns and their storage types ride inside the aggsql/7 term
 % itself, so DDL emission needs nothing but the levelstmt (lower_program/2
 % no longer has the rule list in scope by then).
 aggregate_scope_ddl(Mode, levelstmt(HeadRef, _, _, _, _,
-                              aggsql(ScopeColumns, ScopeTypes, _, _, _, _), _),
+                              aggsql(ScopeColumns, ScopeTypes, _, _, _, _, _), _),
                     [Ddl]) :- !,
     aggregate_scope_table_name(HeadRef, ScopeTable),
     quote_ident(ScopeTable, QuotedScopeTable),
@@ -3751,8 +3754,8 @@ level_insert_sql(Mode, RelPlans, HeadRef, (Head <- Body), InsertSql, InternSqls)
     append(FromParts, JsonFromParts, AllFromParts),
     atomic_list_concat(AllFromParts, ', ', FromSql),
     ( aggregate_head_template(Head, Template)
-    -> aggregate_select_statement(Mode, Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement),
-       InternSqls = []
+    -> aggregate_select_statement(Mode, HeadColumnTypes, Head, Template, Bound, FromSql,
+                                  AllWhereTexts, SelectStatement, InternSqls)
     ;  head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues),
        atomic_list_concat(SelectExprs, ', ', SelectSql),
        ( AllWhereTexts == []
@@ -4097,10 +4100,11 @@ brace_pattern_pairs(Key: Sub, [Key-Sub]).
 %   min/max   min_list/2 and max_list/2 accept NUMBERS ONLY -- they fail
 %             outright on an atom -- so a non-int aggregated expression is a
 %             named refusal here rather than a silent lexicographic min.
-aggregate_select_statement(Mode, Head, Template, Bound, FromSql, AllWhereTexts, SelectStatement) :-
+aggregate_select_statement(Mode, HeadColumnTypes, Head, Template, Bound, FromSql,
+                           AllWhereTexts, SelectStatement, InternSqls) :-
     Head =.. [_ | Args],
-    aggregate_select_exprs(Mode, Template, Args, Bound, SelectExprs),
-    atomic_list_concat(SelectExprs, ', ', SelectSql),
+    aggregate_select_exprs(Mode, HeadColumnTypes, Template, Args, Bound, ColumnSqls,
+                           Kinds),
     aggregate_group_exprs(Mode, Template, Bound, GroupExprs),
     ( AllWhereTexts == []
     -> WhereClause = ''
@@ -4112,56 +4116,118 @@ aggregate_select_statement(Mode, Head, Template, Bound, FromSql, AllWhereTexts, 
     ;  atomic_list_concat(GroupExprs, ', ', GroupSql),
        format(atom(GroupClause), ' GROUP BY ~w', [GroupSql])
     ),
-    format(atom(SelectStatement),
-           'SELECT ~w FROM ~w~w~w HAVING count(*) > 0',
+    aggregate_built_values(Kinds, ColumnSqls, BuiltValues),
+    (   BuiltValues == []
+    ->  atomic_list_concat(ColumnSqls, ', ', SelectSql),
+        aggregate_grouped_sql(SelectSql, FromSql, WhereClause, GroupClause,
+                              SelectStatement),
+        InternSqls = []
+    ;   aggregate_encoded_statement(Kinds, ColumnSqls, FromSql, WhereClause,
+                                    GroupClause, SelectStatement),
+        aggregate_intern_statements(BuiltValues, FromSql, WhereClause, GroupClause,
+                                    InternSqls)
+    ).
+
+aggregate_grouped_sql(SelectSql, FromSql, WhereClause, GroupClause, Sql) :-
+    format(atom(Sql), 'SELECT ~w FROM ~w~w~w HAVING count(*) > 0',
            [SelectSql, FromSql, WhereClause, GroupClause]).
 
-aggregate_select_exprs(_, [], [], _, []).
-aggregate_select_exprs(Mode, [TemplateArg | RestTemplate], [_Arg | RestArgs], Bound,
-                       [Sql | RestSqls]) :-
-    aggregate_select_expr(Mode, TemplateArg, Bound, Sql),
-    aggregate_select_exprs(Mode, RestTemplate, RestArgs, Bound, RestSqls).
+% SQLite refuses an aggregate function inside a scalar subquery belonging to
+% the same query, so the id lookup runs one level out over the grouped rows.
+aggregate_encoded_statement(Kinds, ColumnSqls, FromSql, WhereClause, GroupClause,
+                            Sql) :-
+    aggregate_alias_names(Kinds, 1, Aliases),
+    maplist(alias_select_expr, ColumnSqls, Aliases, InnerExprs),
+    atomic_list_concat(InnerExprs, ', ', InnerSelectSql),
+    aggregate_grouped_sql(InnerSelectSql, FromSql, WhereClause, GroupClause, InnerSql),
+    maplist(aggregate_outer_expr, Kinds, Aliases, OuterExprs),
+    atomic_list_concat(OuterExprs, ', ', OuterSelectSql),
+    format(atom(Sql), 'SELECT ~w FROM (~w)', [OuterSelectSql, InnerSql]).
 
-aggregate_select_expr(Mode, plain(Expr), Bound, Sql) :- !,
-    compile_expr(Mode, identity, Expr, Bound, Sql, _Type, _Encoding).
-aggregate_select_expr(_, agg(count, _Expr), _Bound, 'count(*)') :- !.
-aggregate_select_expr(Mode, agg(sum, Expr), Bound, Sql) :- !,
+aggregate_alias_names([], _, []).
+aggregate_alias_names([_ | Rest], Position, [Alias | More]) :-
+    format(atom(Alias), '__agg_~w', [Position]),
+    NextPosition is Position + 1,
+    aggregate_alias_names(Rest, NextPosition, More).
+
+aggregate_outer_expr(built, Alias, Expr) :- !,
+    quote_ident(Alias, Quoted),
+    interned_id_sql(Quoted, Expr).
+aggregate_outer_expr(stored, Alias, Expr) :- quote_ident(Alias, Expr).
+
+% An aggregated string exists once per GROUP, so its dictionary write repeats
+% the arm's grouping; intern_write_sql/4's row-wise DISTINCT would not.
+aggregate_intern_statements(BuiltValues, FromSql, WhereClause, GroupClause,
+                            [InternSql]) :-
+    maplist(aggregate_intern_arm(FromSql, WhereClause, GroupClause), BuiltValues, Arms),
+    atomic_list_concat(Arms, ' UNION ', ArmsSql),
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(InternSql), 'INSERT OR IGNORE INTO ~w ("content") ~w',
+           [QuotedDictionary, ArmsSql]).
+
+aggregate_intern_arm(FromSql, WhereClause, GroupClause, ValueSql, Arm) :-
+    aggregate_grouped_sql(ValueSql, FromSql, WhereClause, GroupClause, Arm).
+
+aggregate_built_values([], [], []).
+aggregate_built_values([built | Kinds], [Sql | Sqls], [Sql | Rest]) :- !,
+    aggregate_built_values(Kinds, Sqls, Rest).
+aggregate_built_values([stored | Kinds], [_ | Sqls], Rest) :-
+    aggregate_built_values(Kinds, Sqls, Rest).
+
+aggregate_select_exprs(_, [], [], [], _, [], []).
+aggregate_select_exprs(Mode, [ColumnType | RestTypes], [TemplateArg | RestTemplate],
+                       [_Arg | RestArgs], Bound, [Sql | RestSqls], [Kind | RestKinds]) :-
+    aggregate_select_expr(Mode, TemplateArg, Bound, Sql, Encoding),
+    (   column_encoding(Mode, ColumnType, dict), Encoding == direct
+    ->  Kind = built
+    ;   Kind = stored
+    ),
+    aggregate_select_exprs(Mode, RestTypes, RestTemplate, RestArgs, Bound, RestSqls,
+                           RestKinds).
+
+% Every aggregate function answers with the characters it computed, never with
+% a dictionary id, so `direct` is the encoding of all of them.
+aggregate_select_expr(Mode, plain(Expr), Bound, Sql, Encoding) :- !,
+    compile_expr(Mode, identity, Expr, Bound, Sql, _Type, Encoding).
+aggregate_select_expr(_, agg(count, _Expr), _Bound, 'count(*)', direct) :- !.
+aggregate_select_expr(Mode, agg(sum, Expr), Bound, Sql, direct) :- !,
     compile_aggregate_number_operand(Mode, sum, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'sum(~w)', [InnerSql]).
-aggregate_select_expr(Mode, agg(avg, Expr), Bound, Sql) :- !,
+aggregate_select_expr(Mode, agg(avg, Expr), Bound, Sql, direct) :- !,
     compile_aggregate_number_operand(Mode, avg, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'avg(~w)', [InnerSql]).
-aggregate_select_expr(Mode, agg(min, Expr), Bound, Sql) :- !,
+aggregate_select_expr(Mode, agg(min, Expr), Bound, Sql, direct) :- !,
     compile_aggregate_number_operand(Mode, min, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'min(~w)', [InnerSql]).
-aggregate_select_expr(Mode, agg(max, Expr), Bound, Sql) :- !,
+aggregate_select_expr(Mode, agg(max, Expr), Bound, Sql, direct) :- !,
     compile_aggregate_number_operand(Mode, max, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'max(~w)', [InnerSql]).
-aggregate_select_expr(Mode, agg(json_group_array, Expr), Bound, Sql) :- !,
+aggregate_select_expr(Mode, agg(json_group_array, Expr), Bound, Sql, direct) :- !,
     compile_expr(Mode, value, Expr, Bound, ValueSql, ValueType, _Encoding),
     json_group_array_value_sql(ValueType, ValueSql, AggregateValueSql),
     format(atom(Sql), 'json_group_array(~w ORDER BY ~w)',
            [AggregateValueSql, ValueSql]).
 aggregate_select_expr(Mode, agg(json_group_array_ordered, ValueExpr-OrdinalExpr),
-                      Bound, Sql) :- !,
+                      Bound, Sql, direct) :- !,
     compile_expr(Mode, value, ValueExpr, Bound, ValueSql, ValueType, _Encoding),
     compile_aggregate_ordinal_operand(Mode, OrdinalExpr, Bound, OrdinalSql),
     json_group_array_value_sql(ValueType, ValueSql, AggregateValueSql),
     format(atom(Sql), 'json_group_array(~w ORDER BY ~w)',
            [AggregateValueSql, OrdinalSql]).
-aggregate_select_expr(Mode, agg(group_concat(Sep), Expr), Bound, Sql) :- !,
+aggregate_select_expr(Mode, agg(group_concat(Sep), Expr), Bound, Sql, direct) :- !,
     compile_expr(Mode, value, Expr, Bound, ValueSql, _, _Encoding),
     compile_aggregate_text_separator(Sep, SeparatorSql),
     format(atom(Sql), 'group_concat(~w, ~w ORDER BY ~w)',
            [ValueSql, SeparatorSql, ValueSql]).
 aggregate_select_expr(Mode, agg(group_concat_ordered(Sep), ValueExpr-OrdinalExpr),
-                      Bound, Sql) :- !,
+                      Bound, Sql, direct) :- !,
     compile_expr(Mode, value, ValueExpr, Bound, ValueSql, _, _Encoding),
     compile_aggregate_text_separator(Sep, SeparatorSql),
     compile_aggregate_ordinal_operand(Mode, OrdinalExpr, Bound, OrdinalSql),
     format(atom(Sql), 'group_concat(~w, ~w ORDER BY ~w)',
            [ValueSql, SeparatorSql, OrdinalSql]).
-aggregate_select_expr(_, agg(Kind, _), _, _) :-
+aggregate_select_expr(_, agg(Kind, _), _, _, _) :-
     throw(unsupported_construct(aggregate_kind_not_lowered(Kind))).
 
 json_group_array_value_sql(json, ValueSql, AggregateValueSql) :- !,
@@ -4455,7 +4521,7 @@ delta_ddl(Mode, relplan(Ref, _Kind, Columns, _, ColumnTypes), Ddls) :-
     append([[TableDdl, IndexDdl, GroupIndexDdl, FrontierDdl, FrontierIndexDdl,
              NextFrontierDdl], DeltaViewDdls], Ddls).
 
-% An aggregate head has no refCount table (aggsql/6 replaces the refCount
+% An aggregate head has no refCount table (aggsql/7 replaces the refCount
 % family entirely -- level_statement_group/3's own comment), so it gets no
 % refCount DDL either.
 ref_count_ddl(_, _, levelstmt(_, _, _, _, none, _, _), []) :- !.
