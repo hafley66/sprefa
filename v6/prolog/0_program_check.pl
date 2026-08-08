@@ -905,6 +905,8 @@ column_type_assignable(Types, From, To) :-
     storage_assignable(FromStorage, ToStorage).
 
 storage_assignable(Storage, Storage) :- !.
+storage_assignable(list(_), json) :- !.
+storage_assignable(json, list(_)) :- !.
 storage_assignable(int, float).
 
 

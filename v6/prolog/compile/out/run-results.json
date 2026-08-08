@@ -28,6 +28,20 @@
     "final_detail": ""
   },
   {
+    "name": "list_of_json_documents_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_list_of_text_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "variant_field_float_stays_float",
     "bucket": "identical",
     "detail": "",

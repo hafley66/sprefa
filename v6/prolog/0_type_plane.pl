@@ -112,9 +112,9 @@ column_storage(_, json, json) :- !.
 % the storage kind collapses to `json`, so neither guard is emitted; the
 % array-ness CHECK needs list(T) to survive as its own kind all the way to
 % lower.pl:column_def/3, which widens every place that matches on `json`.
-column_storage(Types, list(Element), json) :-
+column_storage(Types, list(Element), list(Element)) :-
     !,
-    (   list_element_type(Element)
+    (   list_element_type(Types, Element)
     ->  true
     ;   declared_type_name(Types, Element)
     ->  throw(unsupported_construct(list_of_relation_refs(Element)))
@@ -127,14 +127,17 @@ column_storage(Types, Name, ref(Name)) :- declared_type_name(Types, Name), !.
 column_storage(_, Name, _) :-
     throw(unsupported_construct(column_type_unknown(Name))).
 
-% A list element is a SCALAR, and one of exactly four. A relation ref is
-% refused separately from any other non-scalar because the reason differs: ids
-% in a list would enter the tick log, breaking the print-values-never-ids
-% ruling, while a nested list is simply what the `json` type is for.
-list_element_type(int).
-list_element_type(text).
-list_element_type(bool).
-list_element_type(float).
+% A list element is a value, and one of the four scalars, a json document, or
+% a nested list whose own element is admissible. A relation ref is refused
+% separately from any other non-scalar because the reason differs: ids in a
+% list would enter the tick log, breaking the print-values-never-ids ruling,
+% while a nested list and a json element are what the widening admits.
+list_element_type(_, int).
+list_element_type(_, text).
+list_element_type(_, bool).
+list_element_type(_, float).
+list_element_type(_, json).
+list_element_type(Types, list(Inner)) :- list_element_type(Types, Inner).
 
 
 % The ref columns of one type, as Column-ChildType pairs.
@@ -560,10 +563,11 @@ wide_integer_witness({}(Body), Witness) :-
 %                 the biggest divergence family in the matrix (the engine kept
 %                 the number, the emitter's TEXT affinity stringified it).
 %
-% json / list(_) columns are NOT checked here: their arrival value has already
-% been through compile/scripts/0_json_arrival.pl, which is the shared reader
-% both .dl6 doors use and which already refuses a non-document. The wide-int
-% pass above still reaches inside them.
+% A json column is NOT checked here: its arrival value has already been through
+% compile/scripts/0_json_arrival.pl, the shared reader both .dl6 doors use,
+% which already refuses a non-document. A list column IS checked here (the
+% array-ness and element arm below), because array-ness is exactly what the
+% reader does not verify. The wide-int pass above reaches inside both.
 column_value_shape_error(_, bool, Value, field_not_bool(Value)) :-
     \+ bool_value(Value), !.
 column_value_shape_error(_, float, Value, field_not_finite_float(Value)) :-
@@ -578,6 +582,17 @@ column_value_shape_error(_, int, Value, field_not_int(Value)) :-
     \+ int_column_value(Value), !.
 column_value_shape_error(_, text, Value, field_not_text(Value)) :-
     \+ text_column_value(Value), !.
+% A list column's arrival value is a json array whose elements must satisfy
+% the element type's own shape check. Runs here even though a json column is
+% not checked: the shared arrival reader only verifies the value is a
+% document, and a CHECK constraint cannot reach into elements (json_each is a
+% table function and CHECK prohibits subqueries).
+column_value_shape_error(_, list(_), Value, field_not_array(Value)) :-
+    \+ is_list(Value), !.
+column_value_shape_error(Types, list(Element), Value, list_element_shape(Index, Reason)) :-
+    nth1(Index, Value, Elem),
+    column_value_shape_error(Types, Element, Elem, Reason),
+    !.
 column_value_shape_error(Types, TypeName, Value, Reason) :-
     declared_type_name(Types, TypeName),
     type_shape_error(Types, TypeName, Value, Reason).
