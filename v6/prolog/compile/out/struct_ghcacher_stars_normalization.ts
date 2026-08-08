@@ -213,7 +213,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "struct_ghcacher_stars_normalization", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "e789b88c5929d6a5", h_schema: "", h_rule: "" },
   { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "current_body", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "0716ae52ad85ceb1", h_schema: "883c8fe6a5dc5a6b", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "ep", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d305a6ff142dbd0c", h_schema: "", h_rule: "" },
-  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "body", kind: "column", type_id: 0, arity: 0, module_id: 6, h_id: "7f8d02caaa23f95a", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "body", kind: "column", type_id: 10, arity: 0, module_id: 6, h_id: "7f8d02caaa23f95a", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "repo_body", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "63190d9858c3eea2", h_schema: "0868b397c32b62e3", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "full_name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f455e4b92e6ab423", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "stargazers_count", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "a2e58ad1306fcb44", h_schema: "", h_rule: "" },
