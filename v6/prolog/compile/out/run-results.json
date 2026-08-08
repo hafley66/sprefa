@@ -1,5 +1,12 @@
 [
   {
+    "name": "enum_decl_variant_rows_round_trip_through_tag_view",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "enum_decl_two_variants_union_in_tag_view",
     "bucket": "identical",
     "detail": "",

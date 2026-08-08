@@ -1,5 +1,5 @@
 [
-  {"name":"enum_decl_variant_rows_round_trip_through_tag_view","file":"0_enum_variants.pl","bucket":"unsupported","reason":"column_type_unknown(view)"},
+  {"name":"enum_decl_variant_rows_round_trip_through_tag_view","file":"0_enum_variants.pl","bucket":"compiled","reason":""},
   {"name":"enum_decl_two_variants_union_in_tag_view","file":"0_enum_variants.pl","bucket":"compiled","reason":""},
   {"name":"enum_nullary_variant_boots_and_tags","file":"0_enum_variants.pl","bucket":"compiled","reason":""},
   {"name":"enum_decl_variant_name_collision_is_refused","file":"0_enum_variants.pl","bucket":"unsupported","reason":"enum_variant_name_collision(page)"},

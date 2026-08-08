@@ -4,7 +4,7 @@
 
 fixture(enum_decl_variant_rows_round_trip_through_tag_view,
     prog(
-        [enum_decl(body, (page(view:view) ; redirect(to:text)))],
+        [enum_decl(body, (page(view:int) ; redirect(to:text)))],
         []),
     [],
     [
