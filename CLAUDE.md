@@ -132,8 +132,15 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   SqlRunner seam; in-memory list work is plain array code returning arrays; SQL
   building sync, running Observable. TRAP: `await someObservable` silently never
   subscribes.
-- One rel = one rule kind (source vs derived vs term-extract heads never mix;
-  engine bails; split and union).
+- One rel = one rule kind, **V5 ONLY** (written 2026-06-13 c4869c17 about v5's
+  `rebuild_derived` doing a full `DELETE FROM rel` that wiped reconciled source
+  rows; `rebuild_derived` exists only in v5 `tests/it/*.rs`). The 2026-08-02
+  turbo-minimize dropped that reason and the line read as universal. **v6 has NO
+  such bail**: measured 2026-08-08, wiring a DERIVED rel as a reference target
+  makes it an arrival target too and the oracle silently returns a DUPLICATED
+  row, `[grade_tag(401,ripe),grade_tag(401,ripe)]`, with zero refusals naming
+  source or derived anywhere in analyze.pl or 0_program_check.pl. Split and
+  union is still the right shape; "the engine bails" is false in v6.
 - Recompute guard: any from-scratch re-derive on a reactive rule needs a digest
   early-out or `// @recompute unguarded: <reason>`; rail =
   examples/recompute-guard.dl --check.

@@ -58,9 +58,30 @@
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
 
-expand_dot_in_context(_, prog(Decls, Rules0), prog(Decls, Rules)) :-
-    maplist(refuse_rel_path_rule, Rules0),
-    maplist(expand_dot_rule, Rules0, Rules).
+expand_dot_in_context(EnumContext, prog(Decls, Rules0), prog(Decls, Rules)) :-
+    maplist(resolve_enum_arm_term(EnumContext), Rules0, Rules1),
+    maplist(refuse_rel_path_rule, Rules1),
+    maplist(expand_dot_rule, Rules1, Rules).
+
+% `Enum.variant(...)` is the arm's own spelling. The generated ref comes from
+% enum_context, so this cannot drift from what expansion actually minted.
+resolve_enum_arm_term(EnumContext, Term0, Term) :-
+    (   nonvar(Term0),
+        Term0 = rel_path(Segments, Args),
+        enum_arm_ref(EnumContext, Segments, Args, Resolved)
+    ->  Term = Resolved
+    ;   compound(Term0)
+    ->  Term0 =.. [Functor | Args0],
+        maplist(resolve_enum_arm_term(EnumContext), Args0, Args1),
+        Term =.. [Functor | Args1]
+    ;   Term = Term0
+    ).
+
+enum_arm_ref(EnumContext, [EnumName, VariantName], Args, Resolved) :-
+    memberchk(EnumName-VariantRefs, EnumContext),
+    memberchk(VariantRelName/VariantArity-VariantName, VariantRefs),
+    length(Args, VariantArity),
+    Resolved =.. [VariantRelName | Args].
 
 % Either door: the text door parses rel_path/2, and SWI reads `a.b(X)` as
 % '.'(a, b(X)), which would otherwise become a rel literally named '.'.
