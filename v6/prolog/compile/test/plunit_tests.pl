@@ -5503,6 +5503,77 @@ test(an_edge_resolver_reads_the_one_snapshot_at_direct) :-
     \+ sub_atom(Text, _, _, _, 'before.stored'),
     once(sub_atom(Text, _, _, _, 'Writes(seam, before, arrivals)')).
 
+% ═══ rel-term demand keys: json_extract reads characters ═══════════════════
+% FAIL-FIRST, measured: with compile_pattern_arg/8's compound branch handing
+% json_extract the bare column, the dict sweep reported RUN wrong=5 /
+% FINAL wrong=5 on switch_as_keyed_replace, merge_policy, exhaust_policy,
+% concat_program_queue and zombie_scope_negative_case_a2b -- each one a
+% `*_view` rel entirely absent, the guard matching no row.
+% The `_at_direct` twins are also the json-column receipt: `json` takes
+% column_encoding direct under BOTH modes, so the twin's path is the path a
+% json operand takes at dict.
+
+interning_demand_key_level(Mode, Name, HeadName, LevelStatement) :-
+    interning_level_statement(Mode, 'scopes.pl', Name, HeadName, LevelStatement).
+
+% RED before this landed: json_extract(<id>, '$.fn') is NULL at every path.
+test(a_rel_term_guard_decodes_the_demand_key_at_dict) :-
+    interning_demand_key_level(dict, switch_as_keyed_replace, route_view,
+                               levelstmt(_, _, _, DeltaInsertSql, _, _, _)),
+    sub_atom(DeltaInsertSql, _, _, _,
+             'json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), \'$.fn\') = \'route_data\''),
+    \+ sub_atom(DeltaInsertSql, _, _, _, 'json_extract(d0."target", \'$.fn\')').
+
+test(a_rel_term_guard_reads_the_column_at_direct) :-
+    interning_demand_key_level(direct, switch_as_keyed_replace, route_view,
+                               levelstmt(_, _, _, DeltaInsertSql, _, _, _)),
+    sub_atom(DeltaInsertSql, _, _, _, 'json_extract(d0."target", \'$.fn\') = \'route_data\''),
+    \+ sub_atom(DeltaInsertSql, _, _, _, '__str').
+
+% One decode serves the whole term: the sub-argument path reads it too.
+test(a_rel_term_sub_argument_decodes_its_parent_at_dict) :-
+    interning_demand_key_level(dict, switch_as_keyed_replace, route_view,
+                               levelstmt(_, _, _, DeltaInsertSql, _, _, _)),
+    sub_atom(DeltaInsertSql, _, _, _,
+             'json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), \'$.args[0]\')'),
+    \+ sub_atom(DeltaInsertSql, _, _, _, 'json_extract(d0."target", \'$.args[0]\')').
+
+% The stored, indexed side keeps its bare id: a decode there is the
+% correct-but-slow shape contract §5.3 refuses.
+test(the_rel_term_join_leaves_the_stored_column_bare_at_dict) :-
+    interning_demand_key_level(dict, switch_as_keyed_replace, route_view,
+                               levelstmt(_, _, _, DeltaInsertSql, _, _, _)),
+    sub_atom(DeltaInsertSql, _, _, _,
+             'b0."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract('),
+    \+ sub_atom(DeltaInsertSql, _, _, _, 'WHERE s."__id" = b0."route_id"').
+
+% The intern-on-write arm reads the same demand key and owed the same decode.
+test(a_rel_term_intern_arm_decodes_the_demand_key_at_dict) :-
+    interning_demand_key_level(dict, switch_as_keyed_replace, route_view,
+                               levelstmt(_, _, _, _, _, _, [InternSql])),
+    sub_atom(InternSql, 0, _, _,
+             'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), \'$.args[0]\')').
+
+test(the_zombie_scope_demand_key_decodes_at_dict) :-
+    interning_demand_key_level(dict, zombie_scope_negative_case_a2b, detail_view,
+                               levelstmt(_, _, _, DeltaInsertSql, _, _, _)),
+    sub_atom(DeltaInsertSql, _, _, _,
+             'json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), \'$.fn\') = \'detail\'').
+
+test(the_zombie_scope_demand_key_is_a_column_at_direct) :-
+    interning_demand_key_level(direct, zombie_scope_negative_case_a2b, detail_view,
+                               levelstmt(_, _, _, DeltaInsertSql, _, _, _)),
+    sub_atom(DeltaInsertSql, _, _, _, 'json_extract(d0."target", \'$.fn\') = \'detail\''),
+    \+ sub_atom(DeltaInsertSql, _, _, _, '__str').
+
+% The recompute arm is the third writer of the same guard, keyed on b0.
+test(the_rel_term_recompute_arm_decodes_the_demand_key_at_dict) :-
+    interning_demand_key_level(dict, switch_as_keyed_replace, route_view,
+                               levelstmt(_, _, [_, InsertSql], _, _, _, _)),
+    sub_atom(InsertSql, _, _, _,
+             'json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), \'$.fn\') = \'route_data\''),
+    \+ sub_atom(InsertSql, _, _, _, 'json_extract(b0."target", \'$.fn\')').
+
 :- end_tests(interning).
 % ═══ Door A: `use "path".` module system (use_resolve.pl + use_item/3) ══════
 % The parse-count rail catches a re-parsing loader end-state equality hides.
