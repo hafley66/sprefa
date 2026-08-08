@@ -5367,6 +5367,76 @@ test(an_arrival_placeholder_is_not_resolved_at_dict) :-
                              edgestmt(_, _, _, _, ProjectSql, _, _, arrival, _)),
     ProjectSql == 'SELECT ?1 AS "key", ?2 AS "value"'.
 
+% ── ordered aggregates that BUILD a string (contract §5.2 row 13) ───────────
+% Sabotage receipts, each run in turn against the tests below:
+%   aggregate_select_exprs/7's `Kind = built` arm forced to `stored`
+%       -> an_aggregate_text_head_interns_the_group_concat
+%          + the_scoped_aggregate_insert_carries_its_own_intern
+%   aggregate_intern_arm/5 swapped for intern_write_arm/4's DISTINCT shape
+%       -> the_aggregate_intern_arm_repeats_the_grouping
+%   aggregate_outer_expr(stored, ...) wrapped in interned_id_sql/2
+%       -> the_aggregate_group_key_stays_an_id_at_dict
+% Every `_at_direct` twin stayed green through all three.
+
+interning_aggregate_level(Mode, Name, HeadName, InsertSqls, AggregateSql) :-
+    interning_level_statement(Mode, '9_ordered_aggregates.pl', Name, HeadName,
+                              levelstmt(_, _, InsertSqls, _, _, AggregateSql, _)).
+
+% RED before this landed: group_concat's characters went straight into a column
+% its own DDL declares INTEGER, and the boundary view decoded them to NULL.
+test(an_aggregate_text_head_interns_the_group_concat) :-
+    interning_aggregate_level(dict, ordered_group_concat_value, value_joined,
+                              [InternSql, InsertSql], _),
+    sub_atom(InternSql, 0, _, _, 'INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat('),
+    sub_atom(InsertSql, _, _, _,
+             'SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat(').
+
+test(an_aggregate_text_head_is_a_bare_group_concat_at_direct) :-
+    interning_aggregate_level(direct, ordered_group_concat_value, value_joined,
+                              [InsertSql], _),
+    InsertSql == 'INSERT OR IGNORE INTO "value_joined" ("group", "col2") SELECT b0."group", group_concat(b0."value", \' > \' ORDER BY b0."value") FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0'.
+
+% The value exists once per GROUP: a row-wise DISTINCT scan would intern one
+% concatenation of the whole relation, an id no head row ever asks for.
+test(the_aggregate_intern_arm_repeats_the_grouping) :-
+    interning_aggregate_level(dict, ordered_group_concat_ordinal, ordinal_joined,
+                              [InternSql | _], _),
+    sub_atom(InternSql, _, _, 0, 'GROUP BY b0."group" HAVING count(*) > 0'),
+    \+ sub_atom(InternSql, _, _, _, 'SELECT DISTINCT').
+
+% The group key is already an id and is a GROUP BY key, so decoding it would be
+% both wrong for the head column and a scan where a probe belongs.
+test(the_aggregate_group_key_stays_an_id_at_dict) :-
+    interning_aggregate_level(dict, ordered_group_concat_value, value_joined,
+                              [_, InsertSql], _),
+    sub_atom(InsertSql, _, _, _, 'SELECT "__agg_1", '),
+    sub_atom(InsertSql, _, _, _, 'b0."group" AS "__agg_1"'),
+    sub_atom(InsertSql, _, _, _, 'GROUP BY b0."group"').
+
+% json is never interned, so a json_group_array head keeps its one statement
+% and never grows the alias wrapper.
+test(a_json_aggregate_head_owes_the_dictionary_nothing_at_dict) :-
+    interning_aggregate_level(dict, ordered_json_group_array_value, value_sorted,
+                              [InsertSql], aggsql(_, _, _, _, _, _, InternSqls)),
+    InternSqls == [],
+    \+ sub_atom(InsertSql, _, _, _, '__agg_'),
+    \+ sub_atom(InsertSql, _, _, _, 'INSERT OR IGNORE INTO "__str"').
+
+% RED before this landed: the per-tick scoped re-derive is a SECOND writer of
+% the same head and owes the dictionary the same rows the recompute does.
+test(the_scoped_aggregate_insert_carries_its_own_intern) :-
+    interning_aggregate_level(dict, ordered_group_concat_value, value_joined,
+                              _, aggsql(_, _, _, _, _, _, [InternSql])),
+    sub_atom(InternSql, 0, _, _, 'INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat('),
+    sub_atom(InternSql, _, _, _,
+             'WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_value_joined")').
+
+test(the_scoped_aggregate_insert_has_no_intern_at_direct) :-
+    interning_aggregate_level(direct, ordered_group_concat_value, value_joined,
+                              _, aggsql(_, _, _, _, _, [InsertScopedSql], InternSqls)),
+    InternSqls == [],
+    \+ sub_atom(InsertScopedSql, _, _, _, '__str').
+
 :- end_tests(interning).
 % ═══ Door A: `use "path".` module system (use_resolve.pl + use_item/3) ══════
 % The parse-count rail catches a re-parsing loader end-state equality hides.

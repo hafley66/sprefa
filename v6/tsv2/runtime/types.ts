@@ -157,6 +157,9 @@ export interface IAggregateLevelPlan {
   readonly scope_seed_sql: readonly string[];
   readonly delete_scoped_sql: string;
   readonly insert_scoped_sql: readonly string[];
+  /** Intern-on-write for an aggregate that BUILDS a string (group_concat into
+   *  an interned head column); runs after the seed, so it reads the scope too. */
+  readonly intern_sql?: readonly string[];
   readonly delta_maintained?: boolean;
 }
 

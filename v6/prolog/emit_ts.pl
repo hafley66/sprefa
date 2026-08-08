@@ -1361,17 +1361,18 @@ fixpoint_literal_text(Literal, Text) :-
 % (RETURNING the -1 events), re-derive them (RETURNING the +1 events).
 aggregate_sql_text(none, null) :- !.
 aggregate_sql_text(aggsql(_ScopeColumns, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
-                          DeleteScopedSql, InsertScopedSqls), Text) :-
+                          DeleteScopedSql, InsertScopedSqls, InternSqls), Text) :-
     js_template(ScopeClearSql, ScopeClearTemplate),
     maplist(js_template, ScopeSeedSqls, ScopeSeedTemplates),
     atomic_list_concat(ScopeSeedTemplates, ', ', ScopeSeedJoined),
     js_template(DeleteScopedSql, DeleteScopedTemplate),
     maplist(js_template, InsertScopedSqls, InsertScopedTemplates),
     atomic_list_concat(InsertScopedTemplates, ', ', InsertScopedJoined),
+    intern_sql_field(InternSqls, InternField),
     format(atom(Text),
-           '{ scope_clear_sql: ~w, scope_seed_sql: [~w], delete_scoped_sql: ~w, insert_scoped_sql: [~w], delta_maintained: false }',
+           '{ scope_clear_sql: ~w, scope_seed_sql: [~w], delete_scoped_sql: ~w, insert_scoped_sql: [~w]~w, delta_maintained: false }',
            [ScopeClearTemplate, ScopeSeedJoined, DeleteScopedTemplate,
-            InsertScopedJoined]).
+            InsertScopedJoined, InternField]).
 aggregate_sql_text(avgsql(_ScopeColumns, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
                           DeleteScopedSql, InsertScopedSqls, _BootSqls), Text) :-
     js_template(ScopeClearSql, ScopeClearTemplate),

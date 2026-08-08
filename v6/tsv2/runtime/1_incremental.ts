@@ -418,9 +418,12 @@ function apply_aggregate_level_statement(
   after_edges: boolean,
   next_sequence: () => number,
 ): Observable<void> {
+  // The intern arm reads the scope table, so it follows the seed inside the
+  // same ordered batch and precedes the insert that looks its ids back up.
   const scope_statements: SqlStatement[] = [
     { sql: aggregate.scope_clear_sql, args: [] },
     ...aggregate.scope_seed_sql.map((sql): SqlStatement => ({ sql, args: [] })),
+    ...(aggregate.intern_sql ?? []).map((sql): SqlStatement => ({ sql, args: [] })),
   ];
   return seam.runner.batch(seam.db, scope_statements).pipe(
     concatMap(() => seam.runner.execute(seam.db, aggregate.delete_scoped_sql)),
