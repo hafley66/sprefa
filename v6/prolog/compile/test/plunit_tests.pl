@@ -1645,7 +1645,7 @@ test(parser_retains_semicolon_enum_decl) :-
 
 test(expands_to_typed_variant_rels_and_tag_union) :-
     Sugared = prog([
-        enum_decl(body, (page(view:view) ; redirect(to:text)))
+        enum_decl(body, (page(view:int) ; redirect(to:text)))
     ], []),
     expand_enum_program(Sugared, Expanded),
     Expected = prog(
@@ -1664,6 +1664,31 @@ test(expands_to_typed_variant_rels_and_tag_union) :-
             (body_tag(RedirectId, redirect) <- body_redirect(RedirectId, _RedirectTo))
         ]),
     assertion(Expanded =@= Expected).
+
+test(variant_field_declared_type_passes_through_verbatim) :-
+    Sugared = prog([
+        enum_decl(loc, (here(at:span) ; note(text:text)))
+    ], []),
+    expand_enum_program(Sugared, prog(Decls, _)),
+    memberchk(col_type(loc_here/2, at, span), Decls),
+    memberchk(col_type(loc_note/2, text, text), Decls).
+
+test(variant_field_float_and_bool_survive_expansion) :-
+    Sugared = prog([
+        enum_decl(meas, (peak(v:float) ; on(b:bool)))
+    ], []),
+    expand_enum_program(Sugared, prog(Decls, _)),
+    memberchk(col_type(meas_peak/2, v, float), Decls),
+    memberchk(col_type(meas_on/2, b, bool), Decls).
+
+test(variant_field_enum_type_still_retargets_to_int) :-
+    Sugared = prog([
+        enum_decl(grade, (ripe(sugar:int) ; green(days:int))),
+        enum_decl(hold, (turn(g:grade) ; pass))
+    ], []),
+    expand_enum_program(Sugared, prog(Decls, _)),
+    memberchk(col_type(hold_turn/2, g, int), Decls).
+
 
 test(refuses_variant_name_collision,
      [throws(unsupported_construct(enum_variant_name_collision(page)))]) :-

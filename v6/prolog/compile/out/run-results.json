@@ -1,12 +1,5 @@
 [
   {
-    "name": "enum_decl_variant_rows_round_trip_through_tag_view",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
-  },
-  {
     "name": "enum_decl_two_variants_union_in_tag_view",
     "bucket": "identical",
     "detail": "",
@@ -22,6 +15,41 @@
   },
   {
     "name": "enum_name_is_a_column_type",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "variant_field_float_stays_float",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "variant_field_bool_stays_bool",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "variant_field_typed_as_struct_is_a_ref",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "variant_field_typed_as_json_stays_json",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "variant_field_int_and_text_unchanged",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",

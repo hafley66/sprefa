@@ -1,0 +1,1 @@
+rel record(num(n: int) ; word(w: text)).
