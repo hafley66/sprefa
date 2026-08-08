@@ -132,6 +132,9 @@ export interface IIncrementalEdgeStatement {
   readonly head_columns: readonly string[];
   readonly key_indices: readonly number[];
   readonly project_sql: string;
+  /** Intern-on-write, run before `project_sql` (contract §5.7.1); absent at
+   *  `intern(direct)`, where no arm builds a value the dictionary must hold. */
+  readonly intern_sql?: readonly string[];
 }
 
 /**
@@ -165,6 +168,10 @@ export interface IIncrementalLevelStatement {
   readonly head_columns: readonly string[];
   /** null exactly when `aggregate_sql` is present. */
   readonly insert_sql: string | null;
+  /** Intern-on-write for the delta arms, run before `insert_sql`; the refCount
+   *  seed's own runs before `support_sql[1]`. Both absent at `intern(direct)`. */
+  readonly intern_sql?: readonly string[];
+  readonly support_intern_sql?: readonly string[];
   readonly select_sql: string;
   readonly recompute_sql: string;
   /** null exactly when `aggregate_sql` is present. */

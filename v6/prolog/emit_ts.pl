@@ -166,11 +166,22 @@ header_lines(Name, Lines) :-
 % ═══ imports ═════════════════════════════════════════════════════════════════
 
 imports_lines(HasEdgeRules, HasRetention, Lines) :-
-    imports_lines(HasEdgeRules, HasRetention, false, false, false, [], Lines).
+    imports_lines(HasEdgeRules, HasRetention, false, false, false, [], false, Lines).
+
+% Four spellings of one import line, so a program that neither orders its arms
+% nor builds a string keeps the exact text it had.
+runtime_import_line(false, false,
+    'import { IncrementalRuntime } from "../runtime/1_incremental.ts";') :- !.
+runtime_import_line(true, false,
+    'import { IncrementalRuntime, stage_ordered_frontiers } from "../runtime/1_incremental.ts";') :- !.
+runtime_import_line(false, true,
+    'import { IncrementalRuntime, intern_then_execute } from "../runtime/1_incremental.ts";') :- !.
+runtime_import_line(true, true,
+    'import { IncrementalRuntime, intern_then_execute, stage_ordered_frontiers } from "../runtime/1_incremental.ts";').
 
 imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
               HasOrderedProgram,
-              SelfReferentialLevelRefs, Lines) :-
+              SelfReferentialLevelRefs, HasInternWrite, Lines) :-
     ( HasRetention == true
     -> RetentionImport = ['  IIncrementalRetentionStatement,']
     ; RetentionImport = []
@@ -183,12 +194,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
     ;  RxImportLine =
        'import { concatMap, EMPTY, expand, forkJoin, last, map, of, type Observable } from "rxjs";'
     ),
-    ( HasOrderedProgram == true
-    -> RuntimeImport =
-       'import { IncrementalRuntime, stage_ordered_frontiers } from "../runtime/1_incremental.ts";'
-    ;  RuntimeImport =
-       'import { IncrementalRuntime } from "../runtime/1_incremental.ts";'
-    ),
+    runtime_import_line(HasOrderedProgram, HasInternWrite, RuntimeImport),
     ( HasStructTypes == true
     -> StructImport = ['import { StructPlane } from "../runtime/structPlane.ts";'],
        StructTypeImports = ['  IStructRefColumns,', '  IStructTypePlan,']
@@ -1030,11 +1036,29 @@ incremental_edge_statement_lines(Program, EdgeStatements, RelPlans, Lines) :-
           ['];']
         ], Lines).
 
-edge_statement_head_ref(edgestmt(HeadRef, _, _, _, _, _, _, _), HeadRef).
+edge_statement_head_ref(edgestmt(HeadRef, _, _, _, _, _, _, _, _), HeadRef).
+
+% Absent, not null, when nothing was built: intern(direct) never produces one
+% and its emitted bytes must not move (§15.4).
+intern_sql_field([], '') :- !.
+intern_sql_field(InternSqls, Field) :-
+    sql_template_array_text(InternSqls, ArrayText),
+    format(atom(Field), ', intern_sql: ~w', [ArrayText]).
+
+support_intern_sql_field([], '') :- !.
+support_intern_sql_field(InternSqls, Field) :-
+    sql_template_array_text(InternSqls, ArrayText),
+    format(atom(Field), ', support_intern_sql: ~w', [ArrayText]).
+
+sql_template_array_text(Sqls, ArrayText) :-
+    maplist(js_template, Sqls, Templates),
+    atomic_list_concat(Templates, ', ', Joined),
+    format(atom(ArrayText), '[~w]', [Joined]).
 
 incremental_edge_statement_entry_line(RelPlans,
         edgestmt(HeadRef, _TriggerRef, HeadColumns, KeyColumns, _ProjectSql,
-                 _WriteSql, DeltaProjectSql, _EdgeTriggerKind), RuleId, Line) :-
+                 _WriteSql, DeltaProjectSql, _EdgeTriggerKind,
+                 edgeinterns(_, DeltaInternSqls)), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
     relplan_kind(RelPlans, HeadRef, HeadKind),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
@@ -1042,10 +1066,11 @@ incremental_edge_statement_entry_line(RelPlans,
     key_indices(HeadColumns, KeyColumns, KeyIndices),
     atomic_list_concat(KeyIndices, ', ', KeyIndicesText),
     js_template(DeltaProjectSql, DeltaProjectTemplate),
+    intern_sql_field(DeltaInternSqls, InternField),
     format(atom(Line),
-           '  { head_rel: "~w", rule_id: "~w", head_kind: "~w", head_table_name: "~w", head_delta_table_name: "~w", head_columns: ~w, key_indices: [~w], project_sql: ~w },',
+           '  { head_rel: "~w", rule_id: "~w", head_kind: "~w", head_table_name: "~w", head_delta_table_name: "~w", head_columns: ~w, key_indices: [~w], project_sql: ~w~w },',
            [HeadName, RuleId, HeadKind, HeadName, DeltaTable, ColumnsText,
-            KeyIndicesText, DeltaProjectTemplate]).
+            KeyIndicesText, DeltaProjectTemplate, InternField]).
 
 incremental_level_statement_lines(Program, LevelStatements, RelPlans, Lines) :-
     maplist(level_statement_head_ref, LevelStatements, HeadRefs),
@@ -1058,11 +1083,11 @@ incremental_level_statement_lines(Program, LevelStatements, RelPlans, Lines) :-
           ['];']
         ], Lines).
 
-level_statement_head_ref(levelstmt(HeadRef, _, _, _, _, _), HeadRef).
+level_statement_head_ref(levelstmt(HeadRef, _, _, _, _, _, _), HeadRef).
 
 incremental_level_statement_entry_line(RelPlans,
         levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, RefCountSql,
-                  AggregateSql), RuleId, Line) :-
+                  AggregateSql, DeltaInternSqls), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     memberchk(relplan(HeadRef, _, HeadColumns, _, _), RelPlans),
@@ -1080,13 +1105,16 @@ incremental_level_statement_entry_line(RelPlans,
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     js_template(RecomputeSql, RecomputeTemplate),
     ref_count_sql_text(RefCountSql, RefCountText, ExpandText, DredText,
-                       FixpointIrText),
+                       FixpointIrText, SupportInternSqls),
     aggregate_sql_text(AggregateSql, AggregateText),
+    intern_sql_field(DeltaInternSqls, InternField),
+    support_intern_sql_field(SupportInternSqls, SupportInternField),
     format(atom(Line),
-           '  { head_rel: "~w", rule_id: "~w", head_delta_table_name: "~w", head_columns: ~w, insert_sql: ~w, select_sql: ~w, recompute_sql: ~w, support_sql: ~w, expand_sql: ~w, dred_sql: ~w, fixpoint_ir: ~w, aggregate_sql: ~w },',
+           '  { head_rel: "~w", rule_id: "~w", head_delta_table_name: "~w", head_columns: ~w, insert_sql: ~w, select_sql: ~w, recompute_sql: ~w, support_sql: ~w, expand_sql: ~w, dred_sql: ~w, fixpoint_ir: ~w, aggregate_sql: ~w~w~w },',
            [HeadName, RuleId, DeltaTable, ColumnsText, DeltaInsertTemplate,
             SelectTemplate, RecomputeTemplate, RefCountText, ExpandText,
-            DredText, FixpointIrText, AggregateText]).
+            DredText, FixpointIrText, AggregateText, InternField,
+            SupportInternField]).
 
 incremental_retention_statement_lines([], []) :- !.
 incremental_retention_statement_lines(RetentionStatements, Lines) :-
@@ -1109,13 +1137,13 @@ incremental_retention_statement_entry_line(
 optional_sql_template(none, null) :- !.
 optional_sql_template(Sql, Template) :- js_template(Sql, Template).
 
-ref_count_sql_text(none, null, null, null, null) :- !.
+ref_count_sql_text(none, null, null, null, null, []) :- !.
 ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
                                CollectZeroSql, ClearNewSql, FillNewSql,
                                StageAddSql, StageFrontierSql,
                                StageNextFrontierSql, InsertNewSql, ExpandPlan,
-                               DredPlan, FixpointIr),
-                 Text, ExpandText, DredText, FixpointIrText) :-
+                               DredPlan, FixpointIr, SupportInternSqls),
+                 Text, ExpandText, DredText, FixpointIrText, SupportInternSqls) :-
     maplist(js_template,
             [ClearSql, SeedSql, UpdateSql, StageRetractSql, CollectZeroSql,
              ClearNewSql, FillNewSql, StageAddSql, StageFrontierSql,
@@ -1384,17 +1412,35 @@ quote_ident_local(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 % `out(Item) <+ event_a(Item)` / `out(Item) <+ event_b(Item)`), which would
 % otherwise collide on `resolve<Head>Writes`.
 
+% `none` when the arm builds nothing, which is every arm at intern(direct):
+% the const is absent and the fork line keeps its original text.
+edge_intern_const_lines([], _, _, [], none) :- !.
+edge_intern_const_lines(InternSqls, Upper, Index, [Line], InternConst) :-
+    format(atom(InternConst), 'EDGE_~w_~w_INTERN_SQL', [Upper, Index]),
+    sql_template_array_text(InternSqls, ArrayText),
+    format(atom(Line), 'const ~w: readonly string[] = ~w;',
+           [InternConst, ArrayText]).
+
+edge_resolver_fork_line(none, ProjectConst, ForkLine) :- !,
+    format(atom(ForkLine),
+           '  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: ~w, args: bind_args(arrival.row) }))).pipe(',
+           [ProjectConst]).
+edge_resolver_fork_line(InternConst, ProjectConst, ForkLine) :-
+    format(atom(ForkLine),
+           '  return forkJoin(trigger_rows.map((arrival) => intern_then_execute(seam, ~w, { sql: ~w, args: bind_args(arrival.row) }))).pipe(',
+           [InternConst, ProjectConst]).
+
 edge_resolver_blocks(EdgeStatements, RelPlans, ConstLines, FnLines) :-
     findall(Index-EdgeStmt, nth0(Index, EdgeStatements, EdgeStmt), IndexedStatements),
     maplist(edge_resolver_block_indexed(RelPlans), IndexedStatements, ConstLineGroups, FnLineGroups),
     flatten_with_blank_separators(ConstLineGroups, ConstLines),
     flatten_with_blank_separators(FnLineGroups, FnLines).
 
-edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind), ConstLines, FnLines) :-
+edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind, EdgeInterns), ConstLines, FnLines) :-
     relplan_kind(RelPlans, TriggerRef, TriggerKind),
     relplan_kind(RelPlans, HeadRef, HeadKind),
     memberchk(relplan(TriggerRef, _, TriggerColumns, _, _), RelPlans),
-    edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _, EdgeTriggerKind), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines).
+    edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _, EdgeTriggerKind, EdgeInterns), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines).
 
 % HeadKind decides how projected rows become SqlStatements (engine.pl
 % apply_edge_writes/6, :236-254, unchanged distinction from before this
@@ -1405,7 +1451,7 @@ edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadCo
 % collapsing through a key Map would be wrong (KeyColumns is `[]` for a Log
 % head, so every row would collapse to the SAME key and only the last
 % survive, contradicting q1's "duplicate rows are distinct occurrences").
-edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines) :-
+edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind, edgeinterns(ProjectInternSqls, _)), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines) :-
     ref_name(TriggerRef, TriggerName),
     upper_snake(HeadRef, Upper),
     format(atom(ProjectConst), 'EDGE_~w_~w_PROJECT_SQL', [Upper, Index]),
@@ -1419,6 +1465,8 @@ edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, Proje
     format(atom(ColumnsLine), 'const ~w: readonly string[] = ~w;', [ColumnsConst, ColumnsArrayText]),
     departure_resolver_const_lines(EdgeTriggerKind, TriggerRef, TriggerColumns,
                                    Upper, Index, DepartureConstLines),
+    edge_intern_const_lines(ProjectInternSqls, Upper, Index, InternConstLines,
+                            InternConst),
     ( HeadKind == log
     -> ConstLines0 = [ProjectLine, WriteLine, ColumnsLine]
     ;  format(atom(IndicesConst), 'EDGE_~w_~w_KEY_INDICES', [Upper, Index]),
@@ -1428,14 +1476,12 @@ edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, Proje
        format(atom(IndicesLine), 'const ~w: readonly number[] = ~w;', [IndicesConst, IndicesArrayText]),
        ConstLines0 = [ProjectLine, WriteLine, ColumnsLine, IndicesLine]
     ),
-    append(ConstLines0, DepartureConstLines, ConstLines),
+    append([ConstLines0, InternConstLines, DepartureConstLines], ConstLines),
     pascal_case(HeadRef, Pascal),
     format(atom(FnName), 'resolve~w_~wWrites', [Pascal, Index]),
     format(atom(SigLine), 'function ~w(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {', [FnName]),
     format(atom(TriggerLine), '  const trigger_rows = trigger_occurrences("~w", "~w", before.~w, arrivals);', [TriggerKind, TriggerName, TriggerName]),
-    format(atom(ForkLine),
-           '  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: ~w, args: bind_args(arrival.row) }))).pipe(',
-           [ProjectConst]),
+    edge_resolver_fork_line(InternConst, ProjectConst, ForkLine),
     format(atom(RowsLine), '        const projected_rows = result.rows.map((row) => ~w.map((column) => row[column] as IRowValue) as IRow);', [ColumnsConst]),
     % bind_args again, not just at the project bind above: a projected value
     % just read back through result.rows may itself be a plain JS number
@@ -1551,7 +1597,7 @@ departure_resolver_const_lines(ordered_departure, TriggerRef, TriggerColumns,
 % Emitted once per program that has any departure arm; nothing else changes
 % for a program without one.
 departure_occurrences_helper_lines(EdgeStatements, Lines) :-
-    (   member(edgestmt(_, _, _, _, _, _, _, TriggerKind), EdgeStatements),
+    (   member(edgestmt(_, _, _, _, _, _, _, TriggerKind, _), EdgeStatements),
         memberchk(TriggerKind, [departure, ordered_departure])
     ->  Lines =
         [ 'function departure_occurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {',
@@ -1570,8 +1616,8 @@ key_indices(HeadColumns, KeyColumns, Indices) :-
 
 % ═══ ordered pre occurrence loop ════════════════════════════════════════════
 
-ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_arrival)).
-ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_departure)).
+ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_arrival, _)).
+ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_departure, _)).
 
 ordered_program(EdgeStatements) :-
     member(Statement, EdgeStatements),
@@ -1648,7 +1694,8 @@ ordered_trigger_kind(_, arrival).
 
 ordered_arm_entry_line(RelPlans, PreRefs,
         edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql,
-                 WriteSql, _, EdgeTriggerKind), Line) :-
+                 WriteSql, _, EdgeTriggerKind,
+                 edgeinterns(ProjectInternSqls, _)), Line) :-
     ref_name(HeadRef, HeadName),
     ref_name(TriggerRef, TriggerName),
     relplan_kind(RelPlans, HeadRef, HeadKind),
@@ -1659,10 +1706,12 @@ ordered_arm_entry_line(RelPlans, PreRefs,
     js_template(ProjectSql, ProjectTemplate),
     js_template(WriteSql, WriteTemplate),
     ( memberchk(HeadRef, PreRefs) -> EvolvesPre = true ; EvolvesPre = false ),
+    intern_sql_field(ProjectInternSqls, InternField),
     format(atom(Line),
-           '  { trigger_rel: "~w", trigger_kind: "~w", head_rel: "~w", head_kind: "~w", head_columns: ~w, key_indices: [~w], project_sql: ~w, write_sql: ~w, evolves_pre: ~w },',
+           '  { trigger_rel: "~w", trigger_kind: "~w", head_rel: "~w", head_kind: "~w", head_columns: ~w, key_indices: [~w], project_sql: ~w, write_sql: ~w, evolves_pre: ~w~w },',
            [TriggerName, TriggerKind, HeadName, HeadKind, HeadColumnsText,
-            KeyIndicesText, ProjectTemplate, WriteTemplate, EvolvesPre]).
+            KeyIndicesText, ProjectTemplate, WriteTemplate, EvolvesPre,
+            InternField]).
 
 ordered_arrival_accept_line(RelPlans, TriggerRef, Line) :-
     ref_name(TriggerRef, TriggerName),
@@ -1701,13 +1750,35 @@ ordered_level_occurrence_line(LevelRef, Line) :-
            '  for (const row of multiset_diff(before["~w"], mid["~w"]).add) occurrences.push({ rel: "~w", kind: "arrival", row });',
            [Name, Name, Name]).
 
+edge_statements_intern(EdgeStatements, true) :-
+    member(edgestmt(_, _, _, _, _, _, _, _, edgeinterns(InternSqls, _)),
+           EdgeStatements),
+    InternSqls \== [],
+    !.
+edge_statements_intern(_, false).
+
+% Two spellings, picked by whether ANY arm builds a string: the direct-mode
+% text is the one that was already there, byte for byte.
+ordered_arm_interface_line(false,
+    'interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }') :- !.
+ordered_arm_interface_line(true,
+    'interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean; readonly intern_sql?: readonly string[] }').
+
+ordered_arm_project_line(false,
+    '  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.project_sql, args: bind_args(occurrence.row) }).pipe(') :- !.
+ordered_arm_project_line(true,
+    '  return forkJoin(arms.map((arm) => intern_then_execute(seam, arm.intern_sql, { sql: arm.project_sql, args: bind_args(occurrence.row) }).pipe(').
+
 ordered_occurrence_lines(false, _, _, _, _, []) :- !.
 ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
                          LevelHeadedRefs, Lines) :-
     maplist(ordered_arm_entry_line(RelPlans, PreRefs), EdgeStatements,
             ArmLines),
+    edge_statements_intern(EdgeStatements, ArmsIntern),
+    ordered_arm_interface_line(ArmsIntern, ArmInterfaceLine),
+    ordered_arm_project_line(ArmsIntern, ArmProjectLine),
     findall(TriggerRef,
-            ( member(edgestmt(_, TriggerRef, _, _, _, _, _, TriggerKind),
+            ( member(edgestmt(_, TriggerRef, _, _, _, _, _, TriggerKind, _),
                      EdgeStatements),
               ordered_trigger_kind(TriggerKind, arrival) ),
             ArrivalRefs0),
@@ -1718,7 +1789,7 @@ ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
     maplist(ordered_level_occurrence_line, TriggerLevelRefs,
             LevelOccurrenceLines),
     findall(TriggerRef,
-            ( member(edgestmt(_, TriggerRef, _, _, _, _, _, TriggerKind),
+            ( member(edgestmt(_, TriggerRef, _, _, _, _, _, TriggerKind, _),
                      EdgeStatements),
               ordered_trigger_kind(TriggerKind, departure) ),
             DepartureRefs0),
@@ -1745,7 +1816,7 @@ ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
        ]
     ),
     append(
-      [ [ 'interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }',
+      [ [ ArmInterfaceLine,
           'interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }',
           'interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }',
           '',
@@ -1818,7 +1889,7 @@ ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
           'function apply_ordered_occurrence(seam: ISqlSeam, occurrence: IOrderedOccurrence, written: IOrderedWrite[]): Observable<void> {',
           '  const arms = ORDERED_EDGE_ARMS.filter((arm) => arm.trigger_rel === occurrence.rel && arm.trigger_kind === occurrence.kind);',
           '  if (arms.length === 0) return of(undefined);',
-          '  return forkJoin(arms.map((arm) => seam.runner.execute(seam.db, { sql: arm.project_sql, args: bind_args(occurrence.row) }).pipe(',
+          ArmProjectLine,
           '    map((result) => ({ arm, rows: result.rows.map((row) => arm.head_columns.map((column) => row[column] as IRowValue) as IRow) })),',
           '  ))).pipe(',
           '    concatMap((groups) => {',
@@ -1916,10 +1987,10 @@ recompute_levels_fn_lines(SelfReferentialLevelRefs, LevelStatements, Lines) :-
     LevelStatements \== [],
     !,
     findall(DeleteSql,
-            member(levelstmt(_, DeleteSql, _, _, _, _), LevelStatements),
+            member(levelstmt(_, DeleteSql, _, _, _, _, _), LevelStatements),
             DeleteSqls),
     findall(InsertSql,
-            ( member(levelstmt(_, _, InsertSqls, _, _, _), LevelStatements),
+            ( member(levelstmt(_, _, InsertSqls, _, _, _, _), LevelStatements),
               member(InsertSql, InsertSqls) ),
             RoundInsertSqls),
     % Real newline; see the note at the recompute join.
@@ -1955,7 +2026,7 @@ recompute_levels_fn_lines(_, LevelStatements, Lines) :-
     % INSERT after exactly one DELETE, never one DELETE per clause); flattens
     % to the identical [Delete, Insert] sequence as before for the common
     % single-clause case.
-    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSqls, _, _, _), LevelStatements), ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ), Sqls),
+    findall(Sql, ( member(levelstmt(_, DeleteSql, InsertSqls, _, _, _, _), LevelStatements), ( Sql = DeleteSql ; member(Sql, InsertSqls) ) ), Sqls),
     % Real newline; see the note at the recompute join.
     atomic_list_concat(Sqls, ';\n', JoinedSql),
     js_template(JoinedSql, SqlTemplate),
@@ -1971,7 +2042,7 @@ recompute_levels_fn_lines(_, LevelStatements, Lines) :-
 % count is one SELECT with no row shape to decode.
 level_row_count_sql(LevelStatements, Sql) :-
     findall(CountExpr,
-            ( member(levelstmt(HeadRef, _, _, _, _, _), LevelStatements),
+            ( member(levelstmt(HeadRef, _, _, _, _, _, _), LevelStatements),
               ref_name(HeadRef, HeadName),
               quote_ident_local(HeadName, QuotedHead),
               format(atom(CountExpr), '(SELECT count(*) FROM ~w)',
@@ -2041,7 +2112,7 @@ rel_entry_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
 % boundary lies about exactly the ticks this feature exists for.
 carry_pending_expr([], [], 'false') :- !.
 carry_pending_expr(EdgeStatements, DepartureRefs, Expr) :-
-    findall(HeadRef, member(edgestmt(HeadRef, _, _, _, _, _, _, _), EdgeStatements), HeadRefs0),
+    findall(HeadRef, member(edgestmt(HeadRef, _, _, _, _, _, _, _, _), EdgeStatements), HeadRefs0),
     sort(HeadRefs0, HeadRefs),
     findall(Cond,
             ( member(HeadRef, HeadRefs),
@@ -2296,7 +2367,7 @@ incremental_plan_export_lines(RetractionGuard, HasRetention, Lines) :-
 incremental_carry_expr([], 'false') :- !.
 incremental_carry_expr(EdgeStatements, Expr) :-
     findall(HeadName,
-            ( member(edgestmt(HeadRef, _, _, _, _, _, _, _), EdgeStatements),
+            ( member(edgestmt(HeadRef, _, _, _, _, _, _, _, _), EdgeStatements),
               ref_name(HeadRef, HeadName) ),
             HeadNames0),
     sort(HeadNames0, HeadNames),
@@ -2444,7 +2515,7 @@ dispatch_signature(_,
 derived_edge_carry_required(
         plan(_, prog(_, Rules), _, _, _, _, _, _), EdgeStatements, Required) :-
     derived_refs(Rules, DerivedRefs),
-    ( member(edgestmt(_, TriggerRef, _, _, _, _, _, _), EdgeStatements),
+    ( member(edgestmt(_, TriggerRef, _, _, _, _, _, _, _), EdgeStatements),
       memberchk(TriggerRef, DerivedRefs)
     -> Required = true
     ;  Required = false
@@ -2485,7 +2556,7 @@ retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _, _), Guard) :-
 % EdgeStatements list, matching edge_resolver_blocks/4's own naming.
 edge_resolve_call_exprs(EdgeStatements, Exprs) :-
     findall(Expr,
-            ( nth0(Index, EdgeStatements, edgestmt(HeadRef, _, _, _, _, _, _, _)),
+            ( nth0(Index, EdgeStatements, edgestmt(HeadRef, _, _, _, _, _, _, _, _)),
               edge_resolve_call_expr(HeadRef, Index, Expr) ),
             Exprs).
 
@@ -2542,8 +2613,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ),
     Plan = plan(_, prog(_, SelfRefScanRules), _, _, _, _, _, _),
     self_referential_level_refs(SelfRefScanRules, SelfReferentialLevelRefs),
+    edge_statements_intern(EdgeStatements, HasInternWrite),
     imports_lines(HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
-                  HasOrderedProgram, SelfReferentialLevelRefs, ImportLines),
+                  HasOrderedProgram, SelfReferentialLevelRefs, HasInternWrite,
+                  ImportLines),
     local_types_lines(LocalTypeLines),
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
@@ -2643,5 +2716,5 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     atomic_list_concat(SectionTexts, '\n\n', Body),
     format(atom(Text), '~w\n', [Body]).
 
-is_level_statement(levelstmt(_, _, _, _, _, _)).
+is_level_statement(levelstmt(_, _, _, _, _, _, _)).
 is_retention_statement(retentionstmt(_, _, _)).
