@@ -19,20 +19,18 @@ out="INDEX.md"
     echo
     echo "| file | lines | title |"
     echo "|---|--:|---|"
-    find . -name '*.md' ! -name 'INDEX.md' | grep -v target | grep -v node_modules | sort | while read -r f; do
-        rel=${f#./}
-        lines=$(wc -l < "$f" | tr -d ' ')
-        h1=$(grep -m1 -E '^# ' "$f" 2>/dev/null | sed 's/^# //' | sed 's/|/\\|/g')
+    git ls-files -- '*.md' | grep -v '^INDEX.md$' | sort | while read -r rel; do
+        lines=$(wc -l < "$rel" | tr -d ' ')
+        h1=$(grep -m1 -E '^# ' "$rel" 2>/dev/null | sed 's/^# //' | sed 's/|/\\|/g')
         printf '| [%s](%s) | %s | %s |\n' "$rel" "$rel" "$lines" "$h1"
     done
     echo
     echo "## Full header index"
     echo
-    find . -name '*.md' ! -name 'INDEX.md' | grep -v target | grep -v node_modules | sort | while read -r f; do
-        rel=${f#./}
+    git ls-files -- '*.md' | grep -v '^INDEX.md$' | sort | while read -r rel; do
         echo "### $rel"
         echo '```'
-        grep -nE '^#{1,3} ' "$f" 2>/dev/null | sed 's/\t/ /g' || true
+        grep -nE '^#{1,3} ' "$rel" 2>/dev/null | sed 's/\t/ /g' || true
         echo '```'
         echo
     done

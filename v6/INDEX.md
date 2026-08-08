@@ -21,7 +21,6 @@
 | [TELEMETRY.md](TELEMETRY.md) | 118 | TELEMETRY |
 | [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
 | [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
-| [bench-cli/out/STANDINGS.md](bench-cli/out/STANDINGS.md) | 73 | bench-cli standings |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 242 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
@@ -75,6 +74,7 @@
 | [plans/2026-07-24-m9-storage-plane-continuation.md](plans/2026-07-24-m9-storage-plane-continuation.md) | 90 | M9 storage-plane continuation — codex brief (2026-07-24) |
 | [plans/2026-07-24-sqlite-retract-perf-lab.md](plans/2026-07-24-sqlite-retract-perf-lab.md) | 425 | 2026-07-24 SQLite retraction perf lab |
 | [plans/2026-07-24-v6-dl-mvp-slice.md](plans/2026-07-24-v6-dl-mvp-slice.md) | 664 | v6 dl MVP slice — ast-grep -> diags -> LSP, http-fronted (2026-07-24) |
+| [plans/2026-07-25-async-to-rxjs-targets.md](plans/2026-07-25-async-to-rxjs-targets.md) | 125 | async -> rxjs: remaining targets |
 | [plans/2026-07-25-sql-builder-build-vs-buy.md](plans/2026-07-25-sql-builder-build-vs-buy.md) | 322 | SQL query-builder / templating: build-vs-buy for `lowerSql.ts` |
 | [prolog/LANG.md](prolog/LANG.md) | 103 | LANG snapshot for labs (2026-07-27) — the candidate language, unbanked |
 | [prolog/compile/PIPELINE.md](prolog/compile/PIPELINE.md) | 153 | The tsv2 compiler pipeline, stage by stage |
@@ -95,7 +95,6 @@
 | [sprefa-extract/tests/fixtures/scip_rel/README.md](sprefa-extract/tests/fixtures/scip_rel/README.md) | 12 |  |
 | [sprefa-store/FINDINGS-AND-GAPS.md](sprefa-store/FINDINGS-AND-GAPS.md) | 138 | v6 store — lab findings brought over + algorithmic gaps for tomorrow |
 | [sprefa-store/PERF-REPORT.md](sprefa-store/PERF-REPORT.md) | 167 | v6 store — retraction perf & completeness report |
-| [sprefa-store/bench/out/REPORT.md](sprefa-store/bench/out/REPORT.md) | 47 | Z-set / IVM head-to-head — feasibility lab |
 | [tsv2/CRAWL-BENCH.md](tsv2/CRAWL-BENCH.md) | 178 | Grafana crawl bench |
 | [tsv2/SCALE.md](tsv2/SCALE.md) | 46 | tsv2 and v1 generated-program scale data |
 | [tsv2/goldens/comment_rail_golden/README.md](tsv2/goldens/comment_rail_golden/README.md) | 215 | Comment-budget rail golden |
@@ -297,16 +296,6 @@
 192:### two_hop_join/100k
 202:### cross_join/1k
 212:## N/A and disqualification reasons
-```
-
-### bench-cli/out/STANDINGS.md
-```
-1:# bench-cli standings
-17:## Reference validity (ruling `bench_reference = proven_engine_reference`)
-50:## Real programs
-52:### callgraph_derivation
-62:## Scale shapes
-65:## N/A and disqualification reasons
 ```
 
 ### dl/fixtures/ghcacher-findings.md
@@ -1142,6 +1131,19 @@
 651:## Frontier (deferred, with the evidence that will resolve each)
 ```
 
+### plans/2026-07-25-async-to-rxjs-targets.md
+```
+1:# async -> rxjs: remaining targets
+9:## The one legitimate async seam
+18:## Tier 1 — real control flow, convert to observables
+30:## Tier 2 — pass-through delegations, mechanical type flip only
+42:## Tier 3 — the public contract
+50:## Traps
+59:## Duplication ledger — delete these
+86:## Where the shared code goes
+117:## Adjacent, not yet ruled on
+```
+
 ### plans/2026-07-25-sql-builder-build-vs-buy.md
 ```
 1:# SQL query-builder / templating: build-vs-buy for `lowerSql.ts`
@@ -1397,14 +1399,6 @@
 130:## CYC 5.8M s7 — nodes≈5760002, cyclic stride=7
 143:## CYC 11.5M s7 — nodes≈11520002, cyclic stride=7
 156:## Breakpoint ramp — tight gun 700 MB
-```
-
-### sprefa-store/bench/out/REPORT.md
-```
-1:# Z-set / IVM head-to-head — feasibility lab
-15:## Charts
-22:## Data
-43:## Takeaways (derived)
 ```
 
 ### tsv2/CRAWL-BENCH.md

@@ -14,6 +14,13 @@ is no per-column opt-out any more, the compiler never quietly leaves a column as
 words, and runtime-built strings go into the bag too. Section 17 is the summary
 of what that deleted.
 
+**Rev 3.1. THE FIRST HALF IS BUILT AND MERGED.** Three agents raced it; one
+finished four lanes with every gate green. The bag, the decoder views, the off
+switch, the front door and the name refusal all exist on main today. **The
+switch is still set to OFF on purpose**, and section 18 explains what has to
+land before it can be turned on, plus what the build found wrong with this
+plan.
+
 ## TOC
 
 - [1. The one-sentence version](#1-the-one-sentence-version)
@@ -33,6 +40,7 @@ of what that deleted.
 - [15. Watching the word bag](#15-watching-the-word-bag)
 - [16. What the red team broke](#16-what-the-red-team-broke)
 - [17. What rev 3 deleted](#17-what-rev-3-deleted)
+- [18. What got built, and what is left](#18-what-got-built-and-what-is-left)
 
 ---
 
@@ -170,8 +178,16 @@ So the fix is structural rather than procedural.
 ```
 
 There is no second function. There is no follow-up task. There is nowhere in
-the code for a table to exist without its decoder. The test is a length check:
-every relation with an interned column returns exactly two things.
+the code for a table to exist without its decoder.
+
+**Corrected during the build.** This plan originally said the test is a COUNT:
+every relation with a text column returns exactly two things. That test cannot
+pass, because relations built on declared types already return two things for a
+different reason, so those return three. Worse, counting is the weaker test
+anyway: a count passes even if the WRONG view is in the list.
+
+The test that shipped names the view it expects, per relation. Stronger, and it
+does not fail on the relations that were already fine.
 
 The compiler already writes this exact line for declared struct types. It has
 worked for a month. The change applies it to plain text columns too.
@@ -1126,3 +1142,128 @@ known. A relation whose hit rate sits near zero is a relation whose words never
 repeat, and that is the exact case the opt-out existed for. If that number never
 approaches zero, the opt-out was never worth its four moving parts. If it does,
 section 9 names the evidence to bring to get it back.
+
+
+---
+
+## 18. What got built, and what is left
+
+Three agents raced the same plan from the same commit. One finished four lanes
+with every gate green and filed seven defects against the plan. The other two
+stopped early and both stopped for the same reason, which turned out to be the
+most useful thing they produced (see "the trap all three hit" below).
+
+### What is on main right now
+
+```
+   ┌─ BUILT AND MERGED ────────────────────────────────────────────┐
+   │                                                               │
+   │   the bag            __str, one per database                  │
+   │   the decoders       1,242 views, one per relation with text  │
+   │   text → numbers     every text column stores an id           │
+   │   the off switch     a flag on the compiler, both directions  │
+   │   the mode stamp     every program says which world built it  │
+   │   the attach guard   refuses a mismatched program+database     │
+   │   the front door     incoming rows get their words numbered   │
+   │   the name refusal   you cannot name a relation __anything    │
+   │                                                               │
+   └───────────────────────────────────────────────────────────────┘
+
+   ┌─ NOT BUILT YET ───────────────────────────────────────────────┐
+   │   constants          "kind == 'rust'" still compares to a word│
+   │   starting rows      a program's initial data skips the door  │
+   │   built strings      glued-together text is not numbered      │
+   │   the monitoring     the per-tick stats row                   │
+   └───────────────────────────────────────────────────────────────┘
+```
+
+### Some numbers from the real thing
+
+| what | number | note |
+|---|---|---|
+| programs that grow a bag | **184 of 211** | this plan guessed 167, from counting only key columns |
+| decoder views written | 1,242 | |
+| reads switched to a decoder | 1,863 | |
+| the gate's alarm, fed the wrong corpus on purpose | **4,738 complaints** | fed the right one: 0. A gate that cannot go red is not a gate |
+| compiling everything, one mode | 1.6 seconds | so checking both modes costs about 4 seconds |
+
+### The trap all three racers hit
+
+Turning the switch ON before the front door exists produces a program that looks
+perfect and answers nothing:
+
+```
+   program says:   this column holds NUMBERS
+   nothing yet:    the door that turns words into numbers
+   so a row with   "foo.ts"  goes into a number column
+   SQLite:         stores it anyway, no complaint
+   every read:     comes back empty
+```
+
+Two racers turned it on and watched the test suite go red. The winner left it
+OFF, built the machinery underneath it, and proved the ON path works a different
+way: compile everything both ways and check the two outputs differ only in the
+interning. That works today, with the switch still off.
+
+**So the switch is OFF on main, deliberately, and turning it on is the finish
+line of this whole arc.**
+
+### What has to happen before the switch flips
+
+```
+   BUILT ─────┬──▶ constants + starting rows ──┐
+              │                                 ├──▶  FLIP THE SWITCH
+              ├──▶ built strings ───────────────┤        (one word
+              │                                 │         of code)
+              └──▶ monitoring ──────────────────┘
+```
+
+### How we will know the flip is safe
+
+Compiling is not enough. A program can compile perfectly and still answer
+nothing, which is the whole trap above.
+
+> **Run all 211 test programs, for real, with the switch ON, and compare every
+> single tick of output against the reference implementation. Zero differences.**
+
+The reference implementation does not use a database at all, so it cannot have
+drifted. If every program produces byte-for-byte the same output with words
+replaced by numbers underneath, the technique works.
+
+If that goes red, the flip does not land, and putting it back is one word of
+code. That is the entire reason the switch is a compiler setting rather than a
+rewrite.
+
+### Seven things the build found wrong with this plan
+
+| # | what the plan said | what was actually true |
+|---|---|---|
+| 1 | the table+view test is a count | counting cannot work, and naming the view is stronger anyway |
+| 2 | "the delta read swaps to the view" | it needed its own view, which the plan never named |
+| 3 | the switch defaults to ON | ON is broken until three more lanes land |
+| 4 | every program carries a mode stamp | four hand-written test programs needed the field added |
+| 5 | the attach guard compares modes | the plan never said where the DATABASE records its mode. Answer: it holds a bag or it does not. No new tables |
+| 6 | the name refusal runs late in the compiler | by then the compiler has minted its OWN `__` names, so it would refuse itself. It runs on what the author wrote |
+| 7 | write a test program that reads the catalog | impossible: the reference implementation has no catalog, so any such test is wrong by construction |
+
+All seven are fixed in the plan. Numbers 1, 5 and 6 were fixed with something
+better than what was asked for.
+
+### Two things nobody had written down
+
+**A Prolog gotcha.** Asking Prolog to build a string with no placeholders in it
+throws an error instead of building the string. It cost time twice. The rule is
+now written down: a constant string gets assigned, never formatted.
+
+**Main got renamed.** A parallel piece of work converted the server files to
+snake_case while this was being built, and the merge renamed the new code to
+match. The code samples in the detailed plan follow main's convention now.
+
+### One more thing you approved
+
+The endgame: generate bespoke Rust per program and race it against
+differential-dataflow on deletion-heavy work. That is recorded in the other
+plan. Its connection to this one is direct: the label saying "this number is a
+word in disguise" is exactly what generated code needs to tell an id from a
+count, and interning is what makes the generated comparisons integer
+comparisons instead of string ones.

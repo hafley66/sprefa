@@ -18,6 +18,15 @@ runtime-built strings are interned on write. **Every text column in a program is
 a dictionary id, with no exceptions.** §20 is the changelog; §9 records what was
 deleted and how it returns if a case ever earns it.
 
+**Rev 3.1, 2026-08-08. PHASE 1 IS LANDED** (merge `b4431308` on main, pushed).
+I-A, I-B, I-D and I-J shipped from a three-entrant race; the winning log is
+`plans/2026-08-08-interning-race-opus-log.md`, the other two are at
+`plans/2026-08-08-interning-race-flash-terra-logs.md`. **The default is
+`intern(direct)`, deliberately**, and the flip is the arc's finish line (§23).
+Seven contract defects were filed against this document and each one is ruled on
+in §22. Sections above are corrected in place where they were wrong; §21-§27 are
+the rev-3.1 record.
+
 ## TOC
 
 - [1. The decision, in one table](#1-the-decision-in-one-table)
@@ -43,6 +52,14 @@ deleted and how it returns if a case ever earns it.
   - [19. Changelog: the seven findings and where each closed](#19-changelog-the-seven-findings-and-where-each-closed)
 - [Rev 3 2026-08-08 (user word: intern it all)](#rev-3-2026-08-08-user-word-intern-it-all)
   - [20. Changelog: what rev 3 deleted, added and re-scoped](#20-changelog-what-rev-3-deleted-added-and-re-scoped)
+- [Rev 3.1 2026-08-08 (phase 1 landed)](#rev-31-2026-08-08-phase-1-landed)
+  - [21. What shipped, with commits and numbers](#21-what-shipped-with-commits-and-numbers)
+  - [22. Rulings on the seven filed defects](#22-rulings-on-the-seven-filed-defects)
+  - [23. The gun as landed, and the flip](#23-the-gun-as-landed-and-the-flip)
+  - [24. I-F re-scoped: the catalog family is single-name](#24-i-f-re-scoped-the-catalog-family-is-single-name)
+  - [25. Remaining lanes, re-sequenced](#25-remaining-lanes-re-sequenced)
+  - [26. Environment facts that bit](#26-environment-facts-that-bit)
+  - [27. The compiled-mode endgame, approved](#27-the-compiled-mode-endgame-approved)
 
 ---
 
@@ -197,9 +214,9 @@ Counterarguments, each recorded with its answer:
 ## 4. The auto-join view, emitted in the same pass
 
 **The structural rule, which is the whole point of this section:** `rel_ddl/5`
-returns a LIST. An interned rel's clause returns a two-element list. There is no
-second predicate, no second pass, no second lane, and no place where a table can
-exist without its view. `lower.pl:938` already writes exactly this line for
+returns a LIST carrying the table and its views. There is no second predicate,
+no second pass, no second lane, and no place where a table can exist without its
+view. `lower.pl:938` already writes exactly this line for
 declared struct types:
 
 ```prolog
@@ -211,9 +228,18 @@ Ddls = [Ddl, ViewDdl]
 ```prolog
 % rel_ddl(+Types, +EdgeHeadedRefs, +ArrivalTargetRefs, +LevelHeadedRefs,
 %         +RelPlan, -Ddls)
-%   Ddls = [TableDdl]              when no column of the rel is interned
-%   Ddls = [TableDdl, ViewDdl]     when >= 1 column is interned
-%   NO OTHER SHAPE. The plunit gate is a length assertion over every relplan.
+%   Ddls = [TableDdl | Views]
+%   REV 3.1 CORRECTION (filed defect 1, ACCEPTED). Rev 3 said "[TableDdl] or
+%   [TableDdl, ViewDdl], NO OTHER SHAPE, gated by a LENGTH assertion". That is
+%   unsatisfiable: lower.pl:928-938 already returns [Ddl, ViewDdl] for a
+%   declared struct type's __ref_ view, so an interned struct-typed rel must
+%   return THREE. The rule was always about the absence of a table without its
+%   view, never about a count.
+%
+%   The landed gate is `every_interned_table_ships_its_view`: for every
+%   interned relplan, assert the NAMED __txt_ view is present in that call's
+%   own Ddls list. Strictly stronger than a length (a length passes if the
+%   wrong view is there) and it does not false-fail on the __ref_ arm.
 
 % text_view_name(+Ref, -Name)
 %   '__txt_' ++ <table name>. Same '__' reserved namespace as __ref_, __new_,
@@ -253,7 +279,7 @@ read and the delta read with no restructuring. `TEMP` for the same reason
 | reader | site | change |
 |---|---|---|
 | tick-log delta read | `lower.pl:3957-3969` `delta_statement/2` `SelectSql` | `FROM "rel_<name>"` -> `FROM "__txt_rel_<name>"` |
-| tick-log boundary read | same predicate, `BoundarySql` over `__delta_<rel>` | the delta table's own text columns are interned identically; same swap |
+| tick-log boundary read | same predicate, `BoundarySql` over `__delta_<rel>` | the delta table's own text columns are interned identically, and it gets **its own view, `__txt___delta_<rel>`**, emitted from `delta_ddl/3` and carrying `_sign`/`_sequence` through verbatim. Rev 3 said "same swap" without naming the view the swap needs (filed defect 2, ACCEPTED). Inlining the decode into `canonical_column_expr/3` was rejected in build: that predicate's text arm renders compound terms OVER the value, so the decode has to happen first, which is what a view gives for free |
 | final-state read | `v6/tsv2/scripts/sweep.ts` via the emitted module's delta statements | inherited, no edit |
 | serve | `v6/tsv2/runtime/serveStats.ts`, `serveDoor` reads | inherited, no edit |
 | oracle | `v6/prolog/conformance/ticklog.pl` | **none.** The oracle computes over prolog terms and never issues SQL. That is what keeps it the referee (§10) |
@@ -959,7 +985,7 @@ runs it rather than reads 167 diffs.
 | **intern on write** | §5.7 | `concat_into_head_text_interns_on_write`: a rule head projecting a concatenation, asserting (a) the emitted module carries the two-statement pair, (b) the tick log is byte-identical to the pre-arc log, (c) `__str` holds the built strings de-duplicated |
 | **NULL concat parity** | §5.7.6 | a built string with a NULL operand, asserting the row is dropped exactly as it is today. This one exists to stop a pre-existing behavior being blamed on this arc |
 | **built text on a recursive head** | §5.7.5 | a program projecting a built string into a rel carrying `fixpointIr`, asserting the compile-time warning fires and the sweep counts it. Expected count in the corpus: 0 |
-| **reserved namespace** | §18, red-team finding 7 | one program declaring a rel in the `__` namespace and one deriving into `__str_stats`, both asserting `reserved_rel_namespace`; plus a program READING `__rel` that still compiles |
+| **reserved namespace** | §18, red-team finding 7 | **TWO** fixtures: one declaring a rel in the `__` namespace, one deriving into it, both asserting `reserved_rel_namespace`. Rev 3 asked for a third ("a program READING `__rel` that still compiles") and **that fixture cannot exist** (filed defect 7, ACCEPTED): the catalog is seeded by DDL and the reference engine holds no `__rel` at all, so any conformance fixture reading it is `FINAL_WRONG` by construction, independent of this arc. The allowed-read receipt is a plunit test (`reserved_namespace_admits_a_catalog_read`), where the oracle is not the referee |
 | **boot seed row** | §16.4 | a module carrying text literals, asserting `__str_stats.rows` at tick 0 equals the dictionary's row count |
 
 ---
@@ -1137,7 +1163,10 @@ it was the source of the reachable mixing red-team finding 3 found.
 
 ```prolog
 % program_plan(+Fixture-Bindings, +Options, -Plan)
-%   Options carries intern(dict) | intern(direct). Default dict.
+%   Options carries intern(dict) | intern(direct).
+%   REV 3.1: the LANDED default is `direct` (compile.pl:153
+%   default_intern_mode(direct)), not `dict`. Filed defect 3, ACCEPTED; the
+%   reason and the flip plan are §23.
 %   Threading, not a global: a global flag is unrecordable in the artifact,
 %   and §15.5 needs the artifact to say which mode built it.
 %
@@ -1201,6 +1230,40 @@ Self-diagnosis law: a database plus its module answers "why does this column
 hold integers" without asking anyone. Serve refuses to attach a `dict` module
 to a database built by a `direct` module and vice versa, naming both modes in
 the error.
+
+**REV 3.1: how the DATABASE states its mode (filed defect 5, ACCEPTED).** Rev 3
+required the refusal and named no place the database records its side of the
+comparison. The landed answer adds no marker table and no new DDL: **a database
+either holds `__str` or it does not, and a module's own DDL either builds it or
+does not.** The physical fact that would otherwise be corrupted is the fact that
+is compared.
+
+Landed, in main's snake_case convention (a parallel arc snake_cased this file:
+`boot_served_program`, `select_rows`, `is_already_exists`), at
+`v6/tsv2/serve/3_engine.ts`:
+
+```ts
+/** Whether this module's own DDL builds the string dictionary. A dict-mode
+ *  program with no text column builds none and reads either database. */
+function program_builds_dictionary(program: IServedProgram): boolean {
+  return program.ddl.some((sql) => sql.startsWith(`CREATE TABLE "${DICTIONARY_TABLE}" (`));
+}
+
+function intern_crossing_failure(program: IServedProgram, tableNames: readonly string[]): Error | null {
+  if (tableNames.length === 0) return null;                       // fresh database, no crossing
+  const databaseIsInterned = tableNames.includes(DICTIONARY_TABLE);
+  if (databaseIsInterned === program_builds_dictionary(program)) return null;
+  // ... names both modes and both remedies
+}
+```
+
+Called from `boot_served_program` **before any DDL statement runs**, which is
+the placement §15.1 requires: after one `CREATE TABLE` the corruption has
+already started.
+
+Note the empty-database and no-text-column arms. A fresh database crosses
+nothing, and a dict-mode program with no text column builds no dictionary and
+reads either side, so neither is a false refusal.
 
 ### 15.6 What pulling the gun costs, measured where possible
 
@@ -1619,10 +1682,27 @@ contract row gets its reservation for free, and the two lists cannot drift.
 
 ### 18.3 Where it runs
 
-`check_supported_subset_expanded/1` (`compile.pl:157`), beside the other
-program-level refusals, so a violating program lands in the sweep's
-`unsupported` bucket with a named reason like every other refusal rather than
-crashing in the emitter. Its fixtures are in §10.3.
+**REV 3.1 CORRECTION (filed defect 6, ACCEPTED). Rev 3 said
+`check_supported_subset_expanded/1`, and that is too late.** Measured during the
+build: by that point `1_host_expand.pl` has already minted `__host_demand_*`
+heads (5 corpus modules) and `materialize_catalog_rel/2` has already injected
+`col_type('__rel'/11, ...)` decls. The check placed there refuses the compiler's
+own writes in its own namespace.
+
+**The landed placement: on the author's `SugaredProg`, at the head of
+`program_plan/3`.** That is the last point where "a user rel" is still a
+distinguishable thing. Everything the compiler mints in the `__` namespace is
+minted after it, so the check sees only what a person wrote.
+
+Receipt that the placement is right rather than merely different: the refusal is
+INERT on all 306 pre-existing fixtures. Buckets went 211/95 before to 211/95
+plus the two new refusal fixtures after, and `MANIFEST_REASON_DIFF` reported
+`added=2 removed=0 bucket_moved=0`, both additions being the new fixtures. A
+placement that caught the compiler's own heads would have moved five modules.
+
+The stated rule is unchanged: a `__` name in a declaration or a rule HEAD is
+refused whatever it is; in a rule BODY it is refused unless it is a registered
+contract name.
 
 ---
 
@@ -1751,3 +1831,317 @@ Sequencing, revised: I-A -> {I-B, I-C, I-D, I-F, I-J} -> I-K -> {I-G} -> I-E.
 | interning is 2.44x when names repeat, 1.2% LOSS when unique | `v6/prolog/ARCH.pl:833` |
 | the join-type checker already refuses `ref(a)` against `ref(b)` by declared type | `v6/prolog/lower.pl:311-315` |
 | the offload contract's encoding slot admits both arms already | `v6/prolog/emit_ts.pl:1169-1170`, `plans/2026-08-07-plan-ir-offload-contract.md` §2.4 |
+
+
+---
+
+# Rev 3.1 2026-08-08 (phase 1 landed)
+
+Merge `b4431308` on main, pushed. Winning entrant's log:
+`plans/2026-08-08-interning-race-opus-log.md`. Other two entrants:
+`plans/2026-08-08-interning-race-flash-terra-logs.md`.
+
+## 21. What shipped, with commits and numbers
+
+### 21.1 The four lanes
+
+| lane | commit | what landed | contract sections closed |
+|---|---|---|---|
+| **I-A** | `863fe1d5` | `__str` DDL emitted once per program; `column_def/4` stores a text column as `INTEGER NOT NULL` under `intern(dict)`; `text_view_ddl/6` returns the `__txt_<table>` view in the SAME `Ddls` list; `rel_ddl/5` -> `/6`, both arms; delta tables get `__txt___delta_<rel>`; `__ref_` renders decode interned columns; **the gun**, threaded `program_plan/3` -> `plan/8` -> `lower_program/2`; `--intern=dict\|direct` on both compile doors; `IGenProgram.internMode`; the crossing refusal; the G9 A/B script | §3, §4, §15 |
+| **I-D** | `67a6af43` | `ir_column_storage/5`: one clause for one clause. `text` reports `storage integer, encoding dict('__str')` under dict. Mode threaded down the IR path. `interned_literals_absent/2`, the `eq_lit` fence: a walk carrying a text literal emits `fixpointIr: null` under dict | §8, §8.1, §8.2 |
+| **I-J** | `49b76b26` + `794b2f46` | `compiler_owned_contract/1` DERIVED from `catalog_ddl_contract/2`; `reserved_namespace_violation/3`; two fail-first fixtures; `uniform_text_encoding/1` called at `ir_rel_storage/4`, with a unit test that calls it on a hand-built mixed list; G11 running inside the A/B script | §5.6, §18 |
+| **I-B** | `a07030ba` | `text_intern_plan/3` emitting §6.2's two statements verbatim; `ITextInternPlan`/`ITextPlane` in the package header; `runtime/textPlane.ts`; the door wired into all THREE tick shapes before `StructPlane.intern`; the COUNT rail, 11 tests, three sabotage receipts | §6 |
+
+### 21.2 Numbers the contract did not have
+
+| quantity | value | why it matters here |
+|---|---|---|
+| modules growing a dictionary at `intern(dict)` | **184 of 211** | §2 predicted 167 from a PK-only scan; the real number is higher because a text column anywhere counts, not only in a key |
+| decode views emitted | **1,242** | §4's "the view ships with the table", counted |
+| boundary reads swapped to a view | **1,863** | §4.3 |
+| `__ref_` render decodes | 23 | §4.3's struct row |
+| IR text columns carrying an encoding | 16 (32 across both modes) | §8 |
+| door plan lines / door call lines | 2,093 / 772 | §6 |
+| **corpus modules losing `fixpointIr` to the `eq_lit` fence** | **0** | §8's fence is inert today because both flagship `flow_reach` heads carry text columns and no text-literal filter. **This is the number to watch when I-C lands**, because I-C is what makes the literal path real |
+| corpus modules the namespace refusal touches | 0 | §18.3 |
+| **G11 findings when fed the DIRECT corpus as if it were dict** | **4,738** | the sabotage receipt. Fed the real dict corpus: 0. A gate that cannot go red is not a gate |
+| corpus compile wall, one mode | ~1.6 s | §15.4's A/B is ~3.7 s for the pair, inside the 10-second law |
+
+### 21.3 The gates as they stand on main
+
+```
+sweep            SWEEP 308/211/97 crash=0; RUN wrong=0; FINAL final_wrong=0     3.9s
+plunit           All 396 (+46 sub-tests) passed                                 1.0s
+tsgo --noEmit    0 errors                                                       1.0s
+ARCH.pl          7 PASS                                                        0.03s
+intern-ab.sh     G9 + G11, unexplained=0 over 211 modules                       3.8s
+tsv2 pnpm test   170 tests, 169 pass, 0 fail, 1 skipped                         6.5s
+store pnpm test  75 tests, 75 pass, 0 fail                                      8.3s
+```
+
+Every gate under the 10-second law. **Read the sweep line carefully: it is green
+because the corpus compiles at `intern(direct)`.** §23 is what makes it mean
+something.
+
+---
+
+## 22. Rulings on the seven filed defects
+
+All seven filed against this document. Six accepted as filed, one accepted with
+a correction to the contract's own framing.
+
+| # | defect | ruling | where the contract now says it |
+|---|---|---|---|
+| 1 | §4.1's `Ddls` length assertion is unsatisfiable against the pre-existing `__ref_` arm | **ACCEPTED, and the substitution is better than the original.** A length assertion passes when the WRONG view is present; `every_interned_table_ships_its_view` asserts the NAMED view per interned relplan. The rule was always "no table without its view", and rev 3 mis-encoded it as a count | §4.1, rewritten |
+| 2 | §4.3's delta-read swap needs a view the contract never named | **ACCEPTED.** `__txt___delta_<rel>` from `delta_ddl/3`. The rejected alternative is recorded with it, because the reason is not obvious: `canonical_column_expr/3`'s text arm renders compound terms over the value, so the decode must precede it | §4.3, row 2 |
+| 3 | §15.3's `dict` default is red at the I-A commit by construction | **ACCEPTED.** A `dict` module before I-B/I-C/I-K writes TEXT into columns its own DDL declares INTEGER, affinity stores it silently, every decode answers NULL. Defaulting to `dict` there makes this document's own sweep gate red by construction | §15.3 + §23 |
+| 4 | `internMode` on `IGenProgram` breaks four hand-written checked-in modules | **ACCEPTED, no contract change.** Four one-line additions (`gen/demand_laziness_effect_rows.ts`, `gen/scale_generated.ts`, `gen/switch_as_keyed_replace.ts`, `gen_emitted/door-handwritten.ts`). Recorded so the next hand-written module knows it owes the field | §15.5 |
+| 5 | §15.5 names no place the DATABASE records its mode | **ACCEPTED, and the answer is better than a marker table.** The database holds `__str` or it does not; the module's DDL builds it or does not. Zero new DDL, and the compared fact IS the fact that would otherwise corrupt | §15.5, rewritten with the landed code |
+| 6 | §18.3 places the namespace check after the compiler's own `__` writes exist | **ACCEPTED.** The landed placement is the author's `SugaredProg` at the head of `program_plan/3`. Receipt: the refusal is inert on all 306 pre-existing fixtures, `added=2 removed=0 bucket_moved=0` | §18.3, rewritten |
+| 7 | §10.3's third reserved-namespace fixture cannot exist | **ACCEPTED.** The oracle holds no `__rel`, so any conformance fixture reading it is `FINAL_WRONG` by construction. The allowed-read receipt is a plunit test | §10.3 |
+
+### 22.1 Three findings carried forward, and who owns each
+
+Filed alongside the seven, and none of them had an owner. Assigning owners here,
+because an unowned finding is a defect with a timer on it.
+
+| finding | ruling |
+|---|---|
+| **`boot_seed_statement/*` writes Initial rows as literal VALUES, outside the arrival door.** Under `dict` those literals need interning before the insert | **I-C owns it.** It is a literal-interning problem, which is I-C's whole subject, and §5.3's boot intern statement is nearly the same statement. Added to I-C's scope in §25. This is the highest-risk item on the remaining list: it is a silent write of TEXT into an INTEGER column on every fixture that carries an Initial section |
+| `departure_read_sql/3` reads raw columns from `__departure_frontier_<rel>`; those values cross into JS and back as binds | **Correct under interning, and it stays on I-C-R's audit list.** Identity round-trips, so an id out and the same id back is right. It is named because it is the one path where an id leaves the database, and §13 row 3's law ("no artifact written outside the database contains an id") needs the exception spelled: a bind parameter round-tripping within one tick is not an artifact |
+| `triggerOccurrences` compares JS arrival values against stored rows | **I-B closed it structurally.** The door interns before anything downstream sees the batch, so the comparison is id-to-id. Kept in the record because it is the shape of bug that reappears whenever a new path reads arrivals |
+
+---
+
+## 23. The gun as landed, and the flip
+
+### 23.1 What landed
+
+| piece | landed as |
+|---|---|
+| the mode | a **plan argument**, `intern(dict) \| intern(direct)`, threaded `program_plan/3` -> `plan/8` -> `lower_program/2` -> every DDL predicate. No prolog flag, no environment variable, exactly as §15.3 demanded and for the reason §15.3 gave |
+| the doors | `--intern=dict\|direct` on `compile/scripts/compile_dl6.sh`; `sweep/1` on the corpus door |
+| the stamp | `IGenProgram.internMode`, on every emitted module |
+| the crossing refusal | `intern_crossing_failure` in `v6/tsv2/serve/3_engine.ts`, called from `boot_served_program` before any DDL runs (§15.5) |
+| **the default** | `default_intern_mode(direct)` at `compile.pl:153` |
+
+### 23.2 §15.4's one-time landing receipt, recorded as that section asks
+
+`intern(direct)` at the I-A commit reproduces base `84541acd`'s emitted corpus
+byte for byte **except one added line per module**:
+
+```
+211 files changed, 211 insertions(+)      # each: `  internMode: "direct",`
+```
+
+That line is §15.5's mode stamp, which this contract requires and which
+therefore cannot be absent from a direct-mode artifact. **Receipt satisfied, and
+per §15.4 it is not run again.** The standing gate is G9's A/B at one commit.
+
+### 23.3 Why the default is `direct`, stated as a schedule rather than a preference
+
+The four things between here and a runnable dict mode:
+
+```mermaid
+flowchart LR
+  L["LANDED<br/>I-A I-B I-D I-J<br/>b4431308"] --> C["I-C<br/>literals + boot seed rows"]
+  C --> K["I-K<br/>built strings"]
+  L --> F["I-F<br/>__str_stats contract row"]
+  F --> G["I-G<br/>stats statement"]
+  C --> FLIP["THE FLIP<br/>default_intern_mode(dict)"]
+  K --> FLIP
+  G --> FLIP
+  FLIP --> E["I-E<br/>head shape"]
+```
+
+| blocker | why dict is wrong without it |
+|---|---|
+| **I-C, literals** | `where_text(lit/2)` still emits `<col> = 'literal'`. Under dict that compares an id to a word: nothing matches, or the wrong row matches (§5.2 row 11) |
+| **I-C, boot seed rows** | `boot_seed_statement/*` writes Initial rows as literal VALUES, bypassing the door. Under dict that writes TEXT into INTEGER columns on every fixture with an Initial section |
+| **I-K, built strings** | a concat projected into a head text column writes a word into an id column (§5.7) |
+| **I-F + I-G, telemetry** | not a correctness blocker; it is the instrument that says whether the technique is working, and §9.3 names it as the evidence for the waiver question |
+
+### 23.4 The flip, and its referee
+
+**The flip is one atom**: `default_intern_mode(direct)` becomes
+`default_intern_mode(dict)` at `compile.pl:153`. Everything else is already
+threaded.
+
+**The referee is not the compile sweep.** Stage 1 compiling green at dict proves
+only that the emitter did not throw, and a dict module whose door is missing
+compiles perfectly and answers NULL at run time. That is exactly the failure
+that made `direct` the default.
+
+> **The flip's gate: the full 211-schedule sweep EXECUTING under
+> `intern(dict)`, with `RUN wrong=0` and `FINAL final_wrong=0`.**
+
+Every fixture replays its own schedule against its emitted module, and every
+tick log is diffed byte-for-byte against the oracle, which never ran a SQL
+statement and cannot have moved. That is the whole of §10's argument, and at the
+flip it is finally being asked the question it was built for.
+
+Two supporting gates run with it, neither sufficient alone:
+
+| gate | what it adds |
+|---|---|
+| G9 A/B at one commit (`intern-ab.sh`) | the two modes still differ only in the intern classes |
+| G11 uniformity | every text column at dict is an id, with the 4,738-finding sabotage receipt behind it |
+
+**If the flip's sweep is red, the flip does not land.** Reverting is one atom
+back, which is the whole reason the mode is a plan argument rather than a
+rewrite.
+
+---
+
+## 24. I-F re-scoped: the catalog family is single-name
+
+§17 scoped I-F as "a second `catalog_ddl_contract/2` row", and the pre-brief
+measured that this is wrong. **`catalog_ddl_contract/2` has ONE row today, and
+its three callers are each written for one name.**
+
+| caller | how it assumes one name |
+|---|---|
+| `compile.pl:materialize_catalog_rel/2` | an if-then that takes the FIRST solution. A second row is never reached |
+| `compile.pl:program_plan/3`'s ArrivalTargets subtraction | subtracts one ref, computed from one `catalog_ddl_contract/2` solution |
+| `analyze.pl:catalog_mentions_atom/1` | hardcodes `'__rel'/11` |
+
+Plus two things no contract row carries at all: `__str_stats` needs
+`kind(log)` and `keep(count(4096))` injected, and today a contract row carries
+column specs and nothing else.
+
+### 24.1 The generalization, spelled
+
+```prolog
+% catalog_ddl_contract(Name, ColumnSpecs)                    % TODAY, 1 row
+% catalog_contract(Name, ColumnSpecs, Modifiers)             % REV 3.1
+%   Modifiers : list of kind(log) | keep(count(N)) | key([P,...])
+%   __rel      -> catalog_contract('__rel', [...], []).
+%   __str_stats-> catalog_contract('__str_stats', [tick-int, rows-int,
+%                     content_bytes-int, interned-int, looked_up-int],
+%                     [kind(log), keep(count(4096))]).
+
+% materialize_catalog_rels(+Prog0, -Prog)
+%   Pseudo-code, replacing the if-then:
+%     forall( catalog_contract(Name, Specs, Modifiers),
+%             program_mentions(Prog0, Name)
+%               -> inject col_type decls for Specs
+%                  AND inject each Modifier as its own decl term
+%             ;  true ).
+%   The per-name gate stays: a program mentioning neither pays nothing.
+
+% catalog_mentions_atom(+Atom)
+%   Pseudo-code: the hardcoded '__rel'/11 becomes
+%     catalog_contract(Name, Specs, _), length(Specs, Arity), Atom = Name/Arity.
+
+% compiler_owned_contract(+Name) :- catalog_contract(Name, _, _).
+%   ALREADY DERIVED this way in the landed I-J. §18.2's "adding a contract row
+%   gets its reservation for free" holds through the generalization unchanged.
+```
+
+Three call sites and one arity change. **It is not a one-row addition, and it is
+not its own arc either**. The pre-brief's "generalizing that family is its own
+arc" reads the cost high. The measured shape is: one predicate gains an
+argument, one if-then becomes a `forall`, one hardcoded pair becomes a lookup.
+
+### 24.2 Routing consequence
+
+I-F stays **flash4** with a sharper brief: the three call sites are named above,
+the modifier list is fixed, and the zero-cost-when-unmentioned property is the
+gate. Its review question gains one line: **does a program mentioning neither
+contract name emit output byte-identical to before the generalization.**
+
+---
+
+## 25. Remaining lanes, re-sequenced
+
+| lane | state | owns | routing |
+|---|---|---|---|
+| ~~I-A~~ | **LANDED** `863fe1d5` | n/a | n/a |
+| ~~I-B~~ | **LANDED** `a07030ba` | n/a | n/a |
+| ~~I-D~~ | **LANDED** `67a6af43` | n/a | n/a |
+| ~~I-J~~ | **LANDED** `49b76b26` + `794b2f46` | n/a | n/a |
+| **I-C** | next, and the largest | §5.3's two rules, twelve call sites, the boot intern statement, **plus `boot_seed_statement/*` (§22.1)**, plus the `EXPLAIN QUERY PLAN` receipt | **opus** |
+| **I-C-R** | after I-C | §5.2 rows 11-14; the boot seed row; `departure_read_sql/3` on the audit list | **opus** |
+| **I-K** | after I-C merges | §5.7 intern-on-write; the §5.7.5 warning; three fixtures | **opus** |
+| **I-K-R** | after I-K | verbatim `FROM`/`WHERE`, `DISTINCT`, NULL-concat parity, no built text on a `fixpointIr` head | **opus** |
+| **I-F** | can run concurrently with I-C (disjoint: `compile.pl` catalog family vs `lower.pl` expressions) | §24's generalization | **flash4** |
+| **I-G** | after I-F | §16.3's three statements, one transaction | **flash4** |
+| **I-G-R** | after I-G | no scan of `__str`; the `SCAN` misreading; survives a kill | **opus** |
+| **THE FLIP** | after I-C, I-K, I-G | one atom at `compile.pl:153`, refereed by §23.4 | **opus** |
+| **I-E** | after the flip | §7 head shape, measured first | **opus** |
+
+I-E moves behind the flip rather than behind the reviews. §7's measurement is
+about a dict-mode database's insert cost, and measuring it against a
+direct-mode corpus would price the wrong thing.
+
+---
+
+## 26. Environment facts that bit
+
+Three facts found during the race that cost time and are not written down
+anywhere else.
+
+### 26.1 SWI `format/2` with no directive raises
+
+```prolog
+format(atom(X), 'no-tilde')          % Type error: text expected
+                                     % SWI-Prolog 10.0.2, in-module
+```
+
+A `format(atom(...))` call whose format string carries no `~` directive raises
+rather than binding. It bit `intern_ddl/1`, whose whole job is a constant DDL
+string, and the fix is a direct atom unification instead of a format call.
+
+**Every `format(atom(...))` example in this document is a real emitted
+statement with `~w` holes in it, so none of them hit this.** The rule for
+anyone adding one: **a constant string is `X = 'the string'`, never
+`format(atom(X), 'the string')`.**
+
+### 26.2 main is snake_case now
+
+A parallel arc snake_cased the serve and runtime files: `boot_served_program`,
+`select_rows`, `is_already_exists`. The landed crossing check was renamed on
+merge to match: `program_builds_dictionary`, `intern_crossing_failure`.
+
+**Every TypeScript sample in this document follows main's convention.** §15.5's
+sample is the landed code verbatim. A lane copying a sample from an older
+revision of this document will produce camelCase names that no longer match
+their neighbours; the colocated-consistency law settles it in favour of the
+file being edited.
+
+### 26.3 `ITextInternPlan.relColumns` names a column by index only
+
+`relColumns` is `rel -> boolean[]`, the same shape `IStructRefColumns` already
+uses, so the door's NULL refusal can say `text_intern_null(Rel, col3)` and not
+`text_intern_null(Rel, "path")`.
+
+**Accepted as landed, not a defect.** The refusal is diagnosable (the rel plus
+a 1-based ordinal locates the column in the declaration), and carrying names
+would duplicate the column list the plan already has elsewhere. Recorded so the
+first person to read a `col3` in an error knows the ordinal is the design and
+where to look it up.
+
+---
+
+## 27. The compiled-mode endgame, approved
+
+**User word, approved 2026-08-08, recorded in the offload contract at
+`bb3cf214`:** *"make it emit bespoke rust retraction code and see if we can
+rival dd."*
+
+Why it belongs in THIS document rather than only in the offload contract:
+
+| link | the connection |
+|---|---|
+| the IR is the codegen input | §8's `encoding: dict('__str')` is how generated rust learns that an INTEGER column is a dictionary id. Without the field (§8.2's argument) the generated code cannot tell an id from a count |
+| interning is what makes the generated code fast | §5.5: after interning, a head's text columns are INTEGER, the comparator is integer compare, and the whole non-ASCII BINARY-collation risk class is deleted rather than mitigated. Generated rust inherits that |
+| the fence is the current boundary | §8's `eq_lit` fence emits `fixpointIr: null` for any walk carrying a text literal. **0 corpus modules today**, and I-C is what makes the literal path real, so I-C is also what decides how much of the corpus is reachable by codegen |
+
+The grading, as the offload contract sets it: identical retraction schedules run
+against differential-dataflow as the external bar and against the oracle as the
+correctness referee. The prize is priced: the rxgraph lab measured the
+rules-as-data interpretation tax at 18% of 56.2M rows/s, and codegen's whole
+claim is deleting that tax while DD keeps its 215 bytes/node.
+
+Nothing in this contract schedules it. What this contract owes it is the IR
+field in §8 and the literal path in I-C, both of which are already spoken for.

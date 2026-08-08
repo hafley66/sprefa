@@ -799,7 +799,7 @@ rxgraph lab measured the rules-as-data interpretation tax at 18% of 56.2M
 rows/s; codegen's whole claim is deleting that tax while DD keeps its 215
 bytes/node and its own clock. Scheduled after P1-C proves the interpreted
 executor; the generator consumes the identical IR, so nothing in phase 1
-moves.
+moves. User approved 2026-08-08 ("yes to endgame").
 
 **Row transport is NOT settled and gets a lab (P1-D-T).** `seam.fixpoint` in
 section 4.1(b) is an interface; how the rust executor is reached is a binding

@@ -480,50 +480,6 @@ function apply_level_statement(
   );
 }
 
-function recompute_level_statement(
-  seam: ISqlSeam,
-  statement: IIncrementalLevelStatement,
-  relation_by_name: ReadonlyMap<string, IIncrementalRelationPlan>,
-): Observable<void> {
-  const relation = relation_by_name.get(statement.head_rel);
-  if (relation === undefined) {
-    throw new Error(`incremental level head relation missing: ${statement.head_rel}`);
-  }
-  return seam.runner.execute(seam.db, statement.select_sql).pipe(
-    concatMap((before_result) =>
-      seam.runner.executeMultiple(seam.db, statement.recompute_sql).pipe(
-        concatMap(() => seam.runner.execute(seam.db, statement.select_sql)),
-        concatMap((after_result) => {
-          const before_rows = result_rows(before_result, statement.head_columns);
-          const after_rows = result_rows(after_result, statement.head_columns);
-          const before_by_key = new Map(before_rows.map((row) => [JSON.stringify(row), row]));
-          const after_by_key = new Map(after_rows.map((row) => [JSON.stringify(row), row]));
-          const events: DeltaEvent[] = [];
-          let sequence = 0;
-          for (const [key, row] of before_by_key) {
-            if (!after_by_key.has(key)) {
-              events.push({ rel: statement.head_rel, sign: -1, sequence, row });
-              sequence += 1;
-            }
-          }
-          for (const [key, row] of after_by_key) {
-            if (!before_by_key.has(key)) {
-              events.push({ rel: statement.head_rel, sign: 1, sequence, row });
-              sequence += 1;
-            }
-          }
-          return stage_events(
-            seam,
-            [relation],
-            events,
-            [{ table_name: (plan) => plan.next_frontier_table_name, phase: 1 }],
-          );
-        }),
-      )
-    ),
-  );
-}
-
 /** Heads that sit on a cycle of the level graph: deriving one can feed a rule
  *  that derives it again. A DAG of levels closes in one dependency-ordered pass. */
 function recursive_heads(
