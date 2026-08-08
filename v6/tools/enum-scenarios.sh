@@ -111,10 +111,21 @@ scenario dot_module_path module_path_unresolved \
 'rel out(id: int).
 out(id) <- other.thing(id).'
 
-scenario dot_onto_enum_variant module_path_unresolved \
+scenario dot_onto_enum_variant compiles \
 'rel grade(ripe(sugar: int) ; green(days: int)).
 rel out(id: int).
 out(id) <- grade.ripe(id, sugar).'
+
+# Arity is part of the arm reference, so a wrong count stays a module path.
+scenario dot_enum_arm_wrong_arity module_path_unresolved \
+'rel grade(ripe(sugar: int) ; green(days: int)).
+rel out(id: int).
+out(id) <- grade.ripe(id).'
+
+scenario dot_enum_unknown_arm module_path_unresolved \
+'rel grade(ripe(sugar: int) ; green(days: int)).
+rel out(id: int).
+out(id) <- grade.rotten(id, why).'
 
 echo "── catalog self-read ──"
 scenario read_rel_catalog compiles \
