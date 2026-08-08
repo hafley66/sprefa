@@ -167,6 +167,9 @@ arrival_value_json(Types, ref(TypeName), Value, Json) :- !,
 arrival_value_json(_, json, Value, Json) :- !,
     canonical_json_text(Value, Text),
     json_string(Text, Json).
+arrival_value_json(_, list(_), Value, Json) :- !,
+    canonical_json_text(Value, Text),
+    json_string(Text, Json).
 arrival_value_json(_, _, Value, Json) :- row_value_json(Value, Json).
 
 row_value_json(Value, Json) :- integer(Value), !, format(atom(Json), '~w', [Value]).

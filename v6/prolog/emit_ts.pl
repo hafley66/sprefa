@@ -839,6 +839,7 @@ boundary_column_type(ref(_), ref) :- !.
 % hand here. `row_value_from_sql` needs no new arm (json passes through the same
 % default text does); the seam that switches on it is ticklog.ts's encoder.
 boundary_column_type(json, json) :- !.
+boundary_column_type(list(_), json) :- !.
 boundary_column_type(Type, Type).
 
 arrival_targets_lines(ArrivalTargets, Lines) :-

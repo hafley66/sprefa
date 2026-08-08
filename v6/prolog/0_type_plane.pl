@@ -112,7 +112,7 @@ column_storage(_, json, json) :- !.
 % the storage kind collapses to `json`, so neither guard is emitted; the
 % array-ness CHECK needs list(T) to survive as its own kind all the way to
 % lower.pl:column_def/3, which widens every place that matches on `json`.
-column_storage(Types, list(Element), json) :-
+column_storage(Types, list(Element), list(Element)) :-
     !,
     (   list_element_type(Element)
     ->  true

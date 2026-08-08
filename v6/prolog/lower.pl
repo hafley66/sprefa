@@ -1365,6 +1365,13 @@ column_def(_, QuotedColumn, float, Def) :- !,
 % second parent and leaving dangling refs (types-as-rels verdict finding 6,
 % plans/2026-07-28-sqlite-retraction-verdict.md fk_cascade WRONG).
 column_def(_, QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+% A list column stores the same TEXT json carrier as a json column, and adds
+% the array-ness CHECK the storage kind now survives to emit. The ARRAY-ness
+% predicate is verified on both SQLite builds this repo runs.
+column_def(_, QuotedColumn, list(_), Def) :- !,
+    format(atom(Def),
+           '~w TEXT NOT NULL CHECK (json_valid(~w) AND json_type(~w) = \'array\')',
+           [QuotedColumn, QuotedColumn, QuotedColumn]).
 % A json column stores TEXT with a json_valid CHECK, never jsonb: the two
 % SQLite builds this project runs disagree about whether jsonb exists at all
 % (system sqlite3 3.43.2 rejects it, the @libsql driver bundles 3.45.1 and
@@ -1895,7 +1902,9 @@ json_decode_goal(RelPlans, BodyGoals, decode(Source, _)) :-
     Atom =.. [_ | Args],
     nth1(Position, Args, Argument),
     Argument == Source,
-    nth1(Position, ColumnTypes, json),
+    ( nth1(Position, ColumnTypes, json)
+    ; nth1(Position, ColumnTypes, list(_))
+    ),
     !.
 
 
@@ -3498,6 +3507,7 @@ ir_column_storage(_, bool, bool, integer, direct) :- !.
 ir_column_storage(_, int, int, integer, direct) :- !.
 ir_column_storage(_, float, float, real, direct) :- !.
 ir_column_storage(_, json, json, text, direct) :- !.
+ir_column_storage(_, list(_), list, text, direct) :- !.
 % An interned text column reports storage `integer`; without the encoding slot
 % the pair {type: text, storage: integer} is uninterpretable to an executor.
 ir_column_storage(Mode, text, text, integer, dict(Dictionary)) :-
@@ -3970,7 +3980,7 @@ compile_json_decodes([decode(Source, Pattern) | Rest], Index0, Index,
     ->  true
     ;   throw(unsupported_construct(decode_source_not_bound(Source)))
     ),
-    (   SourceType == json
+    (   ( SourceType == json ; SourceType = list(_) )
     ->  true
     ;   throw(unsupported_construct(decode_source_not_struct(decode(Source, Pattern))))
     ),
@@ -4346,6 +4356,8 @@ aggregate_select_expr(_, agg(Kind, _), _, _, _) :-
     throw(unsupported_construct(aggregate_kind_not_lowered(Kind))).
 
 json_group_array_value_sql(json, ValueSql, AggregateValueSql) :- !,
+    format(atom(AggregateValueSql), 'json(~w)', [ValueSql]).
+json_group_array_value_sql(list(_), ValueSql, AggregateValueSql) :- !,
     format(atom(AggregateValueSql), 'json(~w)', [ValueSql]).
 json_group_array_value_sql(_, ValueSql, ValueSql).
 
@@ -4754,6 +4766,11 @@ canonical_column_expr(Column, ref(TypeName), Expr) :-
 canonical_column_expr(Column, json, QuotedColumn) :-
     !,
     quote_ident(Column, QuotedColumn).
+% A list column's stored text is its own array text, rendered as-is like a
+% json column's.
+canonical_column_expr(Column, list(_), QuotedColumn) :-
+    !,
+    quote_ident(Column, QuotedColumn).
 % THE GUARD TESTS FOR THE TAGGED TERM, not merely for an object. `json_valid`
 % plus `json_type = 'object'` is true of EVERY json object, including one a
 % program legitimately stores in a text column, and for those the THEN branch
@@ -4838,8 +4855,9 @@ boot_column_slot(Mode, Decls, Types, ColumnType, Value, slot_desc(Slot, Params),
     ->  text_intern_boot_statements(Value, Slot, Params, Statements)
     ;   % A json column stores canonical JSON TEXT, so an Initial seed row
         % binds the rendered text rather than the raw braces term. Same
-        % canonicalizer, same reason as the arrival seam.
-        ColumnType == json
+        % canonicalizer, same reason as the arrival seam. A list column is the
+        % same carrier, so it binds the rendered array text the same way.
+        ( ColumnType == json ; ColumnType = list(_) )
     ->  canonical_json_text(Value, Text),
         Slot = '?', Params = [Text], Statements = []
     ;   Slot = '?', Params = [Value], Statements = []
