@@ -170,13 +170,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
-  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "list_of_json_documents_round_trips", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "6bea3cdfbaaa8c99", h_schema: "", h_rule: "" },
-  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "batch", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "8645ab453c04ff91", h_schema: "507d9c5779b047bb", h_rule: "" },
-  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "36edec2fa0abd6d2", h_schema: "", h_rule: "" },
-  { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "payloads", kind: "column", type_id: 0, arity: 0, module_id: 6, h_id: "ef9d84d7e0b1d80a", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "carry", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "153fc2474ee9b8d3", h_schema: "507d9c5779b047bb", h_rule: "bc596a13bcdf4ce9" },
-  { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "482de137aa18c575", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "payloads", kind: "column", type_id: 0, arity: 0, module_id: 6, h_id: "93b6e2e96a6a90be", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "list(json)", kind: "list", type_id: 5, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "list_of_json_documents_round_trips", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "6bea3cdfbaaa8c99", h_schema: "", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "batch", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "8645ab453c04ff91", h_schema: "507d9c5779b047bb", h_rule: "" },
+  { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "36edec2fa0abd6d2", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 8, ordinal: 2, local_name: "payloads", kind: "column", type_id: 6, arity: 0, module_id: 7, h_id: "ef9d84d7e0b1d80a", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "carry", kind: "rel", type_id: 0, arity: 2, module_id: 7, h_id: "153fc2474ee9b8d3", h_schema: "507d9c5779b047bb", h_rule: "bc596a13bcdf4ce9" },
+  { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "482de137aa18c575", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "payloads", kind: "column", type_id: 0, arity: 0, module_id: 7, h_id: "93b6e2e96a6a90be", h_schema: "", h_rule: "" },
 ];
 
 const rel_declared_column_types: Record<string, readonly string[]> = {
