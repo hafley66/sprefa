@@ -3310,6 +3310,7 @@ level_fixpoint_ir(Mode, RelPlans, HeadRef, Rules,
 
 % Phase 1 has no IR spelling for `<interned column> = 'literal'`: the SQL
 % resolves the literal through __str, and eq_lit/2 carries the bare text.
+% TODO(rust-executor): lift by interning lit(text(V)) through the column's dict(R) colclass encoding before comparing; offload contract carries the sentence.
 interned_literals_absent(Mode, Walks) :-
     \+ ( interned_column(Mode, text),
          member(fixplan(_, _, _, Seeds, Hops, _, _), Walks),
