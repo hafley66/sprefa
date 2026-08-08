@@ -30,6 +30,23 @@ type DeltaEvent = {
  *  count of the fill its copies read stands in for the EXISTS. */
 const skipped_carry = new WeakSet<ISqlSeam>();
 
+/** Intern-on-write (§5.7.1): both statements read the same rows, so the intern
+ *  runs with the bind args the row statement was given. Absent at direct. */
+export function intern_then_execute(
+  seam: ISqlSeam,
+  intern_sql: readonly string[] | undefined,
+  statement: SqlStatement,
+): Observable<QueryResult> {
+  if (intern_sql === undefined || intern_sql.length === 0) {
+    return seam.runner.execute(seam.db, statement);
+  }
+  const args = typeof statement === "string" ? [] : (statement.args ?? []);
+  const interns = intern_sql.map((sql): SqlStatement => ({ sql, args }));
+  return seam.runner.batch(seam.db, interns).pipe(
+    concatMap(() => seam.runner.execute(seam.db, statement)),
+  );
+}
+
 /** Nobody reads this rel's event tables: no rule body (compile time) and no
  *  caller at the boundary (boot). An absent `ruleObservers` never skips. */
 function is_unobserved(relation: IIncrementalRelationPlan, seam: ISqlSeam): boolean {
@@ -362,7 +379,7 @@ function apply_edge_statement(
     throw new Error(`incremental edge head relation missing: ${statement.head_rel}`);
   }
   const started_at = RuntimeTrace.enabled ? performance.now() : 0;
-  return seam.runner.execute(seam.db, statement.project_sql).pipe(
+  return intern_then_execute(seam, statement.intern_sql, statement.project_sql).pipe(
     concatMap((result) => {
       const rows = result_rows(result, statement.head_columns);
       RuntimeTrace.rule(statement.rule_id, rows.length, performance.now() - started_at);
@@ -465,7 +482,7 @@ function apply_level_statement(
     throw new Error(`incremental level statement has neither insert_sql nor aggregate_sql: ${statement.head_rel}`);
   }
   const started_at = RuntimeTrace.enabled ? performance.now() : 0;
-  return seam.runner.execute(seam.db, statement.insert_sql).pipe(
+  return intern_then_execute(seam, statement.intern_sql, statement.insert_sql).pipe(
     concatMap((result) => {
       const rows = result_rows(result, statement.head_columns);
       RuntimeTrace.rule(statement.rule_id, rows.length, performance.now() - started_at);
@@ -579,11 +596,12 @@ function reconcile_ref_count_statement(
     { sql: insert_new!, args: [] },
   ];
   const expand_plan = statement.expand_sql ?? null;
+  const support_interns = statement.support_intern_sql ?? [];
   const recompute = (): Observable<void> => {
     if (expand_plan === null) {
       return seam.runner
-        .batch(seam.db, [...to_statements([clear!, seed!]), ...tail])
-        .pipe(map((results) => note_fill(results[fill_new_index + 2]!.rowsAffected)));
+        .batch(seam.db, [...to_statements([clear!, ...support_interns, seed!]), ...tail])
+        .pipe(map((results) => note_fill(results[fill_new_index + 2 + support_interns.length]!.rowsAffected)));
     }
     // rx expand over the wavefront pair: hop fills the idle wave from the busy
     // one, absorb folds it into the refCount table, roles swap until a hop is 0.

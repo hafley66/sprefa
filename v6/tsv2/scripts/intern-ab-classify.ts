@@ -49,9 +49,28 @@ const DOOR_PLAN_CLOSE = /^\};$/;
  *  many lines as the literal does and ends at the template's own close. */
 const LITERAL_SEED = /INSERT OR IGNORE INTO "__str" \("content"\) VALUES/;
 
-/** §5.7.1 statement one, emitted beside the arm's own insert. `json_each` is the
- *  door's plan line, which the door-plan state machine has already taken. */
-const INTERN_WRITE = /INSERT OR IGNORE INTO "__str" \("content"\) SELECT/;
+/** §5.7.1 statement one, standing alone. Anchored, so a plan FIELD holding the
+ *  same text goes to stripInternField instead of losing its whole line. */
+const INTERN_WRITE = /^\s*(\{ rel: "[^"]*", sql: `)?INSERT OR IGNORE INTO "__str" \("content"\) SELECT/;
+const INTERN_CONST = /^const EDGE_[A-Z0-9_]+_INTERN_SQL: readonly string\[\] = /;
+
+/** `, <name>: [...]` where the array holds SQL template literals, so the
+ *  closing bracket is found by tracking backticks rather than by a regex. */
+function stripInternField(line: string, name: string): string {
+  const opening = `, ${name}: [`;
+  const start = line.indexOf(opening);
+  if (start === -1) return line;
+  let quoted = false;
+  for (let index = start + opening.length; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === "`") quoted = !quoted;
+    else if (!quoted && character === "]") {
+      count("intern-write");
+      return line.slice(0, start) + line.slice(index + 1);
+    }
+  }
+  return line;
+}
 
 /** An unbalanced backtick count means the template is still open. */
 function templateStaysOpen(line: string): boolean {
@@ -116,6 +135,26 @@ function canonicalDocument(text: string): string {
  *  of them is a change interning does not explain. */
 function canonicalLine(line: string): string {
   let out = line;
+  // Longest name first: `, intern_sql: [` is a suffix of neither, but stripping
+  // in the other order would leave the support array's tail behind.
+  out = stripInternField(out, "support_intern_sql");
+  out = stripInternField(out, "intern_sql");
+  if (out.includes("; readonly intern_sql?: readonly string[] }")) {
+    count("intern-write");
+    out = out.replace("; readonly intern_sql?: readonly string[] }", " }");
+  }
+  const forkCalls = out.match(/intern_then_execute\(seam, (?:arm\.intern_sql|EDGE_[A-Z0-9_]+_INTERN_SQL), (\{[^}]*\})\)/g);
+  if (forkCalls !== null) count("intern-write", forkCalls.length);
+  out = out.replace(
+    /intern_then_execute\(seam, (?:arm\.intern_sql|EDGE_[A-Z0-9_]+_INTERN_SQL), (\{[^}]*\})\)/g,
+    "seam.runner.execute(seam.db, $1)",
+  );
+  if (out.includes("IncrementalRuntime, intern_then_execute")) {
+    count("intern-write");
+    out = out.replace("IncrementalRuntime, intern_then_execute, ", "IncrementalRuntime, ");
+    out = out.replace("IncrementalRuntime, intern_then_execute ", "IncrementalRuntime ");
+  }
+
   const readSwaps = out.match(/FROM "__txt_/g);
   if (readSwaps !== null) count("decode-read", readSwaps.length);
   out = out.replace(/FROM "__txt_([^"]+)"/g, 'FROM "$1"');
@@ -179,7 +218,7 @@ function canonicalText(text: string): readonly string[] {
       if (templateStaysOpen(line)) insideInternWrite = false;
       continue;
     }
-    if (INTERN_WRITE.test(line)) {
+    if (INTERN_WRITE.test(line) || INTERN_CONST.test(line)) {
       count("intern-write");
       if (templateStaysOpen(line)) insideInternWrite = true;
       continue;

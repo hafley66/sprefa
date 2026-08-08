@@ -2063,7 +2063,8 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
                       NegAtoms, GuardGoals, TriggerKind,
                       edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns,
                                ProjectSql, WriteSql, DeltaProjectSql,
-                               TriggerKind)) :-
+                               TriggerKind,
+                               edgeinterns(ProjectInternSqls, DeltaInternSqls))) :-
     rel_ref(TriggerAtom, TriggerRef),
     rel_ref(Head, HeadRef),
     relplan_kind(RelPlans, HeadRef, HeadKind),
@@ -2105,8 +2106,9 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     % aliases by string surgery on an alias-free SELECT would be unsafe --
     % a json_object(...) expression's OWN internal commas would look
     % identical to expression-list separators to any naive re-splitter.
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, _BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
+    intern_write_statements(BuiltValues, FromSql, WhereSql, ProjectInternSqls),
     % A FROM-less SELECT with a WHERE is the guard-only arm (every body goal
     % past the trigger is a comparison, a bind or a NOT EXISTS): SQLite
     % evaluates it over the one implicit row and returns zero rows when the
@@ -2121,7 +2123,7 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     ),
     edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, IdentityOtherAtoms,
                            PreAtoms, NegAtoms, GuardGoals, HeadColumns,
-                           TriggerKind, DeltaProjectSql),
+                           TriggerKind, DeltaProjectSql, DeltaInternSqls),
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
@@ -2179,7 +2181,7 @@ member_same_term(Term, [_ | Rest]) :- member_same_term(Term, Rest).
 
 edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
                        NegAtoms, GuardGoals, HeadColumns, TriggerKind,
-                       DeltaProjectSql) :-
+                       DeltaProjectSql, InternSqls) :-
     rel_ref(TriggerAtom, TriggerRef),
     rel_ref(Head, HeadRef),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
@@ -2203,7 +2205,7 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     compile_guard_goals(Mode, GuardGoals, PositiveBound, Bound, GuardWhereTexts),
     maplist(negated_atom_use, NegAtoms, NegUses),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, _BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w ~w', [QuotedFrontierTable, DeltaAlias]),
     append([DeltaFrom], OtherFromParts, FromParts),
@@ -2213,7 +2215,8 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaProjectSql),
            'SELECT ~w FROM ~w WHERE ~w ORDER BY d0."_phase", d0."_sequence"',
-           [SelectSql, FromSql, WhereSql]).
+           [SelectSql, FromSql, WhereSql]),
+    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
 
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
 
@@ -2285,14 +2288,15 @@ take_same_head(_, Rules, [], Rules).
 
 level_statement_group(Mode, RelPlans, HeadRef-Rules,
                       levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                                RefCountSql, AggregateSql)) :-
+                                RefCountSql, AggregateSql, DeltaInternSqls)) :-
     table_name(HeadRef, HeadTable), quote_ident(HeadTable, QuotedHeadTable),
     format(atom(DeleteSql), 'DELETE FROM ~w', [QuotedHeadTable]),
     maplist(level_insert_statements(Mode, RelPlans, HeadRef), Rules, InsertGroups),
     append(InsertGroups, InsertSqls),
     partition(rule_is_aggregate, Rules, AggregateRules, PlainRules),
     ( AggregateRules == []
-    -> level_delta_insert_sql(Mode, RelPlans, HeadRef, Rules, DeltaInsertSql),
+    -> level_delta_insert_sql(Mode, RelPlans, HeadRef, Rules, DeltaInsertSql,
+                                DeltaInternSqls),
        level_ref_count_sql(Mode, RelPlans, HeadRef, Rules, RefCountSql),
        AggregateSql = none
     ;  PlainRules \== []
@@ -2304,6 +2308,7 @@ level_statement_group(Mode, RelPlans, HeadRef-Rules,
        % derivation, its group). Both slots are `none`; the emitter renders
        % them null and 1_incremental.ts dispatches on the aggregate plan.
        DeltaInsertSql = none,
+       DeltaInternSqls = [],
        RefCountSql = none,
        (   avg_aggregate_rules(AggregateRules)
        ->  level_avg_sql(Mode, RelPlans, HeadRef, AggregateRules, AggregateSql)
@@ -2770,7 +2775,7 @@ aggregate_insert_scoped_sql(Mode, RelPlans, HeadRef, ScopeColumns, QuotedScopeTa
 % itself, so DDL emission needs nothing but the levelstmt (lower_program/2
 % no longer has the rule list in scope by then).
 aggregate_scope_ddl(Mode, levelstmt(HeadRef, _, _, _, _,
-                              aggsql(ScopeColumns, ScopeTypes, _, _, _, _)),
+                              aggsql(ScopeColumns, ScopeTypes, _, _, _, _), _),
                     [Ddl]) :- !,
     aggregate_scope_table_name(HeadRef, ScopeTable),
     quote_ident(ScopeTable, QuotedScopeTable),
@@ -2782,7 +2787,7 @@ aggregate_scope_ddl(Mode, levelstmt(HeadRef, _, _, _, _,
            'CREATE TEMP TABLE ~w (~w, PRIMARY KEY (~w)) WITHOUT ROWID',
            [QuotedScopeTable, ColumnsSql, PrimaryKeySql]).
 aggregate_scope_ddl(Mode, levelstmt(HeadRef, _, _, _, _,
-                              avgsql(ScopeColumns, ScopeTypes, _, _, _, _, _)),
+                              avgsql(ScopeColumns, ScopeTypes, _, _, _, _, _), _),
                     [ScopeDdl, AccumulatorDdl]) :- !,
     aggregate_scope_table_name(HeadRef, ScopeTable),
     avg_accumulator_table_name(HeadRef, AccumulatorTable),
@@ -2833,7 +2838,7 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
                              CollectZeroSql, ClearNewSql, FillNewSql,
                              StageAddSql, StageFrontierSql,
                              StageNextFrontierSql, InsertNewSql, ExpandPlan,
-                             DredPlan, FixpointIr)) :-
+                             DredPlan, FixpointIr, SupportInternSqls)) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     ref_count_table_name(HeadRef, RefCountTable),
@@ -2855,13 +2860,14 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
     -> recursive_ref_count_seed_sql(Mode, RelPlans, HeadRef, Rules,
                                   QuotedRefCountTable, HeadColumns,
                                   HeadColumnsSql, SeedSql),
+       SupportInternSqls = [],
        level_expand_plan(Mode, RelPlans, HeadRef, Rules, ExpandPlan),
        ( level_dred_plan(Mode, RelPlans, HeadRef, Rules, DredPlan0)
        -> DredPlan = DredPlan0
        ;  DredPlan = none
        )
     ;  counted_ref_count_seed_sql(Mode, RelPlans, Rules, QuotedRefCountTable,
-                                HeadColumnsSql, SeedSql),
+                                HeadColumnsSql, SeedSql, SupportInternSqls),
        ExpandPlan = none,
        DredPlan = none
     ),
@@ -2918,8 +2924,9 @@ qualified_column_list(Columns, Alias, Sql) :-
     atomic_list_concat(Parts, ', ', Sql).
 
 counted_ref_count_seed_sql(Mode, RelPlans, Rules, QuotedRefCountTable,
-                         HeadColumnsSql, SeedSql) :-
-    maplist(level_ref_count_arm(Mode, RelPlans), Rules, RefCountArms),
+                         HeadColumnsSql, SeedSql, InternSqls) :-
+    maplist(level_ref_count_arm(Mode, RelPlans), Rules, RefCountArms, InternGroups),
+    append(InternGroups, InternSqls),
     atomic_list_concat(RefCountArms, ' UNION ALL ', RefCountUnionSql),
     format(atom(SeedSql),
            'INSERT INTO ~w (~w, "__refcount") SELECT ~w, sum("__refcount") FROM (~w) GROUP BY ~w',
@@ -3638,11 +3645,18 @@ level_recursive_arm_parts(Mode, RelPlans, Rule, PosUses, PosFromParts, JsonFromP
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, _BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
+    recursive_arm_builds_no_string(HeadRef, BuiltValues),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     head_select_list(Mode, HeadColumnTypes, Head, Bound, none, RawExprs, _).
 
-level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm) :-
+% A recursive arm lives inside one WITH RECURSIVE statement, so there is no
+% place to put the intern write (§5.7.3, the per-round case).
+recursive_arm_builds_no_string(_, []) :- !.
+recursive_arm_builds_no_string(HeadRef, _) :-
+    throw(unsupported_construct(built_text_in_recursive_head(HeadRef))).
+
+level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
     Rule = (Head <- Body),
     rule_head_ref(Rule, HeadRef),
     body_ref_uses(Body, Uses),
@@ -3656,19 +3670,21 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm) :-
     atomic_list_concat(AllFromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, _BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, BuiltValues),
     ref_count_group_exprs(Mode, Head, Bound, GroupExprs),
     atomic_list_concat(AliasedSelectExprs, ', ', SelectSql),
     atomic_list_concat(GroupExprs, ', ', GroupSql),
     ( AllWhereTexts == []
-    -> format(atom(RefCountArm),
+    -> WhereSql = none,
+       format(atom(RefCountArm),
               'SELECT ~w, count(*) AS "__refcount" FROM ~w GROUP BY ~w',
               [SelectSql, FromSql, GroupSql])
     ;  atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
        format(atom(RefCountArm),
               'SELECT ~w, count(*) AS "__refcount" FROM ~w WHERE ~w GROUP BY ~w',
               [SelectSql, FromSql, WhereSql, GroupSql])
-    ).
+    ),
+    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
 
 % SQLite treats a bare integer in GROUP BY as a one-based SELECT-list
 % position, including when the integer is parenthesized. Adding zero makes it
@@ -4175,31 +4191,33 @@ aggregate_group_positions(Template, Positions) :-
             ( nth1(Position, Template, TemplateArg), TemplateArg = plain(_) ),
             Positions).
 
-level_delta_insert_sql(Mode, RelPlans, HeadRef, Rules, DeltaInsertSql) :-
+level_delta_insert_sql(Mode, RelPlans, HeadRef, Rules, DeltaInsertSql, InternSqls) :-
     table_name(HeadRef, HeadTable),
     quote_ident(HeadTable, QuotedHeadTable),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
-    level_rules_delta_arms(Mode, RelPlans, Rules, DeltaArms),
+    level_rules_delta_arms(Mode, RelPlans, Rules, DeltaArms, InternSqls),
     atomic_list_concat(DeltaArms, ' UNION ALL ', DeltaSelectSql),
     format(atom(DeltaInsertSql),
            'INSERT OR IGNORE INTO ~w (~w) ~w RETURNING ~w',
            [QuotedHeadTable, HeadColumnsSql, DeltaSelectSql, HeadColumnsSql]).
 
-level_rules_delta_arms(_, _, [], []).
-level_rules_delta_arms(Mode, RelPlans, [Rule | Rest], DeltaArms) :-
-    level_rule_delta_arms(Mode, RelPlans, Rule, RuleArms),
-    level_rules_delta_arms(Mode, RelPlans, Rest, RestArms),
-    append(RuleArms, RestArms, DeltaArms).
+level_rules_delta_arms(_, _, [], [], []).
+level_rules_delta_arms(Mode, RelPlans, [Rule | Rest], DeltaArms, InternGroups) :-
+    level_rule_delta_arms(Mode, RelPlans, Rule, RuleArms, RuleInterns),
+    level_rules_delta_arms(Mode, RelPlans, Rest, RestArms, RestInterns),
+    append(RuleArms, RestArms, DeltaArms),
+    append(RuleInterns, RestInterns, InternGroups).
 
-level_rule_delta_arms(Mode, RelPlans, (Head <- Body), DeltaArms) :-
+level_rule_delta_arms(Mode, RelPlans, (Head <- Body), DeltaArms, InternGroups) :-
     body_ref_uses(Body, Uses),
     include(is_positive_use, Uses, PosUses),
     include(is_negative_use, Uses, NegUses),
-    level_positive_delta_arms(Mode, RelPlans, Head, Body, PosUses, NegUses, PosUses, DeltaArms).
+    level_positive_delta_arms(Mode, RelPlans, Head, Body, PosUses, NegUses, PosUses,
+                              DeltaArms, InternGroups).
 
-level_positive_delta_arms(_, _, _, _, [], _, _, []).
+level_positive_delta_arms(_, _, _, _, [], _, _, [], []).
 % STRUCT-AS-ROWS: a dictionary atom gets NO delta arm, and needs none. A
 % dictionary row is created only by interning a value some ARRIVING row
 % carries, and interning runs before that tick's arrival statements, so every
@@ -4210,16 +4228,19 @@ level_positive_delta_arms(_, _, _, _, [], _, _, []).
 % boundary), so this is the same fact stated twice: dictionaries do not move
 % on their own.
 level_positive_delta_arms(Mode, RelPlans, Head, Body, [_ | RestPositions], NegUses, PosUses,
-                          Arms) :-
+                          Arms, InternGroups) :-
     length(RestPositions, RemainingCount),
     length(PosUses, PositiveCount),
     Position is PositiveCount - RemainingCount - 1,
     nth0_select(Position, PosUses, DeltaUse, OtherPosUses),
-    level_positive_delta_arms(Mode, RelPlans, Head, Body, RestPositions, NegUses, PosUses, RestArms),
+    level_positive_delta_arms(Mode, RelPlans, Head, Body, RestPositions, NegUses, PosUses,
+                              RestArms, RestInterns),
     (   dictionary_use(DeltaUse)
-    ->  Arms = RestArms
-    ;   level_delta_select_arm(Mode, RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses, DeltaArm),
-        Arms = [DeltaArm | RestArms]
+    ->  Arms = RestArms, InternGroups = RestInterns
+    ;   level_delta_select_arm(Mode, RelPlans, Head, Body, DeltaUse, OtherPosUses, NegUses,
+                               DeltaArm, ArmInterns),
+        Arms = [DeltaArm | RestArms],
+        append(ArmInterns, RestInterns, InternGroups)
     ).
 
 dictionary_use(use(Name/_Arity, _, _, _)) :- sub_atom(Name, 0, _, _, '__ref_').
@@ -4240,7 +4261,7 @@ nth0_select(Index, [Item | Rest], Selected, [Item | More]) :-
 % that reproduces a rule body has to reproduce its guards; compile_body_guards/4
 % is the single place that happens.
 level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos, _),
-                       OtherPosUses, NegUses, DeltaArm) :-
+                       OtherPosUses, NegUses, DeltaArm, InternSqls) :-
     frontier_table_name(DeltaRef, FrontierTable),
     quote_ident(FrontierTable, QuotedFrontierTable),
     rel_ref(Head, HeadRef),
@@ -4257,7 +4278,7 @@ level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos,
                           OtherFromParts, OtherWhereTexts),
     compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, _BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w d0', [QuotedFrontierTable]),
     append([[DeltaFrom], IdentityFromParts, OtherFromParts, JsonFromParts],
@@ -4268,7 +4289,8 @@ level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos,
     append([PositiveWhereTexts, GuardWhereTexts, NegWhereTexts], WhereTexts),
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
-           [SelectSql, FromSql, WhereSql]).
+           [SelectSql, FromSql, WhereSql]),
+    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
 
 delta_reference_identity(RelPlans, Name/Arity, Args, Columns,
                          Bound0, Bound, [From], Equalities) :-
@@ -4424,10 +4446,10 @@ delta_ddl(Mode, relplan(Ref, _Kind, Columns, _, ColumnTypes), Ddls) :-
 % An aggregate head has no refCount table (aggsql/6 replaces the refCount
 % family entirely -- level_statement_group/3's own comment), so it gets no
 % refCount DDL either.
-ref_count_ddl(_, _, levelstmt(_, _, _, _, none, _), []) :- !.
-ref_count_ddl(Mode, RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _), DdlList) :-
+ref_count_ddl(_, _, levelstmt(_, _, _, _, none, _, _), []) :- !.
+ref_count_ddl(Mode, RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _, _), DdlList) :-
     ref_count_head_ddl(Mode, RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]),
-    ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan, _),
+    ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan, _, _),
       ExpandPlan = expandplan(_, _, _, _, _, _, _)
     -> expand_wave_ddl(Mode, RelPlans, HeadRef, WaveDdl),
        dred_wave_ddl(Mode, RelPlans, HeadRef, DredPlan, DredDdl),
@@ -4800,12 +4822,12 @@ tag_boot_statements(Name, [bootstmt(Sql, Params) | Rest],
 boot_level_recompute_statements(LevelStatements, BootStatements) :-
     findall(bootstmt(HeadName, Sql, []),
             ( member(LevelStatement, LevelStatements),
-              LevelStatement = levelstmt(HeadName/_, _, _, _, _, _),
+              LevelStatement = levelstmt(HeadName/_, _, _, _, _, _, _),
               boot_level_statement_sql(LevelStatement, Sql) ),
             BootStatements).
 
 boot_level_statement_sql(levelstmt(_, _DeleteSql, _InsertSqls, _, _,
-                                   avgsql(_, _, _, _, _, _, BootSqls)), Sql) :- !,
+                                   avgsql(_, _, _, _, _, _, BootSqls), _), Sql) :- !,
     member(Sql, BootSqls).
-boot_level_statement_sql(levelstmt(_, DeleteSql, InsertSqls, _, _, _), Sql) :-
+boot_level_statement_sql(levelstmt(_, DeleteSql, InsertSqls, _, _, _, _), Sql) :-
     ( Sql = DeleteSql ; member(Sql, InsertSqls) ).

@@ -215,7 +215,7 @@ test(demand_laziness_columns) :-
 % self-join filtered by a stamp column.
 test(switch_as_keyed_replace_edge_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
-    Lowered = lowered(_, _, _, [edgestmt(open_scope/2, route_change/2, HeadColumns, KeyColumns, ProjectSql, UpsertSql, DeltaProjectSql, arrival)], _, _, _, _),
+    Lowered = lowered(_, _, _, [edgestmt(open_scope/2, route_change/2, HeadColumns, KeyColumns, ProjectSql, UpsertSql, DeltaProjectSql, arrival, _)], _, _, _, _),
     HeadColumns == [session_id, target],
     KeyColumns == [session_id],
     ProjectSql ==
@@ -298,7 +298,7 @@ test(pre_edge_lowers_to_ordered_snapshot_read) :-
         Ddl),
     EdgeStatements =
         [edgestmt(counter/2, increment/2, [name, next], [name],
-                  ProjectSql, _, _, ordered_arrival)],
+                  ProjectSql, _, _, ordered_arrival, _)],
     once(sub_atom(ProjectSql, _, _, _, 'FROM "__pre_counter" b0')).
 
 % COUNT receipt for the formerly whole-state-per-occurrence refresh path.
@@ -332,7 +332,7 @@ ddl_for_table(Table, Ddl) :-
 test(switch_as_keyed_replace_level_sql) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _, _, none), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _, _, none)],
+    LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _, _, none, _), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _, _, none, _)],
     DemandedDelete == 'DELETE FROM "demanded"',
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_scope" b0',
     RouteViewDelete == 'DELETE FROM "route_view"',
@@ -354,7 +354,7 @@ test(demand_laziness_incremental_arrival_is_one_batch_statement) :-
 test(demand_laziness_level_sql) :-
     lowered_for(demand_laziness_effect_rows, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert, _, none), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert, _, none)],
+    LevelStatements = [levelstmt(demanded/2, _, [DemandedInsert], DemandedDeltaInsert, _, none, _), levelstmt(effect_call/1, _, [EffectCallInsert], EffectCallDeltaInsert, _, none, _)],
     DemandedInsert == 'INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0',
     EffectCallInsert == 'INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0',
     DemandedDeltaInsert ==
@@ -368,7 +368,7 @@ test(edge_derived_trigger_reads_promoted_frontier) :-
     memberchk(
         edgestmt(stage_two/1, stage_one/1, [item], [], _, _,
                  'SELECT d0."item" AS "item" FROM "__frontier_stage_one" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
-                 arrival),
+                 arrival, _),
         EdgeStatements).
 
 test(level_derived_trigger_reads_same_tick_frontier) :-
@@ -378,7 +378,7 @@ test(level_derived_trigger_reads_same_tick_frontier) :-
     memberchk(
         edgestmt(fetch_call/1, fetch_demand/1, [endpoint], [], _, _,
                  'SELECT d0."endpoint" AS "endpoint" FROM "__frontier_fetch_demand" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
-                 arrival),
+                 arrival, _),
         EdgeStatements).
 
 % Round 2: one plain "read every row" query per rel (log and set alike) --
@@ -446,7 +446,7 @@ test(latest_edge_sample_reads_base_table_in_both_sql_families) :-
             'SELECT b0."client" AS "client", ?1 AS "item" FROM "subscriber" b0',
             _,
             'SELECT b0."client" AS "client", d0."item" AS "item" FROM "__frontier_change_ev" d0, "subscriber" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
-            arrival)
+            arrival, _)
     ].
 
 % The departure arm (TICK PHASE ALIGNMENT target 2). Three claims in one
@@ -466,7 +466,7 @@ test(departure_arm_reads_the_departure_frontier) :-
     memberchk(
         edgestmt(replaced_value/2, latest/2, [key, old_value], [], _, _,
                  'SELECT d0."key" AS "key", d0."value" AS "old_value" FROM "__departure_frontier_latest" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
-                 departure),
+                 departure, _),
         EdgeStatements),
     % The departure table is emitted for the LISTENED rel only.
     memberchk('CREATE TEMP TABLE "__departure_frontier_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)', Ddl),
@@ -484,7 +484,7 @@ test(latest_keyed_sample_is_one_edge_arm_with_key_predicates) :-
     findall(
         EdgeStatement,
         (member(EdgeStatement, EdgeStatements),
-         EdgeStatement = edgestmt(_, fill/3, _, _, _, _, _, _)),
+         EdgeStatement = edgestmt(_, fill/3, _, _, _, _, _, _, _)),
         SampledEdgeStatements),
     SampledEdgeStatements = [
         edgestmt(
@@ -495,7 +495,7 @@ test(latest_keyed_sample_is_one_edge_arm_with_key_predicates) :-
             'SELECT ?1 AS "args", ?2 AS "salt", ?3 AS "payload" FROM "demand" b0 WHERE b0."args" = ?1 AND b0."salt" = ?2',
             _,
             'SELECT d0."args" AS "args", d0."salt" AS "salt", d0."payload" AS "payload" FROM "__frontier_fill" d0, "demand" b0 WHERE d0."_phase" >= 0 AND b0."args" = d0."args" AND b0."salt" = d0."salt" ORDER BY d0."_phase", d0."_sequence"',
-            arrival)
+            arrival, _)
     ].
 
 :- end_tests(sql_text_snapshots).
@@ -536,8 +536,8 @@ test(acyclic_ref_count_statements_are_emitted) :-
     memberchk(levelstmt(effect_call/1, _, _, _,
                         refcountsql(ClearSql, SeedSql, UpdateSql, _,
                                    CollectZeroSql, _, _, _, _, _,
-                                   InsertNewSql, none, none, none),
-                        none),
+                                   InsertNewSql, none, none, none, _),
+                        none, _),
               LevelStatements),
     ClearSql == 'DELETE FROM "__support_next_effect_call"',
     once(sub_atom(SeedSql, _, _, _, 'count(*) AS "__refcount"')),
@@ -558,7 +558,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     level_ref_count_sql(direct,
         RelPlans, path/1, Rules,
         refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, ExpandPlan,
-                    DredPlan, _)),
+                    DredPlan, _, _)),
     once(sub_atom(
         SeedSql, _, _, _,
         'WITH RECURSIVE "path" ("node") AS')),
@@ -616,7 +616,7 @@ test(negated_body_refuses_the_in_place_plan) :-
     level_ref_count_sql(direct,
         RelPlans, path/1, Rules,
         refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, none,
-                    FixpointIr)),
+                    FixpointIr, _)),
     ExpandPlan = expandplan(_, _, _, _, _, _, _),
     % The IR is fenced by the SAME predicate: no in-place plan, no IR.
     FixpointIr == none.
@@ -629,8 +629,8 @@ test(fixpoint_ir_spells_the_reachability_walks_without_sql) :-
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     memberchk(levelstmt(flow_reach/4, _, _, _,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    FixpointIr),
-                        _),
+                                    FixpointIr, _),
+                        _, _),
               LevelStatements),
     FixpointIr = fixpointir(Storage, Assert, Dred, Revive, Expand),
     % Every rel any src reads carries its comparator: storage class, collation,
@@ -735,7 +735,7 @@ fixpoint_ir_share_walk(LegsType, FixpointIr) :-
     ],
     level_ref_count_sql(direct, RelPlans, share/2, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    FixpointIr)),
+                                    FixpointIr, _)),
     FixpointIr \== none.
 
 fixpoint_ir_first_arith(fixpointir(_, fixplan(_, _, _, _, Hops, _, _), _, _, _),
@@ -761,7 +761,7 @@ test(fixpoint_ir_storage_separates_class_from_declared_type) :-
     ],
     level_ref_count_sql(direct, RelPlans, walk/1, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    FixpointIr)),
+                                    FixpointIr, _)),
     FixpointIr = fixpointir(Storage, _, _, _, _),
     memberchk(relstorage(ref(edge_row, 5), ColumnClasses), Storage),
     ColumnClasses == [
@@ -1518,7 +1518,7 @@ test(mod_lowers_to_the_floored_correction) :-
            program_plan(Term-Bindings, Plan),
            lower_program(Plan, Lowered) )),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    memberchk(levelstmt(probe/3, _, [InsertSql], _, _, _), LevelStatements),
+    memberchk(levelstmt(probe/3, _, [InsertSql], _, _, _, _), LevelStatements),
     once(sub_atom(InsertSql, _, _, _, '% b0."denominator") + b0."denominator") % b0."denominator")')).
 
 expressions_fixture_file(File) :-
@@ -1588,7 +1588,7 @@ test(enum_tag_view_can_trigger_keyed_edge_head) :-
     memberchk(
         edgestmt(current/2, door_tag/2, [id, tag], [id], _, _,
                  'SELECT d0."id" AS "id", d0."tag" AS "tag" FROM "__frontier_door_tag" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"',
-                 arrival),
+                 arrival, _),
         EdgeStatements).
 
 :- end_tests(enum_decl_expansion).
@@ -3598,7 +3598,7 @@ test(regexp_is_a_guard_surface) :-
 test(regexp_lowers_to_sql_regexp) :-
     lowered_for('9_regexp.pl', regexp_positive_match, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    member(levelstmt(matched/1, _, [InsertSql], _, _, _), LevelStatements),
+    member(levelstmt(matched/1, _, [InsertSql], _, _, _, _), LevelStatements),
     once(sub_atom(InsertSql, _, _, _, ' REGEXP ')).
 
 test(regexp_pattern_not_literal_agrees_across_doors) :-
@@ -3683,7 +3683,7 @@ test(float_division_and_avg_lower_to_sqlite_real_operations) :-
     assertion(FloatDivision == '(CAST(5.0 AS REAL) / 2)'),
     lowered_for('5_value_plane.pl', float_avg_is_grouped, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    memberchk(levelstmt(mean/2, _, [InsertSql], _, _, _), LevelStatements),
+    memberchk(levelstmt(mean/2, _, [InsertSql], _, _, _, _), LevelStatements),
     assertion(sub_atom(InsertSql, _, _, _, 'avg(b0."value")')).
 
 test(arithmetic_operator_constraint_keeps_unwitnessed_scan_state_numeric) :-
@@ -3889,7 +3889,7 @@ test(depth_two_level_construction_lowers_to_one_join_per_level) :-
                   Plan),
     lower_program(Plan, Lowered),
     arg(5, Lowered, LevelStatements),
-    memberchk(levelstmt(span/3, _, InsertSqls, _, _, _), LevelStatements),
+    memberchk(levelstmt(span/3, _, InsertSqls, _, _, _, _), LevelStatements),
     atomic_list_concat(InsertSqls, ' ', Sql),
     forall(member(View, ['"__ref_repo"', '"__ref_fpath"', '"__ref_file"']),
            sub_atom(Sql, _, _, _, View)),
@@ -3928,7 +3928,7 @@ test(head_value_that_is_a_body_atom_needs_no_dictionary_join) :-
     depth_one_identity_program(Plan),
     lower_program(Plan, Lowered),
     arg(5, Lowered, LevelStatements),
-    memberchk(levelstmt(selected/1, _, InsertSqls, DeltaSql, _, _), LevelStatements),
+    memberchk(levelstmt(selected/1, _, InsertSqls, DeltaSql, _, _, _), LevelStatements),
     atomic_list_concat(InsertSqls, ' ', Sql),
     once(sub_atom(Sql, _, _, _, 'SELECT b0."__id" FROM "user" b0')),
     \+ sub_atom(Sql, _, _, _, '__ref_user'),
@@ -4817,7 +4817,7 @@ interning_walk_ir(Mode, FixpointIr) :-
     interning_walk_rules(Rules),
     level_ref_count_sql(Mode, RelPlans, walk/1, Rules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    FixpointIr)).
+                                    FixpointIr, _)).
 
 test(fixpoint_ir_text_column_encodes_dict) :-
     interning_walk_ir(dict, fixpointir(Storage, _, _, _, _)),
@@ -4860,11 +4860,11 @@ test(text_literal_filter_fences_the_ir_at_dict) :-
     ],
     level_ref_count_sql(direct, RelPlans, walk/1, LiteralRules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    DirectIr)),
+                                    DirectIr, _)),
     DirectIr \== none,
     level_ref_count_sql(dict, RelPlans, walk/1, LiteralRules,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
-                                    DictIr)),
+                                    DictIr, _)),
     DictIr == none.
 
 % ── text literals in the id space (contract §5.3 rule two, lane I-C) ────────
@@ -4879,7 +4879,7 @@ interning_literal_seed_sql(Mode, Rules, SeedSql) :-
     interning_literal_relplans(RelPlans),
     level_ref_count_sql(Mode, RelPlans, tagged/2, Rules,
                         refcountsql(_, SeedSql, _, _, _, _, _, _, _, _, _, _,
-                                    _, _)).
+                                    _, _, _)).
 
 interning_read_rules([ (tagged(Parent, done) <-
                             edge_row(Parent, _, _, _, rust)) ]).
@@ -4974,7 +4974,7 @@ interning_level_inserts(Mode, Name, HeadName, InsertSqls) :-
            read_fixture_term(File, Name, Term, Bindings),
            program_plan(Term-Bindings, [intern(Mode)], Plan),
            lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
-           memberchk(levelstmt(HeadName/_, _, InsertSqls, _, _, _), LevelStatements) )).
+           memberchk(levelstmt(HeadName/_, _, InsertSqls, _, _, _, _), LevelStatements) )).
 
 interning_column_bound([Variable-typed('b0."path"', text, dict)], Variable).
 
@@ -5047,10 +5047,110 @@ test(concat_over_a_text_column_reads_characters) :-
 test(a_characters_side_join_resolves_to_an_id) :-
     interning_lowered(dict, switch_as_keyed_replace,
                       lowered(_, _, _, _, LevelStatements, _, _, _)),
-    member(levelstmt(_, _, InsertSqls, _, _, _), LevelStatements),
+    member(levelstmt(_, _, InsertSqls, _, _, _, _), LevelStatements),
     member(InsertSql, InsertSqls),
     sub_atom(InsertSql, _, _, _,
              'b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(').
+
+% ── the three seamless families: delta insert, refCount seed, edge project
+% (contract §5.7.1, lane I-K pass 2) ────────────────────────────────────────
+%
+% FAIL-FIRST RECEIPTS, taken by making each decision predicate fail in turn.
+%   intern_write_statements/4's non-empty clause
+%       -> delta_arm_interns_before_the_row_insert
+%          ref_count_seed_interns_before_it_groups
+%          edge_project_interns_before_the_projection
+%          edge_delta_project_interns_before_the_projection
+%   recursive_arm_builds_no_string/2's [] clause
+%       -> a_recursive_head_refuses_a_built_string is the inverted pin: the
+%          refusal IS what it asserts, so sabotaging the guard turns it red
+%          from the other side.
+% Every `_at_direct` twin stayed green through both.
+
+interning_level_statement(Mode, Base, Name, HeadName, LevelStatement) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, lowered(_, _, _, _, LevelStatements, _, _, _)),
+           member(LevelStatement, LevelStatements),
+           LevelStatement = levelstmt(HeadName/_, _, _, _, _, _, _) )).
+
+interning_edge_statement(Mode, Base, Name, HeadName, EdgeStatement) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, lowered(_, _, _, EdgeStatements, _, _, _, _)),
+           member(EdgeStatement, EdgeStatements),
+           EdgeStatement = edgestmt(HeadName/_, _, _, _, _, _, _, _, _) )).
+
+% RED before this landed: the delta arm resolved an id the dictionary held no
+% row for, so INSERT OR IGNORE dropped every built-string row.
+test(delta_arm_interns_before_the_row_insert) :-
+    interning_level_statement(dict, 'expressions.pl',
+                              interpolation_desugars_to_concat, message,
+                              levelstmt(_, _, _, DeltaInsertSql, _, _, [InternSql])),
+    sub_atom(InternSql, 0, _, _,
+             'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT'),
+    sub_atom(InternSql, _, _, _,
+             'FROM "__frontier_eprintln_hit" d0 WHERE d0."_phase" >= 0'),
+    sub_atom(DeltaInsertSql, _, _, _,
+             'FROM "__frontier_eprintln_hit" d0 WHERE d0."_phase" >= 0').
+
+test(delta_arm_interns_nothing_at_direct) :-
+    interning_level_statement(direct, 'expressions.pl',
+                              interpolation_desugars_to_concat, message,
+                              levelstmt(_, _, _, _, _, _, [])).
+
+% RED before this landed: the refCount seed wrote the built string into
+% `__support_next_`, whose column its own DDL declares INTEGER.
+test(ref_count_seed_interns_before_it_groups) :-
+    interning_level_statement(dict, 'expressions.pl',
+                              interpolation_desugars_to_concat, message,
+                              levelstmt(_, _, _, _, RefCountSql, _, _)),
+    RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _, _,
+                              [InternSql]),
+    sub_atom(InternSql, 0, _, _,
+             'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT'),
+    sub_atom(InternSql, _, _, _, 'FROM "eprintln_hit" b0').
+
+test(ref_count_seed_interns_nothing_at_direct) :-
+    interning_level_statement(direct, 'expressions.pl',
+                              interpolation_desugars_to_concat, message,
+                              levelstmt(_, _, _, _, RefCountSql, _, _)),
+    RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _, _, []).
+
+% The edge path projects in TypeScript and binds the row back, so its intern
+% statement runs per arrival with the SAME placeholders the projection uses.
+test(edge_project_interns_before_the_projection) :-
+    interning_edge_statement(dict, 'scopes.pl', switch_as_keyed_replace, open_scope,
+                             edgestmt(_, _, _, _, _, _, _, _,
+                                      edgeinterns([InternSql], _))),
+    sub_atom(InternSql, 0, _, _, 'INSERT OR IGNORE INTO "__str" ("content") SELECT'),
+    sub_atom(InternSql, _, _, _, '= ?2)').
+
+test(edge_delta_project_interns_before_the_projection) :-
+    interning_edge_statement(dict, 'scopes.pl', switch_as_keyed_replace, open_scope,
+                             edgestmt(_, _, _, _, _, _, _, _,
+                                      edgeinterns(_, [InternSql]))),
+    sub_atom(InternSql, 0, _, _, 'INSERT OR IGNORE INTO "__str" ("content") SELECT'),
+    sub_atom(InternSql, _, _, _, 'd0."_phase" >= 0').
+
+test(edge_arms_intern_nothing_at_direct) :-
+    interning_edge_statement(direct, 'scopes.pl', switch_as_keyed_replace, open_scope,
+                             edgestmt(_, _, _, _, _, _, _, _,
+                                      edgeinterns([], []))).
+
+% A recursive arm lives inside one WITH RECURSIVE statement: there is no place
+% to put the intern write, so the construct is refused by name.
+test(a_recursive_head_refuses_a_built_string,
+     throws(unsupported_construct(built_text_in_recursive_head(walk/1)))) :-
+    RelPlans = [ relplan(edge_row/5, set, [parent, child, flag, owner, label],
+                         none, [int, int, bool, ref(node_rel), text]),
+                 relplan(walk/1, set, [node], none, [text]) ],
+    level_ref_count_sql(dict, RelPlans, walk/1,
+        [ (walk(Label) <- edge_row(_, _, _, _, Label)),
+          (walk(concat([Node, '/'])) <- ( walk(Node), edge_row(_, _, _, _, _) )) ],
+        _).
 
 % ── the ingest door (contract §6) ───────────────────────────────────────────
 
