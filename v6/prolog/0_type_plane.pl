@@ -154,7 +154,6 @@ type_ref_columns(Types, Name, RefColumns) :-
 % reached only as an ordinary relation carries it in col_type/3 rows. Both
 % spellings describe the same rel, and a caller walking a rule body cannot know
 % in advance which one a given atom has, so this answers from either.
-% relation_column_types/4 below is the types-only projection that predates it.
 relation_columns_and_types(_, Types, Name/Arity, Columns, ColumnTypes) :-
     type_definition(Types, Name, Columns, ColumnTypes),
     length(Columns, Arity),
@@ -359,7 +358,7 @@ relation_reference_target(Decls, Types, Row, TypeName, Target) :-
     compound(Row),
     Row =.. [Name | Values],
     length(Values, Arity),
-    relation_column_types(Decls, Types, Name/Arity, ColumnTypes),
+    relation_columns_and_types(Decls, Types, Name/Arity, _, ColumnTypes),
     nth1(Position, ColumnTypes, TypeName),
     declared_type_name(Types, TypeName),
     nth1(Position, Values, Value),
@@ -369,20 +368,13 @@ relation_reference_target(Decls, Types, Row, TypeName, Target) :-
     compound(Row),
     Row =.. [Name | Values],
     length(Values, Arity),
-    relation_column_types(Decls, Types, Name/Arity, ColumnTypes),
+    relation_columns_and_types(Decls, Types, Name/Arity, _, ColumnTypes),
     nth1(Position, ColumnTypes, ChildType),
     declared_type_name(Types, ChildType),
     nth1(Position, Values, Value),
     type_field_values(Types, ChildType, Value, Fields),
     Child =.. [ChildType | Fields],
     relation_reference_target(Decls, Types, Child, TypeName, Target).
-
-relation_column_types(_, Types, Name/Arity, ColumnTypes) :-
-    type_definition(Types, Name, Columns, ColumnTypes),
-    length(Columns, Arity),
-    !.
-relation_column_types(Decls, _, Ref, ColumnTypes) :-
-    findall(Type, member(col_type(Ref, _, Type), Decls), ColumnTypes).
 
 ordered_target_rows([], _, []).
 ordered_target_rows([Type | Types], TargetPairs, Targets) :-
