@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"maybe_text_none":{"add":[[1]],"del":[]},"maybe_text_tag":{"add":[[1,"none"]],"del":[]}}}
+{"tick":2,"deltas":{"maybe_text_some":{"add":[[2,"hi"]],"del":[]},"maybe_text_tag":{"add":[[2,"some"]],"del":[]}}}
+{"tick":3,"deltas":{"maybe_text_some":{"add":[],"del":[[2,"hi"]]},"maybe_text_tag":{"add":[],"del":[[2,"some"]]}}}

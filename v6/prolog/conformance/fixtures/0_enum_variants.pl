@@ -38,6 +38,30 @@ fixture(enum_decl_two_variants_union_in_tag_view,
         ticks(1)
     ]).
 
+% FAIL-PRE-FIX: emitted `PRIMARY KEY ()` and could not boot. Surface text spells
+% the arm `none()`; the parser yields the bare atom a term fixture writes.
+fixture(enum_nullary_variant_boots_and_tags,
+    prog(
+        [enum_decl(maybe_text, (none ; some(value:text)))],
+        []),
+    [],
+    [
+        [+maybe_text_none(1)],
+        [+maybe_text_some(2, "hi")],
+        [-maybe_text_some(2, "hi")]
+    ],
+    [
+        final(maybe_text_none/1, [maybe_text_none(1)]),
+        final(maybe_text_some/2, []),
+        final(maybe_text_tag/2, [maybe_text_tag(1, none)]),
+        deltas(maybe_text_tag/2, [
+            [+maybe_text_tag(1, none)],
+            [+maybe_text_tag(2, some)],
+            [-maybe_text_tag(2, some)]
+        ]),
+        ticks(3)
+    ]).
+
 fixture(enum_decl_variant_name_collision_is_refused,
     prog(
         [

@@ -168,7 +168,9 @@ storage_type(int, int) :- !.
 storage_type(text, text) :- !.
 storage_type(_, int).
 
-content_key_positions(0, []) :- !.
+% Identity is the CONTENT, so the key skips position 1. A fieldless variant has
+% no content, and `PRIMARY KEY ()` is a syntax error, so its id carries it.
+content_key_positions(0, [1]) :- !.
 content_key_positions(ContentArity, Positions) :-
     LastPosition is ContentArity + 1,
     numlist(2, LastPosition, Positions).
