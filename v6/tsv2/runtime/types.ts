@@ -380,7 +380,7 @@ export interface IRelCatalogRow {
   readonly parent_id: number;
   readonly ordinal: number;
   readonly local_name: string;
-  readonly kind: "primitive" | "module" | "rel" | "column";
+  readonly kind: "primitive" | "list" | "module" | "rel" | "column";
   readonly type_id: number;
   readonly arity: number;
   readonly module_id: number;
