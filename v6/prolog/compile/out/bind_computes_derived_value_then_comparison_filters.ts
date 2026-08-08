@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,30 +136,47 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "bump": [true, false],
+    "over_budget": [true, false],
+    "seen": [true, false, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "bump" ("name" TEXT NOT NULL, "extra" INTEGER NOT NULL, PRIMARY KEY ("name", "extra")) WITHOUT ROWID`,
-  `CREATE TABLE "over_budget" ("name" TEXT NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
-  `CREATE TABLE "seen" ("name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL, PRIMARY KEY ("name", "base", "col3")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_bump" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "extra" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "bump" ("name" INTEGER NOT NULL, "extra" INTEGER NOT NULL, PRIMARY KEY ("name", "extra")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_bump" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."extra" AS "extra" FROM "bump" t`,
+  `CREATE TABLE "over_budget" ("name" INTEGER NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_over_budget" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."sum" AS "sum", t."__refcount" AS "__refcount" FROM "over_budget" t`,
+  `CREATE TABLE "seen" ("name" INTEGER NOT NULL, "base" INTEGER NOT NULL, "col3" INTEGER NOT NULL, PRIMARY KEY ("name", "base", "col3")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."base" AS "base", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col3") AS "col3" FROM "seen" t`,
+  `CREATE TEMP TABLE "__delta_bump" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "extra" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_bump_sign" ON "__delta_bump" ("_sign")`,
   `CREATE INDEX "__delta_bump_group" ON "__delta_bump" ("name", "extra")`,
-  `CREATE TEMP TABLE "__frontier_bump" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "extra" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_bump" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "extra" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_bump_phase" ON "__frontier_bump" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_bump" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "extra" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_over_budget" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_bump" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "extra" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_bump" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."extra" AS "extra", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_bump" t`,
+  `CREATE TEMP TABLE "__delta_over_budget" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_over_budget_sign" ON "__delta_over_budget" ("_sign")`,
   `CREATE INDEX "__delta_over_budget_group" ON "__delta_over_budget" ("name", "sum")`,
-  `CREATE TEMP TABLE "__frontier_over_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_over_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "sum" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_over_budget_phase" ON "__frontier_over_budget" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_over_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "sum" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_over_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "sum" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_over_budget" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."sum" AS "sum", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_over_budget" t`,
+  `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "base" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
   `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("name", "base", "col3")`,
-  `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "base" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_seen_phase" ON "__frontier_seen" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "base" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_over_budget" ("name" TEXT NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_over_budget" ("name" TEXT NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_seen" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "base" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."base" AS "base", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col3") AS "col3", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seen" t`,
+  `CREATE TEMP TABLE "__support_next_over_budget" ("name" INTEGER NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_over_budget" ("name" INTEGER NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "over_budget_zero" ON "over_budget" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -198,10 +217,16 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["bump", "seen"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "bump", sql: `INSERT OR IGNORE INTO "bump" ("name", "extra") VALUES (?, ?)`, params: ["alpha", 3] },
-  { rel: "bump", sql: `INSERT OR IGNORE INTO "bump" ("name", "extra") VALUES (?, ?)`, params: ["beta", 1] },
-  { rel: "seen", sql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") VALUES (?, ?, ?)`, params: ["alpha", 10, "note_a"] },
-  { rel: "seen", sql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") VALUES (?, ?, ?)`, params: ["beta", 4, "note_b"] },
+  { rel: "bump", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["alpha"] },
+  { rel: "bump", sql: `INSERT OR IGNORE INTO "bump" ("name", "extra") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["alpha", 3] },
+  { rel: "bump", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["beta"] },
+  { rel: "bump", sql: `INSERT OR IGNORE INTO "bump" ("name", "extra") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["beta", 1] },
+  { rel: "seen", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["alpha"] },
+  { rel: "seen", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["note_a"] },
+  { rel: "seen", sql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["alpha", 10, "note_a"] },
+  { rel: "seen", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["beta"] },
+  { rel: "seen", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["note_b"] },
+  { rel: "seen", sql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["beta", 4, "note_b"] },
   { rel: "over_budget", sql: `DELETE FROM "over_budget"`, params: [] },
   { rel: "over_budget", sql: `INSERT OR IGNORE INTO "over_budget" ("name", "sum") SELECT b0."name", (b0."base" + b1."extra") FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10)`, params: [] },
 ];
@@ -214,16 +239,30 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    bump: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "extra" FROM "bump"`, rel_columns.bump!, rel_column_types.bump!),
-    over_budget: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "sum" FROM "over_budget"`, rel_columns.over_budget!, rel_column_types.over_budget!),
-    seen: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3" FROM "seen"`, rel_columns.seen!, rel_column_types.seen!),
+    bump: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "extra" FROM "__txt_bump"`, rel_columns.bump!, rel_column_types.bump!),
+    over_budget: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "sum" FROM "__txt_over_budget"`, rel_columns.over_budget!, rel_column_types.over_budget!),
+    seen: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3" FROM "__txt_seen"`, rel_columns.seen!, rel_column_types.seen!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    bump: select_rows(seam, `SELECT "name", "extra" FROM "bump"`, rel_columns.bump!, rel_column_types.bump!),
+    over_budget: select_rows(seam, `SELECT "name", "sum" FROM "over_budget"`, rel_columns.over_budget!, rel_column_types.over_budget!),
+    seen: select_rows(seam, `SELECT "name", "base", "col3" FROM "seen"`, rel_columns.seen!, rel_column_types.seen!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  bump: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "extra" FROM "bump"`,
-  over_budget: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "sum" FROM "over_budget"`,
-  seen: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3" FROM "seen"`,
+  bump: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "extra" FROM "__txt_bump"`,
+  over_budget: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "sum" FROM "__txt_over_budget"`,
+  seen: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3" FROM "__txt_seen"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -254,9 +293,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "bump", kind: "set", table_name: "bump", delta_table_name: "__delta_bump", frontier_table_name: "__frontier_bump", next_frontier_table_name: "__next_frontier_bump", columns: ["name", "extra"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "bump" ("name", "extra") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "extra"`, arrival_del_sql: `DELETE FROM "bump" WHERE ("name", "extra") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "extra"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "extra", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_bump" WHERE "_sign" IN (-1, 1) GROUP BY "name", "extra", "_sign"`, rule_observers: ["over_budget/2"] },
-  { rel: "over_budget", kind: "set", table_name: "over_budget", delta_table_name: "__delta_over_budget", frontier_table_name: "__frontier_over_budget", next_frontier_table_name: "__next_frontier_over_budget", columns: ["name", "sum"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "sum", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_over_budget" WHERE "_sign" IN (-1, 1) GROUP BY "name", "sum", "_sign"`, rule_observers: [] },
-  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["name", "base", "col3"], column_types: ["text", "int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "name", "base", "col3"`, arrival_del_sql: `DELETE FROM "seen" WHERE ("name", "base", "col3") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "name", "base", "col3"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "name", "base", "col3", "_sign"`, rule_observers: ["over_budget/2"] },
+  { rel: "bump", kind: "set", table_name: "bump", delta_table_name: "__delta_bump", frontier_table_name: "__frontier_bump", next_frontier_table_name: "__next_frontier_bump", columns: ["name", "extra"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "bump" ("name", "extra") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "extra"`, arrival_del_sql: `DELETE FROM "bump" WHERE ("name", "extra") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "extra"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "extra", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_bump" WHERE "_sign" IN (-1, 1) GROUP BY "name", "extra", "_sign"`, rule_observers: ["over_budget/2"] },
+  { rel: "over_budget", kind: "set", table_name: "over_budget", delta_table_name: "__delta_over_budget", frontier_table_name: "__frontier_over_budget", next_frontier_table_name: "__next_frontier_over_budget", columns: ["name", "sum"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "sum", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_over_budget" WHERE "_sign" IN (-1, 1) GROUP BY "name", "sum", "_sign"`, rule_observers: [] },
+  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["name", "base", "col3"], column_types: ["text", "int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "name", "base", "col3"`, arrival_del_sql: `DELETE FROM "seen" WHERE ("name", "base", "col3") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "name", "base", "col3"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "base", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "name", "base", "col3", "_sign"`, rule_observers: ["over_budget/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -289,6 +328,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -312,11 +353,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -344,7 +388,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "bind_computes_derived_value_then_comparison_filters",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

@@ -337,7 +337,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "combine_level_is_the_conjunction_spelling",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

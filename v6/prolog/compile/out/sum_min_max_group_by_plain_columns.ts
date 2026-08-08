@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,22 +136,36 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "star_row": [true, false],
+    "stat": [true, false, false, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "star_row" ("repo" TEXT NOT NULL, "stars" INTEGER NOT NULL, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
-  `CREATE TABLE "stat" ("repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "col2", "col3", "col4")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_star_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "star_row" ("repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_star_row" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."stars" AS "stars" FROM "star_row" t`,
+  `CREATE TABLE "stat" ("repo" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "col2", "col3", "col4")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_stat" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."col2" AS "col2", t."col3" AS "col3", t."col4" AS "col4", t."__refcount" AS "__refcount" FROM "stat" t`,
+  `CREATE TEMP TABLE "__delta_star_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_star_row_sign" ON "__delta_star_row" ("_sign")`,
   `CREATE INDEX "__delta_star_row_group" ON "__delta_star_row" ("repo", "stars")`,
-  `CREATE TEMP TABLE "__frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_star_row_phase" ON "__frontier_star_row" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "stars" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_stat" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_star_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_star_row" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."stars" AS "stars", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_star_row" t`,
+  `CREATE TEMP TABLE "__delta_stat" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stat_sign" ON "__delta_stat" ("_sign")`,
   `CREATE INDEX "__delta_stat_group" ON "__delta_stat" ("repo", "col2", "col3", "col4")`,
-  `CREATE TEMP TABLE "__frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stat_phase" ON "__frontier_stat" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__agg_scope_stat" ("repo" TEXT NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__next_frontier_stat" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_stat" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."col2" AS "col2", t."col3" AS "col3", t."col4" AS "col4", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_stat" t`,
+  `CREATE TEMP TABLE "__agg_scope_stat" ("repo" INTEGER NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -185,9 +201,12 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["star_row"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "star_row", sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") VALUES (?, ?)`, params: ["cli", 4] },
-  { rel: "star_row", sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") VALUES (?, ?)`, params: ["cli", 10] },
-  { rel: "star_row", sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") VALUES (?, ?)`, params: ["shell", 7] },
+  { rel: "star_row", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
+  { rel: "star_row", sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["cli", 4] },
+  { rel: "star_row", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
+  { rel: "star_row", sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["cli", 10] },
+  { rel: "star_row", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["shell"] },
+  { rel: "star_row", sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["shell", 7] },
   { rel: "stat", sql: `DELETE FROM "stat"`, params: [] },
   { rel: "stat", sql: `INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", sum(b0."stars"), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo" HAVING count(*) > 0`, params: [] },
 ];
@@ -199,14 +218,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    star_row: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "star_row"`, rel_columns.star_row!, rel_column_types.star_row!),
-    stat: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4" FROM "stat"`, rel_columns.stat!, rel_column_types.stat!),
+    star_row: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "__txt_star_row"`, rel_columns.star_row!, rel_column_types.star_row!),
+    stat: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4" FROM "__txt_stat"`, rel_columns.stat!, rel_column_types.stat!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    star_row: select_rows(seam, `SELECT "repo", "stars" FROM "star_row"`, rel_columns.star_row!, rel_column_types.star_row!),
+    stat: select_rows(seam, `SELECT "repo", "col2", "col3", "col4" FROM "stat"`, rel_columns.stat!, rel_column_types.stat!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  star_row: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "star_row"`,
-  stat: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4" FROM "stat"`,
+  star_row: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "__txt_star_row"`,
+  stat: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4" FROM "__txt_stat"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -236,8 +268,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "star_row", kind: "set", table_name: "star_row", delta_table_name: "__delta_star_row", frontier_table_name: "__frontier_star_row", next_frontier_table_name: "__next_frontier_star_row", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo", "stars"`, arrival_del_sql: `DELETE FROM "star_row" WHERE ("repo", "stars") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "repo", "stars"`, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_star_row" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "stars", "_sign"`, rule_observers: ["stat/4"] },
-  { rel: "stat", kind: "set", table_name: "stat", delta_table_name: "__delta_stat", frontier_table_name: "__frontier_stat", next_frontier_table_name: "__next_frontier_stat", columns: ["repo", "col2", "col3", "col4"], column_types: ["text", "int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stat" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "col2", "col3", "col4", "_sign"`, rule_observers: [] },
+  { rel: "star_row", kind: "set", table_name: "star_row", delta_table_name: "__delta_star_row", frontier_table_name: "__frontier_star_row", next_frontier_table_name: "__next_frontier_star_row", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo", "stars"`, arrival_del_sql: `DELETE FROM "star_row" WHERE ("repo", "stars") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "repo", "stars"`, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_star_row" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "stars", "_sign"`, rule_observers: ["stat/4"] },
+  { rel: "stat", kind: "set", table_name: "stat", delta_table_name: "__delta_stat", frontier_table_name: "__frontier_stat", next_frontier_table_name: "__next_frontier_stat", columns: ["repo", "col2", "col3", "col4"], column_types: ["text", "int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stat" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "col2", "col3", "col4", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -268,6 +300,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -291,11 +325,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -323,7 +360,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "sum_min_max_group_by_plain_columns",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

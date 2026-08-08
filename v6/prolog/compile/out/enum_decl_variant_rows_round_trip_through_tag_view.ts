@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,30 +136,45 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "body_redirect": [false, true],
+    "body_tag": [false, true],
+  },
+};
+
 const ddl: readonly string[] = [
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('page'), ('redirect')`,
   `CREATE TABLE "body_page" ("id" INTEGER NOT NULL, "view" INTEGER NOT NULL, PRIMARY KEY ("view")) WITHOUT ROWID`,
-  `CREATE TABLE "body_redirect" ("id" INTEGER NOT NULL, "to" TEXT NOT NULL, PRIMARY KEY ("to")) WITHOUT ROWID`,
-  `CREATE TABLE "body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "body_redirect" ("id" INTEGER NOT NULL, "to" INTEGER NOT NULL, PRIMARY KEY ("to")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_body_redirect" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."to") AS "to" FROM "body_redirect" t`,
+  `CREATE TABLE "body_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_body_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "body_tag" t`,
   `CREATE TEMP TABLE "__delta_body_page" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_body_page_sign" ON "__delta_body_page" ("_sign")`,
   `CREATE INDEX "__delta_body_page_group" ON "__delta_body_page" ("id", "view")`,
   `CREATE TEMP TABLE "__frontier_body_page" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_body_page_phase" ON "__frontier_body_page" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_body_page" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_body_redirect" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_body_redirect" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_body_redirect_sign" ON "__delta_body_redirect" ("_sign")`,
   `CREATE INDEX "__delta_body_redirect_group" ON "__delta_body_redirect" ("id", "to")`,
-  `CREATE TEMP TABLE "__frontier_body_redirect" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_body_redirect" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_body_redirect_phase" ON "__frontier_body_redirect" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_body_redirect" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_body_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_body_redirect" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "to" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_body_redirect" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."to") AS "to", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_body_redirect" t`,
+  `CREATE TEMP TABLE "__delta_body_tag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_body_tag_sign" ON "__delta_body_tag" ("_sign")`,
   `CREATE INDEX "__delta_body_tag_group" ON "__delta_body_tag" ("id", "tag")`,
-  `CREATE TEMP TABLE "__frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_body_tag_phase" ON "__frontier_body_tag" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_body_tag" ("id" INTEGER NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_body_tag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_body_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_body_tag" t`,
+  `CREATE TEMP TABLE "__support_next_body_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_body_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "body_tag_zero" ON "body_tag" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -201,8 +218,8 @@ const arrival_targets: readonly string[] = ["body_page", "body_redirect"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "body_tag", sql: `DELETE FROM "body_tag"`, params: [] },
-  { rel: "body_tag", sql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'page' FROM "body_page" b0`, params: [] },
-  { rel: "body_tag", sql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`, params: [] },
+  { rel: "body_tag", sql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') FROM "body_page" b0`, params: [] },
+  { rel: "body_tag", sql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') FROM "body_redirect" b0`, params: [] },
 ];
 
 type Snapshot = {
@@ -214,15 +231,29 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     body_page: select_rows(seam, `SELECT "id", "view" FROM "body_page"`, rel_columns.body_page!, rel_column_types.body_page!),
-    body_redirect: select_rows(seam, `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "body_redirect"`, rel_columns.body_redirect!, rel_column_types.body_redirect!),
-    body_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "body_tag"`, rel_columns.body_tag!, rel_column_types.body_tag!),
+    body_redirect: select_rows(seam, `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "__txt_body_redirect"`, rel_columns.body_redirect!, rel_column_types.body_redirect!),
+    body_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_body_tag"`, rel_columns.body_tag!, rel_column_types.body_tag!),
   });
+}
+
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    body_page: select_rows(seam, `SELECT "id", "view" FROM "body_page"`, rel_columns.body_page!, rel_column_types.body_page!),
+    body_redirect: select_rows(seam, `SELECT "id", "to" FROM "body_redirect"`, rel_columns.body_redirect!, rel_column_types.body_redirect!),
+    body_tag: select_rows(seam, `SELECT "id", "tag" FROM "body_tag"`, rel_columns.body_tag!, rel_column_types.body_tag!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
 }
 
 const final_select: Record<string, string> = {
   body_page: `SELECT "id", "view" FROM "body_page"`,
-  body_redirect: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "body_redirect"`,
-  body_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "body_tag"`,
+  body_redirect: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "__txt_body_redirect"`,
+  body_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_body_tag"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -254,23 +285,23 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "body_page", kind: "set", table_name: "body_page", delta_table_name: "__delta_body_page", frontier_table_name: "__frontier_body_page", next_frontier_table_name: "__next_frontier_body_page", columns: ["id", "view"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id" RETURNING "id", "view"`, arrival_del_sql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundary_sql: `SELECT "id", "view", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" WHERE "_sign" IN (-1, 1) GROUP BY "id", "view", "_sign"`, rule_observers: ["body_tag/2"] },
-  { rel: "body_redirect", kind: "set", table_name: "body_redirect", delta_table_name: "__delta_body_redirect", frontier_table_name: "__frontier_body_redirect", next_frontier_table_name: "__next_frontier_body_redirect", columns: ["id", "to"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id" RETURNING "id", "to"`, arrival_del_sql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"`, rule_observers: ["body_tag/2"] },
-  { rel: "body_tag", kind: "set", table_name: "body_tag", delta_table_name: "__delta_body_tag", frontier_table_name: "__frontier_body_tag", next_frontier_table_name: "__next_frontier_body_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
+  { rel: "body_redirect", kind: "set", table_name: "body_redirect", delta_table_name: "__delta_body_redirect", frontier_table_name: "__frontier_body_redirect", next_frontier_table_name: "__next_frontier_body_redirect", columns: ["id", "to"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id" RETURNING "id", "to"`, arrival_del_sql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"`, rule_observers: ["body_tag/2"] },
+  { rel: "body_tag", kind: "set", table_name: "body_tag", delta_table_name: "__delta_body_tag", frontier_table_name: "__frontier_body_tag", next_frontier_table_name: "__next_frontier_body_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "body_tag", rule_id: "enum_decl_variant_rows_round_trip_through_tag_view:body_tag/2#1", head_delta_table_name: "__delta_body_tag", head_columns: ["id", "tag"], insert_sql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT DISTINCT d0."id", 'page' FROM "__frontier_body_page" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", 'redirect' FROM "__frontier_body_redirect" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, select_sql: `SELECT "id", "tag" FROM "body_tag"`, recompute_sql: `DELETE FROM "body_tag";
-INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'page' FROM "body_page" b0;
-INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`, support_sql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", 'page' AS "tag", count(*) AS "__refcount" FROM "body_page" b0 GROUP BY b0."id", 'page' UNION ALL SELECT b0."id" AS "id", 'redirect' AS "tag", count(*) AS "__refcount" FROM "body_redirect" b0 GROUP BY b0."id", 'redirect') GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_body_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "body_tag" WHERE "__refcount" <= 0`, `DELETE FROM "body_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_body_tag"`, `INSERT INTO "__new_body_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_body_tag" n LEFT JOIN "body_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_body_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT INTO "__frontier_body_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT INTO "__next_frontier_body_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT OR IGNORE INTO "body_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_body_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "body_tag", rule_id: "enum_decl_variant_rows_round_trip_through_tag_view:body_tag/2#1", head_delta_table_name: "__delta_body_tag", head_columns: ["id", "tag"], insert_sql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT DISTINCT d0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') FROM "__frontier_body_page" d0 WHERE d0."_phase" >= 0 UNION ALL SELECT DISTINCT d0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') FROM "__frontier_body_redirect" d0 WHERE d0."_phase" >= 0 RETURNING "id", "tag"`, select_sql: `SELECT "id", "tag" FROM "body_tag"`, recompute_sql: `DELETE FROM "body_tag";
+INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') FROM "body_page" b0;
+INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') FROM "body_redirect" b0`, support_sql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') AS "tag", count(*) AS "__refcount" FROM "body_page" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') UNION ALL SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') AS "tag", count(*) AS "__refcount" FROM "body_redirect" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect')) GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_body_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "body_tag" WHERE "__refcount" <= 0`, `DELETE FROM "body_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_body_tag"`, `INSERT INTO "__new_body_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_body_tag" n LEFT JOIN "body_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_body_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT INTO "__frontier_body_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT INTO "__next_frontier_body_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT OR IGNORE INTO "body_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_body_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "body_tag";
-INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'page' FROM "body_page" b0;
-INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", 'redirect' FROM "body_redirect" b0`;
+INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') FROM "body_page" b0;
+INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') FROM "body_redirect" b0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -290,6 +321,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -313,11 +346,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -345,7 +381,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "enum_decl_variant_rows_round_trip_through_tag_view",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

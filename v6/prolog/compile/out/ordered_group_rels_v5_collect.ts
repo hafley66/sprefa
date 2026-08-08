@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,22 +136,36 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "group_rels": [true, false],
+    "rel_catalog": [true, true, true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "group_rels" ("group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group_name", "col2")) WITHOUT ROWID`,
-  `CREATE TABLE "rel_catalog" ("relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL, PRIMARY KEY ("relation_name", "group_name", "_column_text", "_documentation_text")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_group_rels" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "group_rels" ("group_name" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group_name", "col2")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_group_rels" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group_name") AS "group_name", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "group_rels" t`,
+  `CREATE TABLE "rel_catalog" ("relation_name" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "_column_text" INTEGER NOT NULL, "_documentation_text" INTEGER NOT NULL, PRIMARY KEY ("relation_name", "group_name", "_column_text", "_documentation_text")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_rel_catalog" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."relation_name") AS "relation_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group_name") AS "group_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_column_text") AS "_column_text", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_documentation_text") AS "_documentation_text" FROM "rel_catalog" t`,
+  `CREATE TEMP TABLE "__delta_group_rels" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_group_rels_sign" ON "__delta_group_rels" ("_sign")`,
   `CREATE INDEX "__delta_group_rels_group" ON "__delta_group_rels" ("group_name", "col2")`,
-  `CREATE TEMP TABLE "__frontier_group_rels" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
+  `CREATE TEMP TABLE "__frontier_group_rels" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__frontier_group_rels_phase" ON "__frontier_group_rels" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_group_rels" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" TEXT NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
-  `CREATE TEMP TABLE "__delta_rel_catalog" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_group_rels" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
+  `CREATE TEMP VIEW "__txt___delta_group_rels" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group_name") AS "group_name", t."col2" AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_group_rels" t`,
+  `CREATE TEMP TABLE "__delta_rel_catalog" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "_column_text" INTEGER NOT NULL, "_documentation_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_rel_catalog_sign" ON "__delta_rel_catalog" ("_sign")`,
   `CREATE INDEX "__delta_rel_catalog_group" ON "__delta_rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text")`,
-  `CREATE TEMP TABLE "__frontier_rel_catalog" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_rel_catalog" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "_column_text" INTEGER NOT NULL, "_documentation_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_rel_catalog_phase" ON "__frontier_rel_catalog" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_rel_catalog" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" TEXT NOT NULL, "group_name" TEXT NOT NULL, "_column_text" TEXT NOT NULL, "_documentation_text" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__agg_scope_group_rels" ("group_name" TEXT NOT NULL, PRIMARY KEY ("group_name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__next_frontier_rel_catalog" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "relation_name" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "_column_text" INTEGER NOT NULL, "_documentation_text" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_rel_catalog" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."relation_name") AS "relation_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group_name") AS "group_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_column_text") AS "_column_text", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_documentation_text") AS "_documentation_text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_rel_catalog" t`,
+  `CREATE TEMP TABLE "__agg_scope_group_rels" ("group_name" INTEGER NOT NULL, PRIMARY KEY ("group_name")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -185,11 +201,23 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["rel_catalog"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") VALUES (?, ?, ?, ?)`, params: ["alpha", "cli", "name", "docs"] },
-  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") VALUES (?, ?, ?, ?)`, params: ["beta", "cli", "stars", "docs"] },
-  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") VALUES (?, ?, ?, ?)`, params: ["gamma", "cli", "path", "docs"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["alpha"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["name"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["docs"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["alpha", "cli", "name", "docs"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["beta"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["stars"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["docs"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["beta", "cli", "stars", "docs"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["gamma"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["path"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["docs"] },
+  { rel: "rel_catalog", sql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["gamma", "cli", "path", "docs"] },
   { rel: "group_rels", sql: `DELETE FROM "group_rels"`, params: [] },
-  { rel: "group_rels", sql: `INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`, params: [] },
+  { rel: "group_rels", sql: `INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."relation_name") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."relation_name")) FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`, params: [] },
 ];
 
 type Snapshot = {
@@ -199,14 +227,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    group_rels: select_rows(seam, `SELECT CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", "col2" FROM "group_rels"`, rel_columns.group_rels!, rel_column_types.group_rels!),
-    rel_catalog: select_rows(seam, `SELECT CASE WHEN json_valid("relation_name") AND json_type("relation_name") = 'object' AND json_type("relation_name", '$.fn') = 'text' AND json_type("relation_name", '$.args') = 'array' THEN json_extract("relation_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("relation_name", '$.args')), '') || ')' ELSE "relation_name" END AS "relation_name", CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", CASE WHEN json_valid("_column_text") AND json_type("_column_text") = 'object' AND json_type("_column_text", '$.fn') = 'text' AND json_type("_column_text", '$.args') = 'array' THEN json_extract("_column_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_column_text", '$.args')), '') || ')' ELSE "_column_text" END AS "_column_text", CASE WHEN json_valid("_documentation_text") AND json_type("_documentation_text") = 'object' AND json_type("_documentation_text", '$.fn') = 'text' AND json_type("_documentation_text", '$.args') = 'array' THEN json_extract("_documentation_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_documentation_text", '$.args')), '') || ')' ELSE "_documentation_text" END AS "_documentation_text" FROM "rel_catalog"`, rel_columns.rel_catalog!, rel_column_types.rel_catalog!),
+    group_rels: select_rows(seam, `SELECT CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", "col2" FROM "__txt_group_rels"`, rel_columns.group_rels!, rel_column_types.group_rels!),
+    rel_catalog: select_rows(seam, `SELECT CASE WHEN json_valid("relation_name") AND json_type("relation_name") = 'object' AND json_type("relation_name", '$.fn') = 'text' AND json_type("relation_name", '$.args') = 'array' THEN json_extract("relation_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("relation_name", '$.args')), '') || ')' ELSE "relation_name" END AS "relation_name", CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", CASE WHEN json_valid("_column_text") AND json_type("_column_text") = 'object' AND json_type("_column_text", '$.fn') = 'text' AND json_type("_column_text", '$.args') = 'array' THEN json_extract("_column_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_column_text", '$.args')), '') || ')' ELSE "_column_text" END AS "_column_text", CASE WHEN json_valid("_documentation_text") AND json_type("_documentation_text") = 'object' AND json_type("_documentation_text", '$.fn') = 'text' AND json_type("_documentation_text", '$.args') = 'array' THEN json_extract("_documentation_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_documentation_text", '$.args')), '') || ')' ELSE "_documentation_text" END AS "_documentation_text" FROM "__txt_rel_catalog"`, rel_columns.rel_catalog!, rel_column_types.rel_catalog!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    group_rels: select_rows(seam, `SELECT "group_name", "col2" FROM "group_rels"`, rel_columns.group_rels!, rel_column_types.group_rels!),
+    rel_catalog: select_rows(seam, `SELECT "relation_name", "group_name", "_column_text", "_documentation_text" FROM "rel_catalog"`, rel_columns.rel_catalog!, rel_column_types.rel_catalog!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  group_rels: `SELECT CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", "col2" FROM "group_rels"`,
-  rel_catalog: `SELECT CASE WHEN json_valid("relation_name") AND json_type("relation_name") = 'object' AND json_type("relation_name", '$.fn') = 'text' AND json_type("relation_name", '$.args') = 'array' THEN json_extract("relation_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("relation_name", '$.args')), '') || ')' ELSE "relation_name" END AS "relation_name", CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", CASE WHEN json_valid("_column_text") AND json_type("_column_text") = 'object' AND json_type("_column_text", '$.fn') = 'text' AND json_type("_column_text", '$.args') = 'array' THEN json_extract("_column_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_column_text", '$.args')), '') || ')' ELSE "_column_text" END AS "_column_text", CASE WHEN json_valid("_documentation_text") AND json_type("_documentation_text") = 'object' AND json_type("_documentation_text", '$.fn') = 'text' AND json_type("_documentation_text", '$.args') = 'array' THEN json_extract("_documentation_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_documentation_text", '$.args')), '') || ')' ELSE "_documentation_text" END AS "_documentation_text" FROM "rel_catalog"`,
+  group_rels: `SELECT CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", "col2" FROM "__txt_group_rels"`,
+  rel_catalog: `SELECT CASE WHEN json_valid("relation_name") AND json_type("relation_name") = 'object' AND json_type("relation_name", '$.fn') = 'text' AND json_type("relation_name", '$.args') = 'array' THEN json_extract("relation_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("relation_name", '$.args')), '') || ')' ELSE "relation_name" END AS "relation_name", CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", CASE WHEN json_valid("_column_text") AND json_type("_column_text") = 'object' AND json_type("_column_text", '$.fn') = 'text' AND json_type("_column_text", '$.args') = 'array' THEN json_extract("_column_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_column_text", '$.args')), '') || ')' ELSE "_column_text" END AS "_column_text", CASE WHEN json_valid("_documentation_text") AND json_type("_documentation_text") = 'object' AND json_type("_documentation_text", '$.fn') = 'text' AND json_type("_documentation_text", '$.args') = 'array' THEN json_extract("_documentation_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_documentation_text", '$.args')), '') || ')' ELSE "_documentation_text" END AS "_documentation_text" FROM "__txt_rel_catalog"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -236,8 +277,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "group_rels", kind: "set", table_name: "group_rels", delta_table_name: "__delta_group_rels", frontier_table_name: "__frontier_group_rels", next_frontier_table_name: "__next_frontier_group_rels", columns: ["group_name", "col2"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_group_rels" WHERE "_sign" IN (-1, 1) GROUP BY "group_name", "col2", "_sign"`, rule_observers: [] },
-  { rel: "rel_catalog", kind: "set", table_name: "rel_catalog", delta_table_name: "__delta_rel_catalog", frontier_table_name: "__frontier_rel_catalog", next_frontier_table_name: "__next_frontier_rel_catalog", columns: ["relation_name", "group_name", "_column_text", "_documentation_text"], column_types: ["text", "text", "text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "relation_name", "group_name", "_column_text", "_documentation_text"`, arrival_del_sql: `DELETE FROM "rel_catalog" WHERE ("relation_name", "group_name", "_column_text", "_documentation_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "relation_name", "group_name", "_column_text", "_documentation_text"`, boundary_sql: `SELECT CASE WHEN json_valid("relation_name") AND json_type("relation_name") = 'object' AND json_type("relation_name", '$.fn') = 'text' AND json_type("relation_name", '$.args') = 'array' THEN json_extract("relation_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("relation_name", '$.args')), '') || ')' ELSE "relation_name" END AS "relation_name", CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", CASE WHEN json_valid("_column_text") AND json_type("_column_text") = 'object' AND json_type("_column_text", '$.fn') = 'text' AND json_type("_column_text", '$.args') = 'array' THEN json_extract("_column_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_column_text", '$.args')), '') || ')' ELSE "_column_text" END AS "_column_text", CASE WHEN json_valid("_documentation_text") AND json_type("_documentation_text") = 'object' AND json_type("_documentation_text", '$.fn') = 'text' AND json_type("_documentation_text", '$.args') = 'array' THEN json_extract("_documentation_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_documentation_text", '$.args')), '') || ')' ELSE "_documentation_text" END AS "_documentation_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rel_catalog" WHERE "_sign" IN (-1, 1) GROUP BY "relation_name", "group_name", "_column_text", "_documentation_text", "_sign"`, rule_observers: ["group_rels/2"] },
+  { rel: "group_rels", kind: "set", table_name: "group_rels", delta_table_name: "__delta_group_rels", frontier_table_name: "__frontier_group_rels", next_frontier_table_name: "__next_frontier_group_rels", columns: ["group_name", "col2"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_group_rels" WHERE "_sign" IN (-1, 1) GROUP BY "group_name", "col2", "_sign"`, rule_observers: [] },
+  { rel: "rel_catalog", kind: "set", table_name: "rel_catalog", delta_table_name: "__delta_rel_catalog", frontier_table_name: "__frontier_rel_catalog", next_frontier_table_name: "__next_frontier_rel_catalog", columns: ["relation_name", "group_name", "_column_text", "_documentation_text"], column_types: ["text", "text", "text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "rel_catalog" ("relation_name", "group_name", "_column_text", "_documentation_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "relation_name", "group_name", "_column_text", "_documentation_text"`, arrival_del_sql: `DELETE FROM "rel_catalog" WHERE ("relation_name", "group_name", "_column_text", "_documentation_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "relation_name", "group_name", "_column_text", "_documentation_text"`, boundary_sql: `SELECT CASE WHEN json_valid("relation_name") AND json_type("relation_name") = 'object' AND json_type("relation_name", '$.fn') = 'text' AND json_type("relation_name", '$.args') = 'array' THEN json_extract("relation_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("relation_name", '$.args')), '') || ')' ELSE "relation_name" END AS "relation_name", CASE WHEN json_valid("group_name") AND json_type("group_name") = 'object' AND json_type("group_name", '$.fn') = 'text' AND json_type("group_name", '$.args') = 'array' THEN json_extract("group_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group_name", '$.args')), '') || ')' ELSE "group_name" END AS "group_name", CASE WHEN json_valid("_column_text") AND json_type("_column_text") = 'object' AND json_type("_column_text", '$.fn') = 'text' AND json_type("_column_text", '$.args') = 'array' THEN json_extract("_column_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_column_text", '$.args')), '') || ')' ELSE "_column_text" END AS "_column_text", CASE WHEN json_valid("_documentation_text") AND json_type("_documentation_text") = 'object' AND json_type("_documentation_text", '$.fn') = 'text' AND json_type("_documentation_text", '$.args') = 'array' THEN json_extract("_documentation_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_documentation_text", '$.args')), '') || ')' ELSE "_documentation_text" END AS "_documentation_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_rel_catalog" WHERE "_sign" IN (-1, 1) GROUP BY "relation_name", "group_name", "_column_text", "_documentation_text", "_sign"`, rule_observers: ["group_rels/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -245,12 +286,12 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
   { head_rel: "group_rels", rule_id: "ordered_group_rels_v5_collect:group_rels/2#1", head_delta_table_name: "__delta_group_rels", head_columns: ["group_name", "col2"], insert_sql: null, select_sql: `SELECT "group_name", "col2" FROM "group_rels"`, recompute_sql: `DELETE FROM "group_rels";
-INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_group_rels"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_group_rels" ("group_name") SELECT DISTINCT d0."group_name" FROM "__delta_rel_catalog" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "group_rels" WHERE ("group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels") RETURNING "group_name", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 WHERE (b0."group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels") GROUP BY b0."group_name" HAVING count(*) > 0 RETURNING "group_name", "col2"`], delta_maintained: false } },
+INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."relation_name") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."relation_name")) FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_group_rels"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_group_rels" ("group_name") SELECT DISTINCT d0."group_name" FROM "__delta_rel_catalog" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "group_rels" WHERE ("group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels") RETURNING "group_name", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."relation_name") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."relation_name")) FROM "rel_catalog" b0 WHERE (b0."group_name") IN (SELECT "group_name" FROM "__agg_scope_group_rels") GROUP BY b0."group_name" HAVING count(*) > 0 RETURNING "group_name", "col2"`], delta_maintained: false } },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "group_rels";
-INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array(b0."relation_name" ORDER BY b0."relation_name") FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`;
+INSERT OR IGNORE INTO "group_rels" ("group_name", "col2") SELECT b0."group_name", json_group_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."relation_name") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."relation_name")) FROM "rel_catalog" b0 GROUP BY b0."group_name" HAVING count(*) > 0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -268,6 +309,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -291,11 +334,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -323,7 +369,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "ordered_group_rels_v5_collect",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

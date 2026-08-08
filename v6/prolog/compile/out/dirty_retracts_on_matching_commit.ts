@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,26 +155,46 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "commit_arrival": [false, true, true],
+    "dirty": [true],
+    "tree_file": [false, true, true],
+    "worktree_edit": [true, true],
+    "worktree_file": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "commit_arrival" ("rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TABLE "dirty" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "commit_arrival" ("rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_commit_arrival" AS SELECT t."rev_id" AS "rev_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest" FROM "commit_arrival" t`,
+  `CREATE TABLE "dirty" ("path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_dirty" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."__refcount" AS "__refcount" FROM "dirty" t`,
   `CREATE TABLE "head" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, PRIMARY KEY ("repo_id")) WITHOUT ROWID`,
   `CREATE TABLE "head_move" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE TABLE "tree_file" ("rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, PRIMARY KEY ("rev_id", "path")) WITHOUT ROWID`,
-  `CREATE TABLE "worktree_edit" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TABLE "worktree_file" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_commit_arrival" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TABLE "tree_file" ("rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, PRIMARY KEY ("rev_id", "path")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_tree_file" AS SELECT t."rev_id" AS "rev_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest" FROM "tree_file" t`,
+  `CREATE TABLE "worktree_edit" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_worktree_edit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest" FROM "worktree_edit" t`,
+  `CREATE TABLE "worktree_file" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_worktree_file" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest" FROM "worktree_file" t`,
+  `CREATE TEMP TABLE "__delta_commit_arrival" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_commit_arrival_sign" ON "__delta_commit_arrival" ("_sign")`,
   `CREATE INDEX "__delta_commit_arrival_group" ON "__delta_commit_arrival" ("rev_id", "path", "digest")`,
-  `CREATE TEMP TABLE "__frontier_commit_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_commit_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_commit_arrival_phase" ON "__frontier_commit_arrival" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_commit_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_dirty" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_commit_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_commit_arrival" AS SELECT t."rev_id" AS "rev_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_commit_arrival" t`,
+  `CREATE TEMP TABLE "__delta_dirty" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_dirty_sign" ON "__delta_dirty" ("_sign")`,
   `CREATE INDEX "__delta_dirty_group" ON "__delta_dirty" ("path")`,
-  `CREATE TEMP TABLE "__frontier_dirty" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_dirty" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_dirty_phase" ON "__frontier_dirty" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_dirty" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_dirty" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_dirty" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_dirty" t`,
   `CREATE TEMP TABLE "__delta_head" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_head_sign" ON "__delta_head" ("_sign")`,
   `CREATE INDEX "__delta_head_group" ON "__delta_head" ("repo_id", "rev_id")`,
@@ -185,26 +207,29 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_head_move_phase" ON "__frontier_head_move" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_head_move" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_tree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_tree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_tree_file_sign" ON "__delta_tree_file" ("_sign")`,
   `CREATE INDEX "__delta_tree_file_group" ON "__delta_tree_file" ("rev_id", "path", "digest")`,
-  `CREATE TEMP TABLE "__frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_tree_file_phase" ON "__frontier_tree_file" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_worktree_edit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_tree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_tree_file" AS SELECT t."rev_id" AS "rev_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_tree_file" t`,
+  `CREATE TEMP TABLE "__delta_worktree_edit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_worktree_edit_sign" ON "__delta_worktree_edit" ("_sign")`,
   `CREATE INDEX "__delta_worktree_edit_group" ON "__delta_worktree_edit" ("path", "digest")`,
-  `CREATE TEMP TABLE "__frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_worktree_edit_phase" ON "__frontier_worktree_edit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_worktree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_worktree_edit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_worktree_edit" t`,
+  `CREATE TEMP TABLE "__delta_worktree_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_worktree_file_sign" ON "__delta_worktree_file" ("_sign")`,
   `CREATE INDEX "__delta_worktree_file_group" ON "__delta_worktree_file" ("path", "digest")`,
-  `CREATE TEMP TABLE "__frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_worktree_file_phase" ON "__frontier_worktree_file" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_dirty" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_dirty" ("path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_worktree_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_worktree_file" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_worktree_file" t`,
+  `CREATE TEMP TABLE "__support_next_dirty" ("path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_dirty" ("path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "dirty_zero" ON "dirty" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -266,8 +291,12 @@ const arrival_targets: readonly string[] = ["commit_arrival", "head_move", "work
 
 const boot: readonly IBootStatement[] = [
   { rel: "head", sql: `INSERT OR IGNORE INTO "head" ("repo_id", "rev_id") VALUES (?, ?)`, params: [1, 100] },
-  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, ?, ?)`, params: [100, "src/lib.rs", "sha_v1"] },
-  { rel: "worktree_file", sql: `INSERT OR IGNORE INTO "worktree_file" ("path", "digest") VALUES (?, ?)`, params: ["src/lib.rs", "sha_v1"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/lib.rs"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["sha_v1"] },
+  { rel: "tree_file", sql: `INSERT OR IGNORE INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [100, "src/lib.rs", "sha_v1"] },
+  { rel: "worktree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/lib.rs"] },
+  { rel: "worktree_file", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["sha_v1"] },
+  { rel: "worktree_file", sql: `INSERT OR IGNORE INTO "worktree_file" ("path", "digest") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["src/lib.rs", "sha_v1"] },
   { rel: "dirty", sql: `DELETE FROM "dirty"`, params: [] },
   { rel: "dirty", sql: `INSERT OR IGNORE INTO "dirty" ("path") SELECT b0."path" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" <> b2."digest")`, params: [] },
 ];
@@ -284,24 +313,42 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    commit_arrival: select_rows(seam, `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "commit_arrival"`, rel_columns.commit_arrival!, rel_column_types.commit_arrival!),
-    dirty: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "dirty"`, rel_columns.dirty!, rel_column_types.dirty!),
+    commit_arrival: select_rows(seam, `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_commit_arrival"`, rel_columns.commit_arrival!, rel_column_types.commit_arrival!),
+    dirty: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "__txt_dirty"`, rel_columns.dirty!, rel_column_types.dirty!),
     head: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head"`, rel_columns.head!, rel_column_types.head!),
     head_move: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head_move"`, rel_columns.head_move!, rel_column_types.head_move!),
-    tree_file: select_rows(seam, `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "tree_file"`, rel_columns.tree_file!, rel_column_types.tree_file!),
-    worktree_edit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
-    worktree_file: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "worktree_file"`, rel_columns.worktree_file!, rel_column_types.worktree_file!),
+    tree_file: select_rows(seam, `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_tree_file"`, rel_columns.tree_file!, rel_column_types.tree_file!),
+    worktree_edit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
+    worktree_file: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_worktree_file"`, rel_columns.worktree_file!, rel_column_types.worktree_file!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    commit_arrival: select_rows(seam, `SELECT "rev_id", "path", "digest" FROM "commit_arrival"`, rel_columns.commit_arrival!, rel_column_types.commit_arrival!),
+    dirty: select_rows(seam, `SELECT "path" FROM "dirty"`, rel_columns.dirty!, rel_column_types.dirty!),
+    head: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head"`, rel_columns.head!, rel_column_types.head!),
+    head_move: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head_move"`, rel_columns.head_move!, rel_column_types.head_move!),
+    tree_file: select_rows(seam, `SELECT "rev_id", "path", "digest" FROM "tree_file"`, rel_columns.tree_file!, rel_column_types.tree_file!),
+    worktree_edit: select_rows(seam, `SELECT "path", "digest" FROM "worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
+    worktree_file: select_rows(seam, `SELECT "path", "digest" FROM "worktree_file"`, rel_columns.worktree_file!, rel_column_types.worktree_file!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  commit_arrival: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "commit_arrival"`,
-  dirty: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "dirty"`,
+  commit_arrival: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_commit_arrival"`,
+  dirty: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "__txt_dirty"`,
   head: `SELECT "repo_id", "rev_id" FROM "head"`,
   head_move: `SELECT "repo_id", "rev_id" FROM "head_move"`,
-  tree_file: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "tree_file"`,
-  worktree_edit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "worktree_edit"`,
-  worktree_file: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "worktree_file"`,
+  tree_file: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_tree_file"`,
+  worktree_edit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_worktree_edit"`,
+  worktree_file: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_worktree_file"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -333,13 +380,13 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "commit_arrival", kind: "log", table_name: "commit_arrival", delta_table_name: "__delta_commit_arrival", frontier_table_name: "__frontier_commit_arrival", next_frontier_table_name: "__next_frontier_commit_arrival", columns: ["rev_id", "path", "digest"], column_types: ["int", "text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "commit_arrival" ("rev_id", "path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "rev_id", "path", "digest"`, arrival_del_sql: null, boundary_sql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_commit_arrival" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "digest", "_sign"`, rule_observers: ["tree_file/3"] },
-  { rel: "dirty", kind: "set", table_name: "dirty", delta_table_name: "__delta_dirty", frontier_table_name: "__frontier_dirty", next_frontier_table_name: "__next_frontier_dirty", columns: ["path"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dirty" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"`, rule_observers: [] },
+  { rel: "commit_arrival", kind: "log", table_name: "commit_arrival", delta_table_name: "__delta_commit_arrival", frontier_table_name: "__frontier_commit_arrival", next_frontier_table_name: "__next_frontier_commit_arrival", columns: ["rev_id", "path", "digest"], column_types: ["int", "text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "commit_arrival" ("rev_id", "path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "rev_id", "path", "digest"`, arrival_del_sql: null, boundary_sql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_commit_arrival" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "digest", "_sign"`, rule_observers: ["tree_file/3"] },
+  { rel: "dirty", kind: "set", table_name: "dirty", delta_table_name: "__delta_dirty", frontier_table_name: "__frontier_dirty", next_frontier_table_name: "__next_frontier_dirty", columns: ["path"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_dirty" WHERE "_sign" IN (-1, 1) GROUP BY "path", "_sign"`, rule_observers: [] },
   { rel: "head", kind: "set", table_name: "head", delta_table_name: "__delta_head", frontier_table_name: "__frontier_head", next_frontier_table_name: "__next_frontier_head", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, rule_observers: ["dirty/1"] },
   { rel: "head_move", kind: "log", table_name: "head_move", delta_table_name: "__delta_head_move", frontier_table_name: "__frontier_head_move", next_frontier_table_name: "__next_frontier_head_move", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrival_del_sql: null, boundary_sql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move" WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, rule_observers: ["head/2"] },
-  { rel: "tree_file", kind: "set", table_name: "tree_file", delta_table_name: "__delta_tree_file", frontier_table_name: "__frontier_tree_file", next_frontier_table_name: "__next_frontier_tree_file", columns: ["rev_id", "path", "digest"], column_types: ["int", "text", "text"], key_indices: [0, 1], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_file" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "digest", "_sign"`, rule_observers: ["dirty/1"] },
-  { rel: "worktree_edit", kind: "log", table_name: "worktree_edit", delta_table_name: "__delta_worktree_edit", frontier_table_name: "__frontier_worktree_edit", next_frontier_table_name: "__next_frontier_worktree_edit", columns: ["path", "digest"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "worktree_edit" ("path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "digest"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_edit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, rule_observers: ["worktree_file/2"] },
-  { rel: "worktree_file", kind: "set", table_name: "worktree_file", delta_table_name: "__delta_worktree_file", frontier_table_name: "__frontier_worktree_file", next_frontier_table_name: "__next_frontier_worktree_file", columns: ["path", "digest"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, rule_observers: ["dirty/1"] },
+  { rel: "tree_file", kind: "set", table_name: "tree_file", delta_table_name: "__delta_tree_file", frontier_table_name: "__frontier_tree_file", next_frontier_table_name: "__next_frontier_tree_file", columns: ["rev_id", "path", "digest"], column_types: ["int", "text", "text"], key_indices: [0, 1], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "rev_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_tree_file" WHERE "_sign" IN (-1, 1) GROUP BY "rev_id", "path", "digest", "_sign"`, rule_observers: ["dirty/1"] },
+  { rel: "worktree_edit", kind: "log", table_name: "worktree_edit", delta_table_name: "__delta_worktree_edit", frontier_table_name: "__frontier_worktree_edit", next_frontier_table_name: "__next_frontier_worktree_edit", columns: ["path", "digest"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "worktree_edit" ("path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "digest"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_worktree_edit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, rule_observers: ["worktree_file/2"] },
+  { rel: "worktree_file", kind: "set", table_name: "worktree_file", delta_table_name: "__delta_worktree_file", frontier_table_name: "__frontier_worktree_file", next_frontier_table_name: "__next_frontier_worktree_file", columns: ["path", "digest"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_worktree_file" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, rule_observers: ["dirty/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -451,17 +498,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveWorktreeFile_0Writes(seam, before, arrivals), resolveTreeFile_1Writes(seam, before, arrivals), resolveHead_2Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveWorktreeFile_0Writes(seam, before.stored, arrivals), resolveTreeFile_1Writes(seam, before.stored, arrivals), resolveHead_2Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // dirty_retracts_on_matching_commit: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -482,6 +531,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -516,7 +567,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "dirty_retracts_on_matching_commit",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

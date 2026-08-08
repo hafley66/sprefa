@@ -130,6 +130,33 @@ lowered_for(Base, Name, Lowered) :-
            program_plan(Term-Bindings, Plan),
            lower_program(Plan, Lowered) )).
 
+% Mode-pinned twins of the two above: a snapshot that spells one encoding's SQL
+% must name that encoding, never inherit compile.pl's build default.
+interning_lowered(Mode, Name, Lowered) :-
+    once(( fixture_file(File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, Lowered) )).
+
+interning_lowered_in(Base, Mode, Name, Lowered) :-
+    once(( fixture_file(Base, File),
+           read_fixture_term(File, Name, Term, Bindings),
+           program_plan(Term-Bindings, [intern(Mode)], Plan),
+           lower_program(Plan, Lowered) )).
+
+% A level rule reading the catalog's own rows, shared by the catalog unit and
+% the storage rail: no conformance fixture mints a catalog seed.
+catalog_program(fixture(catalog_reader, Prog, [], [], [])) :-
+    Prog = prog([], [ (rel_named(LocalName) <-
+                         '__rel'(_Id, _Parent, _Ordinal, LocalName, rel,
+                                 _TypeId, _Arity, _ModuleId, _HId,
+                                 _HSchema, _HRule)) ]).
+
+catalog_lowered(Mode, _Name, Ddl) :-
+    catalog_program(Term),
+    once(( program_plan(Term-[], [intern(Mode)], Plan),
+           lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)) )).
+
 :- begin_tests(stratum_order).
 
 % Ground truth taken directly from probing level_eval.pl:stratify_level_rules/2
@@ -214,7 +241,7 @@ test(demand_laziness_columns) :-
 % to the trigger arrival row's own values) plus a static UPSERT, not a
 % self-join filtered by a stamp column.
 test(switch_as_keyed_replace_edge_sql) :-
-    lowered_for(switch_as_keyed_replace, Lowered),
+    interning_lowered(direct, switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, [edgestmt(open_scope/2, route_change/2, HeadColumns, KeyColumns, ProjectSql, UpsertSql, DeltaProjectSql, arrival, _)], _, _, _, _),
     HeadColumns == [session_id, target],
     KeyColumns == [session_id],
@@ -280,7 +307,7 @@ test(world_fed_keyed_arrival_uses_key_constraint_and_replace) :-
         ArrivalStatements).
 
 test(switch_as_keyed_replace_frontier_ddl) :-
-    lowered_for(switch_as_keyed_replace, Lowered),
+    interning_lowered(direct, switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, Ddl, _, _, _, _, _, _),
     memberchk('CREATE TEMP TABLE "__frontier_route_change" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "session_id" TEXT NOT NULL, "route_id" TEXT NOT NULL)', Ddl),
     memberchk('CREATE INDEX "__frontier_route_change_phase" ON "__frontier_route_change" ("_phase")', Ddl),
@@ -291,7 +318,8 @@ test(switch_as_keyed_replace_frontier_ddl) :-
 % stopped in analyze.pl with edge_body_needs_pre/1 and produced no lowered
 % statement or snapshot table.
 test(pre_edge_lowers_to_ordered_snapshot_read) :-
-    lowered_for('merge_family.pl', batched_increments_both_count, Lowered),
+    interning_lowered_in('merge_family.pl', direct, batched_increments_both_count,
+                         Lowered),
     Lowered = lowered(_, Ddl, _, EdgeStatements, _, _, _, _),
     memberchk(
         'CREATE TEMP TABLE "__pre_counter" ("name" TEXT NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID',
@@ -330,7 +358,7 @@ ddl_for_table(Table, Ddl) :-
 % both fixtures here have exactly one clause per head, so each list is a
 % singleton.
 test(switch_as_keyed_replace_level_sql) :-
-    lowered_for(switch_as_keyed_replace, Lowered),
+    interning_lowered(direct, switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     LevelStatements = [levelstmt(demanded/2, DemandedDelete, [DemandedInsert], _, _, none, _), levelstmt(route_view/2, RouteViewDelete, [RouteViewInsert], _, _, none, _)],
     DemandedDelete == 'DELETE FROM "demanded"',
@@ -415,7 +443,7 @@ test(canonical_column_expr_shape) :-
       'CASE WHEN json_valid("target") AND json_type("target") = \'object\' AND json_type("target", \'$.fn\') = \'text\' AND json_type("target", \'$.args\') = \'array\' THEN json_extract("target", \'$.fn\') || \'(\' || coalesce((SELECT group_concat(value, \',\') FROM json_each("target", \'$.args\')), \'\') || \')\' ELSE "target" END AS "target"'.
 
 test(switch_as_keyed_replace_delta_sql_open_scope) :-
-    lowered_for(switch_as_keyed_replace, Lowered),
+    interning_lowered(direct, switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
     memberchk(deltastmt(open_scope/2, SelectSql, __delta_open_scope, BoundarySql, _), DeltaStatements),
     once(sub_atom(SelectSql, _, _, _, 'FROM "open_scope"')),
@@ -427,7 +455,7 @@ test(switch_as_keyed_replace_delta_sql_open_scope) :-
     once(sub_atom(BoundarySql, _, _, _, '"_sign" IN (-1, 1)')).
 
 test(switch_as_keyed_replace_delta_sql_route_change_log) :-
-    lowered_for(switch_as_keyed_replace, Lowered),
+    interning_lowered(direct, switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
     memberchk(deltastmt(route_change/2, SelectSql, __delta_route_change, _, _), DeltaStatements),
     once(sub_atom(SelectSql, _, _, _, 'FROM "route_change"')),
@@ -461,7 +489,8 @@ test(latest_edge_sample_reads_base_table_in_both_sql_families) :-
 %      body is a bare finalize, and departed_fires_next_tick_on_retraction's
 %      carries a now/1 beside it; neither raises a second occurrence source.
 test(departure_arm_reads_the_departure_frontier) :-
-    lowered_for('engine_core.pl', keyed_replace_departs_the_old_row, Lowered),
+    interning_lowered_in('engine_core.pl', direct,
+                         keyed_replace_departs_the_old_row, Lowered),
     Lowered = lowered(_, Ddl, _, EdgeStatements, _, _, _, _),
     memberchk(
         edgestmt(replaced_value/2, latest/2, [key, old_value], [], _, _,
@@ -530,7 +559,7 @@ test(edb_edge_trigger_keeps_naive_referee_available) :-
     derived_edge_carry_required(Plan, EdgeStatements, false).
 
 test(acyclic_ref_count_statements_are_emitted) :-
-    lowered_for(shared_demand_refcount, Lowered),
+    interning_lowered(direct, shared_demand_refcount, Lowered),
     Lowered = lowered(_, Ddl, _, _, LevelStatements, _, _, _),
     memberchk('CREATE TEMP TABLE "__support_next_effect_call" ("target" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("target")) WITHOUT ROWID', Ddl),
     memberchk(levelstmt(effect_call/1, _, _, _,
@@ -624,8 +653,8 @@ test(negated_body_refuses_the_in_place_plan) :-
 % The backend-neutral spelling of the SAME walks, over the 4-column TEXT
 % reachability head (plans/2026-08-07-plan-ir-offload-contract.md §2.4).
 test(fixpoint_ir_spells_the_reachability_walks_without_sql) :-
-    lowered_for('4_flagship_flow.pl', flagship_flow_reach_over_resolved_edges,
-                Lowered),
+    interning_lowered_in('4_flagship_flow.pl', direct,
+                         flagship_flow_reach_over_resolved_edges, Lowered),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     memberchk(levelstmt(flow_reach/4, _, _, _,
                         refcountsql(_, _, _, _, _, _, _, _, _, _, _, _, _,
@@ -688,7 +717,7 @@ test(fixpoint_ir_emits_beside_the_sql_fields) :-
     once(( fixture_file('4_flagship_flow.pl', File),
            read_fixture_term(File, flagship_flow_reach_over_resolved_edges,
                              Term, Bindings),
-           program_plan(Term-Bindings, Plan),
+           program_plan(Term-Bindings, [intern(direct)], Plan),
            lower_program(Plan, Lowered) )),
     Term = fixture(_, _, Initial, _, _),
     Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
@@ -798,13 +827,52 @@ test(catalog_absent_by_default) :-
 % ONE CREATE TABLE, built by the ordinary rel_ddl/6 path off compile.pl's
 % injected col_type decls, plus the child-walk index minted by catalog_table_ddl/1.
 test(catalog_table_shape) :-
-    catalog_lowered(catalog_shape, Ddl),
+    catalog_lowered(direct, catalog_shape, Ddl),
     findall(Create,
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
     OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule")) WITHOUT ROWID',
     memberchk('CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")', Ddl).
+
+% FAIL-FIRST RECEIPT: the seed door bypassed the dictionary at dict, declaring
+% the five text columns INTEGER while writing (1,0,0,'text','primitive',...)
+% raw, so every __txt___rel read of a catalog text column answered NULL.
+test(catalog_table_shape_at_dict) :-
+    catalog_lowered(dict, catalog_shape_dict, Ddl),
+    findall(Create,
+            ( member(Create, Ddl),
+              sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
+            [OneCreate]),
+    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" INTEGER NOT NULL, "h_schema" INTEGER NOT NULL, "h_rule" INTEGER NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule")) WITHOUT ROWID',
+    catalog_first_seed_row(Ddl,
+      '(1,0,0,(SELECT s."__id" FROM "__str" s WHERE s."content" = \'text\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'primitive\'),0,0,0,(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'))').
+
+% Those lookups are total only if the seed's own strings reach "__str" first:
+% dictionary DDL, then the string seed, then the catalog seed.
+test(catalog_seed_strings_are_interned_before_the_seed_reads_them) :-
+    catalog_lowered(dict, catalog_seed_order, Ddl),
+    once(nth0(DictionaryIndex, Ddl,
+              'CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)')),
+    once(( nth0(StringSeedIndex, Ddl, StringSeed),
+           sub_atom(StringSeed, 0, _, _, 'INSERT OR IGNORE INTO "__str" ("content") VALUES ') )),
+    once(( nth0(CatalogSeedIndex, Ddl, CatalogSeed),
+           sub_atom(CatalogSeed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') )),
+    DictionaryIndex < StringSeedIndex,
+    StringSeedIndex < CatalogSeedIndex,
+    forall(member(Content, [text, primitive, '__rel', rel_named, col1, column,
+                            module, catalog_reader]),
+           ( format(atom(Row), '(\'~w\')', [Content]),
+             sub_atom(StringSeed, _, _, _, Row) )).
+
+% Positional, not a containment probe: an interned row buried after a raw one
+% would satisfy a bare sub_atom/5.
+catalog_first_seed_row(Ddl, FirstRow) :-
+    once(( member(Seed, Ddl),
+           sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') )),
+    once(sub_atom(Seed, Before, _, _, ' VALUES ')),
+    RowStart is Before + 8,
+    sub_atom(Seed, RowStart, _, _, FirstRow).
 
 % The catalog is seeded by DDL, so the serve door must never accept a write
 % into it; a leftover arrival target is that door standing open.
@@ -825,7 +893,7 @@ test(catalog_gate_is_arity_exact) :-
 % The seed is exactly ONE INSERT OR IGNORE atom carrying every row, the
 % corpus's N+1 law for a catalog that grows by position, never by statement.
 test(catalog_rows_are_one_statement) :-
-    catalog_lowered(catalog_rows, Ddl),
+    catalog_lowered(direct, catalog_rows, Ddl),
     findall(Seed,
             ( member(Seed, Ddl),
               sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') ),
@@ -834,7 +902,7 @@ test(catalog_rows_are_one_statement) :-
 % Ids are positional and self-description terminates in ONE pass: the catalog
 % rel gets its own row and its six column rows, then the user's rel follows.
 test(catalog_ids_are_positional) :-
-    catalog_lowered(catalog_ids, Ddl),
+    catalog_lowered(direct, catalog_ids, Ddl),
     findall(Seed,
             ( member(Seed, Ddl),
               sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') ),
@@ -878,26 +946,13 @@ module_rel_h_id(ModuleName, HId) :-
                                  _TypeId, _Arity, _ModuleId, _HId,
                                  _HSchema, _HRule)) ]),
     Term = fixture(ModuleName, Prog, [], [], []),
-    once(( program_plan(Term-[], Plan),
+    once(( program_plan(Term-[], [intern(direct)], Plan),
            lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
            member(Seed, Ddl),
            sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"'),
            sub_atom(Seed, MarkerStart, MarkerLen, _, "'rel_named','rel',0,1,6,'"),
            HashStart is MarkerStart + MarkerLen,
            sub_atom(Seed, HashStart, 16, _, HId) )).
-
-% One program for the whole group: a level rule reading the catalog's own rows,
-% which is the read the g1 increment exists to make possible.
-catalog_program(fixture(catalog_reader, Prog, [], [], [])) :-
-    Prog = prog([], [ (rel_named(LocalName) <-
-                         '__rel'(_Id, _Parent, _Ordinal, LocalName, rel,
-                                 _TypeId, _Arity, _ModuleId, _HId,
-                                 _HSchema, _HRule)) ]).
-
-catalog_lowered(_Name, Ddl) :-
-    catalog_program(Term),
-    once(( program_plan(Term-[], Plan),
-           lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)) )).
 
 % The whole point of the pair: identity (h_id) is stable while shape moves.
 % Adding a column to a rel changes h_schema but leaves h_id untouched.
@@ -951,7 +1006,7 @@ hash_probe_rel_rule(Prog, RelName, Arity, Rule) :-
 
 hash_probe_rel_seed(Prog, Seed) :-
     Term = fixture(hash_probe, Prog, [], [], []),
-    once(( program_plan(Term-[], Plan),
+    once(( program_plan(Term-[], [intern(direct)], Plan),
            lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
            member(Seed, Ddl),
            sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') )).
@@ -1209,7 +1264,7 @@ test(accepts_edge_head_column_typed_from_its_body) :-
                  keyed(xref/2, [1])],
                 [ (xref(SpanId, Kind) <+ pin_extracted(SpanId, Kind)) ]),
     program_plan(fixture(edge_head_typing, Prog, [pin_extracted(20, doc_link)],
-                         [], [])-[], Plan),
+                         [], [])-[], [intern(direct)], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
     memberchk('CREATE TABLE "xref" ("col1" INTEGER NOT NULL, "col2" TEXT NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
 
@@ -1288,7 +1343,8 @@ test(now_bound_head_column_is_integer_storage) :-
     Prog = prog([kind(ping/1, log), keep(ping/1, all),
                  kind(seen_at/2, log), keep(seen_at/2, all)],
                 [ (seen_at(Name, Tick) <+ ping(Name), now(Tick)) ]),
-    program_plan(fixture(now_typing, Prog, [], [], [])-[], Plan),
+    program_plan(fixture(now_typing, Prog, [], [], [])-[], [intern(direct)],
+                 Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
     % Column NAMES are col1/col2 here: surface names come from the fixture
     % file's variable bindings, and this program is built in Prolog with an
@@ -1461,7 +1517,7 @@ test(concat_result_column_stays_text) :-
 test(delta_and_frontier_tables_repeat_column_affinity) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
-           program_plan(Term-Bindings, Plan),
+           program_plan(Term-Bindings, [intern(direct)], Plan),
            lower_program(Plan, Lowered) )),
     Lowered = lowered(_, Ddl, _, _, _, _, _, _),
     forall(member(Prefix, ['', '__delta_', '__frontier_', '__next_frontier_']),
@@ -3664,12 +3720,14 @@ test(unbound_variable_is_not_a_bool_literal_witness, [fail]) :-
     literal_witness(_).
 
 test(bool_and_float_storage_constraints_are_exact) :-
-    lowered_for('5_value_plane.pl', bool_literals_round_trip, BoolLowered),
+    interning_lowered_in('5_value_plane.pl', direct, bool_literals_round_trip,
+                         BoolLowered),
     BoolLowered = lowered(_, BoolDdl, _, _, _, _, _, _),
     memberchk(
       'CREATE TABLE "flag" ("name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), PRIMARY KEY ("name", "enabled")) WITHOUT ROWID',
       BoolDdl),
-    lowered_for('5_value_plane.pl', float_arithmetic_is_binary64, FloatLowered),
+    interning_lowered_in('5_value_plane.pl', direct, float_arithmetic_is_binary64,
+                         FloatLowered),
     FloatLowered = lowered(_, FloatDdl, _, _, _, _, _, _),
     once(( member(ScoreDdl, FloatDdl),
            sub_atom(ScoreDdl, 0, _, _, 'CREATE TABLE "score"'),
@@ -4705,18 +4763,6 @@ test(ordered_carry_read) :-
 
 :- begin_tests(interning).
 
-interning_lowered(Mode, Name, Lowered) :-
-    once(( fixture_file(File),
-           read_fixture_term(File, Name, Term, Bindings),
-           program_plan(Term-Bindings, [intern(Mode)], Plan),
-           lower_program(Plan, Lowered) )).
-
-interning_lowered_in(Base, Mode, Name, Lowered) :-
-    once(( fixture_file(Base, File),
-           read_fixture_term(File, Name, Term, Bindings),
-           program_plan(Term-Bindings, [intern(Mode)], Plan),
-           lower_program(Plan, Lowered) )).
-
 ddl_containing(Ddl, Needle, Statement) :-
     member(Statement, Ddl),
     sub_atom(Statement, _, _, _, Needle).
@@ -5749,3 +5795,235 @@ test(stripped_use_lines_keep_the_remainder_on_its_own_file_line) :-
     Line == 3.
 
 :- end_tests(use_module_system).
+
+% ═══ the interned-storage rail ══════════════════════════════════════════════
+% The fifth "a door has a sibling that bypasses it" incident of the interning
+% arc; a family check, not a fixture check, so the sixth door fails here first.
+
+:- begin_tests(interned_storage_rail).
+
+% ── reading emitted SQL back ────────────────────────────────────────────────
+% Quote-aware and paren-depth-aware throughout: an interned literal's lookup is
+% itself a parenthesised subquery carrying a quoted string.
+
+codes_prefix(Prefix, Codes, Rest) :-
+    atom_codes(Prefix, PrefixCodes),
+    append(PrefixCodes, Rest, Codes).
+
+codes_after(Needle, Codes, Rest) :-
+    atom_codes(Needle, NeedleCodes),
+    append(_, Tail, Codes),
+    append(NeedleCodes, Rest, Tail),
+    !.
+
+balanced_split(Codes, Body, Rest) :- balanced_split(Codes, 1, out, [], Body, Rest).
+
+balanced_split([0''' | More], Depth, out, Acc, Body, Rest) :- !,
+    balanced_split(More, Depth, in, [0''' | Acc], Body, Rest).
+balanced_split([0''' | More], Depth, in, Acc, Body, Rest) :- !,
+    balanced_split(More, Depth, out, [0''' | Acc], Body, Rest).
+balanced_split([Code | More], Depth, in, Acc, Body, Rest) :- !,
+    balanced_split(More, Depth, in, [Code | Acc], Body, Rest).
+balanced_split([0'( | More], Depth, out, Acc, Body, Rest) :- !,
+    Deeper is Depth + 1,
+    balanced_split(More, Deeper, out, [0'( | Acc], Body, Rest).
+balanced_split([0') | More], 1, out, Acc, Body, More) :- !, reverse(Acc, Body).
+balanced_split([0') | More], Depth, out, Acc, Body, Rest) :- !,
+    Shallower is Depth - 1,
+    balanced_split(More, Shallower, out, [0') | Acc], Body, Rest).
+balanced_split([Code | More], Depth, out, Acc, Body, Rest) :-
+    balanced_split(More, Depth, out, [Code | Acc], Body, Rest).
+
+comma_parts(Codes, Parts) :- comma_parts(Codes, 0, out, [], Parts).
+
+comma_parts([], _, _, Acc, [Part]) :- !, reverse(Acc, Part).
+comma_parts([0''' | More], Depth, out, Acc, Parts) :- !,
+    comma_parts(More, Depth, in, [0''' | Acc], Parts).
+comma_parts([0''' | More], Depth, in, Acc, Parts) :- !,
+    comma_parts(More, Depth, out, [0''' | Acc], Parts).
+comma_parts([Code | More], Depth, in, Acc, Parts) :- !,
+    comma_parts(More, Depth, in, [Code | Acc], Parts).
+comma_parts([0'( | More], Depth, out, Acc, Parts) :- !,
+    Deeper is Depth + 1, comma_parts(More, Deeper, out, [0'( | Acc], Parts).
+comma_parts([0') | More], Depth, out, Acc, Parts) :- !,
+    Shallower is Depth - 1, comma_parts(More, Shallower, out, [0') | Acc], Parts).
+comma_parts([0', | More], 0, out, Acc, [Part | Parts]) :- !,
+    reverse(Acc, Part), comma_parts(More, 0, out, [], Parts).
+comma_parts([Code | More], Depth, out, Acc, Parts) :-
+    comma_parts(More, Depth, out, [Code | Acc], Parts).
+
+% The projection of an INSERT ... SELECT, cut at its own top-level FROM/WHERE.
+select_projection(Codes, Projection) :- select_projection(Codes, 0, out, [], Projection).
+
+select_projection([], _, _, Acc, Projection) :- !, reverse(Acc, Projection).
+select_projection([0''' | More], Depth, out, Acc, Projection) :- !,
+    select_projection(More, Depth, in, [0''' | Acc], Projection).
+select_projection([0''' | More], Depth, in, Acc, Projection) :- !,
+    select_projection(More, Depth, out, [0''' | Acc], Projection).
+select_projection([Code | More], Depth, in, Acc, Projection) :- !,
+    select_projection(More, Depth, in, [Code | Acc], Projection).
+select_projection([0'( | More], Depth, out, Acc, Projection) :- !,
+    Deeper is Depth + 1, select_projection(More, Deeper, out, [0'( | Acc], Projection).
+select_projection([0') | More], Depth, out, Acc, Projection) :- !,
+    Shallower is Depth - 1, select_projection(More, Shallower, out, [0') | Acc], Projection).
+select_projection(Codes, 0, out, Acc, Projection) :-
+    ( codes_prefix(' FROM ', Codes, _) ; codes_prefix(' WHERE ', Codes, _) ), !,
+    reverse(Acc, Projection).
+select_projection([Code | More], Depth, out, Acc, Projection) :-
+    select_projection(More, Depth, out, [Code | Acc], Projection).
+
+trimmed([0'  | More], Trimmed) :- !, trimmed(More, Trimmed).
+trimmed(Codes, Codes).
+
+quoted_identifier(Codes, Name) :-
+    trimmed(Codes, [0'" | AfterQuote]),
+    append(NameCodes, [0'" | _], AfterQuote), !,
+    atom_codes(Name, NameCodes).
+
+first_word(Codes, Word) :-
+    trimmed(Codes, Trimmed),
+    ( append(WordCodes, [0'  | _], Trimmed) -> true ; WordCodes = Trimmed ),
+    atom_codes(Word, WordCodes).
+
+% A table constraint (PRIMARY KEY (...)) opens with no quoted name and drops out.
+column_affinity(Codes, Column-Affinity) :-
+    quoted_identifier(Codes, Column),
+    trimmed(Codes, [0'" | AfterQuote]),
+    append(_, [0'" | AfterName], AfterQuote), !,
+    first_word(AfterName, Affinity).
+
+table_affinities(Statement, Table-Affinities) :-
+    atom_codes(Statement, Codes),
+    (   codes_prefix('CREATE TABLE "', Codes, AfterOpen)
+    ->  true
+    ;   codes_prefix('CREATE TEMP TABLE "', Codes, AfterOpen)
+    ),
+    append(TableCodes, [0'" | AfterTable], AfterOpen), !,
+    atom_codes(Table, TableCodes),
+    codes_after('(', AfterTable, Body0),
+    balanced_split(Body0, Body, _),
+    comma_parts(Body, Parts),
+    findall(Pair, ( member(Part, Parts), column_affinity(Part, Pair) ), Affinities).
+
+insert_binding(Statement, Table, Column, Value) :-
+    atom_codes(Statement, Codes),
+    codes_prefix('INSERT ', Codes, _),
+    codes_after('INTO "', Codes, AfterOpen),
+    append(TableCodes, [0'" | AfterTable], AfterOpen), !,
+    atom_codes(Table, TableCodes),
+    codes_after('(', AfterTable, ColumnsAndRest),
+    balanced_split(ColumnsAndRest, ColumnCodes, AfterColumns),
+    comma_parts(ColumnCodes, ColumnParts),
+    maplist(quoted_identifier, ColumnParts, Columns),
+    insert_value_row(AfterColumns, ValueParts),
+    length(Columns, Arity), length(ValueParts, Arity),
+    nth1(Position, Columns, Column),
+    nth1(Position, ValueParts, ValueCodes),
+    trimmed(ValueCodes, Value).
+
+insert_value_row(AfterColumns, ValueParts) :-
+    codes_after('VALUES ', AfterColumns, Rows), !,
+    comma_parts(Rows, RowParts),
+    member(RowPart, RowParts),
+    trimmed(RowPart, [0'( | Inner]),
+    balanced_split(Inner, RowCodes, _),
+    comma_parts(RowCodes, ValueParts).
+insert_value_row(AfterColumns, ValueParts) :-
+    codes_after('SELECT ', AfterColumns, Projection0),
+    select_projection(Projection0, Projection),
+    comma_parts(Projection, ValueParts).
+
+% ── the rail ────────────────────────────────────────────────────────────────
+
+% Every SQL string the lowering returns, whatever term shape carries it.
+lowered_sql(lowered(_, Ddl, Arrival, Edge, Level, Delta, _, _), Statements) :-
+    findall(Statement,
+            ( member(Source, [Ddl, Arrival, Edge, Level, Delta]),
+              member(Term, Source),
+              term_sql_atom(Term, Statement) ),
+            Statements).
+
+term_sql_atom(Term, Term) :- atom(Term), !.
+term_sql_atom(Term, Atom) :-
+    compound(Term), arg(_, Term, Argument), term_sql_atom(Argument, Atom).
+
+% "__str".content and every direct-mode column are TEXT, so neither can fire.
+interned_storage_violation(Lowered, violation(Table, Column)) :-
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    findall(Pair, ( member(Statement, Ddl), table_affinities(Statement, Pair) ),
+            TableAffinities),
+    lowered_sql(Lowered, Statements),
+    member(Statement, Statements),
+    insert_binding(Statement, Table, Column, [0''' | _]),
+    memberchk(Table-Affinities, TableAffinities),
+    memberchk(Column-'INTEGER', Affinities).
+
+fixture_file_path(Path) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures'], Dir),
+    directory_files(Dir, Entries),
+    msort(Entries, Ordered),
+    member(Entry, Ordered),
+    sub_atom(Entry, _, 3, 0, '.pl'),
+    atomic_list_concat([Dir, '/', Entry], Path).
+
+% A directive term is CALLED, exactly as compile.pl:find_fixture/4 replays it.
+fixture_terms(Stream, Terms) :-
+    read_term(Stream, Candidate, [variable_names(Bindings)]),
+    (   Candidate == end_of_file
+    ->  Terms = []
+    ;   Candidate = (:- Directive)
+    ->  catch(call(Directive), _, true), fixture_terms(Stream, Terms)
+    ;   Candidate = fixture(_, _, _, _, _)
+    ->  Terms = [Candidate-Bindings | Rest], fixture_terms(Stream, Rest)
+    ;   fixture_terms(Stream, Terms)
+    ).
+
+corpus_lowered(Name, Lowered) :-
+    fixture_file_path(Path),
+    open(Path, read, Stream),
+    call_cleanup(fixture_terms(Stream, Terms), close(Stream)),
+    member(fixture(Name, Prog, Initial, Schedule, Expectations)-Bindings, Terms),
+    catch(( program_plan(fixture(Name, Prog, Initial, Schedule,
+                                 Expectations)-Bindings, [intern(dict)], Plan),
+            lower_program(Plan, Lowered) ),
+          _, fail).
+
+% FAIL-FIRST RECEIPT: red on the pre-fix catalog seed.
+%
+% RED:
+%   [.../.] no_character_literal_lands_in_an_integer_column
+%     violations: [catalog_reader-violation('__rel', h_id),
+%                  catalog_reader-violation('__rel', h_rule),
+%                  catalog_reader-violation('__rel', h_schema),
+%                  catalog_reader-violation('__rel', kind),
+%                  catalog_reader-violation('__rel', local_name)]
+test(no_character_literal_lands_in_an_integer_column) :-
+    findall(Name-Violation,
+            ( ( corpus_lowered(Name, Lowered)
+              ; Name = catalog_reader,
+                catalog_program(Term),
+                once(( program_plan(Term-[], [intern(dict)], Plan),
+                       lower_program(Plan, Lowered) )) ),
+              interned_storage_violation(Lowered, Violation) ),
+            Found),
+    sort(Found, Violations),
+    Violations == [].
+
+% The rail reads real INSERTs, not zero of them: a scanner that parses nothing
+% passes the check above vacuously.
+test(the_rail_reads_the_corpus_it_scans) :-
+    once(corpus_lowered(switch_as_keyed_replace, Lowered)),
+    lowered_sql(Lowered, Statements),
+    aggregate_all(count,
+                  ( member(Statement, Statements),
+                    insert_binding(Statement, _, _, _) ),
+                  Bindings),
+    Bindings > 0,
+    Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+    aggregate_all(count,
+                  ( member(Statement, Ddl), table_affinities(Statement, _) ),
+                  Tables),
+    Tables > 0.
+
+:- end_tests(interned_storage_rail).

@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,43 +136,63 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "fetch_result_error": [true, false],
+    "fetch_result_fresh": [true, true, true],
+    "fetch_result_unchanged": [true],
+    "resp_raw": [true, false, true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "fetch_result_error" ("endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint", "status")) WITHOUT ROWID`,
-  `CREATE TABLE "fetch_result_fresh" ("endpoint" TEXT NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint", "tag", "body")) WITHOUT ROWID`,
-  `CREATE TABLE "fetch_result_unchanged" ("endpoint" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
-  `CREATE TABLE "resp_raw" ("endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_fetch_result_error" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "fetch_result_error" ("endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint", "status")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_fetch_result_error" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."status" AS "status", t."__refcount" AS "__refcount" FROM "fetch_result_error" t`,
+  `CREATE TABLE "fetch_result_fresh" ("endpoint" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint", "tag", "body")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_fetch_result_fresh" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body", t."__refcount" AS "__refcount" FROM "fetch_result_fresh" t`,
+  `CREATE TABLE "fetch_result_unchanged" ("endpoint" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_fetch_result_unchanged" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."__refcount" AS "__refcount" FROM "fetch_result_unchanged" t`,
+  `CREATE TABLE "resp_raw" ("endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_resp_raw" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."status" AS "status", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body" FROM "resp_raw" t`,
+  `CREATE TEMP TABLE "__delta_fetch_result_error" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_fetch_result_error_sign" ON "__delta_fetch_result_error" ("_sign")`,
   `CREATE INDEX "__delta_fetch_result_error_group" ON "__delta_fetch_result_error" ("endpoint", "status")`,
-  `CREATE TEMP TABLE "__frontier_fetch_result_error" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_fetch_result_error" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_fetch_result_error_phase" ON "__frontier_fetch_result_error" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_fetch_result_error" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_fetch_result_fresh" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_fetch_result_error" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_fetch_result_error" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."status" AS "status", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_fetch_result_error" t`,
+  `CREATE TEMP TABLE "__delta_fetch_result_fresh" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_fetch_result_fresh_sign" ON "__delta_fetch_result_fresh" ("_sign")`,
   `CREATE INDEX "__delta_fetch_result_fresh_group" ON "__delta_fetch_result_fresh" ("endpoint", "tag", "body")`,
-  `CREATE TEMP TABLE "__frontier_fetch_result_fresh" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_fetch_result_fresh" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_fetch_result_fresh_phase" ON "__frontier_fetch_result_fresh" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_fetch_result_fresh" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_fetch_result_unchanged" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_fetch_result_fresh" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_fetch_result_fresh" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_fetch_result_fresh" t`,
+  `CREATE TEMP TABLE "__delta_fetch_result_unchanged" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_fetch_result_unchanged_sign" ON "__delta_fetch_result_unchanged" ("_sign")`,
   `CREATE INDEX "__delta_fetch_result_unchanged_group" ON "__delta_fetch_result_unchanged" ("endpoint")`,
-  `CREATE TEMP TABLE "__frontier_fetch_result_unchanged" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_fetch_result_unchanged" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_fetch_result_unchanged_phase" ON "__frontier_fetch_result_unchanged" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_fetch_result_unchanged" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_resp_raw" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_fetch_result_unchanged" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_fetch_result_unchanged" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_fetch_result_unchanged" t`,
+  `CREATE TEMP TABLE "__delta_resp_raw" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_resp_raw_sign" ON "__delta_resp_raw" ("_sign")`,
   `CREATE INDEX "__delta_resp_raw_group" ON "__delta_resp_raw" ("endpoint", "status", "tag", "body")`,
-  `CREATE TEMP TABLE "__frontier_resp_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_resp_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_resp_raw_phase" ON "__frontier_resp_raw" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_resp_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_fetch_result_error" ("endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("endpoint", "status")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_fetch_result_error" ("endpoint" TEXT NOT NULL, "status" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_resp_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_resp_raw" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."status" AS "status", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_resp_raw" t`,
+  `CREATE TEMP TABLE "__support_next_fetch_result_error" ("endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("endpoint", "status")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_fetch_result_error" ("endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "fetch_result_error_zero" ON "fetch_result_error" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_fetch_result_fresh" ("endpoint" TEXT NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("endpoint", "tag", "body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_fetch_result_fresh" ("endpoint" TEXT NOT NULL, "tag" TEXT NOT NULL, "body" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_fetch_result_fresh" ("endpoint" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("endpoint", "tag", "body")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_fetch_result_fresh" ("endpoint" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "fetch_result_fresh_zero" ON "fetch_result_fresh" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_fetch_result_unchanged" ("endpoint" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_fetch_result_unchanged" ("endpoint" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_fetch_result_unchanged" ("endpoint" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_fetch_result_unchanged" ("endpoint" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "fetch_result_unchanged_zero" ON "fetch_result_unchanged" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -235,18 +257,33 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    fetch_result_error: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status" FROM "fetch_result_error"`, rel_columns.fetch_result_error!, rel_column_types.fetch_result_error!),
-    fetch_result_fresh: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "fetch_result_fresh"`, rel_columns.fetch_result_fresh!, rel_column_types.fetch_result_fresh!),
-    fetch_result_unchanged: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "fetch_result_unchanged"`, rel_columns.fetch_result_unchanged!, rel_column_types.fetch_result_unchanged!),
-    resp_raw: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "resp_raw"`, rel_columns.resp_raw!, rel_column_types.resp_raw!),
+    fetch_result_error: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status" FROM "__txt_fetch_result_error"`, rel_columns.fetch_result_error!, rel_column_types.fetch_result_error!),
+    fetch_result_fresh: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "__txt_fetch_result_fresh"`, rel_columns.fetch_result_fresh!, rel_column_types.fetch_result_fresh!),
+    fetch_result_unchanged: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "__txt_fetch_result_unchanged"`, rel_columns.fetch_result_unchanged!, rel_column_types.fetch_result_unchanged!),
+    resp_raw: select_rows(seam, `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "__txt_resp_raw"`, rel_columns.resp_raw!, rel_column_types.resp_raw!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    fetch_result_error: select_rows(seam, `SELECT "endpoint", "status" FROM "fetch_result_error"`, rel_columns.fetch_result_error!, rel_column_types.fetch_result_error!),
+    fetch_result_fresh: select_rows(seam, `SELECT "endpoint", "tag", "body" FROM "fetch_result_fresh"`, rel_columns.fetch_result_fresh!, rel_column_types.fetch_result_fresh!),
+    fetch_result_unchanged: select_rows(seam, `SELECT "endpoint" FROM "fetch_result_unchanged"`, rel_columns.fetch_result_unchanged!, rel_column_types.fetch_result_unchanged!),
+    resp_raw: select_rows(seam, `SELECT "endpoint", "status", "tag", "body" FROM "resp_raw"`, rel_columns.resp_raw!, rel_column_types.resp_raw!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  fetch_result_error: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status" FROM "fetch_result_error"`,
-  fetch_result_fresh: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "fetch_result_fresh"`,
-  fetch_result_unchanged: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "fetch_result_unchanged"`,
-  resp_raw: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "resp_raw"`,
+  fetch_result_error: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status" FROM "__txt_fetch_result_error"`,
+  fetch_result_fresh: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "__txt_fetch_result_fresh"`,
+  fetch_result_unchanged: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint" FROM "__txt_fetch_result_unchanged"`,
+  resp_raw: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "__txt_resp_raw"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -276,10 +313,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "fetch_result_error", kind: "set", table_name: "fetch_result_error", delta_table_name: "__delta_fetch_result_error", frontier_table_name: "__frontier_fetch_result_error", next_frontier_table_name: "__next_frontier_fetch_result_error", columns: ["endpoint", "status"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_error" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "status", "_sign"`, rule_observers: [] },
-  { rel: "fetch_result_fresh", kind: "set", table_name: "fetch_result_fresh", delta_table_name: "__delta_fetch_result_fresh", frontier_table_name: "__frontier_fetch_result_fresh", next_frontier_table_name: "__next_frontier_fetch_result_fresh", columns: ["endpoint", "tag", "body"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_fresh" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "tag", "body", "_sign"`, rule_observers: [] },
-  { rel: "fetch_result_unchanged", kind: "set", table_name: "fetch_result_unchanged", delta_table_name: "__delta_fetch_result_unchanged", frontier_table_name: "__frontier_fetch_result_unchanged", next_frontier_table_name: "__next_frontier_fetch_result_unchanged", columns: ["endpoint"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fetch_result_unchanged" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, rule_observers: [] },
-  { rel: "resp_raw", kind: "log", table_name: "resp_raw", delta_table_name: "__delta_resp_raw", frontier_table_name: "__frontier_resp_raw", next_frontier_table_name: "__next_frontier_resp_raw", columns: ["endpoint", "status", "tag", "body"], column_types: ["text", "int", "text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "resp_raw" ("endpoint", "status", "tag", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "endpoint", "status", "tag", "body"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resp_raw" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "status", "tag", "body", "_sign"`, rule_observers: ["fetch_result_error/2", "fetch_result_fresh/3", "fetch_result_unchanged/1"] },
+  { rel: "fetch_result_error", kind: "set", table_name: "fetch_result_error", delta_table_name: "__delta_fetch_result_error", frontier_table_name: "__frontier_fetch_result_error", next_frontier_table_name: "__next_frontier_fetch_result_error", columns: ["endpoint", "status"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fetch_result_error" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "status", "_sign"`, rule_observers: [] },
+  { rel: "fetch_result_fresh", kind: "set", table_name: "fetch_result_fresh", delta_table_name: "__delta_fetch_result_fresh", frontier_table_name: "__frontier_fetch_result_fresh", next_frontier_table_name: "__next_frontier_fetch_result_fresh", columns: ["endpoint", "tag", "body"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fetch_result_fresh" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "tag", "body", "_sign"`, rule_observers: [] },
+  { rel: "fetch_result_unchanged", kind: "set", table_name: "fetch_result_unchanged", delta_table_name: "__delta_fetch_result_unchanged", frontier_table_name: "__frontier_fetch_result_unchanged", next_frontier_table_name: "__next_frontier_fetch_result_unchanged", columns: ["endpoint"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fetch_result_unchanged" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "_sign"`, rule_observers: [] },
+  { rel: "resp_raw", kind: "log", table_name: "resp_raw", delta_table_name: "__delta_resp_raw", frontier_table_name: "__frontier_resp_raw", next_frontier_table_name: "__next_frontier_resp_raw", columns: ["endpoint", "status", "tag", "body"], column_types: ["text", "int", "text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "resp_raw" ("endpoint", "status", "tag", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "endpoint", "status", "tag", "body"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("endpoint") AND json_type("endpoint") = 'object' AND json_type("endpoint", '$.fn') = 'text' AND json_type("endpoint", '$.args') = 'array' THEN json_extract("endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("endpoint", '$.args')), '') || ')' ELSE "endpoint" END AS "endpoint", "status", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_resp_raw" WHERE "_sign" IN (-1, 1) GROUP BY "endpoint", "status", "tag", "body", "_sign"`, rule_observers: ["fetch_result_error/2", "fetch_result_fresh/3", "fetch_result_unchanged/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -322,6 +359,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -345,11 +384,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -377,7 +419,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "match_classify_response",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

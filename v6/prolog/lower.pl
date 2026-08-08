@@ -732,9 +732,9 @@ canonical_hash_key(Term, KeyAtom) :-
 
 % Ids are assigned by POSITION for a byte-stable recompile: the primitives
 % first, then the module row, then each rel and its columns, one INSERT.
-catalog_row_ddl(ModuleName, Rules, RelPlans, [Statement]) :-
+catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, [Statement]) :-
     catalog_rows(ModuleName, Rules, RelPlans, AllRows),
-    foldl(catalog_row_part, AllRows, [], ReversedParts),
+    foldl(catalog_row_part(Mode), AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
     format(atom(Statement),
@@ -799,16 +799,24 @@ catalog_type_id(bool, 4) :- !.
 catalog_type_id(json, 5) :- !.
 catalog_type_id(_, 0).
 
-catalog_row_part(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
-                     ModuleId, HId, HSchema, HRule), Acc, [Part | Acc]) :-
-    sql_text_literal(Name, NameLiteral),
-    sql_text_literal(Kind, KindLiteral),
-    sql_text_literal(HId, HIdLiteral),
-    sql_text_literal(HSchema, HSchemaLiteral),
-    sql_text_literal(HRule, HRuleLiteral),
+catalog_row_part(Mode, row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
+                           ModuleId, HId, HSchema, HRule), Acc, [Part | Acc]) :-
+    catalog_text_sql(Mode, Name, NameLiteral),
+    catalog_text_sql(Mode, Kind, KindLiteral),
+    catalog_text_sql(Mode, HId, HIdLiteral),
+    catalog_text_sql(Mode, HSchema, HSchemaLiteral),
+    catalog_text_sql(Mode, HRule, HRuleLiteral),
     format(atom(Part), '(~d,~d,~d,~w,~w,~d,~d,~d,~w,~w,~w)',
            [RelId, ParentId, Ordinal, NameLiteral, KindLiteral, TypeId, Arity,
             ModuleId, HIdLiteral, HSchemaLiteral, HRuleLiteral]).
+
+% The one spelling literal_seed_ddl/3 reads back, so the seed's own strings
+% reach "__str" instead of landing raw in an INTEGER column.
+catalog_text_sql(Mode, Text, Sql) :-
+    (   interned_column(Mode, text)
+    ->  interned_literal_sql(Text, Sql)
+    ;   sql_text_literal(Text, Sql)
+    ).
 
 % SQL string literal: single-quoted, embedded single quotes doubled.
 sql_text_literal(Text, Literal) :-
@@ -4849,7 +4857,7 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     program_uses_catalog(prog(Decls, Rules), UsesCatalog),
     ( UsesCatalog == true
     -> catalog_table_ddl(CatalogTableDdl),
-       catalog_row_ddl(Name, Rules, RelPlans, CatalogRowDdl)
+       catalog_row_ddl(Mode, Name, Rules, RelPlans, CatalogRowDdl)
     ;  CatalogTableDdl = [], CatalogRowDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table

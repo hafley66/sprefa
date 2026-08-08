@@ -24,6 +24,7 @@ import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
 import { StructPlane } from "../runtime/structPlane.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -40,6 +41,7 @@ import type {
   ISqlSeam,
   IStructRefColumns,
   IStructTypePlan,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -148,16 +150,31 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
   "span": ["file", null, null],
 };
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "fpath": [true],
+    "raw": [true, true, false, false],
+    "repo": [true],
+  },
+};
+
 const ddl: readonly string[] = [
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('acme'), ('globex')`,
   `CREATE TABLE "file" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("repo", "at"))`,
   `CREATE TEMP VIEW "__ref_file" AS SELECT t."__id", "repo", "at", json_object('repo', json((SELECT c."__rendered" FROM "__ref_repo" c WHERE c."__id" = t."repo")), 'at', json((SELECT c."__rendered" FROM "__ref_fpath" c WHERE c."__id" = t."at"))) AS "__rendered" FROM "file" t`,
-  `CREATE TABLE "fpath" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__ref_fpath" AS SELECT t."__id", "name", json_object('name', t."name") AS "__rendered" FROM "fpath" t`,
+  `CREATE TABLE "fpath" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__ref_fpath" AS SELECT t."__id", "name", json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name")) AS "__rendered" FROM "fpath" t`,
+  `CREATE TEMP VIEW "__txt_fpath" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__id" AS "__id", t."__refcount" AS "__refcount" FROM "fpath" t`,
   `CREATE TABLE "hit" ("start" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("start")) WITHOUT ROWID`,
   `CREATE TABLE "miss" ("start" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("start")) WITHOUT ROWID`,
-  `CREATE TABLE "raw" ("repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, PRIMARY KEY ("repo_name", "path_name", "start", "end")) WITHOUT ROWID`,
-  `CREATE TABLE "repo" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
-  `CREATE TEMP VIEW "__ref_repo" AS SELECT t."__id", "name", json_object('name', t."name") AS "__rendered" FROM "repo" t`,
+  `CREATE TABLE "raw" ("repo_name" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, PRIMARY KEY ("repo_name", "path_name", "start", "end")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_raw" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo_name") AS "repo_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path_name") AS "path_name", t."start" AS "start", t."end" AS "end" FROM "raw" t`,
+  `CREATE TABLE "repo" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
+  `CREATE TEMP VIEW "__ref_repo" AS SELECT t."__id", "name", json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name")) AS "__rendered" FROM "repo" t`,
+  `CREATE TEMP VIEW "__txt_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__id" AS "__id", t."__refcount" AS "__refcount" FROM "repo" t`,
   `CREATE TABLE "span" ("file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file", "start", "end")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_file_sign" ON "__delta_file" ("_sign")`,
@@ -165,12 +182,13 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_file_phase" ON "__frontier_file" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_file" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_fpath" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_fpath" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_fpath_sign" ON "__delta_fpath" ("_sign")`,
   `CREATE INDEX "__delta_fpath_group" ON "__delta_fpath" ("name")`,
-  `CREATE TEMP TABLE "__frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_fpath_phase" ON "__frontier_fpath" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_fpath" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_fpath" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_fpath" t`,
   `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hit_sign" ON "__delta_hit" ("_sign")`,
   `CREATE INDEX "__delta_hit_group" ON "__delta_hit" ("start")`,
@@ -183,29 +201,31 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier_miss" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_miss_phase" ON "__frontier_miss" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_miss" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_raw" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_raw" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_raw_sign" ON "__delta_raw" ("_sign")`,
   `CREATE INDEX "__delta_raw_group" ON "__delta_raw" ("repo_name", "path_name", "start", "end")`,
-  `CREATE TEMP TABLE "__frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_raw_phase" ON "__frontier_raw" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" TEXT NOT NULL, "path_name" TEXT NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_name" INTEGER NOT NULL, "path_name" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_raw" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo_name") AS "repo_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path_name") AS "path_name", t."start" AS "start", t."end" AS "end", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_raw" t`,
+  `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_repo_sign" ON "__delta_repo" ("_sign")`,
   `CREATE INDEX "__delta_repo_group" ON "__delta_repo" ("name")`,
-  `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_repo_phase" ON "__frontier_repo" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_repo" t`,
   `CREATE TEMP TABLE "__delta_span" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_span_sign" ON "__delta_span" ("_sign")`,
   `CREATE INDEX "__delta_span_group" ON "__delta_span" ("file", "start", "end")`,
   `CREATE TEMP TABLE "__frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_span_phase" ON "__frontier_span" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_span" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_fpath" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_fpath" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_fpath" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_fpath" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "fpath_zero" ON "fpath" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_repo" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_repo" ("name" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_repo" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_repo" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "repo_zero" ON "repo" ("__refcount") WHERE "__refcount" <= 0`,
   `CREATE TEMP TABLE "__support_next_file" ("repo" INTEGER NOT NULL, "at" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("repo", "at")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__new_file" ("repo" INTEGER NOT NULL, "at" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
@@ -292,9 +312,9 @@ const boot: readonly IBootStatement[] = [
   { rel: "span", sql: `DELETE FROM "span"`, params: [] },
   { rel: "span", sql: `INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT b1."__id", b0."start", b0."end" FROM "raw" b0, "file" b1, "__ref_repo" b2, "__ref_fpath" b3 WHERE b2."__id" = b1."repo" AND b2."name" = b0."repo_name" AND b3."__id" = b1."at" AND b3."name" = b0."path_name"`, params: [] },
   { rel: "hit", sql: `DELETE FROM "hit"`, params: [] },
-  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = 'acme' AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`, params: [] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acme') AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`, params: [] },
   { rel: "miss", sql: `DELETE FROM "miss"`, params: [] },
-  { rel: "miss", sql: `INSERT OR IGNORE INTO "miss" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = 'globex' AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`, params: [] },
+  { rel: "miss", sql: `INSERT OR IGNORE INTO "miss" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'globex') AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`, params: [] },
 ];
 
 type Snapshot = {
@@ -310,22 +330,40 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     file: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = "repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = "at") AS "at" FROM "file"`, rel_columns.file!, rel_column_types.file!),
-    fpath: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "fpath"`, rel_columns.fpath!, rel_column_types.fpath!),
+    fpath: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_fpath"`, rel_columns.fpath!, rel_column_types.fpath!),
     hit: select_rows(seam, `SELECT "start" FROM "hit"`, rel_columns.hit!, rel_column_types.hit!),
     miss: select_rows(seam, `SELECT "start" FROM "miss"`, rel_columns.miss!, rel_column_types.miss!),
-    raw: select_rows(seam, `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end" FROM "raw"`, rel_columns.raw!, rel_column_types.raw!),
-    repo: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
+    raw: select_rows(seam, `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end" FROM "__txt_raw"`, rel_columns.raw!, rel_column_types.raw!),
+    repo: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_repo"`, rel_columns.repo!, rel_column_types.repo!),
     span: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = "file") AS "file", "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    file: select_rows(seam, `SELECT "repo", "at" FROM "file"`, rel_columns.file!, rel_column_types.file!),
+    fpath: select_rows(seam, `SELECT "name" FROM "fpath"`, rel_columns.fpath!, rel_column_types.fpath!),
+    hit: select_rows(seam, `SELECT "start" FROM "hit"`, rel_columns.hit!, rel_column_types.hit!),
+    miss: select_rows(seam, `SELECT "start" FROM "miss"`, rel_columns.miss!, rel_column_types.miss!),
+    raw: select_rows(seam, `SELECT "repo_name", "path_name", "start", "end" FROM "raw"`, rel_columns.raw!, rel_column_types.raw!),
+    repo: select_rows(seam, `SELECT "name" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
+    span: select_rows(seam, `SELECT "file", "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
   file: `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = "repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = "at") AS "at" FROM "file"`,
-  fpath: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "fpath"`,
+  fpath: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_fpath"`,
   hit: `SELECT "start" FROM "hit"`,
   miss: `SELECT "start" FROM "miss"`,
-  raw: `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end" FROM "raw"`,
-  repo: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "repo"`,
+  raw: `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end" FROM "__txt_raw"`,
+  repo: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_repo"`,
   span: `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = "file") AS "file", "start", "end" FROM "span"`,
 };
 
@@ -357,11 +395,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "file", kind: "set", table_name: "file", delta_table_name: "__delta_file", frontier_table_name: "__frontier_file", next_frontier_table_name: "__next_frontier_file", columns: ["repo", "at"], column_types: ["ref", "ref"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = "repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_file" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "at", "_sign"`, rule_observers: ["span/3"] },
-  { rel: "fpath", kind: "set", table_name: "fpath", delta_table_name: "__delta_fpath", frontier_table_name: "__frontier_fpath", next_frontier_table_name: "__next_frontier_fpath", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fpath" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["file/2"] },
+  { rel: "fpath", kind: "set", table_name: "fpath", delta_table_name: "__delta_fpath", frontier_table_name: "__frontier_fpath", next_frontier_table_name: "__next_frontier_fpath", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fpath" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["file/2"] },
   { rel: "hit", kind: "set", table_name: "hit", delta_table_name: "__delta_hit", frontier_table_name: "__frontier_hit", next_frontier_table_name: "__next_frontier_hit", columns: ["start"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "start", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hit" WHERE "_sign" IN (-1, 1) GROUP BY "start", "_sign"`, rule_observers: [] },
   { rel: "miss", kind: "set", table_name: "miss", delta_table_name: "__delta_miss", frontier_table_name: "__frontier_miss", next_frontier_table_name: "__next_frontier_miss", columns: ["start"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "start", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_miss" WHERE "_sign" IN (-1, 1) GROUP BY "start", "_sign"`, rule_observers: [] },
-  { rel: "raw", kind: "set", table_name: "raw", delta_table_name: "__delta_raw", frontier_table_name: "__frontier_raw", next_frontier_table_name: "__next_frontier_raw", columns: ["repo_name", "path_name", "start", "end"], column_types: ["text", "text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw" ("repo_name", "path_name", "start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "repo_name", "path_name", "start", "end"`, arrival_del_sql: `DELETE FROM "raw" WHERE ("repo_name", "path_name", "start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "repo_name", "path_name", "start", "end"`, boundary_sql: `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw" WHERE "_sign" IN (-1, 1) GROUP BY "repo_name", "path_name", "start", "end", "_sign"`, rule_observers: ["file/2", "fpath/1", "repo/1", "span/3"] },
-  { rel: "repo", kind: "set", table_name: "repo", delta_table_name: "__delta_repo", frontier_table_name: "__frontier_repo", next_frontier_table_name: "__next_frontier_repo", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["file/2"] },
+  { rel: "raw", kind: "set", table_name: "raw", delta_table_name: "__delta_raw", frontier_table_name: "__frontier_raw", next_frontier_table_name: "__next_frontier_raw", columns: ["repo_name", "path_name", "start", "end"], column_types: ["text", "text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw" ("repo_name", "path_name", "start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "repo_name", "path_name", "start", "end"`, arrival_del_sql: `DELETE FROM "raw" WHERE ("repo_name", "path_name", "start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "repo_name", "path_name", "start", "end"`, boundary_sql: `SELECT CASE WHEN json_valid("repo_name") AND json_type("repo_name") = 'object' AND json_type("repo_name", '$.fn') = 'text' AND json_type("repo_name", '$.args') = 'array' THEN json_extract("repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo_name", '$.args')), '') || ')' ELSE "repo_name" END AS "repo_name", CASE WHEN json_valid("path_name") AND json_type("path_name") = 'object' AND json_type("path_name", '$.fn') = 'text' AND json_type("path_name", '$.args') = 'array' THEN json_extract("path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path_name", '$.args')), '') || ')' ELSE "path_name" END AS "path_name", "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_raw" WHERE "_sign" IN (-1, 1) GROUP BY "repo_name", "path_name", "start", "end", "_sign"`, rule_observers: ["file/2", "fpath/1", "repo/1", "span/3"] },
+  { rel: "repo", kind: "set", table_name: "repo", delta_table_name: "__delta_repo", frontier_table_name: "__frontier_repo", next_frontier_table_name: "__next_frontier_repo", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["file/2"] },
   { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["file", "start", "end"], column_types: ["ref", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = "file") AS "file", "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "file", "start", "end", "_sign"`, rule_observers: ["hit/1", "miss/1"] },
 ];
 
@@ -377,10 +415,10 @@ INSERT OR IGNORE INTO "repo" ("name") SELECT b0."repo_name" FROM "raw" b0`, supp
 INSERT OR IGNORE INTO "file" ("repo", "at") SELECT b1."__id", b2."__id" FROM "raw" b0, "repo" b1, "fpath" b2 WHERE b1."name" = b0."repo_name" AND b2."name" = b0."path_name"`, support_sql: [`DELETE FROM "__support_next_file"`, `INSERT INTO "__support_next_file" ("repo", "at", "__refcount") SELECT "repo", "at", sum("__refcount") FROM (SELECT b1."__id" AS "repo", b2."__id" AS "at", count(*) AS "__refcount" FROM "raw" b0, "repo" b1, "fpath" b2 WHERE b1."name" = b0."repo_name" AND b2."name" = b0."path_name" GROUP BY b1."__id", b2."__id") GROUP BY "repo", "at"`, `UPDATE "file" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_file" n WHERE n."repo" = h."repo" AND n."at" = h."at"), 0)`, `INSERT INTO "__delta_file" ("_sign", "_sequence", "repo", "at") SELECT -1, row_number() OVER () - 1, "repo", "at" FROM "file" WHERE "__refcount" <= 0`, `DELETE FROM "file" WHERE "__refcount" <= 0`, `DELETE FROM "__new_file"`, `INSERT INTO "__new_file" ("repo", "at", "__refcount") SELECT n."repo", n."at", n."__refcount" FROM "__support_next_file" n LEFT JOIN "file" h ON n."repo" = h."repo" AND n."at" = h."at" WHERE h."repo" IS NULL`, `INSERT INTO "__delta_file" ("_sign", "_sequence", "repo", "at") SELECT 1, "rowid" - 1, "repo", "at" FROM "__new_file"`, `INSERT INTO "__frontier_file" ("_phase", "_sequence", "repo", "at") SELECT ?, "rowid" - 1, "repo", "at" FROM "__new_file"`, `INSERT INTO "__next_frontier_file" ("_phase", "_sequence", "repo", "at") SELECT ?, "rowid" - 1, "repo", "at" FROM "__new_file"`, `INSERT OR IGNORE INTO "file" ("repo", "at", "__refcount") SELECT n."repo", n."at", n."__refcount" FROM "__support_next_file" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
   { head_rel: "span", rule_id: "relation_depth2_literal_leaf_selects_zero_and_one:span/3#1", head_delta_table_name: "__delta_span", head_columns: ["file", "start", "end"], insert_sql: `INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT DISTINCT b0."__id", d0."start", d0."end" FROM "__frontier_raw" d0, "file" b0, "__ref_repo" b1, "__ref_fpath" b2 WHERE d0."_phase" >= 0 AND b1."__id" = b0."repo" AND b1."name" = d0."repo_name" AND b2."__id" = b0."at" AND b2."name" = d0."path_name" UNION ALL SELECT DISTINCT r0."__id", b0."start", b0."end" FROM "__frontier_file" d0, "file" r0, "raw" b0, "__ref_repo" b1, "__ref_fpath" b2 WHERE d0."_phase" >= 0 AND r0."repo" = d0."repo" AND r0."at" = d0."at" AND b1."__id" = d0."repo" AND b1."name" = b0."repo_name" AND b2."__id" = d0."at" AND b2."name" = b0."path_name" RETURNING "file", "start", "end"`, select_sql: `SELECT "file", "start", "end" FROM "span"`, recompute_sql: `DELETE FROM "span";
 INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT b1."__id", b0."start", b0."end" FROM "raw" b0, "file" b1, "__ref_repo" b2, "__ref_fpath" b3 WHERE b2."__id" = b1."repo" AND b2."name" = b0."repo_name" AND b3."__id" = b1."at" AND b3."name" = b0."path_name"`, support_sql: [`DELETE FROM "__support_next_span"`, `INSERT INTO "__support_next_span" ("file", "start", "end", "__refcount") SELECT "file", "start", "end", sum("__refcount") FROM (SELECT b1."__id" AS "file", b0."start" AS "start", b0."end" AS "end", count(*) AS "__refcount" FROM "raw" b0, "file" b1, "__ref_repo" b2, "__ref_fpath" b3 WHERE b2."__id" = b1."repo" AND b2."name" = b0."repo_name" AND b3."__id" = b1."at" AND b3."name" = b0."path_name" GROUP BY b1."__id", b0."start", b0."end") GROUP BY "file", "start", "end"`, `UPDATE "span" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_span" n WHERE n."file" = h."file" AND n."start" = h."start" AND n."end" = h."end"), 0)`, `INSERT INTO "__delta_span" ("_sign", "_sequence", "file", "start", "end") SELECT -1, row_number() OVER () - 1, "file", "start", "end" FROM "span" WHERE "__refcount" <= 0`, `DELETE FROM "span" WHERE "__refcount" <= 0`, `DELETE FROM "__new_span"`, `INSERT INTO "__new_span" ("file", "start", "end", "__refcount") SELECT n."file", n."start", n."end", n."__refcount" FROM "__support_next_span" n LEFT JOIN "span" h ON n."file" = h."file" AND n."start" = h."start" AND n."end" = h."end" WHERE h."file" IS NULL`, `INSERT INTO "__delta_span" ("_sign", "_sequence", "file", "start", "end") SELECT 1, "rowid" - 1, "file", "start", "end" FROM "__new_span"`, `INSERT INTO "__frontier_span" ("_phase", "_sequence", "file", "start", "end") SELECT ?, "rowid" - 1, "file", "start", "end" FROM "__new_span"`, `INSERT INTO "__next_frontier_span" ("_phase", "_sequence", "file", "start", "end") SELECT ?, "rowid" - 1, "file", "start", "end" FROM "__new_span"`, `INSERT OR IGNORE INTO "span" ("file", "start", "end", "__refcount") SELECT n."file", n."start", n."end", n."__refcount" FROM "__support_next_span" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
-  { head_rel: "hit", rule_id: "relation_depth2_literal_leaf_selects_zero_and_one:hit/1#1", head_delta_table_name: "__delta_hit", head_columns: ["start"], insert_sql: `INSERT OR IGNORE INTO "hit" ("start") SELECT DISTINCT d0."start" FROM "__frontier_span" d0, "__ref_repo" b0, "__ref_file" b1 WHERE d0."_phase" >= 0 AND b0."name" = 'acme' AND b1."__id" = d0."file" AND b1."repo" = b0."__id" RETURNING "start"`, select_sql: `SELECT "start" FROM "hit"`, recompute_sql: `DELETE FROM "hit";
-INSERT OR IGNORE INTO "hit" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = 'acme' AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`, support_sql: [`DELETE FROM "__support_next_hit"`, `INSERT INTO "__support_next_hit" ("start", "__refcount") SELECT "start", sum("__refcount") FROM (SELECT b0."start" AS "start", count(*) AS "__refcount" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = 'acme' AND b2."__id" = b0."file" AND b2."repo" = b1."__id" GROUP BY b0."start") GROUP BY "start"`, `UPDATE "hit" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_hit" n WHERE n."start" = h."start"), 0)`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "start") SELECT -1, row_number() OVER () - 1, "start" FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "__new_hit"`, `INSERT INTO "__new_hit" ("start", "__refcount") SELECT n."start", n."__refcount" FROM "__support_next_hit" n LEFT JOIN "hit" h ON n."start" = h."start" WHERE h."start" IS NULL`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "start") SELECT 1, "rowid" - 1, "start" FROM "__new_hit"`, `INSERT INTO "__frontier_hit" ("_phase", "_sequence", "start") SELECT ?, "rowid" - 1, "start" FROM "__new_hit"`, `INSERT INTO "__next_frontier_hit" ("_phase", "_sequence", "start") SELECT ?, "rowid" - 1, "start" FROM "__new_hit"`, `INSERT OR IGNORE INTO "hit" ("start", "__refcount") SELECT n."start", n."__refcount" FROM "__support_next_hit" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
-  { head_rel: "miss", rule_id: "relation_depth2_literal_leaf_selects_zero_and_one:miss/1#1", head_delta_table_name: "__delta_miss", head_columns: ["start"], insert_sql: `INSERT OR IGNORE INTO "miss" ("start") SELECT DISTINCT d0."start" FROM "__frontier_span" d0, "__ref_repo" b0, "__ref_file" b1 WHERE d0."_phase" >= 0 AND b0."name" = 'globex' AND b1."__id" = d0."file" AND b1."repo" = b0."__id" RETURNING "start"`, select_sql: `SELECT "start" FROM "miss"`, recompute_sql: `DELETE FROM "miss";
-INSERT OR IGNORE INTO "miss" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = 'globex' AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`, support_sql: [`DELETE FROM "__support_next_miss"`, `INSERT INTO "__support_next_miss" ("start", "__refcount") SELECT "start", sum("__refcount") FROM (SELECT b0."start" AS "start", count(*) AS "__refcount" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = 'globex' AND b2."__id" = b0."file" AND b2."repo" = b1."__id" GROUP BY b0."start") GROUP BY "start"`, `UPDATE "miss" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_miss" n WHERE n."start" = h."start"), 0)`, `INSERT INTO "__delta_miss" ("_sign", "_sequence", "start") SELECT -1, row_number() OVER () - 1, "start" FROM "miss" WHERE "__refcount" <= 0`, `DELETE FROM "miss" WHERE "__refcount" <= 0`, `DELETE FROM "__new_miss"`, `INSERT INTO "__new_miss" ("start", "__refcount") SELECT n."start", n."__refcount" FROM "__support_next_miss" n LEFT JOIN "miss" h ON n."start" = h."start" WHERE h."start" IS NULL`, `INSERT INTO "__delta_miss" ("_sign", "_sequence", "start") SELECT 1, "rowid" - 1, "start" FROM "__new_miss"`, `INSERT INTO "__frontier_miss" ("_phase", "_sequence", "start") SELECT ?, "rowid" - 1, "start" FROM "__new_miss"`, `INSERT INTO "__next_frontier_miss" ("_phase", "_sequence", "start") SELECT ?, "rowid" - 1, "start" FROM "__new_miss"`, `INSERT OR IGNORE INTO "miss" ("start", "__refcount") SELECT n."start", n."__refcount" FROM "__support_next_miss" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "hit", rule_id: "relation_depth2_literal_leaf_selects_zero_and_one:hit/1#1", head_delta_table_name: "__delta_hit", head_columns: ["start"], insert_sql: `INSERT OR IGNORE INTO "hit" ("start") SELECT DISTINCT d0."start" FROM "__frontier_span" d0, "__ref_repo" b0, "__ref_file" b1 WHERE d0."_phase" >= 0 AND b0."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acme') AND b1."__id" = d0."file" AND b1."repo" = b0."__id" RETURNING "start"`, select_sql: `SELECT "start" FROM "hit"`, recompute_sql: `DELETE FROM "hit";
+INSERT OR IGNORE INTO "hit" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acme') AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`, support_sql: [`DELETE FROM "__support_next_hit"`, `INSERT INTO "__support_next_hit" ("start", "__refcount") SELECT "start", sum("__refcount") FROM (SELECT b0."start" AS "start", count(*) AS "__refcount" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acme') AND b2."__id" = b0."file" AND b2."repo" = b1."__id" GROUP BY b0."start") GROUP BY "start"`, `UPDATE "hit" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_hit" n WHERE n."start" = h."start"), 0)`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "start") SELECT -1, row_number() OVER () - 1, "start" FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "__new_hit"`, `INSERT INTO "__new_hit" ("start", "__refcount") SELECT n."start", n."__refcount" FROM "__support_next_hit" n LEFT JOIN "hit" h ON n."start" = h."start" WHERE h."start" IS NULL`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "start") SELECT 1, "rowid" - 1, "start" FROM "__new_hit"`, `INSERT INTO "__frontier_hit" ("_phase", "_sequence", "start") SELECT ?, "rowid" - 1, "start" FROM "__new_hit"`, `INSERT INTO "__next_frontier_hit" ("_phase", "_sequence", "start") SELECT ?, "rowid" - 1, "start" FROM "__new_hit"`, `INSERT OR IGNORE INTO "hit" ("start", "__refcount") SELECT n."start", n."__refcount" FROM "__support_next_hit" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "miss", rule_id: "relation_depth2_literal_leaf_selects_zero_and_one:miss/1#1", head_delta_table_name: "__delta_miss", head_columns: ["start"], insert_sql: `INSERT OR IGNORE INTO "miss" ("start") SELECT DISTINCT d0."start" FROM "__frontier_span" d0, "__ref_repo" b0, "__ref_file" b1 WHERE d0."_phase" >= 0 AND b0."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'globex') AND b1."__id" = d0."file" AND b1."repo" = b0."__id" RETURNING "start"`, select_sql: `SELECT "start" FROM "miss"`, recompute_sql: `DELETE FROM "miss";
+INSERT OR IGNORE INTO "miss" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'globex') AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`, support_sql: [`DELETE FROM "__support_next_miss"`, `INSERT INTO "__support_next_miss" ("start", "__refcount") SELECT "start", sum("__refcount") FROM (SELECT b0."start" AS "start", count(*) AS "__refcount" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'globex') AND b2."__id" = b0."file" AND b2."repo" = b1."__id" GROUP BY b0."start") GROUP BY "start"`, `UPDATE "miss" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_miss" n WHERE n."start" = h."start"), 0)`, `INSERT INTO "__delta_miss" ("_sign", "_sequence", "start") SELECT -1, row_number() OVER () - 1, "start" FROM "miss" WHERE "__refcount" <= 0`, `DELETE FROM "miss" WHERE "__refcount" <= 0`, `DELETE FROM "__new_miss"`, `INSERT INTO "__new_miss" ("start", "__refcount") SELECT n."start", n."__refcount" FROM "__support_next_miss" n LEFT JOIN "miss" h ON n."start" = h."start" WHERE h."start" IS NULL`, `INSERT INTO "__delta_miss" ("_sign", "_sequence", "start") SELECT 1, "rowid" - 1, "start" FROM "__new_miss"`, `INSERT INTO "__frontier_miss" ("_phase", "_sequence", "start") SELECT ?, "rowid" - 1, "start" FROM "__new_miss"`, `INSERT INTO "__next_frontier_miss" ("_phase", "_sequence", "start") SELECT ?, "rowid" - 1, "start" FROM "__new_miss"`, `INSERT OR IGNORE INTO "miss" ("start", "__refcount") SELECT n."start", n."__refcount" FROM "__support_next_miss" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
@@ -393,9 +431,9 @@ INSERT OR IGNORE INTO "file" ("repo", "at") SELECT b1."__id", b2."__id" FROM "ra
 DELETE FROM "span";
 INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT b1."__id", b0."start", b0."end" FROM "raw" b0, "file" b1, "__ref_repo" b2, "__ref_fpath" b3 WHERE b2."__id" = b1."repo" AND b2."name" = b0."repo_name" AND b3."__id" = b1."at" AND b3."name" = b0."path_name";
 DELETE FROM "hit";
-INSERT OR IGNORE INTO "hit" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = 'acme' AND b2."__id" = b0."file" AND b2."repo" = b1."__id";
+INSERT OR IGNORE INTO "hit" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acme') AND b2."__id" = b0."file" AND b2."repo" = b1."__id";
 DELETE FROM "miss";
-INSERT OR IGNORE INTO "miss" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = 'globex' AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`;
+INSERT OR IGNORE INTO "miss" ("start") SELECT b0."start" FROM "span" b0, "__ref_repo" b1, "__ref_file" b2 WHERE b1."name" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'globex') AND b2."__id" = b0."file" AND b2."repo" = b1."__id"`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -423,8 +461,10 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets),
+      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
     ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
@@ -449,14 +489,17 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS),
+      (targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS), TEXT_INTERN_PLAN,
     ).pipe(map((normalized) => { arrivals = normalized; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -484,7 +527,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "relation_depth2_literal_leaf_selects_zero_and_one",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

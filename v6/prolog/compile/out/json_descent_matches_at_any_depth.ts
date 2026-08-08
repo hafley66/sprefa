@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,34 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "image": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "chart" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TABLE "image" ("repository" TEXT NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repository", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "image" ("repository" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repository", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_image" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repository") AS "repository", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "image" t`,
   `CREATE TEMP TABLE "__delta_chart" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_chart_sign" ON "__delta_chart" ("_sign")`,
   `CREATE INDEX "__delta_chart_group" ON "__delta_chart" ("body")`,
   `CREATE TEMP TABLE "__frontier_chart" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_chart_phase" ON "__frontier_chart" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_chart" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__delta_image" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_image" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_image_sign" ON "__delta_image" ("_sign")`,
   `CREATE INDEX "__delta_image_group" ON "__delta_image" ("repository", "tag")`,
-  `CREATE TEMP TABLE "__frontier_image" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_image" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_image_phase" ON "__frontier_image" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_image" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" TEXT NOT NULL, "tag" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_image" ("repository" TEXT NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("repository", "tag")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_image" ("repository" TEXT NOT NULL, "tag" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_image" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repository" INTEGER NOT NULL, "tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_image" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repository") AS "repository", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_image" t`,
+  `CREATE TEMP TABLE "__support_next_image" ("repository" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("repository", "tag")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_image" ("repository" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "image_zero" ON "image" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -187,7 +200,8 @@ const arrival_targets: readonly string[] = ["chart"];
 const boot: readonly IBootStatement[] = [
   { rel: "chart", sql: `INSERT OR IGNORE INTO "chart" ("body") VALUES (?)`, params: ["{\"sidecar\":{\"image\":{\"repository\":\"envoy\",\"tag\":\"2.0\"}},\"spec\":{\"template\":{\"image\":{\"repository\":\"nginx\",\"tag\":\"1.2\"}}}}"] },
   { rel: "image", sql: `DELETE FROM "image"`, params: [] },
-  { rel: "image", sql: `INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT json_extract(j0.value, '$."image"."repository"'), json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`, params: [] },
+  { rel: "image", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`, params: [] },
+  { rel: "image", sql: `INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`, params: [] },
 ];
 
 type Snapshot = {
@@ -198,13 +212,26 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     chart: select_rows(seam, `SELECT "body" FROM "chart"`, rel_columns.chart!, rel_column_types.chart!),
-    image: select_rows(seam, `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "image"`, rel_columns.image!, rel_column_types.image!),
+    image: select_rows(seam, `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_image"`, rel_columns.image!, rel_column_types.image!),
   });
+}
+
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    chart: select_rows(seam, `SELECT "body" FROM "chart"`, rel_columns.chart!, rel_column_types.chart!),
+    image: select_rows(seam, `SELECT "repository", "tag" FROM "image"`, rel_columns.image!, rel_column_types.image!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
 }
 
 const final_select: Record<string, string> = {
   chart: `SELECT "body" FROM "chart"`,
-  image: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "image"`,
+  image: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_image"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -235,20 +262,22 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "chart", kind: "set", table_name: "chart", delta_table_name: "__delta_chart", frontier_table_name: "__frontier_chart", next_frontier_table_name: "__next_frontier_chart", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "chart" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "chart" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_chart" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["image/2"] },
-  { rel: "image", kind: "set", table_name: "image", delta_table_name: "__delta_image", frontier_table_name: "__frontier_image", next_frontier_table_name: "__next_frontier_image", columns: ["repository", "tag"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_image" WHERE "_sign" IN (-1, 1) GROUP BY "repository", "tag", "_sign"`, rule_observers: [] },
+  { rel: "image", kind: "set", table_name: "image", delta_table_name: "__delta_image", frontier_table_name: "__frontier_image", next_frontier_table_name: "__next_frontier_image", columns: ["repository", "tag"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repository") AND json_type("repository") = 'object' AND json_type("repository", '$.fn') = 'text' AND json_type("repository", '$.args') = 'array' THEN json_extract("repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repository", '$.args')), '') || ')' ELSE "repository" END AS "repository", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_image" WHERE "_sign" IN (-1, 1) GROUP BY "repository", "tag", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "image", rule_id: "json_descent_matches_at_any_depth:image/2#1", head_delta_table_name: "__delta_image", head_columns: ["repository", "tag"], insert_sql: `INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"'), json_extract(j0.value, '$."image"."tag"') FROM "__frontier_chart" d0, json_tree(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL RETURNING "repository", "tag"`, select_sql: `SELECT "repository", "tag" FROM "image"`, recompute_sql: `DELETE FROM "image";
-INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT json_extract(j0.value, '$."image"."repository"'), json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_image"`, `INSERT INTO "__support_next_image" ("repository", "tag", "__refcount") SELECT "repository", "tag", sum("__refcount") FROM (SELECT json_extract(j0.value, '$."image"."repository"') AS "repository", json_extract(j0.value, '$."image"."tag"') AS "tag", count(*) AS "__refcount" FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL GROUP BY json_extract(j0.value, '$."image"."repository"'), json_extract(j0.value, '$."image"."tag"')) GROUP BY "repository", "tag"`, `UPDATE "image" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_image" n WHERE n."repository" = h."repository" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_image" ("_sign", "_sequence", "repository", "tag") SELECT -1, row_number() OVER () - 1, "repository", "tag" FROM "image" WHERE "__refcount" <= 0`, `DELETE FROM "image" WHERE "__refcount" <= 0`, `DELETE FROM "__new_image"`, `INSERT INTO "__new_image" ("repository", "tag", "__refcount") SELECT n."repository", n."tag", n."__refcount" FROM "__support_next_image" n LEFT JOIN "image" h ON n."repository" = h."repository" AND n."tag" = h."tag" WHERE h."repository" IS NULL`, `INSERT INTO "__delta_image" ("_sign", "_sequence", "repository", "tag") SELECT 1, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT INTO "__frontier_image" ("_phase", "_sequence", "repository", "tag") SELECT ?, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT INTO "__next_frontier_image" ("_phase", "_sequence", "repository", "tag") SELECT ?, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT OR IGNORE INTO "image" ("repository", "tag", "__refcount") SELECT n."repository", n."tag", n."__refcount" FROM "__support_next_image" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "image", rule_id: "json_descent_matches_at_any_depth:image/2#1", head_delta_table_name: "__delta_image", head_columns: ["repository", "tag"], insert_sql: `INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) FROM "__frontier_chart" d0, json_tree(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL RETURNING "repository", "tag"`, select_sql: `SELECT "repository", "tag" FROM "image"`, recompute_sql: `DELETE FROM "image";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL;
+INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_image"`, `INSERT INTO "__support_next_image" ("repository", "tag", "__refcount") SELECT "repository", "tag", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')) AS "repository", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) AS "tag", count(*) AS "__refcount" FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL GROUP BY json_extract(j0.value, '$."image"."repository"'), json_extract(j0.value, '$."image"."tag"')) GROUP BY "repository", "tag"`, `UPDATE "image" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_image" n WHERE n."repository" = h."repository" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_image" ("_sign", "_sequence", "repository", "tag") SELECT -1, row_number() OVER () - 1, "repository", "tag" FROM "image" WHERE "__refcount" <= 0`, `DELETE FROM "image" WHERE "__refcount" <= 0`, `DELETE FROM "__new_image"`, `INSERT INTO "__new_image" ("repository", "tag", "__refcount") SELECT n."repository", n."tag", n."__refcount" FROM "__support_next_image" n LEFT JOIN "image" h ON n."repository" = h."repository" AND n."tag" = h."tag" WHERE h."repository" IS NULL`, `INSERT INTO "__delta_image" ("_sign", "_sequence", "repository", "tag") SELECT 1, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT INTO "__frontier_image" ("_phase", "_sequence", "repository", "tag") SELECT ?, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT INTO "__next_frontier_image" ("_phase", "_sequence", "repository", "tag") SELECT ?, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT OR IGNORE INTO "image" ("repository", "tag", "__refcount") SELECT n."repository", n."tag", n."__refcount" FROM "__support_next_image" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"') FROM "__frontier_chart" d0, json_tree(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."image"."tag"') FROM "__frontier_chart" d0, json_tree(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`] },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "image";
-INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT json_extract(j0.value, '$."image"."repository"'), json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL;
+INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -266,6 +295,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -289,11 +320,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -321,7 +355,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_descent_matches_at_any_depth",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

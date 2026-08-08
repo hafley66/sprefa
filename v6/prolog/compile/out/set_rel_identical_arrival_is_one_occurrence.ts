@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,21 +155,35 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "ev": [true],
+    "fired": [true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "ev" ("name" TEXT NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
-  `CREATE TABLE "fired" ("name" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "ev" ("name" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "ev" t`,
+  `CREATE TABLE "fired" ("name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_fired" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "fired" t`,
+  `CREATE TEMP TABLE "__delta_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_ev_sign" ON "__delta_ev" ("_sign")`,
   `CREATE INDEX "__delta_ev_group" ON "__delta_ev" ("name")`,
-  `CREATE TEMP TABLE "__frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_ev_phase" ON "__frontier_ev" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_fired" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_ev" t`,
+  `CREATE TEMP TABLE "__delta_fired" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_fired_sign" ON "__delta_fired" ("_sign")`,
   `CREATE INDEX "__delta_fired_group" ON "__delta_fired" ("name")`,
-  `CREATE TEMP TABLE "__frontier_fired" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_fired" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_fired_phase" ON "__frontier_fired" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_fired" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_fired" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_fired" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_fired" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -208,14 +224,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    ev: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "ev"`, rel_columns.ev!, rel_column_types.ev!),
-    fired: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "fired"`, rel_columns.fired!, rel_column_types.fired!),
+    ev: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_ev"`, rel_columns.ev!, rel_column_types.ev!),
+    fired: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_fired"`, rel_columns.fired!, rel_column_types.fired!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    ev: select_rows(seam, `SELECT "name" FROM "ev"`, rel_columns.ev!, rel_column_types.ev!),
+    fired: select_rows(seam, `SELECT "name" FROM "fired"`, rel_columns.fired!, rel_column_types.fired!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  ev: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "ev"`,
-  fired: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "fired"`,
+  ev: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_ev"`,
+  fired: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_fired"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -245,8 +274,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "ev", kind: "set", table_name: "ev", delta_table_name: "__delta_ev", frontier_table_name: "__frontier_ev", next_frontier_table_name: "__next_frontier_ev", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "ev" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "ev" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ev" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["fired/1"] },
-  { rel: "fired", kind: "log", table_name: "fired", delta_table_name: "__delta_fired", frontier_table_name: "__frontier_fired", next_frontier_table_name: "__next_frontier_fired", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_fired" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: [] },
+  { rel: "ev", kind: "set", table_name: "ev", delta_table_name: "__delta_ev", frontier_table_name: "__frontier_ev", next_frontier_table_name: "__next_frontier_ev", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "ev" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "ev" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_ev" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["fired/1"] },
+  { rel: "fired", kind: "log", table_name: "fired", delta_table_name: "__delta_fired", frontier_table_name: "__frontier_fired", next_frontier_table_name: "__next_frontier_fired", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fired" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -295,17 +324,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      resolveFired_0Writes(seam, before, arrivals).pipe(
+      resolveFired_0Writes(seam, before.stored, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // set_rel_identical_arrival_is_one_occurrence: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -326,6 +357,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -360,7 +393,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "set_rel_identical_arrival_is_one_occurrence",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

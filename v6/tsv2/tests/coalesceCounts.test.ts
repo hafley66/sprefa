@@ -107,7 +107,7 @@ function arrivals(repo_count: number): readonly IArrivalRow[] {
  *  JS, then 35 -> 37 when the antijoin was materialized once into a scratch
  *  table so three staging reads share it. Constant statements, and the tick
  *  went 2,771 ms to 2,166 ms on grid_10000. */
-const STATEMENTS_PER_TICK = 37;
+const STATEMENTS_PER_TICK = 39;
 
 async function run_one_tick(repo_count: number) {
   const seam = ScratchStore.open(":memory:");

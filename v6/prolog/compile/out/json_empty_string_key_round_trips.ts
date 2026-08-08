@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,34 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "pair": [true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "pair" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "pair" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_pair" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value", t."__refcount" AS "__refcount" FROM "pair" t`,
   `CREATE TABLE "raw_doc" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_pair" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_pair" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_pair_sign" ON "__delta_pair" ("_sign")`,
   `CREATE INDEX "__delta_pair_group" ON "__delta_pair" ("name", "value")`,
-  `CREATE TEMP TABLE "__frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_pair_phase" ON "__frontier_pair" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_pair" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_pair" t`,
   `CREATE TEMP TABLE "__delta_raw_doc" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_raw_doc_sign" ON "__delta_raw_doc" ("_sign")`,
   `CREATE INDEX "__delta_raw_doc_group" ON "__delta_raw_doc" ("body")`,
   `CREATE TEMP TABLE "__frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_raw_doc_phase" ON "__frontier_raw_doc" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_raw_doc" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__support_next_pair" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_pair" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_pair" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_pair" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "pair_zero" ON "pair" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -188,7 +201,8 @@ const arrival_targets: readonly string[] = ["raw_doc"];
 const boot: readonly IBootStatement[] = [
   { rel: "raw_doc", sql: `INSERT OR IGNORE INTO "raw_doc" ("body") VALUES (?)`, params: ["{\"\":7,\"a\":8}"] },
   { rel: "pair", sql: `DELETE FROM "pair"`, params: [] },
-  { rel: "pair", sql: `INSERT OR IGNORE INTO "pair" ("name", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, params: [] },
+  { rel: "pair", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, params: [] },
+  { rel: "pair", sql: `INSERT OR IGNORE INTO "pair" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, params: [] },
 ];
 
 type Snapshot = {
@@ -198,13 +212,26 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    pair: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value" FROM "pair"`, rel_columns.pair!, rel_column_types.pair!),
+    pair: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value" FROM "__txt_pair"`, rel_columns.pair!, rel_column_types.pair!),
     raw_doc: select_rows(seam, `SELECT "body" FROM "raw_doc"`, rel_columns.raw_doc!, rel_column_types.raw_doc!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    pair: select_rows(seam, `SELECT "name", "value" FROM "pair"`, rel_columns.pair!, rel_column_types.pair!),
+    raw_doc: select_rows(seam, `SELECT "body" FROM "raw_doc"`, rel_columns.raw_doc!, rel_column_types.raw_doc!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  pair: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value" FROM "pair"`,
+  pair: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value" FROM "__txt_pair"`,
   raw_doc: `SELECT "body" FROM "raw_doc"`,
 };
 
@@ -235,7 +262,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "pair", kind: "set", table_name: "pair", delta_table_name: "__delta_pair", frontier_table_name: "__frontier_pair", next_frontier_table_name: "__next_frontier_pair", columns: ["name", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pair" WHERE "_sign" IN (-1, 1) GROUP BY "name", "value", "_sign"`, rule_observers: [] },
+  { rel: "pair", kind: "set", table_name: "pair", delta_table_name: "__delta_pair", frontier_table_name: "__frontier_pair", next_frontier_table_name: "__next_frontier_pair", columns: ["name", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_pair" WHERE "_sign" IN (-1, 1) GROUP BY "name", "value", "_sign"`, rule_observers: [] },
   { rel: "raw_doc", kind: "set", table_name: "raw_doc", delta_table_name: "__delta_raw_doc", frontier_table_name: "__frontier_raw_doc", next_frontier_table_name: "__next_frontier_raw_doc", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw_doc" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["pair/2"] },
 ];
 
@@ -243,13 +270,15 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "pair", rule_id: "json_empty_string_key_round_trips:pair/2#1", head_delta_table_name: "__delta_pair", head_columns: ["name", "value"], insert_sql: `INSERT OR IGNORE INTO "pair" ("name", "value") SELECT DISTINCT j0.key, j0.value FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL RETURNING "name", "value"`, select_sql: `SELECT "name", "value" FROM "pair"`, recompute_sql: `DELETE FROM "pair";
-INSERT OR IGNORE INTO "pair" ("name", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_pair"`, `INSERT INTO "__support_next_pair" ("name", "value", "__refcount") SELECT "name", "value", sum("__refcount") FROM (SELECT j0.key AS "name", j0.value AS "value", count(*) AS "__refcount" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key, j0.value) GROUP BY "name", "value"`, `UPDATE "pair" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pair" n WHERE n."name" = h."name" AND n."value" = h."value"), 0)`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "name", "value") SELECT -1, row_number() OVER () - 1, "name", "value" FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pair"`, `INSERT INTO "__new_pair" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_pair" n LEFT JOIN "pair" h ON n."name" = h."name" AND n."value" = h."value" WHERE h."name" IS NULL`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "name", "value") SELECT 1, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT INTO "__frontier_pair" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT INTO "__next_frontier_pair" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT OR IGNORE INTO "pair" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_pair" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "pair", rule_id: "json_empty_string_key_round_trips:pair/2#1", head_delta_table_name: "__delta_pair", head_columns: ["name", "value"], insert_sql: `INSERT OR IGNORE INTO "pair" ("name", "value") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), j0.value FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL RETURNING "name", "value"`, select_sql: `SELECT "name", "value" FROM "pair"`, recompute_sql: `DELETE FROM "pair";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL;
+INSERT OR IGNORE INTO "pair" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_pair"`, `INSERT INTO "__support_next_pair" ("name", "value", "__refcount") SELECT "name", "value", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key) AS "name", j0.value AS "value", count(*) AS "__refcount" FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL GROUP BY j0.key, j0.value) GROUP BY "name", "value"`, `UPDATE "pair" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pair" n WHERE n."name" = h."name" AND n."value" = h."value"), 0)`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "name", "value") SELECT -1, row_number() OVER () - 1, "name", "value" FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "pair" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pair"`, `INSERT INTO "__new_pair" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_pair" n LEFT JOIN "pair" h ON n."name" = h."name" AND n."value" = h."value" WHERE h."name" IS NULL`, `INSERT INTO "__delta_pair" ("_sign", "_sequence", "name", "value") SELECT 1, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT INTO "__frontier_pair" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT INTO "__next_frontier_pair" ("_phase", "_sequence", "name", "value") SELECT ?, "rowid" - 1, "name", "value" FROM "__new_pair"`, `INSERT OR IGNORE INTO "pair" ("name", "value", "__refcount") SELECT n."name", n."value", n."__refcount" FROM "__support_next_pair" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "__frontier_raw_doc" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.value IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`] },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "pair";
-INSERT OR IGNORE INTO "pair" ("name", "value") SELECT j0.key, j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL;
+INSERT OR IGNORE INTO "pair" ("name", "value") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), j0.value FROM "raw_doc" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.value IS NOT NULL`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -267,6 +296,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -290,11 +321,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -322,7 +356,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_empty_string_key_round_trips",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

@@ -23,6 +23,7 @@ import { IncrementalRuntime, stage_ordered_frontiers } from "../runtime/1_increm
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,22 +155,36 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "arrive": [false, true],
+    "thing": [false, true, false, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "arrive" ("id" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
-  `CREATE TABLE "thing" ("id" INTEGER NOT NULL, "payload" TEXT NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_arrive" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "arrive" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_arrive" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "arrive" t`,
+  `CREATE TABLE "thing" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_thing" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."born" AS "born", t."tick" AS "tick" FROM "thing" t`,
+  `CREATE TEMP TABLE "__delta_arrive" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_arrive_sign" ON "__delta_arrive" ("_sign")`,
   `CREATE INDEX "__delta_arrive_group" ON "__delta_arrive" ("id", "payload")`,
-  `CREATE TEMP TABLE "__frontier_arrive" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_arrive" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_arrive_phase" ON "__frontier_arrive" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_arrive" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_thing" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" TEXT NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_arrive" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_arrive" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_arrive" t`,
+  `CREATE TEMP TABLE "__delta_thing" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_thing_sign" ON "__delta_thing" ("_sign")`,
   `CREATE INDEX "__delta_thing_group" ON "__delta_thing" ("id", "payload", "born", "tick")`,
-  `CREATE TEMP TABLE "__frontier_thing" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" TEXT NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_thing" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_thing_phase" ON "__frontier_thing" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_thing" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" TEXT NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__pre_thing" ("id" INTEGER NOT NULL, "payload" TEXT NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__next_frontier_thing" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_thing" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."born" AS "born", t."tick" AS "tick", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_thing" t`,
+  `CREATE TEMP TABLE "__pre_thing" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
   `CREATE TABLE "__tick" ("n" INTEGER NOT NULL)`,
   `INSERT INTO "__tick" ("n") SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM "__tick")`,
 ];
@@ -215,14 +231,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrive: select_rows(seam, `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "arrive"`, rel_columns.arrive!, rel_column_types.arrive!),
-    thing: select_rows(seam, `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "born", "tick" FROM "thing"`, rel_columns.thing!, rel_column_types.thing!),
+    arrive: select_rows(seam, `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_arrive"`, rel_columns.arrive!, rel_column_types.arrive!),
+    thing: select_rows(seam, `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "born", "tick" FROM "__txt_thing"`, rel_columns.thing!, rel_column_types.thing!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    arrive: select_rows(seam, `SELECT "id", "payload" FROM "arrive"`, rel_columns.arrive!, rel_column_types.arrive!),
+    thing: select_rows(seam, `SELECT "id", "payload", "born", "tick" FROM "thing"`, rel_columns.thing!, rel_column_types.thing!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  arrive: `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "arrive"`,
-  thing: `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "born", "tick" FROM "thing"`,
+  arrive: `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_arrive"`,
+  thing: `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "born", "tick" FROM "__txt_thing"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -252,8 +281,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "arrive", kind: "log", table_name: "arrive", delta_table_name: "__delta_arrive", frontier_table_name: "__frontier_arrive", next_frontier_table_name: "__next_frontier_arrive", columns: ["id", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "arrive" ("id", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payload"`, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_arrive" WHERE "_sign" IN (-1, 1) GROUP BY "id", "payload", "_sign"`, rule_observers: ["thing/4"] },
-  { rel: "thing", kind: "set", table_name: "thing", delta_table_name: "__delta_thing", frontier_table_name: "__frontier_thing", next_frontier_table_name: "__next_frontier_thing", columns: ["id", "payload", "born", "tick"], column_types: ["int", "text", "int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "born", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_thing" WHERE "_sign" IN (-1, 1) GROUP BY "id", "payload", "born", "tick", "_sign"`, rule_observers: [] },
+  { rel: "arrive", kind: "log", table_name: "arrive", delta_table_name: "__delta_arrive", frontier_table_name: "__frontier_arrive", next_frontier_table_name: "__next_frontier_arrive", columns: ["id", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "arrive" ("id", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payload"`, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_arrive" WHERE "_sign" IN (-1, 1) GROUP BY "id", "payload", "_sign"`, rule_observers: ["thing/4"] },
+  { rel: "thing", kind: "set", table_name: "thing", delta_table_name: "__delta_thing", frontier_table_name: "__frontier_thing", next_frontier_table_name: "__next_frontier_thing", columns: ["id", "payload", "born", "tick"], column_types: ["int", "text", "int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "born", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_thing" WHERE "_sign" IN (-1, 1) GROUP BY "id", "payload", "born", "tick", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -471,34 +500,38 @@ function advance_tick(seam: ISqlSeam): Observable<void> {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
     concatMap((before) => advance_tick(seam).pipe(map(() => before))),
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveThing_0Writes(seam, before, arrivals), resolveThing_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveThing_0Writes(seam, before.stored, arrivals), resolveThing_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // created_at_pinned_updated_at_advances: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
 
 function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
     concatMap((before) => advance_tick(seam).pipe(map(() => before))),
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => snapshot_ordered_pre(seam).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((mid) => ({ before, mid })))),
-    concatMap(({ before, mid }) => process_ordered_occurrences(seam, before, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
+    concatMap((before) => read_stored_snapshot(seam).pipe(map((mid) => ({ before, mid })))),
+    concatMap(({ before, mid }) => process_ordered_occurrences(seam, before.stored, mid, arrivals).pipe(map((written) => ({ before, mid, written })))),
     concatMap(({ before, mid, written }) => recompute_levels(seam).pipe(map(() => ({ before, mid, written })))),
   ).pipe(
-    concatMap(({ before, mid, written }) => read_snapshot(seam).pipe(map((after) => ({ mid, after, written, deltas: build_deltas(before, after) })))),
-    concatMap(({ mid, after, written, deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after, deltas, written)).pipe(
+    concatMap(({ before, mid, written }) => read_snapshots(seam).pipe(map((after) => ({ mid, after, written, deltas: build_deltas(before.decoded, after.decoded), stored_deltas: build_deltas(before.stored, after.stored) })))),
+    concatMap(({ mid, after, written, deltas, stored_deltas }) => stage_ordered_frontiers(seam, INCREMENTAL_RELATIONS, ordered_carry_additions(mid, after.stored, stored_deltas, written)).pipe(
       map((post_write_carry): ITickDeltas => ({ rels: deltas.rels, carry_pending: deltas.carry_pending || post_write_carry })),
     )),
   );
@@ -522,6 +555,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
     concatMap(() => advance_tick(seam)),
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -553,7 +588,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "created_at_pinned_updated_at_advances",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

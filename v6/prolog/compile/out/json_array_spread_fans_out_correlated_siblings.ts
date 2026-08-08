@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,34 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "pull_request": [false, true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "pull_request" ("number" INTEGER NOT NULL, "title" TEXT NOT NULL, "author" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("number", "title", "author")) WITHOUT ROWID`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "pull_request" ("number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("number", "title", "author")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_pull_request" AS SELECT t."number" AS "number", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."title") AS "title", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."author") AS "author", t."__refcount" AS "__refcount" FROM "pull_request" t`,
   `CREATE TABLE "resp" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_pull_request" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL, "title" TEXT NOT NULL, "author" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_pull_request" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_pull_request_sign" ON "__delta_pull_request" ("_sign")`,
   `CREATE INDEX "__delta_pull_request_group" ON "__delta_pull_request" ("number", "title", "author")`,
-  `CREATE TEMP TABLE "__frontier_pull_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL, "title" TEXT NOT NULL, "author" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_pull_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_pull_request_phase" ON "__frontier_pull_request" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_pull_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL, "title" TEXT NOT NULL, "author" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_pull_request" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_pull_request" AS SELECT t."number" AS "number", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."title") AS "title", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."author") AS "author", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_pull_request" t`,
   `CREATE TEMP TABLE "__delta_resp" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_resp_sign" ON "__delta_resp" ("_sign")`,
   `CREATE INDEX "__delta_resp_group" ON "__delta_resp" ("body")`,
   `CREATE TEMP TABLE "__frontier_resp" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_resp_phase" ON "__frontier_resp" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_resp" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__support_next_pull_request" ("number" INTEGER NOT NULL, "title" TEXT NOT NULL, "author" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("number", "title", "author")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_pull_request" ("number" INTEGER NOT NULL, "title" TEXT NOT NULL, "author" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_pull_request" ("number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("number", "title", "author")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_pull_request" ("number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "pull_request_zero" ON "pull_request" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -189,7 +202,8 @@ const arrival_targets: readonly string[] = ["resp"];
 const boot: readonly IBootStatement[] = [
   { rel: "resp", sql: `INSERT OR IGNORE INTO "resp" ("body") VALUES (?)`, params: ["[{\"number\":1,\"title\":\"first\",\"user\":{\"login\":\"octo\"}},{\"number\":2,\"title\":\"second\",\"user\":{\"login\":\"hubot\"}}]"] },
   { rel: "pull_request", sql: `DELETE FROM "pull_request"`, params: [] },
-  { rel: "pull_request", sql: `INSERT OR IGNORE INTO "pull_request" ("number", "title", "author") SELECT json_extract(j0.value, '$."number"'), json_extract(j0.value, '$."title"'), json_extract(j0.value, '$."user"."login"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`, params: [] },
+  { rel: "pull_request", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."title"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."user"."login"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`, params: [] },
+  { rel: "pull_request", sql: `INSERT OR IGNORE INTO "pull_request" ("number", "title", "author") SELECT json_extract(j0.value, '$."number"'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."title"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."user"."login"')) FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`, params: [] },
 ];
 
 type Snapshot = {
@@ -199,13 +213,26 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    pull_request: select_rows(seam, `SELECT "number", CASE WHEN json_valid("title") AND json_type("title") = 'object' AND json_type("title", '$.fn') = 'text' AND json_type("title", '$.args') = 'array' THEN json_extract("title", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("title", '$.args')), '') || ')' ELSE "title" END AS "title", CASE WHEN json_valid("author") AND json_type("author") = 'object' AND json_type("author", '$.fn') = 'text' AND json_type("author", '$.args') = 'array' THEN json_extract("author", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("author", '$.args')), '') || ')' ELSE "author" END AS "author" FROM "pull_request"`, rel_columns.pull_request!, rel_column_types.pull_request!),
+    pull_request: select_rows(seam, `SELECT "number", CASE WHEN json_valid("title") AND json_type("title") = 'object' AND json_type("title", '$.fn') = 'text' AND json_type("title", '$.args') = 'array' THEN json_extract("title", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("title", '$.args')), '') || ')' ELSE "title" END AS "title", CASE WHEN json_valid("author") AND json_type("author") = 'object' AND json_type("author", '$.fn') = 'text' AND json_type("author", '$.args') = 'array' THEN json_extract("author", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("author", '$.args')), '') || ')' ELSE "author" END AS "author" FROM "__txt_pull_request"`, rel_columns.pull_request!, rel_column_types.pull_request!),
     resp: select_rows(seam, `SELECT "body" FROM "resp"`, rel_columns.resp!, rel_column_types.resp!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    pull_request: select_rows(seam, `SELECT "number", "title", "author" FROM "pull_request"`, rel_columns.pull_request!, rel_column_types.pull_request!),
+    resp: select_rows(seam, `SELECT "body" FROM "resp"`, rel_columns.resp!, rel_column_types.resp!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  pull_request: `SELECT "number", CASE WHEN json_valid("title") AND json_type("title") = 'object' AND json_type("title", '$.fn') = 'text' AND json_type("title", '$.args') = 'array' THEN json_extract("title", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("title", '$.args')), '') || ')' ELSE "title" END AS "title", CASE WHEN json_valid("author") AND json_type("author") = 'object' AND json_type("author", '$.fn') = 'text' AND json_type("author", '$.args') = 'array' THEN json_extract("author", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("author", '$.args')), '') || ')' ELSE "author" END AS "author" FROM "pull_request"`,
+  pull_request: `SELECT "number", CASE WHEN json_valid("title") AND json_type("title") = 'object' AND json_type("title", '$.fn') = 'text' AND json_type("title", '$.args') = 'array' THEN json_extract("title", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("title", '$.args')), '') || ')' ELSE "title" END AS "title", CASE WHEN json_valid("author") AND json_type("author") = 'object' AND json_type("author", '$.fn') = 'text' AND json_type("author", '$.args') = 'array' THEN json_extract("author", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("author", '$.args')), '') || ')' ELSE "author" END AS "author" FROM "__txt_pull_request"`,
   resp: `SELECT "body" FROM "resp"`,
 };
 
@@ -236,7 +263,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "pull_request", kind: "set", table_name: "pull_request", delta_table_name: "__delta_pull_request", frontier_table_name: "__frontier_pull_request", next_frontier_table_name: "__next_frontier_pull_request", columns: ["number", "title", "author"], column_types: ["int", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "number", CASE WHEN json_valid("title") AND json_type("title") = 'object' AND json_type("title", '$.fn') = 'text' AND json_type("title", '$.args') = 'array' THEN json_extract("title", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("title", '$.args')), '') || ')' ELSE "title" END AS "title", CASE WHEN json_valid("author") AND json_type("author") = 'object' AND json_type("author", '$.fn') = 'text' AND json_type("author", '$.args') = 'array' THEN json_extract("author", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("author", '$.args')), '') || ')' ELSE "author" END AS "author", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pull_request" WHERE "_sign" IN (-1, 1) GROUP BY "number", "title", "author", "_sign"`, rule_observers: [] },
+  { rel: "pull_request", kind: "set", table_name: "pull_request", delta_table_name: "__delta_pull_request", frontier_table_name: "__frontier_pull_request", next_frontier_table_name: "__next_frontier_pull_request", columns: ["number", "title", "author"], column_types: ["int", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "number", CASE WHEN json_valid("title") AND json_type("title") = 'object' AND json_type("title", '$.fn') = 'text' AND json_type("title", '$.args') = 'array' THEN json_extract("title", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("title", '$.args')), '') || ')' ELSE "title" END AS "title", CASE WHEN json_valid("author") AND json_type("author") = 'object' AND json_type("author", '$.fn') = 'text' AND json_type("author", '$.args') = 'array' THEN json_extract("author", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("author", '$.args')), '') || ')' ELSE "author" END AS "author", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_pull_request" WHERE "_sign" IN (-1, 1) GROUP BY "number", "title", "author", "_sign"`, rule_observers: [] },
   { rel: "resp", kind: "set", table_name: "resp", delta_table_name: "__delta_resp", frontier_table_name: "__frontier_resp", next_frontier_table_name: "__next_frontier_resp", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "resp" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "resp" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_resp" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["pull_request/3"] },
 ];
 
@@ -244,13 +271,15 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "pull_request", rule_id: "json_array_spread_fans_out_correlated_siblings:pull_request/3#1", head_delta_table_name: "__delta_pull_request", head_columns: ["number", "title", "author"], insert_sql: `INSERT OR IGNORE INTO "pull_request" ("number", "title", "author") SELECT DISTINCT json_extract(j0.value, '$."number"'), json_extract(j0.value, '$."title"'), json_extract(j0.value, '$."user"."login"') FROM "__frontier_resp" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL RETURNING "number", "title", "author"`, select_sql: `SELECT "number", "title", "author" FROM "pull_request"`, recompute_sql: `DELETE FROM "pull_request";
-INSERT OR IGNORE INTO "pull_request" ("number", "title", "author") SELECT json_extract(j0.value, '$."number"'), json_extract(j0.value, '$."title"'), json_extract(j0.value, '$."user"."login"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_pull_request"`, `INSERT INTO "__support_next_pull_request" ("number", "title", "author", "__refcount") SELECT "number", "title", "author", sum("__refcount") FROM (SELECT json_extract(j0.value, '$."number"') AS "number", json_extract(j0.value, '$."title"') AS "title", json_extract(j0.value, '$."user"."login"') AS "author", count(*) AS "__refcount" FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL GROUP BY json_extract(j0.value, '$."number"'), json_extract(j0.value, '$."title"'), json_extract(j0.value, '$."user"."login"')) GROUP BY "number", "title", "author"`, `UPDATE "pull_request" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pull_request" n WHERE n."number" = h."number" AND n."title" = h."title" AND n."author" = h."author"), 0)`, `INSERT INTO "__delta_pull_request" ("_sign", "_sequence", "number", "title", "author") SELECT -1, row_number() OVER () - 1, "number", "title", "author" FROM "pull_request" WHERE "__refcount" <= 0`, `DELETE FROM "pull_request" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pull_request"`, `INSERT INTO "__new_pull_request" ("number", "title", "author", "__refcount") SELECT n."number", n."title", n."author", n."__refcount" FROM "__support_next_pull_request" n LEFT JOIN "pull_request" h ON n."number" = h."number" AND n."title" = h."title" AND n."author" = h."author" WHERE h."number" IS NULL`, `INSERT INTO "__delta_pull_request" ("_sign", "_sequence", "number", "title", "author") SELECT 1, "rowid" - 1, "number", "title", "author" FROM "__new_pull_request"`, `INSERT INTO "__frontier_pull_request" ("_phase", "_sequence", "number", "title", "author") SELECT ?, "rowid" - 1, "number", "title", "author" FROM "__new_pull_request"`, `INSERT INTO "__next_frontier_pull_request" ("_phase", "_sequence", "number", "title", "author") SELECT ?, "rowid" - 1, "number", "title", "author" FROM "__new_pull_request"`, `INSERT OR IGNORE INTO "pull_request" ("number", "title", "author", "__refcount") SELECT n."number", n."title", n."author", n."__refcount" FROM "__support_next_pull_request" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "pull_request", rule_id: "json_array_spread_fans_out_correlated_siblings:pull_request/3#1", head_delta_table_name: "__delta_pull_request", head_columns: ["number", "title", "author"], insert_sql: `INSERT OR IGNORE INTO "pull_request" ("number", "title", "author") SELECT DISTINCT json_extract(j0.value, '$."number"'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."title"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."user"."login"')) FROM "__frontier_resp" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL RETURNING "number", "title", "author"`, select_sql: `SELECT "number", "title", "author" FROM "pull_request"`, recompute_sql: `DELETE FROM "pull_request";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."title"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."user"."login"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL;
+INSERT OR IGNORE INTO "pull_request" ("number", "title", "author") SELECT json_extract(j0.value, '$."number"'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."title"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."user"."login"')) FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_pull_request"`, `INSERT INTO "__support_next_pull_request" ("number", "title", "author", "__refcount") SELECT "number", "title", "author", sum("__refcount") FROM (SELECT json_extract(j0.value, '$."number"') AS "number", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."title"')) AS "title", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."user"."login"')) AS "author", count(*) AS "__refcount" FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL GROUP BY json_extract(j0.value, '$."number"'), json_extract(j0.value, '$."title"'), json_extract(j0.value, '$."user"."login"')) GROUP BY "number", "title", "author"`, `UPDATE "pull_request" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_pull_request" n WHERE n."number" = h."number" AND n."title" = h."title" AND n."author" = h."author"), 0)`, `INSERT INTO "__delta_pull_request" ("_sign", "_sequence", "number", "title", "author") SELECT -1, row_number() OVER () - 1, "number", "title", "author" FROM "pull_request" WHERE "__refcount" <= 0`, `DELETE FROM "pull_request" WHERE "__refcount" <= 0`, `DELETE FROM "__new_pull_request"`, `INSERT INTO "__new_pull_request" ("number", "title", "author", "__refcount") SELECT n."number", n."title", n."author", n."__refcount" FROM "__support_next_pull_request" n LEFT JOIN "pull_request" h ON n."number" = h."number" AND n."title" = h."title" AND n."author" = h."author" WHERE h."number" IS NULL`, `INSERT INTO "__delta_pull_request" ("_sign", "_sequence", "number", "title", "author") SELECT 1, "rowid" - 1, "number", "title", "author" FROM "__new_pull_request"`, `INSERT INTO "__frontier_pull_request" ("_phase", "_sequence", "number", "title", "author") SELECT ?, "rowid" - 1, "number", "title", "author" FROM "__new_pull_request"`, `INSERT INTO "__next_frontier_pull_request" ("_phase", "_sequence", "number", "title", "author") SELECT ?, "rowid" - 1, "number", "title", "author" FROM "__new_pull_request"`, `INSERT OR IGNORE INTO "pull_request" ("number", "title", "author", "__refcount") SELECT n."number", n."title", n."author", n."__refcount" FROM "__support_next_pull_request" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."title"') FROM "__frontier_resp" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."user"."login"') FROM "__frontier_resp" d0, json_each(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."title"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."user"."login"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`] },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "pull_request";
-INSERT OR IGNORE INTO "pull_request" ("number", "title", "author") SELECT json_extract(j0.value, '$."number"'), json_extract(j0.value, '$."title"'), json_extract(j0.value, '$."user"."login"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."title"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."user"."login"') FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL;
+INSERT OR IGNORE INTO "pull_request" ("number", "title", "author") SELECT json_extract(j0.value, '$."number"'), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."title"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."user"."login"')) FROM "resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."number"') IS NOT NULL AND json_extract(j0.value, '$."title"') IS NOT NULL AND json_type(j0.value, '$."user"') = 'object' AND json_extract(j0.value, '$."user"."login"') IS NOT NULL`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -268,6 +297,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -291,11 +322,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -323,7 +357,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_array_spread_fans_out_correlated_siblings",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

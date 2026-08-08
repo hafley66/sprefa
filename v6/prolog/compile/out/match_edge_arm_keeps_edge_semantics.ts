@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,21 +155,35 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "cache": [true, true],
+    "poll_result": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "cache" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
-  `CREATE TABLE "poll_result" ("key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_cache" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "cache" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_cache" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "cache" t`,
+  `CREATE TABLE "poll_result" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_poll_result" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "poll_result" t`,
+  `CREATE TEMP TABLE "__delta_cache" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_cache_sign" ON "__delta_cache" ("_sign")`,
   `CREATE INDEX "__delta_cache_group" ON "__delta_cache" ("key", "value")`,
-  `CREATE TEMP TABLE "__frontier_cache" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_cache" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_cache_phase" ON "__frontier_cache" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_cache" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_poll_result" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_cache" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_cache" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_cache" t`,
+  `CREATE TEMP TABLE "__delta_poll_result" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_poll_result_sign" ON "__delta_poll_result" ("_sign")`,
   `CREATE INDEX "__delta_poll_result_group" ON "__delta_poll_result" ("key", "value")`,
-  `CREATE TEMP TABLE "__frontier_poll_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_poll_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_poll_result_phase" ON "__frontier_poll_result" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_poll_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_poll_result" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_poll_result" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_poll_result" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -210,14 +226,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    cache: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "cache"`, rel_columns.cache!, rel_column_types.cache!),
-    poll_result: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "poll_result"`, rel_columns.poll_result!, rel_column_types.poll_result!),
+    cache: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_cache"`, rel_columns.cache!, rel_column_types.cache!),
+    poll_result: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_poll_result"`, rel_columns.poll_result!, rel_column_types.poll_result!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    cache: select_rows(seam, `SELECT "key", "value" FROM "cache"`, rel_columns.cache!, rel_column_types.cache!),
+    poll_result: select_rows(seam, `SELECT "key", "value" FROM "poll_result"`, rel_columns.poll_result!, rel_column_types.poll_result!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  cache: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "cache"`,
-  poll_result: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "poll_result"`,
+  cache: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_cache"`,
+  poll_result: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_poll_result"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -247,8 +276,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "cache", kind: "set", table_name: "cache", delta_table_name: "__delta_cache", frontier_table_name: "__frontier_cache", next_frontier_table_name: "__next_frontier_cache", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_cache" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: [] },
-  { rel: "poll_result", kind: "log", table_name: "poll_result", delta_table_name: "__delta_poll_result", frontier_table_name: "__frontier_poll_result", next_frontier_table_name: "__next_frontier_poll_result", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "poll_result" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_poll_result" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: ["cache/2"] },
+  { rel: "cache", kind: "set", table_name: "cache", delta_table_name: "__delta_cache", frontier_table_name: "__frontier_cache", next_frontier_table_name: "__next_frontier_cache", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_cache" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: [] },
+  { rel: "poll_result", kind: "log", table_name: "poll_result", delta_table_name: "__delta_poll_result", frontier_table_name: "__frontier_poll_result", next_frontier_table_name: "__next_frontier_poll_result", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "poll_result" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_poll_result" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: ["cache/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -299,17 +328,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      resolveCache_0Writes(seam, before, arrivals).pipe(
+      resolveCache_0Writes(seam, before.stored, arrivals).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // match_edge_arm_keeps_edge_semantics: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -330,6 +361,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -364,7 +397,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "match_edge_arm_keeps_edge_semantics",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,30 +136,48 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "stream_end": [true, true],
+    "stream_item": [true, false, true],
+    "stream_status": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "stream_end" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE TABLE "stream_item" ("args" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
-  `CREATE TABLE "stream_status" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_stream_end" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('done'), ('running')`,
+  `CREATE TABLE "stream_end" ("args" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_stream_end" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2" FROM "stream_end" t`,
+  `CREATE TABLE "stream_item" ("args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_stream_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", t."col2" AS "col2", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col3") AS "col3" FROM "stream_item" t`,
+  `CREATE TABLE "stream_status" ("args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_stream_status" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."__refcount" AS "__refcount" FROM "stream_status" t`,
+  `CREATE TEMP TABLE "__delta_stream_end" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stream_end_sign" ON "__delta_stream_end" ("_sign")`,
   `CREATE INDEX "__delta_stream_end_group" ON "__delta_stream_end" ("args", "col2")`,
-  `CREATE TEMP TABLE "__frontier_stream_end" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_stream_end" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stream_end_phase" ON "__frontier_stream_end" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_stream_end" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_stream_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_stream_end" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_stream_end" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_stream_end" t`,
+  `CREATE TEMP TABLE "__delta_stream_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stream_item_sign" ON "__delta_stream_item" ("_sign")`,
   `CREATE INDEX "__delta_stream_item_group" ON "__delta_stream_item" ("args", "col2", "col3")`,
-  `CREATE TEMP TABLE "__frontier_stream_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_stream_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stream_item_phase" ON "__frontier_stream_item" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_stream_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" INTEGER NOT NULL, "col3" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_stream_status" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_stream_item" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_stream_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", t."col2" AS "col2", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col3") AS "col3", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_stream_item" t`,
+  `CREATE TEMP TABLE "__delta_stream_status" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stream_status_sign" ON "__delta_stream_status" ("_sign")`,
   `CREATE INDEX "__delta_stream_status_group" ON "__delta_stream_status" ("args", "col2")`,
-  `CREATE TEMP TABLE "__frontier_stream_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_stream_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stream_status_phase" ON "__frontier_stream_status" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_stream_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" TEXT NOT NULL, "col2" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_stream_status" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_stream_status" ("args" TEXT NOT NULL, "col2" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_stream_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_stream_status" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_stream_status" t`,
+  `CREATE TEMP TABLE "__support_next_stream_status" ("args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_stream_status" ("args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "stream_status_zero" ON "stream_status" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -199,8 +219,8 @@ const arrival_targets: readonly string[] = ["stream_end", "stream_item"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "stream_status", sql: `DELETE FROM "stream_status"`, params: [] },
-  { rel: "stream_status", sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'running' FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args")`, params: [] },
-  { rel: "stream_status", sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`, params: [] },
+  { rel: "stream_status", sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args")`, params: [] },
+  { rel: "stream_status", sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') FROM "stream_end" b0`, params: [] },
 ];
 
 type Snapshot = {
@@ -211,16 +231,30 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    stream_end: select_rows(seam, `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "stream_end"`, rel_columns.stream_end!, rel_column_types.stream_end!),
-    stream_item: select_rows(seam, `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", "col2", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3" FROM "stream_item"`, rel_columns.stream_item!, rel_column_types.stream_item!),
-    stream_status: select_rows(seam, `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "stream_status"`, rel_columns.stream_status!, rel_column_types.stream_status!),
+    stream_end: select_rows(seam, `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "__txt_stream_end"`, rel_columns.stream_end!, rel_column_types.stream_end!),
+    stream_item: select_rows(seam, `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", "col2", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3" FROM "__txt_stream_item"`, rel_columns.stream_item!, rel_column_types.stream_item!),
+    stream_status: select_rows(seam, `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "__txt_stream_status"`, rel_columns.stream_status!, rel_column_types.stream_status!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    stream_end: select_rows(seam, `SELECT "args", "col2" FROM "stream_end"`, rel_columns.stream_end!, rel_column_types.stream_end!),
+    stream_item: select_rows(seam, `SELECT "args", "col2", "col3" FROM "stream_item"`, rel_columns.stream_item!, rel_column_types.stream_item!),
+    stream_status: select_rows(seam, `SELECT "args", "col2" FROM "stream_status"`, rel_columns.stream_status!, rel_column_types.stream_status!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  stream_end: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "stream_end"`,
-  stream_item: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", "col2", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3" FROM "stream_item"`,
-  stream_status: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "stream_status"`,
+  stream_end: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "__txt_stream_end"`,
+  stream_item: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", "col2", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3" FROM "__txt_stream_item"`,
+  stream_status: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2" FROM "__txt_stream_status"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -251,24 +285,24 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "stream_end", kind: "log", table_name: "stream_end", delta_table_name: "__delta_stream_end", frontier_table_name: "__frontier_stream_end", next_frontier_table_name: "__next_frontier_stream_end", columns: ["args", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "stream_end" ("args", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "args", "col2"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stream_end" WHERE "_sign" IN (-1, 1) GROUP BY "args", "col2", "_sign"`, rule_observers: ["stream_status/2"] },
-  { rel: "stream_item", kind: "log", table_name: "stream_item", delta_table_name: "__delta_stream_item", frontier_table_name: "__frontier_stream_item", next_frontier_table_name: "__next_frontier_stream_item", columns: ["args", "col2", "col3"], column_types: ["text", "int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "stream_item" ("args", "col2", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "args", "col2", "col3"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", "col2", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stream_item" WHERE "_sign" IN (-1, 1) GROUP BY "args", "col2", "col3", "_sign"`, rule_observers: ["stream_status/2"] },
-  { rel: "stream_status", kind: "set", table_name: "stream_status", delta_table_name: "__delta_stream_status", frontier_table_name: "__frontier_stream_status", next_frontier_table_name: "__next_frontier_stream_status", columns: ["args", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stream_status" WHERE "_sign" IN (-1, 1) GROUP BY "args", "col2", "_sign"`, rule_observers: [] },
+  { rel: "stream_end", kind: "log", table_name: "stream_end", delta_table_name: "__delta_stream_end", frontier_table_name: "__frontier_stream_end", next_frontier_table_name: "__next_frontier_stream_end", columns: ["args", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "stream_end" ("args", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "args", "col2"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stream_end" WHERE "_sign" IN (-1, 1) GROUP BY "args", "col2", "_sign"`, rule_observers: ["stream_status/2"] },
+  { rel: "stream_item", kind: "log", table_name: "stream_item", delta_table_name: "__delta_stream_item", frontier_table_name: "__frontier_stream_item", next_frontier_table_name: "__next_frontier_stream_item", columns: ["args", "col2", "col3"], column_types: ["text", "int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "stream_item" ("args", "col2", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "args", "col2", "col3"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", "col2", CASE WHEN json_valid("col3") AND json_type("col3") = 'object' AND json_type("col3", '$.fn') = 'text' AND json_type("col3", '$.args') = 'array' THEN json_extract("col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col3", '$.args')), '') || ')' ELSE "col3" END AS "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stream_item" WHERE "_sign" IN (-1, 1) GROUP BY "args", "col2", "col3", "_sign"`, rule_observers: ["stream_status/2"] },
+  { rel: "stream_status", kind: "set", table_name: "stream_status", delta_table_name: "__delta_stream_status", frontier_table_name: "__frontier_stream_status", next_frontier_table_name: "__next_frontier_stream_status", columns: ["args", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("args") AND json_type("args") = 'object' AND json_type("args", '$.fn') = 'text' AND json_type("args", '$.args') = 'array' THEN json_extract("args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("args", '$.args')), '') || ')' ELSE "args" END AS "args", CASE WHEN json_valid("col2") AND json_type("col2") = 'object' AND json_type("col2", '$.fn') = 'text' AND json_type("col2", '$.args') = 'array' THEN json_extract("col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col2", '$.args')), '') || ')' ELSE "col2" END AS "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stream_status" WHERE "_sign" IN (-1, 1) GROUP BY "args", "col2", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "stream_status", rule_id: "terminal_is_terminal:stream_status/2#1", head_delta_table_name: "__delta_stream_status", head_columns: ["args", "col2"], insert_sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT DISTINCT d0."args", 'running' FROM "__frontier_stream_item" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = d0."args") UNION ALL SELECT DISTINCT d0."args", 'done' FROM "__frontier_stream_end" d0 WHERE d0."_phase" >= 0 RETURNING "args", "col2"`, select_sql: `SELECT "args", "col2" FROM "stream_status"`, recompute_sql: `DELETE FROM "stream_status";
-INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'running' FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args");
-INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`, support_sql: [`DELETE FROM "__support_next_stream_status"`, `INSERT INTO "__support_next_stream_status" ("args", "col2", "__refcount") SELECT "args", "col2", sum("__refcount") FROM (SELECT b0."args" AS "args", 'running' AS "col2", count(*) AS "__refcount" FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args") GROUP BY b0."args", 'running' UNION ALL SELECT b0."args" AS "args", 'done' AS "col2", count(*) AS "__refcount" FROM "stream_end" b0 GROUP BY b0."args", 'done') GROUP BY "args", "col2"`, `UPDATE "stream_status" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_stream_status" n WHERE n."args" = h."args" AND n."col2" = h."col2"), 0)`, `INSERT INTO "__delta_stream_status" ("_sign", "_sequence", "args", "col2") SELECT -1, row_number() OVER () - 1, "args", "col2" FROM "stream_status" WHERE "__refcount" <= 0`, `DELETE FROM "stream_status" WHERE "__refcount" <= 0`, `DELETE FROM "__new_stream_status"`, `INSERT INTO "__new_stream_status" ("args", "col2", "__refcount") SELECT n."args", n."col2", n."__refcount" FROM "__support_next_stream_status" n LEFT JOIN "stream_status" h ON n."args" = h."args" AND n."col2" = h."col2" WHERE h."args" IS NULL`, `INSERT INTO "__delta_stream_status" ("_sign", "_sequence", "args", "col2") SELECT 1, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT INTO "__frontier_stream_status" ("_phase", "_sequence", "args", "col2") SELECT ?, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT INTO "__next_frontier_stream_status" ("_phase", "_sequence", "args", "col2") SELECT ?, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT OR IGNORE INTO "stream_status" ("args", "col2", "__refcount") SELECT n."args", n."col2", n."__refcount" FROM "__support_next_stream_status" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "stream_status", rule_id: "terminal_is_terminal:stream_status/2#1", head_delta_table_name: "__delta_stream_status", head_columns: ["args", "col2"], insert_sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT DISTINCT d0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') FROM "__frontier_stream_item" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = d0."args") UNION ALL SELECT DISTINCT d0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') FROM "__frontier_stream_end" d0 WHERE d0."_phase" >= 0 RETURNING "args", "col2"`, select_sql: `SELECT "args", "col2" FROM "stream_status"`, recompute_sql: `DELETE FROM "stream_status";
+INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args");
+INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') FROM "stream_end" b0`, support_sql: [`DELETE FROM "__support_next_stream_status"`, `INSERT INTO "__support_next_stream_status" ("args", "col2", "__refcount") SELECT "args", "col2", sum("__refcount") FROM (SELECT b0."args" AS "args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') AS "col2", count(*) AS "__refcount" FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args") GROUP BY b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') UNION ALL SELECT b0."args" AS "args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') AS "col2", count(*) AS "__refcount" FROM "stream_end" b0 GROUP BY b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done')) GROUP BY "args", "col2"`, `UPDATE "stream_status" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_stream_status" n WHERE n."args" = h."args" AND n."col2" = h."col2"), 0)`, `INSERT INTO "__delta_stream_status" ("_sign", "_sequence", "args", "col2") SELECT -1, row_number() OVER () - 1, "args", "col2" FROM "stream_status" WHERE "__refcount" <= 0`, `DELETE FROM "stream_status" WHERE "__refcount" <= 0`, `DELETE FROM "__new_stream_status"`, `INSERT INTO "__new_stream_status" ("args", "col2", "__refcount") SELECT n."args", n."col2", n."__refcount" FROM "__support_next_stream_status" n LEFT JOIN "stream_status" h ON n."args" = h."args" AND n."col2" = h."col2" WHERE h."args" IS NULL`, `INSERT INTO "__delta_stream_status" ("_sign", "_sequence", "args", "col2") SELECT 1, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT INTO "__frontier_stream_status" ("_phase", "_sequence", "args", "col2") SELECT ?, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT INTO "__next_frontier_stream_status" ("_phase", "_sequence", "args", "col2") SELECT ?, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT OR IGNORE INTO "stream_status" ("args", "col2", "__refcount") SELECT n."args", n."col2", n."__refcount" FROM "__support_next_stream_status" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "stream_status";
-INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'running' FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args");
-INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", 'done' FROM "stream_end" b0`;
+INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args");
+INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') FROM "stream_end" b0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -288,6 +322,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -311,11 +347,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -343,7 +382,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "terminal_is_terminal",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

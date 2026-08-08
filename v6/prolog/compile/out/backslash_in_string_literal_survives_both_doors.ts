@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,38 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "hit": [true],
+    "raw": [true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "hit" ("text_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
-  `CREATE TABLE "raw" ("text_value" TEXT NOT NULL, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('digit \\d here')`,
+  `CREATE TABLE "hit" ("text_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text_value") AS "text_value", t."__refcount" AS "__refcount" FROM "hit" t`,
+  `CREATE TABLE "raw" ("text_value" INTEGER NOT NULL, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_raw" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text_value") AS "text_value" FROM "raw" t`,
+  `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hit_sign" ON "__delta_hit" ("_sign")`,
   `CREATE INDEX "__delta_hit_group" ON "__delta_hit" ("text_value")`,
-  `CREATE TEMP TABLE "__frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_hit_phase" ON "__frontier_hit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_raw" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text_value") AS "text_value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_hit" t`,
+  `CREATE TEMP TABLE "__delta_raw" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_raw_sign" ON "__delta_raw" ("_sign")`,
   `CREATE INDEX "__delta_raw_group" ON "__delta_raw" ("text_value")`,
-  `CREATE TEMP TABLE "__frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_raw_phase" ON "__frontier_raw" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_hit" ("text_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_hit" ("text_value" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_raw" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_raw" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text_value") AS "text_value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_raw" t`,
+  `CREATE TEMP TABLE "__support_next_hit" ("text_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_hit" ("text_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "hit_zero" ON "hit" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -186,7 +203,7 @@ const arrival_targets: readonly string[] = ["raw"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "hit", sql: `DELETE FROM "hit"`, params: [] },
-  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("text_value") SELECT b0."text_value" FROM "raw" b0 WHERE (b0."text_value" = 'digit \\d here')`, params: [] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("text_value") SELECT b0."text_value" FROM "raw" b0 WHERE (b0."text_value" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'digit \\d here'))`, params: [] },
 ];
 
 type Snapshot = {
@@ -196,14 +213,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    hit: select_rows(seam, `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value" FROM "hit"`, rel_columns.hit!, rel_column_types.hit!),
-    raw: select_rows(seam, `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value" FROM "raw"`, rel_columns.raw!, rel_column_types.raw!),
+    hit: select_rows(seam, `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value" FROM "__txt_hit"`, rel_columns.hit!, rel_column_types.hit!),
+    raw: select_rows(seam, `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value" FROM "__txt_raw"`, rel_columns.raw!, rel_column_types.raw!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    hit: select_rows(seam, `SELECT "text_value" FROM "hit"`, rel_columns.hit!, rel_column_types.hit!),
+    raw: select_rows(seam, `SELECT "text_value" FROM "raw"`, rel_columns.raw!, rel_column_types.raw!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  hit: `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value" FROM "hit"`,
-  raw: `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value" FROM "raw"`,
+  hit: `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value" FROM "__txt_hit"`,
+  raw: `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value" FROM "__txt_raw"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -233,21 +263,21 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "hit", kind: "set", table_name: "hit", delta_table_name: "__delta_hit", frontier_table_name: "__frontier_hit", next_frontier_table_name: "__next_frontier_hit", columns: ["text_value"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hit" WHERE "_sign" IN (-1, 1) GROUP BY "text_value", "_sign"`, rule_observers: [] },
-  { rel: "raw", kind: "set", table_name: "raw", delta_table_name: "__delta_raw", frontier_table_name: "__frontier_raw", next_frontier_table_name: "__next_frontier_raw", columns: ["text_value"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw" ("text_value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "text_value"`, arrival_del_sql: `DELETE FROM "raw" WHERE ("text_value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "text_value"`, boundary_sql: `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw" WHERE "_sign" IN (-1, 1) GROUP BY "text_value", "_sign"`, rule_observers: ["hit/1"] },
+  { rel: "hit", kind: "set", table_name: "hit", delta_table_name: "__delta_hit", frontier_table_name: "__frontier_hit", next_frontier_table_name: "__next_frontier_hit", columns: ["text_value"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_hit" WHERE "_sign" IN (-1, 1) GROUP BY "text_value", "_sign"`, rule_observers: [] },
+  { rel: "raw", kind: "set", table_name: "raw", delta_table_name: "__delta_raw", frontier_table_name: "__frontier_raw", next_frontier_table_name: "__next_frontier_raw", columns: ["text_value"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw" ("text_value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "text_value"`, arrival_del_sql: `DELETE FROM "raw" WHERE ("text_value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "text_value"`, boundary_sql: `SELECT CASE WHEN json_valid("text_value") AND json_type("text_value") = 'object' AND json_type("text_value", '$.fn') = 'text' AND json_type("text_value", '$.args') = 'array' THEN json_extract("text_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text_value", '$.args')), '') || ')' ELSE "text_value" END AS "text_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_raw" WHERE "_sign" IN (-1, 1) GROUP BY "text_value", "_sign"`, rule_observers: ["hit/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "hit", rule_id: "backslash_in_string_literal_survives_both_doors:hit/1#1", head_delta_table_name: "__delta_hit", head_columns: ["text_value"], insert_sql: `INSERT OR IGNORE INTO "hit" ("text_value") SELECT DISTINCT d0."text_value" FROM "__frontier_raw" d0 WHERE d0."_phase" >= 0 AND (d0."text_value" = 'digit \\d here') RETURNING "text_value"`, select_sql: `SELECT "text_value" FROM "hit"`, recompute_sql: `DELETE FROM "hit";
-INSERT OR IGNORE INTO "hit" ("text_value") SELECT b0."text_value" FROM "raw" b0 WHERE (b0."text_value" = 'digit \\d here')`, support_sql: [`DELETE FROM "__support_next_hit"`, `INSERT INTO "__support_next_hit" ("text_value", "__refcount") SELECT "text_value", sum("__refcount") FROM (SELECT b0."text_value" AS "text_value", count(*) AS "__refcount" FROM "raw" b0 WHERE (b0."text_value" = 'digit \\d here') GROUP BY b0."text_value") GROUP BY "text_value"`, `UPDATE "hit" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_hit" n WHERE n."text_value" = h."text_value"), 0)`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "text_value") SELECT -1, row_number() OVER () - 1, "text_value" FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "__new_hit"`, `INSERT INTO "__new_hit" ("text_value", "__refcount") SELECT n."text_value", n."__refcount" FROM "__support_next_hit" n LEFT JOIN "hit" h ON n."text_value" = h."text_value" WHERE h."text_value" IS NULL`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "text_value") SELECT 1, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT INTO "__frontier_hit" ("_phase", "_sequence", "text_value") SELECT ?, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT INTO "__next_frontier_hit" ("_phase", "_sequence", "text_value") SELECT ?, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT OR IGNORE INTO "hit" ("text_value", "__refcount") SELECT n."text_value", n."__refcount" FROM "__support_next_hit" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "hit", rule_id: "backslash_in_string_literal_survives_both_doors:hit/1#1", head_delta_table_name: "__delta_hit", head_columns: ["text_value"], insert_sql: `INSERT OR IGNORE INTO "hit" ("text_value") SELECT DISTINCT d0."text_value" FROM "__frontier_raw" d0 WHERE d0."_phase" >= 0 AND (d0."text_value" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'digit \\d here')) RETURNING "text_value"`, select_sql: `SELECT "text_value" FROM "hit"`, recompute_sql: `DELETE FROM "hit";
+INSERT OR IGNORE INTO "hit" ("text_value") SELECT b0."text_value" FROM "raw" b0 WHERE (b0."text_value" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'digit \\d here'))`, support_sql: [`DELETE FROM "__support_next_hit"`, `INSERT INTO "__support_next_hit" ("text_value", "__refcount") SELECT "text_value", sum("__refcount") FROM (SELECT b0."text_value" AS "text_value", count(*) AS "__refcount" FROM "raw" b0 WHERE (b0."text_value" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'digit \\d here')) GROUP BY b0."text_value") GROUP BY "text_value"`, `UPDATE "hit" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_hit" n WHERE n."text_value" = h."text_value"), 0)`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "text_value") SELECT -1, row_number() OVER () - 1, "text_value" FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "__new_hit"`, `INSERT INTO "__new_hit" ("text_value", "__refcount") SELECT n."text_value", n."__refcount" FROM "__support_next_hit" n LEFT JOIN "hit" h ON n."text_value" = h."text_value" WHERE h."text_value" IS NULL`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "text_value") SELECT 1, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT INTO "__frontier_hit" ("_phase", "_sequence", "text_value") SELECT ?, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT INTO "__next_frontier_hit" ("_phase", "_sequence", "text_value") SELECT ?, "rowid" - 1, "text_value" FROM "__new_hit"`, `INSERT OR IGNORE INTO "hit" ("text_value", "__refcount") SELECT n."text_value", n."__refcount" FROM "__support_next_hit" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "hit";
-INSERT OR IGNORE INTO "hit" ("text_value") SELECT b0."text_value" FROM "raw" b0 WHERE (b0."text_value" = 'digit \\d here')`;
+INSERT OR IGNORE INTO "hit" ("text_value") SELECT b0."text_value" FROM "raw" b0 WHERE (b0."text_value" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'digit \\d here'))`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -265,6 +295,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -288,11 +320,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -320,7 +355,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "backslash_in_string_literal_survives_both_doors",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

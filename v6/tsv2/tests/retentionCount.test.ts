@@ -63,7 +63,7 @@ test("keep(count) statement count is flat and the oldest rows are pruned", async
       hundred_delta_count: hundred_rows.event_delta?.add.length,
     },
     {
-      statement_counts: [12, 12],
+      statement_counts: [14, 14],
       three_final: ["row_1", "row_2"],
       hundred_final: ["row_98", "row_99"],
       three_delta: { rel: "event", add: [["row_1"], ["row_2"]], del: [] },

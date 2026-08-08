@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,37 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "doubled": [true, false],
+    "reading": [true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "doubled" ("name" TEXT NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
-  `CREATE TABLE "reading" ("name" TEXT NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_doubled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "out" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "doubled" ("name" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_doubled" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."out" AS "out", t."__refcount" AS "__refcount" FROM "doubled" t`,
+  `CREATE TABLE "reading" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_reading" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value" FROM "reading" t`,
+  `CREATE TEMP TABLE "__delta_doubled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_doubled_sign" ON "__delta_doubled" ("_sign")`,
   `CREATE INDEX "__delta_doubled_group" ON "__delta_doubled" ("name", "out")`,
-  `CREATE TEMP TABLE "__frontier_doubled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "out" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_doubled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_doubled_phase" ON "__frontier_doubled" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_doubled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "out" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_reading" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_doubled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "out" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_doubled" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."out" AS "out", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_doubled" t`,
+  `CREATE TEMP TABLE "__delta_reading" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_reading_sign" ON "__delta_reading" ("_sign")`,
   `CREATE INDEX "__delta_reading_group" ON "__delta_reading" ("name", "value")`,
-  `CREATE TEMP TABLE "__frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_reading_phase" ON "__frontier_reading" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_doubled" ("name" TEXT NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_doubled" ("name" TEXT NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_reading" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_reading" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_reading" t`,
+  `CREATE TEMP TABLE "__support_next_doubled" ("name" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_doubled" ("name" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "doubled_zero" ON "doubled" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -185,8 +201,10 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["reading"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "reading", sql: `INSERT OR IGNORE INTO "reading" ("name", "value") VALUES (?, ?)`, params: ["cpu", 12] },
-  { rel: "reading", sql: `INSERT OR IGNORE INTO "reading" ("name", "value") VALUES (?, ?)`, params: ["disk", 4] },
+  { rel: "reading", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cpu"] },
+  { rel: "reading", sql: `INSERT OR IGNORE INTO "reading" ("name", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["cpu", 12] },
+  { rel: "reading", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["disk"] },
+  { rel: "reading", sql: `INSERT OR IGNORE INTO "reading" ("name", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["disk", 4] },
   { rel: "doubled", sql: `DELETE FROM "doubled"`, params: [] },
   { rel: "doubled", sql: `INSERT OR IGNORE INTO "doubled" ("name", "out") SELECT b0."name", (b0."value" * 2) FROM "reading" b0 WHERE (b0."value" >= 10)`, params: [] },
 ];
@@ -198,14 +216,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    doubled: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "out" FROM "doubled"`, rel_columns.doubled!, rel_column_types.doubled!),
-    reading: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value" FROM "reading"`, rel_columns.reading!, rel_column_types.reading!),
+    doubled: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "out" FROM "__txt_doubled"`, rel_columns.doubled!, rel_column_types.doubled!),
+    reading: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value" FROM "__txt_reading"`, rel_columns.reading!, rel_column_types.reading!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    doubled: select_rows(seam, `SELECT "name", "out" FROM "doubled"`, rel_columns.doubled!, rel_column_types.doubled!),
+    reading: select_rows(seam, `SELECT "name", "value" FROM "reading"`, rel_columns.reading!, rel_column_types.reading!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  doubled: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "out" FROM "doubled"`,
-  reading: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value" FROM "reading"`,
+  doubled: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "out" FROM "__txt_doubled"`,
+  reading: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value" FROM "__txt_reading"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -235,8 +266,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "doubled", kind: "set", table_name: "doubled", delta_table_name: "__delta_doubled", frontier_table_name: "__frontier_doubled", next_frontier_table_name: "__next_frontier_doubled", columns: ["name", "out"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "out", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_doubled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "out", "_sign"`, rule_observers: [] },
-  { rel: "reading", kind: "set", table_name: "reading", delta_table_name: "__delta_reading", frontier_table_name: "__frontier_reading", next_frontier_table_name: "__next_frontier_reading", columns: ["name", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "reading" ("name", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "value"`, arrival_del_sql: `DELETE FROM "reading" WHERE ("name", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_reading" WHERE "_sign" IN (-1, 1) GROUP BY "name", "value", "_sign"`, rule_observers: ["doubled/2"] },
+  { rel: "doubled", kind: "set", table_name: "doubled", delta_table_name: "__delta_doubled", frontier_table_name: "__frontier_doubled", next_frontier_table_name: "__next_frontier_doubled", columns: ["name", "out"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "out", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_doubled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "out", "_sign"`, rule_observers: [] },
+  { rel: "reading", kind: "set", table_name: "reading", delta_table_name: "__delta_reading", frontier_table_name: "__frontier_reading", next_frontier_table_name: "__next_frontier_reading", columns: ["name", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "reading" ("name", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "value"`, arrival_del_sql: `DELETE FROM "reading" WHERE ("name", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_reading" WHERE "_sign" IN (-1, 1) GROUP BY "name", "value", "_sign"`, rule_observers: ["doubled/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -267,6 +298,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -290,11 +323,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -322,7 +358,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "filter_map_is_a_level_rule",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

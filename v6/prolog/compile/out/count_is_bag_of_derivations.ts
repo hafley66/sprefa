@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,22 +136,36 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "hit": [true, false, false],
+    "hits": [true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "hit" ("path" TEXT NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL, PRIMARY KEY ("path", "line", "col3")) WITHOUT ROWID`,
-  `CREATE TABLE "hits" ("path" TEXT NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "col2")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "hit" ("path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL, PRIMARY KEY ("path", "line", "col3")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line" AS "line", t."col3" AS "col3" FROM "hit" t`,
+  `CREATE TABLE "hits" ("path" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "col2")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_hits" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "hits" t`,
+  `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hit_sign" ON "__delta_hit" ("_sign")`,
   `CREATE INDEX "__delta_hit_group" ON "__delta_hit" ("path", "line", "col3")`,
-  `CREATE TEMP TABLE "__frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_hit_phase" ON "__frontier_hit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_hits" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line" AS "line", t."col3" AS "col3", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_hit" t`,
+  `CREATE TEMP TABLE "__delta_hits" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hits_sign" ON "__delta_hits" ("_sign")`,
   `CREATE INDEX "__delta_hits_group" ON "__delta_hits" ("path", "col2")`,
-  `CREATE TEMP TABLE "__frontier_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_hits_phase" ON "__frontier_hits" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__agg_scope_hits" ("path" TEXT NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__next_frontier_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_hits" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."col2" AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_hits" t`,
+  `CREATE TEMP TABLE "__agg_scope_hits" ("path" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -184,9 +200,12 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["hit"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES (?, ?, ?)`, params: ["main_rs", 1, 3] },
-  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES (?, ?, ?)`, params: ["main_rs", 1, 7] },
-  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES (?, ?, ?)`, params: ["lib_rs", 9, 1] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["main_rs"] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["main_rs", 1, 3] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["main_rs"] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["main_rs", 1, 7] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["lib_rs"] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["lib_rs", 9, 1] },
   { rel: "hits", sql: `DELETE FROM "hits"`, params: [] },
   { rel: "hits", sql: `INSERT OR IGNORE INTO "hits" ("path", "col2") SELECT b0."path", count(*) FROM "hit" b0 GROUP BY b0."path" HAVING count(*) > 0`, params: [] },
 ];
@@ -198,14 +217,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    hit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", "col3" FROM "hit"`, rel_columns.hit!, rel_column_types.hit!),
-    hits: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "col2" FROM "hits"`, rel_columns.hits!, rel_column_types.hits!),
+    hit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", "col3" FROM "__txt_hit"`, rel_columns.hit!, rel_column_types.hit!),
+    hits: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "col2" FROM "__txt_hits"`, rel_columns.hits!, rel_column_types.hits!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    hit: select_rows(seam, `SELECT "path", "line", "col3" FROM "hit"`, rel_columns.hit!, rel_column_types.hit!),
+    hits: select_rows(seam, `SELECT "path", "col2" FROM "hits"`, rel_columns.hits!, rel_column_types.hits!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  hit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", "col3" FROM "hit"`,
-  hits: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "col2" FROM "hits"`,
+  hit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", "col3" FROM "__txt_hit"`,
+  hits: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "col2" FROM "__txt_hits"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -235,8 +267,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "hit", kind: "set", table_name: "hit", delta_table_name: "__delta_hit", frontier_table_name: "__frontier_hit", next_frontier_table_name: "__next_frontier_hit", columns: ["path", "line", "col3"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "line", "col3"`, arrival_del_sql: `DELETE FROM "hit" WHERE ("path", "line", "col3") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "path", "line", "col3"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "col3", "_sign"`, rule_observers: ["hits/2"] },
-  { rel: "hits", kind: "set", table_name: "hits", delta_table_name: "__delta_hits", frontier_table_name: "__frontier_hits", next_frontier_table_name: "__next_frontier_hits", columns: ["path", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_hits" WHERE "_sign" IN (-1, 1) GROUP BY "path", "col2", "_sign"`, rule_observers: [] },
+  { rel: "hit", kind: "set", table_name: "hit", delta_table_name: "__delta_hit", frontier_table_name: "__frontier_hit", next_frontier_table_name: "__next_frontier_hit", columns: ["path", "line", "col3"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "line", "col3"`, arrival_del_sql: `DELETE FROM "hit" WHERE ("path", "line", "col3") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "path", "line", "col3"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line", "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_hit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line", "col3", "_sign"`, rule_observers: ["hits/2"] },
+  { rel: "hits", kind: "set", table_name: "hits", delta_table_name: "__delta_hits", frontier_table_name: "__frontier_hits", next_frontier_table_name: "__next_frontier_hits", columns: ["path", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_hits" WHERE "_sign" IN (-1, 1) GROUP BY "path", "col2", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -267,6 +299,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -290,11 +324,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -322,7 +359,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "count_is_bag_of_derivations",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

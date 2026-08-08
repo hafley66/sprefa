@@ -2506,6 +2506,11 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                                   HasRetention, UsesTick, DepartureRefs, false,
                                   false, Lines).
 
+% The intern arm is a TENTH operator on an edge-free chain, which degrades the
+% whole pipe to Observable<unknown>; same split point, same operator sequence.
+tick_pipe_split_lines([], true, ['  ).pipe(']) :- !.
+tick_pipe_split_lines(EdgeSplitLines, _, EdgeSplitLines).
+
 run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
                               HasRetention, UsesTick, DepartureRefs,
                               HasStructTypes, HasTextIntern, HasOrderedProgram,
@@ -2514,7 +2519,8 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
     incremental_text_intern_lines(HasTextIntern, TextInternLines),
     incremental_reference_normalize_lines(HasStructTypes, HasTextIntern, NormalizeLines),
     departure_stage_incremental_lines(DepartureRefs, DepartureStageLines),
-    pre_edge_level_reconcile_lines(EdgeStatements, PreEdgeReconcileLines, PipeSplitLines),
+    pre_edge_level_reconcile_lines(EdgeStatements, PreEdgeReconcileLines, EdgeSplitLines),
+    tick_pipe_split_lines(EdgeSplitLines, HasTextIntern, PipeSplitLines),
     ( EdgeStatements == []
     -> MergeLine = '    concatMap(() => of(undefined)),',
        PostEdgeLevelLine = '    concatMap(() => of(undefined)),'

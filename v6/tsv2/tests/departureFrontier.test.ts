@@ -191,8 +191,10 @@ test("plan: the departure arm reads only its own departure table", async () => {
     seam.runner.execute(seam.db, `EXPLAIN QUERY PLAN ${arm.project_sql}`),
   );
   const plan = explained.rows.map((row) => String(row.detail)).join(" | ");
+  // Alias `s` is the "__str" dictionary, not a relation: at intern(dict) every
+  // text operand in the projection resolves through it.
   assert.ok(
-    !/\b(SCAN|SEARCH) (?!d0\b)/.test(plan),
+    !/\b(SCAN|SEARCH) (?!d0\b|s\b)/.test(plan),
     `the departure arm must touch only its own delta table, got: ${plan}`,
   );
   assert.ok(

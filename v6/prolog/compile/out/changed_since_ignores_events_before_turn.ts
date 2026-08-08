@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,44 +155,67 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "agent_turn": [true, false],
+    "change_event": [true, true, false],
+    "changed_since": [true, true],
+    "turn_marker": [true],
+    "worktree_edit": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "agent_turn" ("turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE TABLE "change_event" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE TABLE "changed_since" ("turn_id" TEXT NOT NULL, "path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
-  `CREATE TABLE "turn_marker" ("turn_id" TEXT NOT NULL)`,
-  `CREATE TABLE "worktree_edit" ("path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_agent_turn" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "agent_turn" ("turn_id" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_agent_turn" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id", t."tick" AS "tick" FROM "agent_turn" t`,
+  `CREATE TABLE "change_event" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_change_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."tick" AS "tick" FROM "change_event" t`,
+  `CREATE TABLE "changed_since" ("turn_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_changed_since" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."__refcount" AS "__refcount" FROM "changed_since" t`,
+  `CREATE TABLE "turn_marker" ("turn_id" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_turn_marker" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id" FROM "turn_marker" t`,
+  `CREATE TABLE "worktree_edit" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_worktree_edit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest" FROM "worktree_edit" t`,
+  `CREATE TEMP TABLE "__delta_agent_turn" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_agent_turn_sign" ON "__delta_agent_turn" ("_sign")`,
   `CREATE INDEX "__delta_agent_turn_group" ON "__delta_agent_turn" ("turn_id", "tick")`,
-  `CREATE TEMP TABLE "__frontier_agent_turn" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_agent_turn" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_agent_turn_phase" ON "__frontier_agent_turn" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_agent_turn" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_change_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_agent_turn" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_agent_turn" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id", t."tick" AS "tick", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_agent_turn" t`,
+  `CREATE TEMP TABLE "__delta_change_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_change_event_sign" ON "__delta_change_event" ("_sign")`,
   `CREATE INDEX "__delta_change_event_group" ON "__delta_change_event" ("path", "digest", "tick")`,
-  `CREATE TEMP TABLE "__frontier_change_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_change_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_change_event_phase" ON "__frontier_change_event" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_change_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_changed_since" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "path" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_change_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_change_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."tick" AS "tick", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_change_event" t`,
+  `CREATE TEMP TABLE "__delta_changed_since" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_changed_since_sign" ON "__delta_changed_since" ("_sign")`,
   `CREATE INDEX "__delta_changed_since_group" ON "__delta_changed_since" ("turn_id", "path")`,
-  `CREATE TEMP TABLE "__frontier_changed_since" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "path" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_changed_since" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_changed_since_phase" ON "__frontier_changed_since" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_changed_since" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL, "path" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_turn_marker" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_changed_since" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_changed_since" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_changed_since" t`,
+  `CREATE TEMP TABLE "__delta_turn_marker" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_turn_marker_sign" ON "__delta_turn_marker" ("_sign")`,
   `CREATE INDEX "__delta_turn_marker_group" ON "__delta_turn_marker" ("turn_id")`,
-  `CREATE TEMP TABLE "__frontier_turn_marker" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_turn_marker" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_turn_marker_phase" ON "__frontier_turn_marker" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_turn_marker" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_worktree_edit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_turn_marker" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "turn_id" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_turn_marker" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_turn_marker" t`,
+  `CREATE TEMP TABLE "__delta_worktree_edit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_worktree_edit_sign" ON "__delta_worktree_edit" ("_sign")`,
   `CREATE INDEX "__delta_worktree_edit_group" ON "__delta_worktree_edit" ("path", "digest")`,
-  `CREATE TEMP TABLE "__frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_worktree_edit_phase" ON "__frontier_worktree_edit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "digest" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_changed_since" ("turn_id" TEXT NOT NULL, "path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_changed_since" ("turn_id" TEXT NOT NULL, "path" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_worktree_edit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_worktree_edit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_worktree_edit" t`,
+  `CREATE TEMP TABLE "__support_next_changed_since" ("turn_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_changed_since" ("turn_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "changed_since_zero" ON "changed_since" ("__refcount") WHERE "__refcount" <= 0`,
   `CREATE TABLE "__tick" ("n" INTEGER NOT NULL)`,
   `INSERT INTO "__tick" ("n") SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM "__tick")`,
@@ -242,7 +267,9 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["turn_marker", "worktree_edit"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "change_event", sql: `INSERT INTO "change_event" ("path", "digest", "tick") VALUES (?, ?, ?)`, params: ["src/old.rs", "sha_0", 0] },
+  { rel: "change_event", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/old.rs"] },
+  { rel: "change_event", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["sha_0"] },
+  { rel: "change_event", sql: `INSERT INTO "change_event" ("path", "digest", "tick") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["src/old.rs", "sha_0", 0] },
   { rel: "changed_since", sql: `DELETE FROM "changed_since"`, params: [] },
   { rel: "changed_since", sql: `INSERT OR IGNORE INTO "changed_since" ("turn_id", "path") SELECT b0."turn_id", b1."path" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick")`, params: [] },
 ];
@@ -257,20 +284,36 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    agent_turn: select_rows(seam, `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", "tick" FROM "agent_turn"`, rel_columns.agent_turn!, rel_column_types.agent_turn!),
-    change_event: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "tick" FROM "change_event"`, rel_columns.change_event!, rel_column_types.change_event!),
-    changed_since: select_rows(seam, `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "changed_since"`, rel_columns.changed_since!, rel_column_types.changed_since!),
-    turn_marker: select_rows(seam, `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id" FROM "turn_marker"`, rel_columns.turn_marker!, rel_column_types.turn_marker!),
-    worktree_edit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
+    agent_turn: select_rows(seam, `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", "tick" FROM "__txt_agent_turn"`, rel_columns.agent_turn!, rel_column_types.agent_turn!),
+    change_event: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "tick" FROM "__txt_change_event"`, rel_columns.change_event!, rel_column_types.change_event!),
+    changed_since: select_rows(seam, `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "__txt_changed_since"`, rel_columns.changed_since!, rel_column_types.changed_since!),
+    turn_marker: select_rows(seam, `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id" FROM "__txt_turn_marker"`, rel_columns.turn_marker!, rel_column_types.turn_marker!),
+    worktree_edit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    agent_turn: select_rows(seam, `SELECT "turn_id", "tick" FROM "agent_turn"`, rel_columns.agent_turn!, rel_column_types.agent_turn!),
+    change_event: select_rows(seam, `SELECT "path", "digest", "tick" FROM "change_event"`, rel_columns.change_event!, rel_column_types.change_event!),
+    changed_since: select_rows(seam, `SELECT "turn_id", "path" FROM "changed_since"`, rel_columns.changed_since!, rel_column_types.changed_since!),
+    turn_marker: select_rows(seam, `SELECT "turn_id" FROM "turn_marker"`, rel_columns.turn_marker!, rel_column_types.turn_marker!),
+    worktree_edit: select_rows(seam, `SELECT "path", "digest" FROM "worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  agent_turn: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", "tick" FROM "agent_turn"`,
-  change_event: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "tick" FROM "change_event"`,
-  changed_since: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "changed_since"`,
-  turn_marker: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id" FROM "turn_marker"`,
-  worktree_edit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "worktree_edit"`,
+  agent_turn: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", "tick" FROM "__txt_agent_turn"`,
+  change_event: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "tick" FROM "__txt_change_event"`,
+  changed_since: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path" FROM "__txt_changed_since"`,
+  turn_marker: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id" FROM "__txt_turn_marker"`,
+  worktree_edit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest" FROM "__txt_worktree_edit"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -301,11 +344,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "agent_turn", kind: "log", table_name: "agent_turn", delta_table_name: "__delta_agent_turn", frontier_table_name: "__frontier_agent_turn", next_frontier_table_name: "__next_frontier_agent_turn", columns: ["turn_id", "tick"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_agent_turn" WHERE "_sign" IN (-1, 1) GROUP BY "turn_id", "tick", "_sign"`, rule_observers: ["changed_since/2"] },
-  { rel: "change_event", kind: "log", table_name: "change_event", delta_table_name: "__delta_change_event", frontier_table_name: "__frontier_change_event", next_frontier_table_name: "__next_frontier_change_event", columns: ["path", "digest", "tick"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_change_event" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "tick", "_sign"`, rule_observers: ["changed_since/2"] },
-  { rel: "changed_since", kind: "set", table_name: "changed_since", delta_table_name: "__delta_changed_since", frontier_table_name: "__frontier_changed_since", next_frontier_table_name: "__next_frontier_changed_since", columns: ["turn_id", "path"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_changed_since" WHERE "_sign" IN (-1, 1) GROUP BY "turn_id", "path", "_sign"`, rule_observers: [] },
-  { rel: "turn_marker", kind: "log", table_name: "turn_marker", delta_table_name: "__delta_turn_marker", frontier_table_name: "__frontier_turn_marker", next_frontier_table_name: "__next_frontier_turn_marker", columns: ["turn_id"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "turn_marker" ("turn_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "turn_id"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_turn_marker" WHERE "_sign" IN (-1, 1) GROUP BY "turn_id", "_sign"`, rule_observers: ["agent_turn/2"] },
-  { rel: "worktree_edit", kind: "log", table_name: "worktree_edit", delta_table_name: "__delta_worktree_edit", frontier_table_name: "__frontier_worktree_edit", next_frontier_table_name: "__next_frontier_worktree_edit", columns: ["path", "digest"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "worktree_edit" ("path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "digest"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_worktree_edit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, rule_observers: ["change_event/3"] },
+  { rel: "agent_turn", kind: "log", table_name: "agent_turn", delta_table_name: "__delta_agent_turn", frontier_table_name: "__frontier_agent_turn", next_frontier_table_name: "__next_frontier_agent_turn", columns: ["turn_id", "tick"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_agent_turn" WHERE "_sign" IN (-1, 1) GROUP BY "turn_id", "tick", "_sign"`, rule_observers: ["changed_since/2"] },
+  { rel: "change_event", kind: "log", table_name: "change_event", delta_table_name: "__delta_change_event", frontier_table_name: "__frontier_change_event", next_frontier_table_name: "__next_frontier_change_event", columns: ["path", "digest", "tick"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "tick", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_change_event" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "tick", "_sign"`, rule_observers: ["changed_since/2"] },
+  { rel: "changed_since", kind: "set", table_name: "changed_since", delta_table_name: "__delta_changed_since", frontier_table_name: "__frontier_changed_since", next_frontier_table_name: "__next_frontier_changed_since", columns: ["turn_id", "path"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_changed_since" WHERE "_sign" IN (-1, 1) GROUP BY "turn_id", "path", "_sign"`, rule_observers: [] },
+  { rel: "turn_marker", kind: "log", table_name: "turn_marker", delta_table_name: "__delta_turn_marker", frontier_table_name: "__frontier_turn_marker", next_frontier_table_name: "__next_frontier_turn_marker", columns: ["turn_id"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "turn_marker" ("turn_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "turn_id"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("turn_id") AND json_type("turn_id") = 'object' AND json_type("turn_id", '$.fn') = 'text' AND json_type("turn_id", '$.args') = 'array' THEN json_extract("turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("turn_id", '$.args')), '') || ')' ELSE "turn_id" END AS "turn_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_turn_marker" WHERE "_sign" IN (-1, 1) GROUP BY "turn_id", "_sign"`, rule_observers: ["agent_turn/2"] },
+  { rel: "worktree_edit", kind: "log", table_name: "worktree_edit", delta_table_name: "__delta_worktree_edit", frontier_table_name: "__frontier_worktree_edit", next_frontier_table_name: "__next_frontier_worktree_edit", columns: ["path", "digest"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "worktree_edit" ("path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "digest"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("digest") AND json_type("digest") = 'object' AND json_type("digest", '$.fn') = 'text' AND json_type("digest", '$.args') = 'array' THEN json_extract("digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("digest", '$.args')), '') || ')' ELSE "digest" END AS "digest", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_worktree_edit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "digest", "_sign"`, rule_observers: ["change_event/3"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -389,18 +432,20 @@ function advance_tick(seam: ISqlSeam): Observable<void> {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
     concatMap((before) => advance_tick(seam).pipe(map(() => before))),
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveChangeEvent_0Writes(seam, before, arrivals), resolveAgentTurn_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveChangeEvent_0Writes(seam, before.stored, arrivals), resolveAgentTurn_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // changed_since_ignores_events_before_turn: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -422,6 +467,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
     concatMap(() => advance_tick(seam)),
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -456,7 +503,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "changed_since_ignores_events_before_turn",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

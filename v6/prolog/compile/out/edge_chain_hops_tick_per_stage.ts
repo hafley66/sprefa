@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,28 +155,45 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "source_ev": [true],
+    "stage_one": [true],
+    "stage_two": [true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "source_ev" ("item" TEXT NOT NULL)`,
-  `CREATE TABLE "stage_one" ("item" TEXT NOT NULL)`,
-  `CREATE TABLE "stage_two" ("item" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_source_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "source_ev" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_source_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "source_ev" t`,
+  `CREATE TABLE "stage_one" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_stage_one" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "stage_one" t`,
+  `CREATE TABLE "stage_two" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_stage_two" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "stage_two" t`,
+  `CREATE TEMP TABLE "__delta_source_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_source_ev_sign" ON "__delta_source_ev" ("_sign")`,
   `CREATE INDEX "__delta_source_ev_group" ON "__delta_source_ev" ("item")`,
-  `CREATE TEMP TABLE "__frontier_source_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_source_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_source_ev_phase" ON "__frontier_source_ev" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_source_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_stage_one" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_source_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_source_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_source_ev" t`,
+  `CREATE TEMP TABLE "__delta_stage_one" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stage_one_sign" ON "__delta_stage_one" ("_sign")`,
   `CREATE INDEX "__delta_stage_one_group" ON "__delta_stage_one" ("item")`,
-  `CREATE TEMP TABLE "__frontier_stage_one" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_stage_one" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stage_one_phase" ON "__frontier_stage_one" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_stage_one" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_stage_two" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_stage_one" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_stage_one" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_stage_one" t`,
+  `CREATE TEMP TABLE "__delta_stage_two" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stage_two_sign" ON "__delta_stage_two" ("_sign")`,
   `CREATE INDEX "__delta_stage_two_group" ON "__delta_stage_two" ("item")`,
-  `CREATE TEMP TABLE "__frontier_stage_two" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_stage_two" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stage_two_phase" ON "__frontier_stage_two" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_stage_two" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_stage_two" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_stage_two" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_stage_two" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -220,16 +239,30 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    source_ev: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "source_ev"`, rel_columns.source_ev!, rel_column_types.source_ev!),
-    stage_one: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "stage_one"`, rel_columns.stage_one!, rel_column_types.stage_one!),
-    stage_two: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "stage_two"`, rel_columns.stage_two!, rel_column_types.stage_two!),
+    source_ev: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_source_ev"`, rel_columns.source_ev!, rel_column_types.source_ev!),
+    stage_one: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_stage_one"`, rel_columns.stage_one!, rel_column_types.stage_one!),
+    stage_two: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_stage_two"`, rel_columns.stage_two!, rel_column_types.stage_two!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    source_ev: select_rows(seam, `SELECT "item" FROM "source_ev"`, rel_columns.source_ev!, rel_column_types.source_ev!),
+    stage_one: select_rows(seam, `SELECT "item" FROM "stage_one"`, rel_columns.stage_one!, rel_column_types.stage_one!),
+    stage_two: select_rows(seam, `SELECT "item" FROM "stage_two"`, rel_columns.stage_two!, rel_column_types.stage_two!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  source_ev: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "source_ev"`,
-  stage_one: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "stage_one"`,
-  stage_two: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "stage_two"`,
+  source_ev: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_source_ev"`,
+  stage_one: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_stage_one"`,
+  stage_two: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_stage_two"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -259,9 +292,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "source_ev", kind: "log", table_name: "source_ev", delta_table_name: "__delta_source_ev", frontier_table_name: "__frontier_source_ev", next_frontier_table_name: "__next_frontier_source_ev", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "source_ev" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_ev" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: ["stage_one/1"] },
-  { rel: "stage_one", kind: "log", table_name: "stage_one", delta_table_name: "__delta_stage_one", frontier_table_name: "__frontier_stage_one", next_frontier_table_name: "__next_frontier_stage_one", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stage_one" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: ["stage_two/1"] },
-  { rel: "stage_two", kind: "log", table_name: "stage_two", delta_table_name: "__delta_stage_two", frontier_table_name: "__frontier_stage_two", next_frontier_table_name: "__next_frontier_stage_two", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stage_two" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: [] },
+  { rel: "source_ev", kind: "log", table_name: "source_ev", delta_table_name: "__delta_source_ev", frontier_table_name: "__frontier_source_ev", next_frontier_table_name: "__next_frontier_source_ev", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "source_ev" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_source_ev" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: ["stage_one/1"] },
+  { rel: "stage_one", kind: "log", table_name: "stage_one", delta_table_name: "__delta_stage_one", frontier_table_name: "__frontier_stage_one", next_frontier_table_name: "__next_frontier_stage_one", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stage_one" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: ["stage_two/1"] },
+  { rel: "stage_two", kind: "log", table_name: "stage_two", delta_table_name: "__delta_stage_two", frontier_table_name: "__frontier_stage_two", next_frontier_table_name: "__next_frontier_stage_two", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stage_two" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -334,17 +367,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveStageOne_0Writes(seam, before, arrivals), resolveStageTwo_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveStageOne_0Writes(seam, before.stored, arrivals), resolveStageTwo_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // edge_chain_hops_tick_per_stage: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -365,6 +400,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -397,7 +434,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "edge_chain_hops_tick_per_stage",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

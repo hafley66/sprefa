@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,34 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "operation": [true, true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "operation" ("path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "method", "id")) WITHOUT ROWID`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "operation" ("path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "method", "id")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_operation" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."method") AS "method", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."id") AS "id", t."__refcount" AS "__refcount" FROM "operation" t`,
   `CREATE TABLE "spec" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_operation" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_operation" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_operation_sign" ON "__delta_operation" ("_sign")`,
   `CREATE INDEX "__delta_operation_group" ON "__delta_operation" ("path", "method", "id")`,
-  `CREATE TEMP TABLE "__frontier_operation" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_operation" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_operation_phase" ON "__frontier_operation" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_operation" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_operation" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_operation" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."method") AS "method", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."id") AS "id", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_operation" t`,
   `CREATE TEMP TABLE "__delta_spec" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_spec_sign" ON "__delta_spec" ("_sign")`,
   `CREATE INDEX "__delta_spec_group" ON "__delta_spec" ("body")`,
   `CREATE TEMP TABLE "__frontier_spec" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_spec_phase" ON "__frontier_spec" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_spec" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__support_next_operation" ("path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "method", "id")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_operation" ("path" TEXT NOT NULL, "method" TEXT NOT NULL, "id" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_operation" ("path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "method", "id")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_operation" ("path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "operation_zero" ON "operation" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -188,7 +201,8 @@ const arrival_targets: readonly string[] = ["spec"];
 const boot: readonly IBootStatement[] = [
   { rel: "spec", sql: `INSERT OR IGNORE INTO "spec" ("body") VALUES (?)`, params: ["{\"paths\":{\"/pets\":{\"get\":{\"operationId\":\"list_pets\"}},\"/users\":{\"get\":{\"operationId\":\"list_users\"},\"post\":{\"operationId\":\"create_user\"}}}}"] },
   { rel: "operation", sql: `DELETE FROM "operation"`, params: [] },
-  { rel: "operation", sql: `INSERT OR IGNORE INTO "operation" ("path", "method", "id") SELECT j0.key, j1.key, json_extract(j1.value, '$."operationId"') FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`, params: [] },
+  { rel: "operation", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT j1.key FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT json_extract(j1.value, '$."operationId"') FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`, params: [] },
+  { rel: "operation", sql: `INSERT OR IGNORE INTO "operation" ("path", "method", "id") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j1.value, '$."operationId"')) FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`, params: [] },
 ];
 
 type Snapshot = {
@@ -198,13 +212,26 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    operation: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id" FROM "operation"`, rel_columns.operation!, rel_column_types.operation!),
+    operation: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id" FROM "__txt_operation"`, rel_columns.operation!, rel_column_types.operation!),
     spec: select_rows(seam, `SELECT "body" FROM "spec"`, rel_columns.spec!, rel_column_types.spec!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    operation: select_rows(seam, `SELECT "path", "method", "id" FROM "operation"`, rel_columns.operation!, rel_column_types.operation!),
+    spec: select_rows(seam, `SELECT "body" FROM "spec"`, rel_columns.spec!, rel_column_types.spec!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  operation: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id" FROM "operation"`,
+  operation: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id" FROM "__txt_operation"`,
   spec: `SELECT "body" FROM "spec"`,
 };
 
@@ -235,7 +262,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "operation", kind: "set", table_name: "operation", delta_table_name: "__delta_operation", frontier_table_name: "__frontier_operation", next_frontier_table_name: "__next_frontier_operation", columns: ["path", "method", "id"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_operation" WHERE "_sign" IN (-1, 1) GROUP BY "path", "method", "id", "_sign"`, rule_observers: [] },
+  { rel: "operation", kind: "set", table_name: "operation", delta_table_name: "__delta_operation", frontier_table_name: "__frontier_operation", next_frontier_table_name: "__next_frontier_operation", columns: ["path", "method", "id"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_operation" WHERE "_sign" IN (-1, 1) GROUP BY "path", "method", "id", "_sign"`, rule_observers: [] },
   { rel: "spec", kind: "set", table_name: "spec", delta_table_name: "__delta_spec", frontier_table_name: "__frontier_spec", next_frontier_table_name: "__next_frontier_spec", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spec" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "spec" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_spec" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["operation/3"] },
 ];
 
@@ -243,13 +270,15 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "operation", rule_id: "json_key_capture_nests_and_fans_out:operation/3#1", head_delta_table_name: "__delta_operation", head_columns: ["path", "method", "id"], insert_sql: `INSERT OR IGNORE INTO "operation" ("path", "method", "id") SELECT DISTINCT j0.key, j1.key, json_extract(j1.value, '$."operationId"') FROM "__frontier_spec" d0, json_each(json_extract(d0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_type(d0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL RETURNING "path", "method", "id"`, select_sql: `SELECT "path", "method", "id" FROM "operation"`, recompute_sql: `DELETE FROM "operation";
-INSERT OR IGNORE INTO "operation" ("path", "method", "id") SELECT j0.key, j1.key, json_extract(j1.value, '$."operationId"') FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_operation"`, `INSERT INTO "__support_next_operation" ("path", "method", "id", "__refcount") SELECT "path", "method", "id", sum("__refcount") FROM (SELECT j0.key AS "path", j1.key AS "method", json_extract(j1.value, '$."operationId"') AS "id", count(*) AS "__refcount" FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL GROUP BY j0.key, j1.key, json_extract(j1.value, '$."operationId"')) GROUP BY "path", "method", "id"`, `UPDATE "operation" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_operation" n WHERE n."path" = h."path" AND n."method" = h."method" AND n."id" = h."id"), 0)`, `INSERT INTO "__delta_operation" ("_sign", "_sequence", "path", "method", "id") SELECT -1, row_number() OVER () - 1, "path", "method", "id" FROM "operation" WHERE "__refcount" <= 0`, `DELETE FROM "operation" WHERE "__refcount" <= 0`, `DELETE FROM "__new_operation"`, `INSERT INTO "__new_operation" ("path", "method", "id", "__refcount") SELECT n."path", n."method", n."id", n."__refcount" FROM "__support_next_operation" n LEFT JOIN "operation" h ON n."path" = h."path" AND n."method" = h."method" AND n."id" = h."id" WHERE h."path" IS NULL`, `INSERT INTO "__delta_operation" ("_sign", "_sequence", "path", "method", "id") SELECT 1, "rowid" - 1, "path", "method", "id" FROM "__new_operation"`, `INSERT INTO "__frontier_operation" ("_phase", "_sequence", "path", "method", "id") SELECT ?, "rowid" - 1, "path", "method", "id" FROM "__new_operation"`, `INSERT INTO "__next_frontier_operation" ("_phase", "_sequence", "path", "method", "id") SELECT ?, "rowid" - 1, "path", "method", "id" FROM "__new_operation"`, `INSERT OR IGNORE INTO "operation" ("path", "method", "id", "__refcount") SELECT n."path", n."method", n."id", n."__refcount" FROM "__support_next_operation" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "operation", rule_id: "json_key_capture_nests_and_fans_out:operation/3#1", head_delta_table_name: "__delta_operation", head_columns: ["path", "method", "id"], insert_sql: `INSERT OR IGNORE INTO "operation" ("path", "method", "id") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j1.value, '$."operationId"')) FROM "__frontier_spec" d0, json_each(json_extract(d0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_type(d0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL RETURNING "path", "method", "id"`, select_sql: `SELECT "path", "method", "id" FROM "operation"`, recompute_sql: `DELETE FROM "operation";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT j1.key FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT json_extract(j1.value, '$."operationId"') FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL;
+INSERT OR IGNORE INTO "operation" ("path", "method", "id") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j1.value, '$."operationId"')) FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_operation"`, `INSERT INTO "__support_next_operation" ("path", "method", "id", "__refcount") SELECT "path", "method", "id", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key) AS "path", (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key) AS "method", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j1.value, '$."operationId"')) AS "id", count(*) AS "__refcount" FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL GROUP BY j0.key, j1.key, json_extract(j1.value, '$."operationId"')) GROUP BY "path", "method", "id"`, `UPDATE "operation" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_operation" n WHERE n."path" = h."path" AND n."method" = h."method" AND n."id" = h."id"), 0)`, `INSERT INTO "__delta_operation" ("_sign", "_sequence", "path", "method", "id") SELECT -1, row_number() OVER () - 1, "path", "method", "id" FROM "operation" WHERE "__refcount" <= 0`, `DELETE FROM "operation" WHERE "__refcount" <= 0`, `DELETE FROM "__new_operation"`, `INSERT INTO "__new_operation" ("path", "method", "id", "__refcount") SELECT n."path", n."method", n."id", n."__refcount" FROM "__support_next_operation" n LEFT JOIN "operation" h ON n."path" = h."path" AND n."method" = h."method" AND n."id" = h."id" WHERE h."path" IS NULL`, `INSERT INTO "__delta_operation" ("_sign", "_sequence", "path", "method", "id") SELECT 1, "rowid" - 1, "path", "method", "id" FROM "__new_operation"`, `INSERT INTO "__frontier_operation" ("_phase", "_sequence", "path", "method", "id") SELECT ?, "rowid" - 1, "path", "method", "id" FROM "__new_operation"`, `INSERT INTO "__next_frontier_operation" ("_phase", "_sequence", "path", "method", "id") SELECT ?, "rowid" - 1, "path", "method", "id" FROM "__new_operation"`, `INSERT OR IGNORE INTO "operation" ("path", "method", "id", "__refcount") SELECT n."path", n."method", n."id", n."__refcount" FROM "__support_next_operation" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "__frontier_spec" d0, json_each(json_extract(d0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_type(d0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT j1.key FROM "__frontier_spec" d0, json_each(json_extract(d0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_type(d0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT json_extract(j1.value, '$."operationId"') FROM "__frontier_spec" d0, json_each(json_extract(d0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_type(d0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT j1.key FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT json_extract(j1.value, '$."operationId"') FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`] },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "operation";
-INSERT OR IGNORE INTO "operation" ("path", "method", "id") SELECT j0.key, j1.key, json_extract(j1.value, '$."operationId"') FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j0.key FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT j1.key FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL UNION SELECT DISTINCT json_extract(j1.value, '$."operationId"') FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL;
+INSERT OR IGNORE INTO "operation" ("path", "method", "id") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = j0.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j1.value, '$."operationId"')) FROM "spec" b0, json_each(json_extract(b0."body", '$."paths"')) j0, json_each(j0.value) j1 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."paths"') = 'object' AND j0.type = 'object' AND j1.type = 'object' AND json_extract(j1.value, '$."operationId"') IS NOT NULL`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -267,6 +296,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -290,11 +321,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -322,7 +356,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_key_capture_nests_and_fans_out",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

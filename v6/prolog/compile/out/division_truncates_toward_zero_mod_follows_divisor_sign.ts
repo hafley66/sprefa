@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,37 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "division_input": [true, false, false],
+    "probe": [true, false, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "division_input" ("label" TEXT NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL, PRIMARY KEY ("label", "numerator", "denominator")) WITHOUT ROWID`,
-  `CREATE TABLE "probe" ("label" TEXT NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("label", "quotient", "remainder")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_division_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" TEXT NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "division_input" ("label" INTEGER NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL, PRIMARY KEY ("label", "numerator", "denominator")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_division_input" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."numerator" AS "numerator", t."denominator" AS "denominator" FROM "division_input" t`,
+  `CREATE TABLE "probe" ("label" INTEGER NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("label", "quotient", "remainder")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_probe" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."quotient" AS "quotient", t."remainder" AS "remainder", t."__refcount" AS "__refcount" FROM "probe" t`,
+  `CREATE TEMP TABLE "__delta_division_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" INTEGER NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_division_input_sign" ON "__delta_division_input" ("_sign")`,
   `CREATE INDEX "__delta_division_input_group" ON "__delta_division_input" ("label", "numerator", "denominator")`,
-  `CREATE TEMP TABLE "__frontier_division_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" TEXT NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_division_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" INTEGER NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_division_input_phase" ON "__frontier_division_input" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_division_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" TEXT NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_probe" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" TEXT NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_division_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" INTEGER NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_division_input" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."numerator" AS "numerator", t."denominator" AS "denominator", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_division_input" t`,
+  `CREATE TEMP TABLE "__delta_probe" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" INTEGER NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_probe_sign" ON "__delta_probe" ("_sign")`,
   `CREATE INDEX "__delta_probe_group" ON "__delta_probe" ("label", "quotient", "remainder")`,
-  `CREATE TEMP TABLE "__frontier_probe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" TEXT NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_probe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" INTEGER NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_probe_phase" ON "__frontier_probe" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_probe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" TEXT NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_probe" ("label" TEXT NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("label", "quotient", "remainder")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_probe" ("label" TEXT NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_probe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" INTEGER NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_probe" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."quotient" AS "quotient", t."remainder" AS "remainder", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_probe" t`,
+  `CREATE TEMP TABLE "__support_next_probe" ("label" INTEGER NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("label", "quotient", "remainder")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_probe" ("label" INTEGER NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "probe_zero" ON "probe" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -187,10 +203,14 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["division_input"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "division_input", sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES (?, ?, ?)`, params: ["pos_pos", 7, 2] },
-  { rel: "division_input", sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES (?, ?, ?)`, params: ["neg_numerator", -7, 2] },
-  { rel: "division_input", sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES (?, ?, ?)`, params: ["neg_denominator", 7, -2] },
-  { rel: "division_input", sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES (?, ?, ?)`, params: ["neg_both", -7, -2] },
+  { rel: "division_input", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["pos_pos"] },
+  { rel: "division_input", sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["pos_pos", 7, 2] },
+  { rel: "division_input", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["neg_numerator"] },
+  { rel: "division_input", sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["neg_numerator", -7, 2] },
+  { rel: "division_input", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["neg_denominator"] },
+  { rel: "division_input", sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["neg_denominator", 7, -2] },
+  { rel: "division_input", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["neg_both"] },
+  { rel: "division_input", sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["neg_both", -7, -2] },
   { rel: "probe", sql: `DELETE FROM "probe"`, params: [] },
   { rel: "probe", sql: `INSERT OR IGNORE INTO "probe" ("label", "quotient", "remainder") SELECT b0."label", (b0."numerator" / b0."denominator"), (((b0."numerator" % b0."denominator") + b0."denominator") % b0."denominator") FROM "division_input" b0`, params: [] },
 ];
@@ -202,14 +222,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    division_input: select_rows(seam, `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "numerator", "denominator" FROM "division_input"`, rel_columns.division_input!, rel_column_types.division_input!),
-    probe: select_rows(seam, `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "quotient", "remainder" FROM "probe"`, rel_columns.probe!, rel_column_types.probe!),
+    division_input: select_rows(seam, `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "numerator", "denominator" FROM "__txt_division_input"`, rel_columns.division_input!, rel_column_types.division_input!),
+    probe: select_rows(seam, `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "quotient", "remainder" FROM "__txt_probe"`, rel_columns.probe!, rel_column_types.probe!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    division_input: select_rows(seam, `SELECT "label", "numerator", "denominator" FROM "division_input"`, rel_columns.division_input!, rel_column_types.division_input!),
+    probe: select_rows(seam, `SELECT "label", "quotient", "remainder" FROM "probe"`, rel_columns.probe!, rel_column_types.probe!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  division_input: `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "numerator", "denominator" FROM "division_input"`,
-  probe: `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "quotient", "remainder" FROM "probe"`,
+  division_input: `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "numerator", "denominator" FROM "__txt_division_input"`,
+  probe: `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "quotient", "remainder" FROM "__txt_probe"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -239,8 +272,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "division_input", kind: "set", table_name: "division_input", delta_table_name: "__delta_division_input", frontier_table_name: "__frontier_division_input", next_frontier_table_name: "__next_frontier_division_input", columns: ["label", "numerator", "denominator"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "label", "numerator", "denominator"`, arrival_del_sql: `DELETE FROM "division_input" WHERE ("label", "numerator", "denominator") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "label", "numerator", "denominator"`, boundary_sql: `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "numerator", "denominator", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_division_input" WHERE "_sign" IN (-1, 1) GROUP BY "label", "numerator", "denominator", "_sign"`, rule_observers: ["probe/3"] },
-  { rel: "probe", kind: "set", table_name: "probe", delta_table_name: "__delta_probe", frontier_table_name: "__frontier_probe", next_frontier_table_name: "__next_frontier_probe", columns: ["label", "quotient", "remainder"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "quotient", "remainder", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_probe" WHERE "_sign" IN (-1, 1) GROUP BY "label", "quotient", "remainder", "_sign"`, rule_observers: [] },
+  { rel: "division_input", kind: "set", table_name: "division_input", delta_table_name: "__delta_division_input", frontier_table_name: "__frontier_division_input", next_frontier_table_name: "__next_frontier_division_input", columns: ["label", "numerator", "denominator"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "label", "numerator", "denominator"`, arrival_del_sql: `DELETE FROM "division_input" WHERE ("label", "numerator", "denominator") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "label", "numerator", "denominator"`, boundary_sql: `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "numerator", "denominator", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_division_input" WHERE "_sign" IN (-1, 1) GROUP BY "label", "numerator", "denominator", "_sign"`, rule_observers: ["probe/3"] },
+  { rel: "probe", kind: "set", table_name: "probe", delta_table_name: "__delta_probe", frontier_table_name: "__frontier_probe", next_frontier_table_name: "__next_frontier_probe", columns: ["label", "quotient", "remainder"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "quotient", "remainder", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_probe" WHERE "_sign" IN (-1, 1) GROUP BY "label", "quotient", "remainder", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -271,6 +304,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -294,11 +329,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -326,7 +364,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "division_truncates_toward_zero_mod_follows_divisor_sign",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

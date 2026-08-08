@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,37 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "mirror": [true],
+    "source_row": [true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "mirror" ("item" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("item")) WITHOUT ROWID`,
-  `CREATE TABLE "source_row" ("item" TEXT NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_mirror" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "mirror" ("item" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_mirror" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."__refcount" AS "__refcount" FROM "mirror" t`,
+  `CREATE TABLE "source_row" ("item" INTEGER NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_source_row" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "source_row" t`,
+  `CREATE TEMP TABLE "__delta_mirror" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_mirror_sign" ON "__delta_mirror" ("_sign")`,
   `CREATE INDEX "__delta_mirror_group" ON "__delta_mirror" ("item")`,
-  `CREATE TEMP TABLE "__frontier_mirror" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_mirror" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_mirror_phase" ON "__frontier_mirror" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_mirror" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_source_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_mirror" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_mirror" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_mirror" t`,
+  `CREATE TEMP TABLE "__delta_source_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_source_row_sign" ON "__delta_source_row" ("_sign")`,
   `CREATE INDEX "__delta_source_row_group" ON "__delta_source_row" ("item")`,
-  `CREATE TEMP TABLE "__frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_source_row_phase" ON "__frontier_source_row" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_mirror" ("item" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_mirror" ("item" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_source_row" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_source_row" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_source_row" t`,
+  `CREATE TEMP TABLE "__support_next_mirror" ("item" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_mirror" ("item" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "mirror_zero" ON "mirror" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -194,14 +210,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    mirror: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "mirror"`, rel_columns.mirror!, rel_column_types.mirror!),
-    source_row: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "source_row"`, rel_columns.source_row!, rel_column_types.source_row!),
+    mirror: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_mirror"`, rel_columns.mirror!, rel_column_types.mirror!),
+    source_row: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_source_row"`, rel_columns.source_row!, rel_column_types.source_row!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    mirror: select_rows(seam, `SELECT "item" FROM "mirror"`, rel_columns.mirror!, rel_column_types.mirror!),
+    source_row: select_rows(seam, `SELECT "item" FROM "source_row"`, rel_columns.source_row!, rel_column_types.source_row!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  mirror: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "mirror"`,
-  source_row: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "source_row"`,
+  mirror: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_mirror"`,
+  source_row: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_source_row"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -231,8 +260,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "mirror", kind: "set", table_name: "mirror", delta_table_name: "__delta_mirror", frontier_table_name: "__frontier_mirror", next_frontier_table_name: "__next_frontier_mirror", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mirror" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: [] },
-  { rel: "source_row", kind: "set", table_name: "source_row", delta_table_name: "__delta_source_row", frontier_table_name: "__frontier_source_row", next_frontier_table_name: "__next_frontier_source_row", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source_row" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: `DELETE FROM "source_row" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_row" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: ["mirror/1"] },
+  { rel: "mirror", kind: "set", table_name: "mirror", delta_table_name: "__delta_mirror", frontier_table_name: "__frontier_mirror", next_frontier_table_name: "__next_frontier_mirror", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_mirror" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: [] },
+  { rel: "source_row", kind: "set", table_name: "source_row", delta_table_name: "__delta_source_row", frontier_table_name: "__frontier_source_row", next_frontier_table_name: "__next_frontier_source_row", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source_row" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: `DELETE FROM "source_row" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_source_row" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: ["mirror/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -263,6 +292,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -286,11 +317,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -318,7 +352,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "retraction_only_tick_retracts_level_view",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

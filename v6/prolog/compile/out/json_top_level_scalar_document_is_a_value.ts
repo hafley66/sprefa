@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,40 +136,60 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "echoed": [true, false],
+    "label": [true, true],
+    "labelled": [true, true],
+    "payload": [true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "echoed" ("name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
-  `CREATE TABLE "label" ("name" TEXT NOT NULL, "body" TEXT NOT NULL, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
-  `CREATE TABLE "labelled" ("name" TEXT NOT NULL, "body" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
-  `CREATE TABLE "payload" ("name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_echoed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "echoed" ("name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_echoed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."body" AS "body", t."__refcount" AS "__refcount" FROM "echoed" t`,
+  `CREATE TABLE "label" ("name" INTEGER NOT NULL, "body" INTEGER NOT NULL, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_label" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body" FROM "label" t`,
+  `CREATE TABLE "labelled" ("name" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_labelled" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body", t."__refcount" AS "__refcount" FROM "labelled" t`,
+  `CREATE TABLE "payload" ("name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_payload" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."body" AS "body" FROM "payload" t`,
+  `CREATE TEMP TABLE "__delta_echoed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_echoed_sign" ON "__delta_echoed" ("_sign")`,
   `CREATE INDEX "__delta_echoed_group" ON "__delta_echoed" ("name", "body")`,
-  `CREATE TEMP TABLE "__frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE TEMP TABLE "__frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_echoed_phase" ON "__frontier_echoed" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__delta_label" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_echoed" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE TEMP VIEW "__txt___delta_echoed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."body" AS "body", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_echoed" t`,
+  `CREATE TEMP TABLE "__delta_label" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_label_sign" ON "__delta_label" ("_sign")`,
   `CREATE INDEX "__delta_label_group" ON "__delta_label" ("name", "body")`,
-  `CREATE TEMP TABLE "__frontier_label" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_label" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_label_phase" ON "__frontier_label" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_label" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_labelled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_label" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_label" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_label" t`,
+  `CREATE TEMP TABLE "__delta_labelled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_labelled_sign" ON "__delta_labelled" ("_sign")`,
   `CREATE INDEX "__delta_labelled_group" ON "__delta_labelled" ("name", "body")`,
-  `CREATE TEMP TABLE "__frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_labelled_phase" ON "__frontier_labelled" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_payload" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE TEMP TABLE "__next_frontier_labelled" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_labelled" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_labelled" t`,
+  `CREATE TEMP TABLE "__delta_payload" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_payload_sign" ON "__delta_payload" ("_sign")`,
   `CREATE INDEX "__delta_payload_group" ON "__delta_payload" ("name", "body")`,
-  `CREATE TEMP TABLE "__frontier_payload" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE TEMP TABLE "__frontier_payload" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__frontier_payload_phase" ON "__frontier_payload" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_payload" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
-  `CREATE TEMP TABLE "__support_next_echoed" ("name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_echoed" ("name" TEXT NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_payload" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
+  `CREATE TEMP VIEW "__txt___delta_payload" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."body" AS "body", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_payload" t`,
+  `CREATE TEMP TABLE "__support_next_echoed" ("name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_echoed" ("name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "echoed_zero" ON "echoed" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_labelled" ("name" TEXT NOT NULL, "body" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_labelled" ("name" TEXT NOT NULL, "body" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_labelled" ("name" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_labelled" ("name" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "labelled_zero" ON "labelled" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -231,18 +253,33 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    echoed: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "echoed"`, rel_columns.echoed!, rel_column_types.echoed!),
-    label: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "label"`, rel_columns.label!, rel_column_types.label!),
-    labelled: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "labelled"`, rel_columns.labelled!, rel_column_types.labelled!),
-    payload: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "payload"`, rel_columns.payload!, rel_column_types.payload!),
+    echoed: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "__txt_echoed"`, rel_columns.echoed!, rel_column_types.echoed!),
+    label: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "__txt_label"`, rel_columns.label!, rel_column_types.label!),
+    labelled: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "__txt_labelled"`, rel_columns.labelled!, rel_column_types.labelled!),
+    payload: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "__txt_payload"`, rel_columns.payload!, rel_column_types.payload!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    echoed: select_rows(seam, `SELECT "name", "body" FROM "echoed"`, rel_columns.echoed!, rel_column_types.echoed!),
+    label: select_rows(seam, `SELECT "name", "body" FROM "label"`, rel_columns.label!, rel_column_types.label!),
+    labelled: select_rows(seam, `SELECT "name", "body" FROM "labelled"`, rel_columns.labelled!, rel_column_types.labelled!),
+    payload: select_rows(seam, `SELECT "name", "body" FROM "payload"`, rel_columns.payload!, rel_column_types.payload!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  echoed: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "echoed"`,
-  label: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "label"`,
-  labelled: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "labelled"`,
-  payload: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "payload"`,
+  echoed: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "__txt_echoed"`,
+  label: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "__txt_label"`,
+  labelled: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body" FROM "__txt_labelled"`,
+  payload: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body" FROM "__txt_payload"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -273,10 +310,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "echoed", kind: "set", table_name: "echoed", delta_table_name: "__delta_echoed", frontier_table_name: "__frontier_echoed", next_frontier_table_name: "__next_frontier_echoed", columns: ["name", "body"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_echoed" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: [] },
-  { rel: "label", kind: "set", table_name: "label", delta_table_name: "__delta_label", frontier_table_name: "__frontier_label", next_frontier_table_name: "__next_frontier_label", columns: ["name", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "label" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrival_del_sql: `DELETE FROM "label" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_label" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: ["labelled/2"] },
-  { rel: "labelled", kind: "set", table_name: "labelled", delta_table_name: "__delta_labelled", frontier_table_name: "__frontier_labelled", next_frontier_table_name: "__next_frontier_labelled", columns: ["name", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_labelled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: [] },
-  { rel: "payload", kind: "set", table_name: "payload", delta_table_name: "__delta_payload", frontier_table_name: "__frontier_payload", next_frontier_table_name: "__next_frontier_payload", columns: ["name", "body"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "payload" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrival_del_sql: `DELETE FROM "payload" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: ["echoed/2"] },
+  { rel: "echoed", kind: "set", table_name: "echoed", delta_table_name: "__delta_echoed", frontier_table_name: "__frontier_echoed", next_frontier_table_name: "__next_frontier_echoed", columns: ["name", "body"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_echoed" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: [] },
+  { rel: "label", kind: "set", table_name: "label", delta_table_name: "__delta_label", frontier_table_name: "__frontier_label", next_frontier_table_name: "__next_frontier_label", columns: ["name", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "label" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrival_del_sql: `DELETE FROM "label" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_label" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: ["labelled/2"] },
+  { rel: "labelled", kind: "set", table_name: "labelled", delta_table_name: "__delta_labelled", frontier_table_name: "__frontier_labelled", next_frontier_table_name: "__next_frontier_labelled", columns: ["name", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("body") AND json_type("body") = 'object' AND json_type("body", '$.fn') = 'text' AND json_type("body", '$.args') = 'array' THEN json_extract("body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("body", '$.args')), '') || ')' ELSE "body" END AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_labelled" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: [] },
+  { rel: "payload", kind: "set", table_name: "payload", delta_table_name: "__delta_payload", frontier_table_name: "__frontier_payload", next_frontier_table_name: "__next_frontier_payload", columns: ["name", "body"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "payload" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrival_del_sql: `DELETE FROM "payload" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_payload" WHERE "_sign" IN (-1, 1) GROUP BY "name", "body", "_sign"`, rule_observers: ["echoed/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -315,6 +352,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -338,11 +377,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -370,7 +412,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "json_top_level_scalar_document_is_a_value",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,30 +136,48 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "latest_commit": [true, true],
+    "repo": [true],
+    "repo_latest": [true, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "latest_commit" ("name" TEXT NOT NULL, "commit" TEXT NOT NULL, PRIMARY KEY ("name", "commit")) WITHOUT ROWID`,
-  `CREATE TABLE "repo" ("name" TEXT NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
-  `CREATE TABLE "repo_latest" ("name" TEXT NOT NULL, "commit" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "commit")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_latest_commit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "commit" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `INSERT OR IGNORE INTO "__str" ("content") VALUES ('absent')`,
+  `CREATE TABLE "latest_commit" ("name" INTEGER NOT NULL, "commit" INTEGER NOT NULL, PRIMARY KEY ("name", "commit")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_latest_commit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."commit") AS "commit" FROM "latest_commit" t`,
+  `CREATE TABLE "repo" ("name" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "repo" t`,
+  `CREATE TABLE "repo_latest" ("name" INTEGER NOT NULL, "commit" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "commit")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_repo_latest" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."commit") AS "commit", t."__refcount" AS "__refcount" FROM "repo_latest" t`,
+  `CREATE TEMP TABLE "__delta_latest_commit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "commit" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_latest_commit_sign" ON "__delta_latest_commit" ("_sign")`,
   `CREATE INDEX "__delta_latest_commit_group" ON "__delta_latest_commit" ("name", "commit")`,
-  `CREATE TEMP TABLE "__frontier_latest_commit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "commit" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_latest_commit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "commit" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_latest_commit_phase" ON "__frontier_latest_commit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_latest_commit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "commit" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_latest_commit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "commit" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_latest_commit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."commit") AS "commit", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_latest_commit" t`,
+  `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_repo_sign" ON "__delta_repo" ("_sign")`,
   `CREATE INDEX "__delta_repo_group" ON "__delta_repo" ("name")`,
-  `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_repo_phase" ON "__frontier_repo" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_repo_latest" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "commit" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_repo" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_repo" t`,
+  `CREATE TEMP TABLE "__delta_repo_latest" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "commit" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_repo_latest_sign" ON "__delta_repo_latest" ("_sign")`,
   `CREATE INDEX "__delta_repo_latest_group" ON "__delta_repo_latest" ("name", "commit")`,
-  `CREATE TEMP TABLE "__frontier_repo_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "commit" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_repo_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "commit" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_repo_latest_phase" ON "__frontier_repo_latest" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_repo_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" TEXT NOT NULL, "commit" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_repo_latest" ("name" TEXT NOT NULL, "commit" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "commit")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_repo_latest" ("name" TEXT NOT NULL, "commit" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_repo_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "commit" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_repo_latest" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."commit") AS "commit", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_repo_latest" t`,
+  `CREATE TEMP TABLE "__support_next_repo_latest" ("name" INTEGER NOT NULL, "commit" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("name", "commit")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_repo_latest" ("name" INTEGER NOT NULL, "commit" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "repo_latest_zero" ON "repo_latest" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -199,10 +219,11 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["latest_commit", "repo"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "repo", sql: `INSERT OR IGNORE INTO "repo" ("name") VALUES (?)`, params: ["alpha"] },
+  { rel: "repo", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["alpha"] },
+  { rel: "repo", sql: `INSERT OR IGNORE INTO "repo" ("name") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["alpha"] },
   { rel: "repo_latest", sql: `DELETE FROM "repo_latest"`, params: [] },
   { rel: "repo_latest", sql: `INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", b1."commit" FROM "repo" b0, "latest_commit" b1 WHERE b1."name" = b0."name"`, params: [] },
-  { rel: "repo_latest", sql: `INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", 'absent' FROM "repo" b0 WHERE NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = b0."name")`, params: [] },
+  { rel: "repo_latest", sql: `INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'absent') FROM "repo" b0 WHERE NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = b0."name")`, params: [] },
 ];
 
 type Snapshot = {
@@ -213,16 +234,30 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    latest_commit: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit" FROM "latest_commit"`, rel_columns.latest_commit!, rel_column_types.latest_commit!),
-    repo: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
-    repo_latest: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit" FROM "repo_latest"`, rel_columns.repo_latest!, rel_column_types.repo_latest!),
+    latest_commit: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit" FROM "__txt_latest_commit"`, rel_columns.latest_commit!, rel_column_types.latest_commit!),
+    repo: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_repo"`, rel_columns.repo!, rel_column_types.repo!),
+    repo_latest: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit" FROM "__txt_repo_latest"`, rel_columns.repo_latest!, rel_column_types.repo_latest!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    latest_commit: select_rows(seam, `SELECT "name", "commit" FROM "latest_commit"`, rel_columns.latest_commit!, rel_column_types.latest_commit!),
+    repo: select_rows(seam, `SELECT "name" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
+    repo_latest: select_rows(seam, `SELECT "name", "commit" FROM "repo_latest"`, rel_columns.repo_latest!, rel_column_types.repo_latest!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  latest_commit: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit" FROM "latest_commit"`,
-  repo: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "repo"`,
-  repo_latest: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit" FROM "repo_latest"`,
+  latest_commit: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit" FROM "__txt_latest_commit"`,
+  repo: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_repo"`,
+  repo_latest: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit" FROM "__txt_repo_latest"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -253,24 +288,24 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "latest_commit", kind: "set", table_name: "latest_commit", delta_table_name: "__delta_latest_commit", frontier_table_name: "__frontier_latest_commit", next_frontier_table_name: "__next_frontier_latest_commit", columns: ["name", "commit"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "latest_commit" ("name", "commit") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "commit"`, arrival_del_sql: `DELETE FROM "latest_commit" WHERE ("name", "commit") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "commit"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_latest_commit" WHERE "_sign" IN (-1, 1) GROUP BY "name", "commit", "_sign"`, rule_observers: ["repo_latest/2"] },
-  { rel: "repo", kind: "set", table_name: "repo", delta_table_name: "__delta_repo", frontier_table_name: "__frontier_repo", next_frontier_table_name: "__next_frontier_repo", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "repo" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["repo_latest/2"] },
-  { rel: "repo_latest", kind: "set", table_name: "repo_latest", delta_table_name: "__delta_repo_latest", frontier_table_name: "__frontier_repo_latest", next_frontier_table_name: "__next_frontier_repo_latest", columns: ["name", "commit"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_latest" WHERE "_sign" IN (-1, 1) GROUP BY "name", "commit", "_sign"`, rule_observers: [] },
+  { rel: "latest_commit", kind: "set", table_name: "latest_commit", delta_table_name: "__delta_latest_commit", frontier_table_name: "__frontier_latest_commit", next_frontier_table_name: "__next_frontier_latest_commit", columns: ["name", "commit"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "latest_commit" ("name", "commit") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "commit"`, arrival_del_sql: `DELETE FROM "latest_commit" WHERE ("name", "commit") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "commit"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_latest_commit" WHERE "_sign" IN (-1, 1) GROUP BY "name", "commit", "_sign"`, rule_observers: ["repo_latest/2"] },
+  { rel: "repo", kind: "set", table_name: "repo", delta_table_name: "__delta_repo", frontier_table_name: "__frontier_repo", next_frontier_table_name: "__next_frontier_repo", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo" ("name") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "name"`, arrival_del_sql: `DELETE FROM "repo" WHERE ("name") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "name"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo" WHERE "_sign" IN (-1, 1) GROUP BY "name", "_sign"`, rule_observers: ["repo_latest/2"] },
+  { rel: "repo_latest", kind: "set", table_name: "repo_latest", delta_table_name: "__delta_repo_latest", frontier_table_name: "__frontier_repo_latest", next_frontier_table_name: "__next_frontier_repo_latest", columns: ["name", "commit"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("commit") AND json_type("commit") = 'object' AND json_type("commit", '$.fn') = 'text' AND json_type("commit", '$.args') = 'array' THEN json_extract("commit", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("commit", '$.args')), '') || ')' ELSE "commit" END AS "commit", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_latest" WHERE "_sign" IN (-1, 1) GROUP BY "name", "commit", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "repo_latest", rule_id: "coalesce_default_returns_when_source_retracts:repo_latest/2#1", head_delta_table_name: "__delta_repo_latest", head_columns: ["name", "commit"], insert_sql: `INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT DISTINCT d0."name", b0."commit" FROM "__frontier_repo" d0, "latest_commit" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" UNION ALL SELECT DISTINCT d0."name", d0."commit" FROM "__frontier_latest_commit" d0, "repo" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" UNION ALL SELECT DISTINCT d0."name", 'absent' FROM "__frontier_repo" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = d0."name") RETURNING "name", "commit"`, select_sql: `SELECT "name", "commit" FROM "repo_latest"`, recompute_sql: `DELETE FROM "repo_latest";
+  { head_rel: "repo_latest", rule_id: "coalesce_default_returns_when_source_retracts:repo_latest/2#1", head_delta_table_name: "__delta_repo_latest", head_columns: ["name", "commit"], insert_sql: `INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT DISTINCT d0."name", b0."commit" FROM "__frontier_repo" d0, "latest_commit" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" UNION ALL SELECT DISTINCT d0."name", d0."commit" FROM "__frontier_latest_commit" d0, "repo" b0 WHERE d0."_phase" >= 0 AND b0."name" = d0."name" UNION ALL SELECT DISTINCT d0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'absent') FROM "__frontier_repo" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = d0."name") RETURNING "name", "commit"`, select_sql: `SELECT "name", "commit" FROM "repo_latest"`, recompute_sql: `DELETE FROM "repo_latest";
 INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", b1."commit" FROM "repo" b0, "latest_commit" b1 WHERE b1."name" = b0."name";
-INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", 'absent' FROM "repo" b0 WHERE NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = b0."name")`, support_sql: [`DELETE FROM "__support_next_repo_latest"`, `INSERT INTO "__support_next_repo_latest" ("name", "commit", "__refcount") SELECT "name", "commit", sum("__refcount") FROM (SELECT b0."name" AS "name", b1."commit" AS "commit", count(*) AS "__refcount" FROM "repo" b0, "latest_commit" b1 WHERE b1."name" = b0."name" GROUP BY b0."name", b1."commit" UNION ALL SELECT b0."name" AS "name", 'absent' AS "commit", count(*) AS "__refcount" FROM "repo" b0 WHERE NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = b0."name") GROUP BY b0."name", 'absent') GROUP BY "name", "commit"`, `UPDATE "repo_latest" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_repo_latest" n WHERE n."name" = h."name" AND n."commit" = h."commit"), 0)`, `INSERT INTO "__delta_repo_latest" ("_sign", "_sequence", "name", "commit") SELECT -1, row_number() OVER () - 1, "name", "commit" FROM "repo_latest" WHERE "__refcount" <= 0`, `DELETE FROM "repo_latest" WHERE "__refcount" <= 0`, `DELETE FROM "__new_repo_latest"`, `INSERT INTO "__new_repo_latest" ("name", "commit", "__refcount") SELECT n."name", n."commit", n."__refcount" FROM "__support_next_repo_latest" n LEFT JOIN "repo_latest" h ON n."name" = h."name" AND n."commit" = h."commit" WHERE h."name" IS NULL`, `INSERT INTO "__delta_repo_latest" ("_sign", "_sequence", "name", "commit") SELECT 1, "rowid" - 1, "name", "commit" FROM "__new_repo_latest"`, `INSERT INTO "__frontier_repo_latest" ("_phase", "_sequence", "name", "commit") SELECT ?, "rowid" - 1, "name", "commit" FROM "__new_repo_latest"`, `INSERT INTO "__next_frontier_repo_latest" ("_phase", "_sequence", "name", "commit") SELECT ?, "rowid" - 1, "name", "commit" FROM "__new_repo_latest"`, `INSERT OR IGNORE INTO "repo_latest" ("name", "commit", "__refcount") SELECT n."name", n."commit", n."__refcount" FROM "__support_next_repo_latest" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'absent') FROM "repo" b0 WHERE NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = b0."name")`, support_sql: [`DELETE FROM "__support_next_repo_latest"`, `INSERT INTO "__support_next_repo_latest" ("name", "commit", "__refcount") SELECT "name", "commit", sum("__refcount") FROM (SELECT b0."name" AS "name", b1."commit" AS "commit", count(*) AS "__refcount" FROM "repo" b0, "latest_commit" b1 WHERE b1."name" = b0."name" GROUP BY b0."name", b1."commit" UNION ALL SELECT b0."name" AS "name", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'absent') AS "commit", count(*) AS "__refcount" FROM "repo" b0 WHERE NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = b0."name") GROUP BY b0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'absent')) GROUP BY "name", "commit"`, `UPDATE "repo_latest" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_repo_latest" n WHERE n."name" = h."name" AND n."commit" = h."commit"), 0)`, `INSERT INTO "__delta_repo_latest" ("_sign", "_sequence", "name", "commit") SELECT -1, row_number() OVER () - 1, "name", "commit" FROM "repo_latest" WHERE "__refcount" <= 0`, `DELETE FROM "repo_latest" WHERE "__refcount" <= 0`, `DELETE FROM "__new_repo_latest"`, `INSERT INTO "__new_repo_latest" ("name", "commit", "__refcount") SELECT n."name", n."commit", n."__refcount" FROM "__support_next_repo_latest" n LEFT JOIN "repo_latest" h ON n."name" = h."name" AND n."commit" = h."commit" WHERE h."name" IS NULL`, `INSERT INTO "__delta_repo_latest" ("_sign", "_sequence", "name", "commit") SELECT 1, "rowid" - 1, "name", "commit" FROM "__new_repo_latest"`, `INSERT INTO "__frontier_repo_latest" ("_phase", "_sequence", "name", "commit") SELECT ?, "rowid" - 1, "name", "commit" FROM "__new_repo_latest"`, `INSERT INTO "__next_frontier_repo_latest" ("_phase", "_sequence", "name", "commit") SELECT ?, "rowid" - 1, "name", "commit" FROM "__new_repo_latest"`, `INSERT OR IGNORE INTO "repo_latest" ("name", "commit", "__refcount") SELECT n."name", n."commit", n."__refcount" FROM "__support_next_repo_latest" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "repo_latest";
 INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", b1."commit" FROM "repo" b0, "latest_commit" b1 WHERE b1."name" = b0."name";
-INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", 'absent' FROM "repo" b0 WHERE NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = b0."name")`;
+INSERT OR IGNORE INTO "repo_latest" ("name", "commit") SELECT b0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'absent') FROM "repo" b0 WHERE NOT EXISTS (SELECT 1 FROM "latest_commit" n0 WHERE n0."name" = b0."name")`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -290,6 +325,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -313,11 +350,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -345,7 +385,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "coalesce_default_returns_when_source_retracts",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

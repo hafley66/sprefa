@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,28 +155,45 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "change_ev": [true],
+    "sent": [true, true],
+    "subscriber": [true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "change_ev" ("item" TEXT NOT NULL)`,
-  `CREATE TABLE "sent" ("client" TEXT NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE TABLE "subscriber" ("client" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_change_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "change_ev" ("item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_change_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "change_ev" t`,
+  `CREATE TABLE "sent" ("client" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_sent" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "sent" t`,
+  `CREATE TABLE "subscriber" ("client" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_subscriber" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client" FROM "subscriber" t`,
+  `CREATE TEMP TABLE "__delta_change_ev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_change_ev_sign" ON "__delta_change_ev" ("_sign")`,
   `CREATE INDEX "__delta_change_ev_group" ON "__delta_change_ev" ("item")`,
-  `CREATE TEMP TABLE "__frontier_change_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_change_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_change_ev_phase" ON "__frontier_change_ev" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_change_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_sent" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_change_ev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_change_ev" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_change_ev" t`,
+  `CREATE TEMP TABLE "__delta_sent" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_sent_sign" ON "__delta_sent" ("_sign")`,
   `CREATE INDEX "__delta_sent_group" ON "__delta_sent" ("client", "item")`,
-  `CREATE TEMP TABLE "__frontier_sent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL, "item" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_sent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_sent_phase" ON "__frontier_sent" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_sent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL, "item" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_subscriber" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_sent" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_sent" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_sent" t`,
+  `CREATE TEMP TABLE "__delta_subscriber" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_subscriber_sign" ON "__delta_subscriber" ("_sign")`,
   `CREATE INDEX "__delta_subscriber_group" ON "__delta_subscriber" ("client")`,
-  `CREATE TEMP TABLE "__frontier_subscriber" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_subscriber" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_subscriber_phase" ON "__frontier_subscriber" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_subscriber" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_subscriber" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "client" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_subscriber" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."client") AS "client", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_subscriber" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -221,16 +240,30 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    change_ev: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "change_ev"`, rel_columns.change_ev!, rel_column_types.change_ev!),
-    sent: select_rows(seam, `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client", CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "sent"`, rel_columns.sent!, rel_column_types.sent!),
-    subscriber: select_rows(seam, `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client" FROM "subscriber"`, rel_columns.subscriber!, rel_column_types.subscriber!),
+    change_ev: select_rows(seam, `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_change_ev"`, rel_columns.change_ev!, rel_column_types.change_ev!),
+    sent: select_rows(seam, `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client", CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_sent"`, rel_columns.sent!, rel_column_types.sent!),
+    subscriber: select_rows(seam, `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client" FROM "__txt_subscriber"`, rel_columns.subscriber!, rel_column_types.subscriber!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    change_ev: select_rows(seam, `SELECT "item" FROM "change_ev"`, rel_columns.change_ev!, rel_column_types.change_ev!),
+    sent: select_rows(seam, `SELECT "client", "item" FROM "sent"`, rel_columns.sent!, rel_column_types.sent!),
+    subscriber: select_rows(seam, `SELECT "client" FROM "subscriber"`, rel_columns.subscriber!, rel_column_types.subscriber!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  change_ev: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "change_ev"`,
-  sent: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client", CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "sent"`,
-  subscriber: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client" FROM "subscriber"`,
+  change_ev: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_change_ev"`,
+  sent: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client", CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item" FROM "__txt_sent"`,
+  subscriber: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client" FROM "__txt_subscriber"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -261,9 +294,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "change_ev", kind: "log", table_name: "change_ev", delta_table_name: "__delta_change_ev", frontier_table_name: "__frontier_change_ev", next_frontier_table_name: "__next_frontier_change_ev", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "change_ev" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_change_ev" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: ["sent/2"] },
-  { rel: "sent", kind: "log", table_name: "sent", delta_table_name: "__delta_sent", frontier_table_name: "__frontier_sent", next_frontier_table_name: "__next_frontier_sent", columns: ["client", "item"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client", CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_sent" WHERE "_sign" IN (-1, 1) GROUP BY "client", "item", "_sign"`, rule_observers: [] },
-  { rel: "subscriber", kind: "log", table_name: "subscriber", delta_table_name: "__delta_subscriber", frontier_table_name: "__frontier_subscriber", next_frontier_table_name: "__next_frontier_subscriber", columns: ["client"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "subscriber" ("client") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "client"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_subscriber" WHERE "_sign" IN (-1, 1) GROUP BY "client", "_sign"`, rule_observers: ["sent/2"] },
+  { rel: "change_ev", kind: "log", table_name: "change_ev", delta_table_name: "__delta_change_ev", frontier_table_name: "__frontier_change_ev", next_frontier_table_name: "__next_frontier_change_ev", columns: ["item"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "change_ev" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_change_ev" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: ["sent/2"] },
+  { rel: "sent", kind: "log", table_name: "sent", delta_table_name: "__delta_sent", frontier_table_name: "__frontier_sent", next_frontier_table_name: "__next_frontier_sent", columns: ["client", "item"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client", CASE WHEN json_valid("item") AND json_type("item") = 'object' AND json_type("item", '$.fn') = 'text' AND json_type("item", '$.args') = 'array' THEN json_extract("item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("item", '$.args')), '') || ')' ELSE "item" END AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_sent" WHERE "_sign" IN (-1, 1) GROUP BY "client", "item", "_sign"`, rule_observers: [] },
+  { rel: "subscriber", kind: "log", table_name: "subscriber", delta_table_name: "__delta_subscriber", frontier_table_name: "__frontier_subscriber", next_frontier_table_name: "__next_frontier_subscriber", columns: ["client"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "subscriber" ("client") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "client"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("client") AND json_type("client") = 'object' AND json_type("client", '$.fn') = 'text' AND json_type("client", '$.args') = 'array' THEN json_extract("client", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("client", '$.args')), '') || ')' ELSE "client" END AS "client", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_subscriber" WHERE "_sign" IN (-1, 1) GROUP BY "client", "_sign"`, rule_observers: ["sent/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -336,17 +369,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveSent_0Writes(seam, before, arrivals), resolveSent_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveSent_0Writes(seam, before.stored, arrivals), resolveSent_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // unmarked_edge_replays_backlog: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -367,6 +402,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -401,7 +438,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "unmarked_edge_replays_backlog",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

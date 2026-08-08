@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -153,44 +155,67 @@ function trigger_occurrences(
   return occurrences;
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "demand_rev": [false, true],
+    "pin_want": [false, false, true],
+    "rev_fill": [false, true, false, false],
+    "rev_status": [false, true, false, false],
+    "stale_pin": [false, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "demand_rev" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
-  `CREATE TABLE "pin_want" ("col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
-  `CREATE TABLE "rev_fill" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
-  `CREATE TABLE "rev_status" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
-  `CREATE TABLE "stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_demand_rev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "demand_rev" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_demand_rev" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text" FROM "demand_rev" t`,
+  `CREATE TABLE "pin_want" ("col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_pin_want" AS SELECT t."col1" AS "col1", t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text" FROM "pin_want" t`,
+  `CREATE TABLE "rev_fill" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_rev_fill" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."behind" AS "behind", t."ahead" AS "ahead" FROM "rev_fill" t`,
+  `CREATE TABLE "rev_status" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_rev_status" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."behind" AS "behind", t."ahead" AS "ahead" FROM "rev_status" t`,
+  `CREATE TABLE "stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_stale_pin" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."__refcount" AS "__refcount" FROM "stale_pin" t`,
+  `CREATE TEMP TABLE "__delta_demand_rev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_demand_rev_sign" ON "__delta_demand_rev" ("_sign")`,
   `CREATE INDEX "__delta_demand_rev_group" ON "__delta_demand_rev" ("dep_repo_id", "ref_text")`,
-  `CREATE TEMP TABLE "__frontier_demand_rev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_demand_rev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_demand_rev_phase" ON "__frontier_demand_rev" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_demand_rev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_pin_want" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_demand_rev" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_demand_rev" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_demand_rev" t`,
+  `CREATE TEMP TABLE "__delta_pin_want" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_pin_want_sign" ON "__delta_pin_want" ("_sign")`,
   `CREATE INDEX "__delta_pin_want_group" ON "__delta_pin_want" ("col1", "dep_repo_id", "ref_text")`,
-  `CREATE TEMP TABLE "__frontier_pin_want" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_pin_want" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_pin_want_phase" ON "__frontier_pin_want" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_pin_want" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_rev_fill" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_pin_want" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_pin_want" AS SELECT t."col1" AS "col1", t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_pin_want" t`,
+  `CREATE TEMP TABLE "__delta_rev_fill" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_rev_fill_sign" ON "__delta_rev_fill" ("_sign")`,
   `CREATE INDEX "__delta_rev_fill_group" ON "__delta_rev_fill" ("dep_repo_id", "ref_text", "behind", "ahead")`,
-  `CREATE TEMP TABLE "__frontier_rev_fill" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_rev_fill" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_rev_fill_phase" ON "__frontier_rev_fill" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_rev_fill" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_rev_status" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_rev_fill" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_rev_fill" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."behind" AS "behind", t."ahead" AS "ahead", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_rev_fill" t`,
+  `CREATE TEMP TABLE "__delta_rev_status" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_rev_status_sign" ON "__delta_rev_status" ("_sign")`,
   `CREATE INDEX "__delta_rev_status_group" ON "__delta_rev_status" ("dep_repo_id", "ref_text", "behind", "ahead")`,
-  `CREATE TEMP TABLE "__frontier_rev_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_rev_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_rev_status_phase" ON "__frontier_rev_status" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_rev_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_stale_pin" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_rev_status" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_rev_status" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."behind" AS "behind", t."ahead" AS "ahead", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_rev_status" t`,
+  `CREATE TEMP TABLE "__delta_stale_pin" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stale_pin_sign" ON "__delta_stale_pin" ("_sign")`,
   `CREATE INDEX "__delta_stale_pin_group" ON "__delta_stale_pin" ("dep_repo_id", "ref_text")`,
-  `CREATE TEMP TABLE "__frontier_stale_pin" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_stale_pin" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_stale_pin_phase" ON "__frontier_stale_pin" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_stale_pin" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_stale_pin" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_stale_pin" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_stale_pin" t`,
+  `CREATE TEMP TABLE "__support_next_stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "stale_pin_zero" ON "stale_pin" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -259,20 +284,36 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    demand_rev: select_rows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "demand_rev"`, rel_columns.demand_rev!, rel_column_types.demand_rev!),
-    pin_want: select_rows(seam, `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "pin_want"`, rel_columns.pin_want!, rel_column_types.pin_want!),
-    rev_fill: select_rows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "rev_fill"`, rel_columns.rev_fill!, rel_column_types.rev_fill!),
-    rev_status: select_rows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "rev_status"`, rel_columns.rev_status!, rel_column_types.rev_status!),
-    stale_pin: select_rows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "stale_pin"`, rel_columns.stale_pin!, rel_column_types.stale_pin!),
+    demand_rev: select_rows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "__txt_demand_rev"`, rel_columns.demand_rev!, rel_column_types.demand_rev!),
+    pin_want: select_rows(seam, `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "__txt_pin_want"`, rel_columns.pin_want!, rel_column_types.pin_want!),
+    rev_fill: select_rows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "__txt_rev_fill"`, rel_columns.rev_fill!, rel_column_types.rev_fill!),
+    rev_status: select_rows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "__txt_rev_status"`, rel_columns.rev_status!, rel_column_types.rev_status!),
+    stale_pin: select_rows(seam, `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "__txt_stale_pin"`, rel_columns.stale_pin!, rel_column_types.stale_pin!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    demand_rev: select_rows(seam, `SELECT "dep_repo_id", "ref_text" FROM "demand_rev"`, rel_columns.demand_rev!, rel_column_types.demand_rev!),
+    pin_want: select_rows(seam, `SELECT "col1", "dep_repo_id", "ref_text" FROM "pin_want"`, rel_columns.pin_want!, rel_column_types.pin_want!),
+    rev_fill: select_rows(seam, `SELECT "dep_repo_id", "ref_text", "behind", "ahead" FROM "rev_fill"`, rel_columns.rev_fill!, rel_column_types.rev_fill!),
+    rev_status: select_rows(seam, `SELECT "dep_repo_id", "ref_text", "behind", "ahead" FROM "rev_status"`, rel_columns.rev_status!, rel_column_types.rev_status!),
+    stale_pin: select_rows(seam, `SELECT "dep_repo_id", "ref_text" FROM "stale_pin"`, rel_columns.stale_pin!, rel_column_types.stale_pin!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  demand_rev: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "demand_rev"`,
-  pin_want: `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "pin_want"`,
-  rev_fill: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "rev_fill"`,
-  rev_status: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "rev_status"`,
-  stale_pin: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "stale_pin"`,
+  demand_rev: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "__txt_demand_rev"`,
+  pin_want: `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "__txt_pin_want"`,
+  rev_fill: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "__txt_rev_fill"`,
+  rev_status: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead" FROM "__txt_rev_status"`,
+  stale_pin: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text" FROM "__txt_stale_pin"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -303,11 +344,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "demand_rev", kind: "set", table_name: "demand_rev", delta_table_name: "__delta_demand_rev", frontier_table_name: "__frontier_demand_rev", next_frontier_table_name: "__next_frontier_demand_rev", columns: ["dep_repo_id", "ref_text"], column_types: ["int", "text"], key_indices: [0, 1], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_demand_rev" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "_sign"`, rule_observers: [] },
-  { rel: "pin_want", kind: "log", table_name: "pin_want", delta_table_name: "__delta_pin_want", frontier_table_name: "__frontier_pin_want", next_frontier_table_name: "__next_frontier_pin_want", columns: ["col1", "dep_repo_id", "ref_text"], column_types: ["int", "int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "pin_want" ("col1", "dep_repo_id", "ref_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "col1", "dep_repo_id", "ref_text"`, arrival_del_sql: null, boundary_sql: `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pin_want" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "dep_repo_id", "ref_text", "_sign"`, rule_observers: ["demand_rev/2"] },
-  { rel: "rev_fill", kind: "log", table_name: "rev_fill", delta_table_name: "__delta_rev_fill", frontier_table_name: "__frontier_rev_fill", next_frontier_table_name: "__next_frontier_rev_fill", columns: ["dep_repo_id", "ref_text", "behind", "ahead"], column_types: ["int", "text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "rev_fill" ("dep_repo_id", "ref_text", "behind", "ahead") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "dep_repo_id", "ref_text", "behind", "ahead"`, arrival_del_sql: null, boundary_sql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rev_fill" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "behind", "ahead", "_sign"`, rule_observers: ["rev_status/4"] },
-  { rel: "rev_status", kind: "set", table_name: "rev_status", delta_table_name: "__delta_rev_status", frontier_table_name: "__frontier_rev_status", next_frontier_table_name: "__next_frontier_rev_status", columns: ["dep_repo_id", "ref_text", "behind", "ahead"], column_types: ["int", "text", "int", "int"], key_indices: [0, 1], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_rev_status" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "behind", "ahead", "_sign"`, rule_observers: ["stale_pin/2"] },
-  { rel: "stale_pin", kind: "set", table_name: "stale_pin", delta_table_name: "__delta_stale_pin", frontier_table_name: "__frontier_stale_pin", next_frontier_table_name: "__next_frontier_stale_pin", columns: ["dep_repo_id", "ref_text"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_stale_pin" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "_sign"`, rule_observers: [] },
+  { rel: "demand_rev", kind: "set", table_name: "demand_rev", delta_table_name: "__delta_demand_rev", frontier_table_name: "__frontier_demand_rev", next_frontier_table_name: "__next_frontier_demand_rev", columns: ["dep_repo_id", "ref_text"], column_types: ["int", "text"], key_indices: [0, 1], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_demand_rev" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "_sign"`, rule_observers: [] },
+  { rel: "pin_want", kind: "log", table_name: "pin_want", delta_table_name: "__delta_pin_want", frontier_table_name: "__frontier_pin_want", next_frontier_table_name: "__next_frontier_pin_want", columns: ["col1", "dep_repo_id", "ref_text"], column_types: ["int", "int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "pin_want" ("col1", "dep_repo_id", "ref_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "col1", "dep_repo_id", "ref_text"`, arrival_del_sql: null, boundary_sql: `SELECT "col1", "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_pin_want" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "dep_repo_id", "ref_text", "_sign"`, rule_observers: ["demand_rev/2"] },
+  { rel: "rev_fill", kind: "log", table_name: "rev_fill", delta_table_name: "__delta_rev_fill", frontier_table_name: "__frontier_rev_fill", next_frontier_table_name: "__next_frontier_rev_fill", columns: ["dep_repo_id", "ref_text", "behind", "ahead"], column_types: ["int", "text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "rev_fill" ("dep_repo_id", "ref_text", "behind", "ahead") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "dep_repo_id", "ref_text", "behind", "ahead"`, arrival_del_sql: null, boundary_sql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_rev_fill" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "behind", "ahead", "_sign"`, rule_observers: ["rev_status/4"] },
+  { rel: "rev_status", kind: "set", table_name: "rev_status", delta_table_name: "__delta_rev_status", frontier_table_name: "__frontier_rev_status", next_frontier_table_name: "__next_frontier_rev_status", columns: ["dep_repo_id", "ref_text", "behind", "ahead"], column_types: ["int", "text", "int", "int"], key_indices: [0, 1], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "behind", "ahead", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_rev_status" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "behind", "ahead", "_sign"`, rule_observers: ["stale_pin/2"] },
+  { rel: "stale_pin", kind: "set", table_name: "stale_pin", delta_table_name: "__delta_stale_pin", frontier_table_name: "__frontier_stale_pin", next_frontier_table_name: "__next_frontier_stale_pin", columns: ["dep_repo_id", "ref_text"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dep_repo_id", CASE WHEN json_valid("ref_text") AND json_type("ref_text") = 'object' AND json_type("ref_text", '$.fn') = 'text' AND json_type("ref_text", '$.args') = 'array' THEN json_extract("ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ref_text", '$.args')), '') || ')' ELSE "ref_text" END AS "ref_text", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stale_pin" WHERE "_sign" IN (-1, 1) GROUP BY "dep_repo_id", "ref_text", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -391,17 +432,19 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 }
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
+  return read_snapshots(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) =>
-      forkJoin([resolveDemandRev_0Writes(seam, before, arrivals), resolveRevStatus_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
+      forkJoin([resolveDemandRev_0Writes(seam, before.stored, arrivals), resolveRevStatus_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
         concatMap((statements) => seam.runner.batch(seam.db, statements)),
         map(() => before),
       ),
     ),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
+    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
   // rev_fill_not_behind_keeps_stale_pin_empty: engine.pl process_occurrences -> level_closure -> boundary_deltas.
 }
@@ -422,6 +465,8 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.recompute_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK, arrivals)),
@@ -456,7 +501,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "rev_fill_not_behind_keeps_stale_pin_empty",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

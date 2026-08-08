@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,23 +136,37 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "eprintln_hit": [true, false],
+    "message": [true, false, true],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "eprintln_hit" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
-  `CREATE TABLE "message" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "line_number", "text")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "eprintln_hit" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_eprintln_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number" FROM "eprintln_hit" t`,
+  `CREATE TABLE "message" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "line_number", "text")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_message" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."__refcount" AS "__refcount" FROM "message" t`,
+  `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_hit_sign" ON "__delta_eprintln_hit" ("_sign")`,
   `CREATE INDEX "__delta_eprintln_hit_group" ON "__delta_eprintln_hit" ("path", "line_number")`,
-  `CREATE TEMP TABLE "__frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_eprintln_hit_phase" ON "__frontier_eprintln_hit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_message" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_eprintln_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_eprintln_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_eprintln_hit" t`,
+  `CREATE TEMP TABLE "__delta_message" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_message_sign" ON "__delta_message" ("_sign")`,
   `CREATE INDEX "__delta_message_group" ON "__delta_message" ("path", "line_number", "text")`,
-  `CREATE TEMP TABLE "__frontier_message" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_message" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_message_phase" ON "__frontier_message" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_message" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_message" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number", "text")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_message" ("path" TEXT NOT NULL, "line_number" INTEGER NOT NULL, "text" TEXT NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_message" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_message" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_message" t`,
+  `CREATE TEMP TABLE "__support_next_message" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number", "text")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_message" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "message_zero" ON "message" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -186,9 +202,11 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["eprintln_hit"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") VALUES (?, ?)`, params: ["src/db.rs", 40] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["src/db.rs"] },
+  { rel: "eprintln_hit", sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["src/db.rs", 40] },
   { rel: "message", sql: `DELETE FROM "message"`, params: [] },
-  { rel: "message", sql: `INSERT OR IGNORE INTO "message" ("path", "line_number", "text") SELECT b0."path", b0."line_number", ('eprintln at ' || b0."path" || ':' || b0."line_number" || ' is waived') FROM "eprintln_hit" b0`, params: [] },
+  { rel: "message", sql: `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived') FROM "eprintln_hit" b0`, params: [] },
+  { rel: "message", sql: `INSERT OR IGNORE INTO "message" ("path", "line_number", "text") SELECT b0."path", b0."line_number", (SELECT s."__id" FROM "__str" s WHERE s."content" = ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived')) FROM "eprintln_hit" b0`, params: [] },
 ];
 
 type Snapshot = {
@@ -198,14 +216,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    eprintln_hit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_hit"`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
-    message: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text" FROM "message"`, rel_columns.message!, rel_column_types.message!),
+    eprintln_hit: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "__txt_eprintln_hit"`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
+    message: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text" FROM "__txt_message"`, rel_columns.message!, rel_column_types.message!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    eprintln_hit: select_rows(seam, `SELECT "path", "line_number" FROM "eprintln_hit"`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
+    message: select_rows(seam, `SELECT "path", "line_number", "text" FROM "message"`, rel_columns.message!, rel_column_types.message!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  eprintln_hit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "eprintln_hit"`,
-  message: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text" FROM "message"`,
+  eprintln_hit: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number" FROM "__txt_eprintln_hit"`,
+  message: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text" FROM "__txt_message"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -235,21 +266,23 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "eprintln_hit", kind: "set", table_name: "eprintln_hit", delta_table_name: "__delta_eprintln_hit", frontier_table_name: "__frontier_eprintln_hit", next_frontier_table_name: "__next_frontier_eprintln_hit", columns: ["path", "line_number"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "line_number"`, arrival_del_sql: `DELETE FROM "eprintln_hit" WHERE ("path", "line_number") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "line_number"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_eprintln_hit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"`, rule_observers: ["message/3"] },
-  { rel: "message", kind: "set", table_name: "message", delta_table_name: "__delta_message", frontier_table_name: "__frontier_message", next_frontier_table_name: "__next_frontier_message", columns: ["path", "line_number", "text"], column_types: ["text", "int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_message" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "text", "_sign"`, rule_observers: [] },
+  { rel: "eprintln_hit", kind: "set", table_name: "eprintln_hit", delta_table_name: "__delta_eprintln_hit", frontier_table_name: "__frontier_eprintln_hit", next_frontier_table_name: "__next_frontier_eprintln_hit", columns: ["path", "line_number"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "line_number"`, arrival_del_sql: `DELETE FROM "eprintln_hit" WHERE ("path", "line_number") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "line_number"`, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_eprintln_hit" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "_sign"`, rule_observers: ["message/3"] },
+  { rel: "message", kind: "set", table_name: "message", delta_table_name: "__delta_message", frontier_table_name: "__frontier_message", next_frontier_table_name: "__next_frontier_message", columns: ["path", "line_number", "text"], column_types: ["text", "int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", "line_number", CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_message" WHERE "_sign" IN (-1, 1) GROUP BY "path", "line_number", "text", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "message", rule_id: "interpolation_desugars_to_concat:message/3#1", head_delta_table_name: "__delta_message", head_columns: ["path", "line_number", "text"], insert_sql: `INSERT OR IGNORE INTO "message" ("path", "line_number", "text") SELECT DISTINCT d0."path", d0."line_number", ('eprintln at ' || d0."path" || ':' || d0."line_number" || ' is waived') FROM "__frontier_eprintln_hit" d0 WHERE d0."_phase" >= 0 RETURNING "path", "line_number", "text"`, select_sql: `SELECT "path", "line_number", "text" FROM "message"`, recompute_sql: `DELETE FROM "message";
-INSERT OR IGNORE INTO "message" ("path", "line_number", "text") SELECT b0."path", b0."line_number", ('eprintln at ' || b0."path" || ':' || b0."line_number" || ' is waived') FROM "eprintln_hit" b0`, support_sql: [`DELETE FROM "__support_next_message"`, `INSERT INTO "__support_next_message" ("path", "line_number", "text", "__refcount") SELECT "path", "line_number", "text", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."line_number" AS "line_number", ('eprintln at ' || b0."path" || ':' || b0."line_number" || ' is waived') AS "text", count(*) AS "__refcount" FROM "eprintln_hit" b0 GROUP BY b0."path", b0."line_number", ('eprintln at ' || b0."path" || ':' || b0."line_number" || ' is waived')) GROUP BY "path", "line_number", "text"`, `UPDATE "message" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_message" n WHERE n."path" = h."path" AND n."line_number" = h."line_number" AND n."text" = h."text"), 0)`, `INSERT INTO "__delta_message" ("_sign", "_sequence", "path", "line_number", "text") SELECT -1, row_number() OVER () - 1, "path", "line_number", "text" FROM "message" WHERE "__refcount" <= 0`, `DELETE FROM "message" WHERE "__refcount" <= 0`, `DELETE FROM "__new_message"`, `INSERT INTO "__new_message" ("path", "line_number", "text", "__refcount") SELECT n."path", n."line_number", n."text", n."__refcount" FROM "__support_next_message" n LEFT JOIN "message" h ON n."path" = h."path" AND n."line_number" = h."line_number" AND n."text" = h."text" WHERE h."path" IS NULL`, `INSERT INTO "__delta_message" ("_sign", "_sequence", "path", "line_number", "text") SELECT 1, "rowid" - 1, "path", "line_number", "text" FROM "__new_message"`, `INSERT INTO "__frontier_message" ("_phase", "_sequence", "path", "line_number", "text") SELECT ?, "rowid" - 1, "path", "line_number", "text" FROM "__new_message"`, `INSERT INTO "__next_frontier_message" ("_phase", "_sequence", "path", "line_number", "text") SELECT ?, "rowid" - 1, "path", "line_number", "text" FROM "__new_message"`, `INSERT OR IGNORE INTO "message" ("path", "line_number", "text", "__refcount") SELECT n."path", n."line_number", n."text", n."__refcount" FROM "__support_next_message" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "message", rule_id: "interpolation_desugars_to_concat:message/3#1", head_delta_table_name: "__delta_message", head_columns: ["path", "line_number", "text"], insert_sql: `INSERT OR IGNORE INTO "message" ("path", "line_number", "text") SELECT DISTINCT d0."path", d0."line_number", (SELECT s."__id" FROM "__str" s WHERE s."content" = ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."path") || ':' || d0."line_number" || ' is waived')) FROM "__frontier_eprintln_hit" d0 WHERE d0."_phase" >= 0 RETURNING "path", "line_number", "text"`, select_sql: `SELECT "path", "line_number", "text" FROM "message"`, recompute_sql: `DELETE FROM "message";
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived') FROM "eprintln_hit" b0;
+INSERT OR IGNORE INTO "message" ("path", "line_number", "text") SELECT b0."path", b0."line_number", (SELECT s."__id" FROM "__str" s WHERE s."content" = ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived')) FROM "eprintln_hit" b0`, support_sql: [`DELETE FROM "__support_next_message"`, `INSERT INTO "__support_next_message" ("path", "line_number", "text", "__refcount") SELECT "path", "line_number", "text", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."line_number" AS "line_number", (SELECT s."__id" FROM "__str" s WHERE s."content" = ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived')) AS "text", count(*) AS "__refcount" FROM "eprintln_hit" b0 GROUP BY b0."path", b0."line_number", ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived')) GROUP BY "path", "line_number", "text"`, `UPDATE "message" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_message" n WHERE n."path" = h."path" AND n."line_number" = h."line_number" AND n."text" = h."text"), 0)`, `INSERT INTO "__delta_message" ("_sign", "_sequence", "path", "line_number", "text") SELECT -1, row_number() OVER () - 1, "path", "line_number", "text" FROM "message" WHERE "__refcount" <= 0`, `DELETE FROM "message" WHERE "__refcount" <= 0`, `DELETE FROM "__new_message"`, `INSERT INTO "__new_message" ("path", "line_number", "text", "__refcount") SELECT n."path", n."line_number", n."text", n."__refcount" FROM "__support_next_message" n LEFT JOIN "message" h ON n."path" = h."path" AND n."line_number" = h."line_number" AND n."text" = h."text" WHERE h."path" IS NULL`, `INSERT INTO "__delta_message" ("_sign", "_sequence", "path", "line_number", "text") SELECT 1, "rowid" - 1, "path", "line_number", "text" FROM "__new_message"`, `INSERT INTO "__frontier_message" ("_phase", "_sequence", "path", "line_number", "text") SELECT ?, "rowid" - 1, "path", "line_number", "text" FROM "__new_message"`, `INSERT INTO "__next_frontier_message" ("_phase", "_sequence", "path", "line_number", "text") SELECT ?, "rowid" - 1, "path", "line_number", "text" FROM "__new_message"`, `INSERT OR IGNORE INTO "message" ("path", "line_number", "text", "__refcount") SELECT n."path", n."line_number", n."text", n."__refcount" FROM "__support_next_message" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."path") || ':' || d0."line_number" || ' is waived') FROM "__frontier_eprintln_hit" d0 WHERE d0."_phase" >= 0`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived') FROM "eprintln_hit" b0`] },
 ];
 
 function recompute_levels(seam: ISqlSeam): Observable<void> {
   const sql = `DELETE FROM "message";
-INSERT OR IGNORE INTO "message" ("path", "line_number", "text") SELECT b0."path", b0."line_number", ('eprintln at ' || b0."path" || ':' || b0."line_number" || ' is waived') FROM "eprintln_hit" b0`;
+INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived') FROM "eprintln_hit" b0;
+INSERT OR IGNORE INTO "message" ("path", "line_number", "text") SELECT b0."path", b0."line_number", (SELECT s."__id" FROM "__str" s WHERE s."content" = ('eprintln at ' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path") || ':' || b0."line_number" || ' is waived')) FROM "eprintln_hit" b0`;
   return seam.runner.executeMultiple(seam.db, sql);
 }
 
@@ -267,6 +300,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -290,11 +325,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -322,7 +360,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "interpolation_desugars_to_concat",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

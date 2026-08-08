@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,22 +136,36 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "budget": [true, false],
+    "spend": [true, true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "budget" ("team" TEXT NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("team", "col2")) WITHOUT ROWID`,
-  `CREATE TABLE "spend" ("team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL, PRIMARY KEY ("team", "_item", "cost")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_budget" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "budget" ("team" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("team", "col2")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_budget" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "budget" t`,
+  `CREATE TABLE "spend" ("team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL, PRIMARY KEY ("team", "_item", "cost")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_spend" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_item") AS "_item", t."cost" AS "cost" FROM "spend" t`,
+  `CREATE TEMP TABLE "__delta_budget" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_budget_sign" ON "__delta_budget" ("_sign")`,
   `CREATE INDEX "__delta_budget_group" ON "__delta_budget" ("team", "col2")`,
-  `CREATE TEMP TABLE "__frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_budget_phase" ON "__frontier_budget" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_spend" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_budget" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", t."col2" AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_budget" t`,
+  `CREATE TEMP TABLE "__delta_spend" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_spend_sign" ON "__delta_spend" ("_sign")`,
   `CREATE INDEX "__delta_spend_group" ON "__delta_spend" ("team", "_item", "cost")`,
-  `CREATE TEMP TABLE "__frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_spend_phase" ON "__frontier_spend" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" TEXT NOT NULL, "_item" TEXT NOT NULL, "cost" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__agg_scope_budget" ("team" TEXT NOT NULL, PRIMARY KEY ("team")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__next_frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_spend" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_item") AS "_item", t."cost" AS "cost", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_spend" t`,
+  `CREATE TEMP TABLE "__agg_scope_budget" ("team" INTEGER NOT NULL, PRIMARY KEY ("team")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -184,8 +200,12 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["spend"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "spend", sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") VALUES (?, ?, ?)`, params: ["core", "disk", 10] },
-  { rel: "spend", sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") VALUES (?, ?, ?)`, params: ["core", "cpu", 5] },
+  { rel: "spend", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["core"] },
+  { rel: "spend", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["disk"] },
+  { rel: "spend", sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["core", "disk", 10] },
+  { rel: "spend", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["core"] },
+  { rel: "spend", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cpu"] },
+  { rel: "spend", sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["core", "cpu", 5] },
   { rel: "budget", sql: `DELETE FROM "budget"`, params: [] },
   { rel: "budget", sql: `INSERT OR IGNORE INTO "budget" ("team", "col2") SELECT b0."team", sum(b0."cost") FROM "spend" b0 GROUP BY b0."team" HAVING count(*) > 0`, params: [] },
 ];
@@ -197,14 +217,27 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    budget: select_rows(seam, `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2" FROM "budget"`, rel_columns.budget!, rel_column_types.budget!),
-    spend: select_rows(seam, `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost" FROM "spend"`, rel_columns.spend!, rel_column_types.spend!),
+    budget: select_rows(seam, `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2" FROM "__txt_budget"`, rel_columns.budget!, rel_column_types.budget!),
+    spend: select_rows(seam, `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost" FROM "__txt_spend"`, rel_columns.spend!, rel_column_types.spend!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    budget: select_rows(seam, `SELECT "team", "col2" FROM "budget"`, rel_columns.budget!, rel_column_types.budget!),
+    spend: select_rows(seam, `SELECT "team", "_item", "cost" FROM "spend"`, rel_columns.spend!, rel_column_types.spend!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  budget: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2" FROM "budget"`,
-  spend: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost" FROM "spend"`,
+  budget: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2" FROM "__txt_budget"`,
+  spend: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost" FROM "__txt_spend"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -234,8 +267,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "budget", kind: "set", table_name: "budget", delta_table_name: "__delta_budget", frontier_table_name: "__frontier_budget", next_frontier_table_name: "__next_frontier_budget", columns: ["team", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_budget" WHERE "_sign" IN (-1, 1) GROUP BY "team", "col2", "_sign"`, rule_observers: [] },
-  { rel: "spend", kind: "set", table_name: "spend", delta_table_name: "__delta_spend", frontier_table_name: "__frontier_spend", next_frontier_table_name: "__next_frontier_spend", columns: ["team", "_item", "cost"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "team", "_item", "cost"`, arrival_del_sql: `DELETE FROM "spend" WHERE ("team", "_item", "cost") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "team", "_item", "cost"`, boundary_sql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_spend" WHERE "_sign" IN (-1, 1) GROUP BY "team", "_item", "cost", "_sign"`, rule_observers: ["budget/2"] },
+  { rel: "budget", kind: "set", table_name: "budget", delta_table_name: "__delta_budget", frontier_table_name: "__frontier_budget", next_frontier_table_name: "__next_frontier_budget", columns: ["team", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_budget" WHERE "_sign" IN (-1, 1) GROUP BY "team", "col2", "_sign"`, rule_observers: [] },
+  { rel: "spend", kind: "set", table_name: "spend", delta_table_name: "__delta_spend", frontier_table_name: "__frontier_spend", next_frontier_table_name: "__next_frontier_spend", columns: ["team", "_item", "cost"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "team", "_item", "cost"`, arrival_del_sql: `DELETE FROM "spend" WHERE ("team", "_item", "cost") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "team", "_item", "cost"`, boundary_sql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_spend" WHERE "_sign" IN (-1, 1) GROUP BY "team", "_item", "cost", "_sign"`, rule_observers: ["budget/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -266,6 +299,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -289,11 +324,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -321,7 +359,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "aggregate_sum_tracks_a_growing_and_shrinking_group",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,

@@ -23,6 +23,7 @@ import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { TextPlane } from "../runtime/textPlane.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -37,6 +38,7 @@ import type {
   IRowColumnType,
   IRowValue,
   ISqlSeam,
+  ITextInternPlan,
   ITickDeltas,
   SqlStatement,
 } from "../runtime/types.ts";
@@ -134,40 +136,60 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
+export const TEXT_INTERN_PLAN: ITextInternPlan = {
+  internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
+  lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
+  relColumns: {
+    "callee_set_size": [true, false],
+    "jaccard": [true, true, false],
+    "shared_count": [true, true, false],
+    "union_size": [true, true, false],
+  },
+};
+
 const ddl: readonly string[] = [
-  `CREATE TABLE "callee_set_size" ("left" TEXT NOT NULL, "left_size" INTEGER NOT NULL, PRIMARY KEY ("left", "left_size")) WITHOUT ROWID`,
-  `CREATE TABLE "jaccard" ("left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("left", "right", "col3")) WITHOUT ROWID`,
-  `CREATE TABLE "shared_count" ("left" TEXT NOT NULL, "right" TEXT NOT NULL, "shared" INTEGER NOT NULL, PRIMARY KEY ("left", "right", "shared")) WITHOUT ROWID`,
-  `CREATE TABLE "union_size" ("left" TEXT NOT NULL, "right" TEXT NOT NULL, "union" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("left", "right", "union")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__delta_callee_set_size" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "left_size" INTEGER NOT NULL)`,
+  `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
+  `CREATE TABLE "callee_set_size" ("left" INTEGER NOT NULL, "left_size" INTEGER NOT NULL, PRIMARY KEY ("left", "left_size")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_callee_set_size" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", t."left_size" AS "left_size" FROM "callee_set_size" t`,
+  `CREATE TABLE "jaccard" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("left", "right", "col3")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_jaccard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."col3" AS "col3", t."__refcount" AS "__refcount" FROM "jaccard" t`,
+  `CREATE TABLE "shared_count" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "shared" INTEGER NOT NULL, PRIMARY KEY ("left", "right", "shared")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_shared_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."shared" AS "shared" FROM "shared_count" t`,
+  `CREATE TABLE "union_size" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "union" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("left", "right", "union")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt_union_size" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."union" AS "union", t."__refcount" AS "__refcount" FROM "union_size" t`,
+  `CREATE TEMP TABLE "__delta_callee_set_size" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "left_size" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_callee_set_size_sign" ON "__delta_callee_set_size" ("_sign")`,
   `CREATE INDEX "__delta_callee_set_size_group" ON "__delta_callee_set_size" ("left", "left_size")`,
-  `CREATE TEMP TABLE "__frontier_callee_set_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "left_size" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_callee_set_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "left_size" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_callee_set_size_phase" ON "__frontier_callee_set_size" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_callee_set_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "left_size" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_jaccard" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_callee_set_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "left_size" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_callee_set_size" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", t."left_size" AS "left_size", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_callee_set_size" t`,
+  `CREATE TEMP TABLE "__delta_jaccard" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_jaccard_sign" ON "__delta_jaccard" ("_sign")`,
   `CREATE INDEX "__delta_jaccard_group" ON "__delta_jaccard" ("left", "right", "col3")`,
-  `CREATE TEMP TABLE "__frontier_jaccard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_jaccard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_jaccard_phase" ON "__frontier_jaccard" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_jaccard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_shared_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "shared" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_jaccard" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_jaccard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."col3" AS "col3", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_jaccard" t`,
+  `CREATE TEMP TABLE "__delta_shared_count" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "shared" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_shared_count_sign" ON "__delta_shared_count" ("_sign")`,
   `CREATE INDEX "__delta_shared_count_group" ON "__delta_shared_count" ("left", "right", "shared")`,
-  `CREATE TEMP TABLE "__frontier_shared_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "shared" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_shared_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "shared" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_shared_count_phase" ON "__frontier_shared_count" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_shared_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "shared" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_union_size" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "union" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_shared_count" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "shared" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_shared_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."shared" AS "shared", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_shared_count" t`,
+  `CREATE TEMP TABLE "__delta_union_size" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "union" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_union_size_sign" ON "__delta_union_size" ("_sign")`,
   `CREATE INDEX "__delta_union_size_group" ON "__delta_union_size" ("left", "right", "union")`,
-  `CREATE TEMP TABLE "__frontier_union_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "union" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__frontier_union_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "union" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_union_size_phase" ON "__frontier_union_size" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_union_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" TEXT NOT NULL, "right" TEXT NOT NULL, "union" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_union_size" ("left" TEXT NOT NULL, "right" TEXT NOT NULL, "union" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("left", "right", "union")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_union_size" ("left" TEXT NOT NULL, "right" TEXT NOT NULL, "union" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier_union_size" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "union" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_union_size" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."union" AS "union", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_union_size" t`,
+  `CREATE TEMP TABLE "__support_next_union_size" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "union" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("left", "right", "union")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_union_size" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "union" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "union_size_zero" ON "union_size" ("__refcount") WHERE "__refcount" <= 0`,
-  `CREATE TEMP TABLE "__support_next_jaccard" ("left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("left", "right", "col3")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_jaccard" ("left" TEXT NOT NULL, "right" TEXT NOT NULL, "col3" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_jaccard" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("left", "right", "col3")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_jaccard" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
   `CREATE INDEX "jaccard_zero" ON "jaccard" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
@@ -215,11 +237,18 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["callee_set_size", "shared_count"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES (?, ?)`, params: ["db.rs", 10] },
-  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES (?, ?)`, params: ["cli.rs", 8] },
-  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES (?, ?)`, params: ["ui.rs", 4] },
-  { rel: "shared_count", sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") VALUES (?, ?, ?)`, params: ["db.rs", "cli.rs", 6] },
-  { rel: "shared_count", sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") VALUES (?, ?, ?)`, params: ["db.rs", "ui.rs", 1] },
+  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["db.rs"] },
+  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["db.rs", 10] },
+  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli.rs"] },
+  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["cli.rs", 8] },
+  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["ui.rs"] },
+  { rel: "callee_set_size", sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["ui.rs", 4] },
+  { rel: "shared_count", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["db.rs"] },
+  { rel: "shared_count", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli.rs"] },
+  { rel: "shared_count", sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["db.rs", "cli.rs", 6] },
+  { rel: "shared_count", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["db.rs"] },
+  { rel: "shared_count", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["ui.rs"] },
+  { rel: "shared_count", sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["db.rs", "ui.rs", 1] },
   { rel: "union_size", sql: `DELETE FROM "union_size"`, params: [] },
   { rel: "union_size", sql: `INSERT OR IGNORE INTO "union_size" ("left", "right", "union") SELECT b0."left", b1."left", ((b0."left_size" + b1."left_size") - b2."shared") FROM "callee_set_size" b0, "callee_set_size" b1, "shared_count" b2 WHERE b2."left" = b0."left" AND b2."right" = b1."left"`, params: [] },
   { rel: "jaccard", sql: `DELETE FROM "jaccard"`, params: [] },
@@ -235,18 +264,33 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    callee_set_size: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size" FROM "callee_set_size"`, rel_columns.callee_set_size!, rel_column_types.callee_set_size!),
-    jaccard: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3" FROM "jaccard"`, rel_columns.jaccard!, rel_column_types.jaccard!),
-    shared_count: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared" FROM "shared_count"`, rel_columns.shared_count!, rel_column_types.shared_count!),
-    union_size: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union" FROM "union_size"`, rel_columns.union_size!, rel_column_types.union_size!),
+    callee_set_size: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size" FROM "__txt_callee_set_size"`, rel_columns.callee_set_size!, rel_column_types.callee_set_size!),
+    jaccard: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3" FROM "__txt_jaccard"`, rel_columns.jaccard!, rel_column_types.jaccard!),
+    shared_count: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared" FROM "__txt_shared_count"`, rel_columns.shared_count!, rel_column_types.shared_count!),
+    union_size: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union" FROM "__txt_union_size"`, rel_columns.union_size!, rel_column_types.union_size!),
   });
 }
 
+type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
+
+function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
+  return forkJoin({
+    callee_set_size: select_rows(seam, `SELECT "left", "left_size" FROM "callee_set_size"`, rel_columns.callee_set_size!, rel_column_types.callee_set_size!),
+    jaccard: select_rows(seam, `SELECT "left", "right", "col3" FROM "jaccard"`, rel_columns.jaccard!, rel_column_types.jaccard!),
+    shared_count: select_rows(seam, `SELECT "left", "right", "shared" FROM "shared_count"`, rel_columns.shared_count!, rel_column_types.shared_count!),
+    union_size: select_rows(seam, `SELECT "left", "right", "union" FROM "union_size"`, rel_columns.union_size!, rel_column_types.union_size!),
+  });
+}
+
+function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
+  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
+}
+
 const final_select: Record<string, string> = {
-  callee_set_size: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size" FROM "callee_set_size"`,
-  jaccard: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3" FROM "jaccard"`,
-  shared_count: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared" FROM "shared_count"`,
-  union_size: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union" FROM "union_size"`,
+  callee_set_size: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size" FROM "__txt_callee_set_size"`,
+  jaccard: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3" FROM "__txt_jaccard"`,
+  shared_count: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared" FROM "__txt_shared_count"`,
+  union_size: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union" FROM "__txt_union_size"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -277,10 +321,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "callee_set_size", kind: "set", table_name: "callee_set_size", delta_table_name: "__delta_callee_set_size", frontier_table_name: "__frontier_callee_set_size", next_frontier_table_name: "__next_frontier_callee_set_size", columns: ["left", "left_size"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "left_size"`, arrival_del_sql: `DELETE FROM "callee_set_size" WHERE ("left", "left_size") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "left_size"`, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_callee_set_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "left_size", "_sign"`, rule_observers: ["union_size/3"] },
-  { rel: "jaccard", kind: "set", table_name: "jaccard", delta_table_name: "__delta_jaccard", frontier_table_name: "__frontier_jaccard", next_frontier_table_name: "__next_frontier_jaccard", columns: ["left", "right", "col3"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_jaccard" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "col3", "_sign"`, rule_observers: [] },
-  { rel: "shared_count", kind: "set", table_name: "shared_count", delta_table_name: "__delta_shared_count", frontier_table_name: "__frontier_shared_count", next_frontier_table_name: "__next_frontier_shared_count", columns: ["left", "right", "shared"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "left", "right", "shared"`, arrival_del_sql: `DELETE FROM "shared_count" WHERE ("left", "right", "shared") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "left", "right", "shared"`, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shared_count" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "shared", "_sign"`, rule_observers: ["jaccard/3", "union_size/3"] },
-  { rel: "union_size", kind: "set", table_name: "union_size", delta_table_name: "__delta_union_size", frontier_table_name: "__frontier_union_size", next_frontier_table_name: "__next_frontier_union_size", columns: ["left", "right", "union"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_union_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "union", "_sign"`, rule_observers: ["jaccard/3"] },
+  { rel: "callee_set_size", kind: "set", table_name: "callee_set_size", delta_table_name: "__delta_callee_set_size", frontier_table_name: "__frontier_callee_set_size", next_frontier_table_name: "__next_frontier_callee_set_size", columns: ["left", "left_size"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "left_size"`, arrival_del_sql: `DELETE FROM "callee_set_size" WHERE ("left", "left_size") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "left_size"`, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", "left_size", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_callee_set_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "left_size", "_sign"`, rule_observers: ["union_size/3"] },
+  { rel: "jaccard", kind: "set", table_name: "jaccard", delta_table_name: "__delta_jaccard", frontier_table_name: "__frontier_jaccard", next_frontier_table_name: "__next_frontier_jaccard", columns: ["left", "right", "col3"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "col3", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_jaccard" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "col3", "_sign"`, rule_observers: [] },
+  { rel: "shared_count", kind: "set", table_name: "shared_count", delta_table_name: "__delta_shared_count", frontier_table_name: "__frontier_shared_count", next_frontier_table_name: "__next_frontier_shared_count", columns: ["left", "right", "shared"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "left", "right", "shared"`, arrival_del_sql: `DELETE FROM "shared_count" WHERE ("left", "right", "shared") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "left", "right", "shared"`, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "shared", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_shared_count" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "shared", "_sign"`, rule_observers: ["jaccard/3", "union_size/3"] },
+  { rel: "union_size", kind: "set", table_name: "union_size", delta_table_name: "__delta_union_size", frontier_table_name: "__frontier_union_size", next_frontier_table_name: "__next_frontier_union_size", columns: ["left", "right", "union"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "union", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_union_size" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "union", "_sign"`, rule_observers: ["jaccard/3"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -319,6 +363,8 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
+    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
@@ -342,11 +388,14 @@ const SUBSCRIBED_BOOT = SubscribeCone.boot(SUBSCRIBE_PRUNE, boot, subscribed_rel
 
 function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, SUBSCRIBED_RELATIONS).pipe(
+    concatMap(() => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
+      .pipe(map((interned) => { arrivals = interned; }))),
     concatMap(() => IncrementalRuntime.apply_arrivals(seam, arrivals, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_levels_before_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => IncrementalRuntime.apply_edges(seam, SUBSCRIBED_EDGE_STATEMENTS, SUBSCRIBED_RELATIONS)),
     concatMap(() => of(undefined)),
     concatMap(() => of(undefined)),
+  ).pipe(
     concatMap(() => IncrementalRuntime.recompute_levels_after_edges(seam, SUBSCRIBED_LEVEL_STATEMENTS, SUBSCRIBED_RELATIONS, RECONCILE_EVERY_TICK)),
     concatMap(() => IncrementalRuntime.read_boundary(seam, SUBSCRIBED_RELATIONS)),
     concatMap((rels) => IncrementalRuntime.promote_frontiers(seam, SUBSCRIBED_RELATIONS).pipe(
@@ -374,7 +423,7 @@ export const incremental_plan: IIncrementalProgramPlan = {
 
 export const program: IGenProgramWithBoot = {
   name: "comparison_filters_rows",
-  internMode: "direct",
+  internMode: "dict",
   ddl,
   rel_columns,
   rel_column_types,
