@@ -925,9 +925,9 @@ test(catalog_all_rows_equals_decl_rows) :-
     lower:catalog_all_rows(direct, catalog_all_eq, [], RelPlans, [], [], [],
                            [], [], AllRows),
     append(DeclRows, PlaneRows, AllRows),
-    % the plane half is non-empty (nine frontier rows) so the stability is not
-    % vacuous, and it never touches a decl row's id.
-    length(PlaneRows, 9),
+    % nine frontier rows plus one storage row per column (4 columns under
+    % direct); the split never touches a decl row's id.
+    length(PlaneRows, 13),
     !.
 
 % The split's receipt at the DDL level: the live seed is exactly the full row
@@ -980,6 +980,8 @@ plane_kind_for(LocalName, Kind) :-
     ;   atom_concat('__ping_', _, LocalName) -> Kind == dred
     ;   atom_concat('__pong_', _, LocalName) -> Kind == dred
     ;   atom_concat('__cone_', _, LocalName) -> Kind == dred
+    ;   LocalName == interned_id -> Kind == storage
+    ;   LocalName == raw_characters -> Kind == storage
     ).
 
 % Reconstruct the seed statement the way catalog_row_ddl/5 does, in direct
@@ -1323,6 +1325,35 @@ test(step5_bind_port_never_has_a_response_child) :-
     !.
 
 :- end_tests(catalog_port_rows).
+
+% Step 6, storage rows: one storage child per column row, local_name answered
+% by interned_column(Mode, ColumnType) -- interned_id under dict for a text
+% column, raw_characters under direct. They make the storage axis queryable.
+:- begin_tests(catalog_storage_rows).
+
+storage_local_name_for(Mode, ColumnName, LocalName) :-
+    catalog_program(Term),
+    once(( program_plan(Term-[], [intern(Mode)], Plan),
+           Plan = plan(ModName, prog(Decls, Rules), RelPlans, _, _, _, _, M),
+           findall(Ref, (member((_ <+ EB), Rules), level_body_pre_ref(EB, Ref)), R0),
+           sort(R0, PreRefs),
+           listened_departure_refs(Rules, Deps),
+           type_definitions(Decls, Types),
+           lower:plan_rule_level_statements(Plan, RLS),
+           lower:catalog_all_rows(M, ModName, Rules, RelPlans, Deps, PreRefs,
+                                  Types, RLS, Decls, All),
+           member(row(ColumnRowId, _, _, ColumnName, column, _, _, _, _, _,
+                      ''), All),
+           member(row(_, ColumnRowId, _, LocalName, storage, _, _, _, _, '',
+                      ''), All) )).
+
+test(storage_row_interned_under_dict) :-
+    storage_local_name_for(dict, 'col1', interned_id).
+
+test(storage_row_raw_under_direct) :-
+    storage_local_name_for(direct, 'col1', raw_characters).
+
+:- end_tests(catalog_storage_rows).
 
 :- begin_tests(catalog_type_ids).
 

@@ -843,8 +843,11 @@ catalog_plane_rows(Mode, _ModuleName, RelPlans, DepartureRefs, PreRefs,
                              ModuleHash, ModuleId, IdAfterDict, LevelRows,
                              IdAfterLevel),
     catalog_port_plane_rows(Decls, RelIdMap, ModuleHash, ModuleId,
-                            IdAfterLevel, PortRows, _IdAfterPort),
-    append([RelPlaneRows, DictRows, LevelRows, PortRows], PlaneRows).
+                            IdAfterLevel, PortRows, IdAfterPort),
+    catalog_storage_rows(Mode, RelPlans, RelIdMap, ModuleHash, ModuleId,
+                         IdAfterPort, StorageRows, _IdAfterStorage),
+    append([RelPlaneRows, DictRows, LevelRows, PortRows, StorageRows],
+           PlaneRows).
 
 % ── per-rel planes ─────────────────────────────────────────────────────────
 catalog_rel_plane_rows(_Mode, [], _DepartureRefs, _PreRefs, _RelIdMap,
@@ -1169,6 +1172,45 @@ catalog_port_plane_rows([Decl | Rest], RelIdMap, ModuleHash, ModuleId,
     catalog_port_plane_rows(Rest, RelIdMap, ModuleHash, ModuleId, Id2,
                             RestRows, IdFinal),
     append(ThisRows, RestRows, Rows).
+
+% ── storage rows ──────────────────────────────────────────────────────────
+% One storage child row per column row: local_name interned_id when the column
+% is interned (interned_column/2), else raw_characters. The column j of a rel
+% whose rel row is at id R sits at R+j (catalog_column_rows/9's positional id
+% assignment), so the storage row parents on that column row's own id.
+catalog_storage_rows(_Mode, [], _RelIdMap, _ModuleHash, _ModuleId, Id, [], Id).
+catalog_storage_rows(Mode, [relplan(Name/RelArity, _, Columns, _, ColumnTypes)
+                            | Rest], RelIdMap, ModuleHash, ModuleId, Id0,
+                     Rows, IdFinal) :-
+    rel_row_id(RelIdMap, Name, RelId),
+    rel_h_id(ModuleHash, Name, RelArity, RelHId),
+    catalog_one_rel_storage(Mode, Columns, ColumnTypes, RelHId, RelId, 1,
+                            ModuleId, Id0, RelStorage, IdAfterRel),
+    catalog_storage_rows(Mode, Rest, RelIdMap, ModuleHash, ModuleId,
+                         IdAfterRel, RestRows, IdFinal),
+    append(RelStorage, RestRows, Rows).
+
+catalog_one_rel_storage(_Mode, [], _ColumnTypes, _RelHId, _RelId, _Ordinal,
+                        _ModuleId, Id, [], Id).
+catalog_one_rel_storage(Mode, [ColumnName | RestColumns], ColumnTypes,
+                        RelHId, RelId, Ordinal, ModuleId, Id0, Rows,
+                        IdFinal) :-
+    nth1(Ordinal, ColumnTypes, ColumnType),
+    (   interned_column(Mode, ColumnType)
+    ->  LocalName = interned_id
+    ;   LocalName = raw_characters
+    ),
+    ColumnId is RelId + Ordinal,
+    rel_h_id(RelHId, ColumnName, 0, ColumnHId),
+    rel_h_id(ColumnHId, LocalName, 0, StorageHId),
+    StorageRow = row(Id0, ColumnId, Ordinal, LocalName, storage, 0, 0,
+                     ModuleId, StorageHId, '', ''),
+    NextId is Id0 + 1,
+    NextOrdinal is Ordinal + 1,
+    catalog_one_rel_storage(Mode, RestColumns, ColumnTypes, RelHId, RelId,
+                            NextOrdinal, ModuleId, NextId, RestRows,
+                            IdFinal),
+    Rows = [StorageRow | RestRows].
 
 %! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
 %   The relplan carries each column's full type, ref(_) and list(_) included.
