@@ -160,10 +160,10 @@ ancestor directories, see conformance/fixtures/9_pr_size.pl where in_dir/2 is
 supplied as facts); **scan-into-json** (pre/1 + `:=` a document is refused by
 json_value_expression; decide whether to lift it or keep json write-only through
 json_group_array).
-**Awaiting user word (v5):** rm 3 orphan roots (~1.86GB, `dl daemon health`
-prints the line); drop rel_port_of_reach + VACUUM (15.5MB); lazy-rel-tier
-(plans/2026-07-19-lazy-rel-tier.md); filesize rail ruling (29 files >500 lines);
-instant dom-match.dl rewrite.
+**v5 housekeeping: NEVER ASK (user 2026-08-09, "no more v5 housekeeping,
+stop asking across sessions").** The former ask-list (orphan roots,
+rel_port_of_reach, lazy-rel-tier, filesize rail, dom-match rewrite) wakes
+only if the user raises it; no agent re-surfaces it.
 **Dispatchable (v5):** storage-diet 4a (WITHOUT ROWID junctions, dense dict ids);
 erase public no-daemon split (owns failure-modes class 23); scheduler execution
 steps 1-2 (d13dcf56).
