@@ -81,7 +81,7 @@ function rows_of(body: string): readonly (readonly (string | number)[])[] {
 }
 
 function verdict_of(outcome: IReloadOutcome | undefined, rel: string): RelVerdict | undefined {
-  return outcome?.verdicts.find(([key]) => key.endsWith(`:${rel}`))?.[1];
+  return outcome?.verdicts.find(([key]) => key === rel || key.endsWith(`:${rel}`))?.[1];
 }
 
 function table_names(db_url: string): Promise<readonly string[]> {

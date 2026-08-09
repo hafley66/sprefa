@@ -414,7 +414,7 @@ export interface IRelCatalogRow {
 export type RelVerdict = "create" | "recreate" | "refill" | "keep" | "drop";
 
 export interface IReloadPlan {
-  /** Keyed by `module_id:local_name`. h_id hashes the name AND the arity, so
+  /** Keyed by the parent local_name chain. h_id hashes the name AND the arity, so
    *  keying on it reads a routine column addition as a drop plus a create. */
   readonly verdicts: ReadonlyMap<string, RelVerdict>;
   readonly statements: readonly string[];

@@ -2,11 +2,14 @@
  * reloadPlan.test.ts: receipts for the reload planner that diffs two __rel
  * catalogs (the running program's rows against a freshly compiled module's).
  *
- * KEYED BY (module_id, local_name), NOT by h_id. rel_h_id hashes the module
- * hash, the name AND the arity (v6/prolog/lower.pl rel_h_id/4), so adding a
- * column moves h_id. Keying on h_id therefore read a column addition as "the
- * old rel vanished, a stranger arrived": a unsupported construct plus a create, for a routine
- * edit. MEASURED on one file compiled three ways, same module name:
+ * KEYED BY the parent local_name chain, NOT by h_id and NOT by module_id.
+ * rel_h_id hashes the module hash, the name AND the arity (v6/prolog/lower.pl
+ * rel_h_id/4), so adding a column moves h_id. Keying on h_id therefore read a
+ * column addition as "the old rel vanished, a stranger arrived": a unsupported
+ * construct plus a create, for a routine edit. module_id is positional in the
+ * emitted id sequence, so keying on it read any id-layout shift (a new
+ * primitive, a synthetic list row) as drop-everything with identical rels.
+ * MEASURED on one file compiled three ways, same module name:
  *   2 cols                 h_id 975158fcc67ee6af  h_schema 76bdfb91a44e84a1
  *   to_path text -> int    h_id 975158fcc67ee6af  h_schema fa2a45594779d533
  *   + weight: int          h_id be1425dc796502d5  h_schema 225740de73633ea1
@@ -92,12 +95,21 @@ const REACH: IRelCatalogRow = rel({
   h_rule: "8a1c0d5e6f7b2a34",
 });
 
-const EDGE_KEY = "6:edge";
-const REACH_KEY = "6:reach";
+const EDGE_KEY = "edge";
+const REACH_KEY = "reach";
 
 test("cold boot is all create", () => {
   const plan = ReloadPlanner.plan([], [EDGE], false);
   assert.equal(plan.verdicts.get(EDGE_KEY), "create");
+  assert.equal(plan.statements.length, 0);
+  assert.equal(plan.unsupported.length, 0);
+});
+
+test("an id-layout shift with identical rels keeps everything", () => {
+  const shifted: IRelCatalogRow = { ...EDGE, rel_id: 9, parent_id: 7, module_id: 7 };
+  const plan = ReloadPlanner.plan([EDGE], [shifted], false);
+  assert.equal(plan.verdicts.size, 1);
+  assert.equal(plan.verdicts.get(EDGE_KEY), "keep");
   assert.equal(plan.statements.length, 0);
   assert.equal(plan.unsupported.length, 0);
 });
@@ -155,7 +167,7 @@ test("a new rel creates", () => {
 test("a renamed rel is a drop plus a create", () => {
   const renamed: IRelCatalogRow = rel({ ...EDGE, local_name: "edges", h_id: "1f2e3d4c5b6a7908" });
   const plan = ReloadPlanner.plan([EDGE], [renamed], true);
-  assert.equal(plan.verdicts.get("6:edges"), "create");
+  assert.equal(plan.verdicts.get("edges"), "create");
   assert.equal(plan.verdicts.get(EDGE_KEY), "drop");
   assert.deepEqual(plan.statements, ['DROP TABLE IF EXISTS "edge"']);
 });
