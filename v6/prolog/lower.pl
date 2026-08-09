@@ -150,7 +150,10 @@
             catalog_ddl_contract/2,
             % The same rows the catalog INSERT renders, read by emit_ts.pl.
             catalog_rows/4,
-            catalog_all_rows/8 ]).
+            catalog_all_rows/9,
+            % Reproduce the RuleLevelStatements input the producer needs, used
+            % by the catalog rail to plan rows outside lower_program/2.
+            plan_rule_level_statements/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -776,9 +779,9 @@ canonical_hash_key(Term, KeyAtom) :-
 % Ids are positional for a byte-stable recompile: primitives, list rows,
 % module, then each rel and its columns.
 catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
-                Types, [Statement]) :-
+                Types, RuleLevelStatements, [Statement]) :-
     catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs,
-                     PreRefs, Types, AllRows),
+                     PreRefs, Types, RuleLevelStatements, AllRows),
     foldl(catalog_row_part(Mode), AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
@@ -786,17 +789,37 @@ catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
            'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule") VALUES ~w',
            [ValuesText]).
 
+%! plan_rule_level_statements(+Plan, -RuleLevelStatements) is det.
+%   Mirror of the lower_program/2 pipeline (dictionaries, the two expands,
+%   then level_statement_groups/4) so a caller outside lower_program/2 can plan
+%   the same level rows the DDL minted. Faithful because every step is the same
+%   predicate.
+plan_rule_level_statements(
+        plan(_Name, prog(Decls, _Rules), RelPlans, _ArrivalTargets, RuleOrder,
+             _EdgeRules, _SubscribedRels, Mode),
+        RuleLevelStatements) :-
+    type_definitions(Decls, LoweringTypes),
+    dictionary_relplans(LoweringTypes, DictionaryRelPlans),
+    append(DictionaryRelPlans, RelPlans, BodyRelPlans),
+    expand_relation_pattern_rules(LoweringTypes, BodyRelPlans, RuleOrder,
+                                  PatternedRuleOrder),
+    expand_decode_rules(LoweringTypes, BodyRelPlans, PatternedRuleOrder,
+                        DecodedRuleOrder),
+    level_statement_groups(Mode, BodyRelPlans, DecodedRuleOrder,
+                           RuleLevelStatements).
+
 %! catalog_all_rows(+Mode, +ModuleName, +Rules, +RelPlans, +DepartureRefs,
-%!                  +PreRefs, +Types, -Rows) is det.
-%   The block the seed renders: the decl rows (catalog_rows/4, byte-stable)
-%   then the plane rows (catalog_plane_rows/8, the Rules-derivable families).
-%   DepartureRefs and PreRefs mirror the `lower_program/2` call-site derivations
-%   so a plane row exists exactly where its DDL mint site emitted.
+%!                  +PreRefs, +Types, +RuleLevelStatements, -Rows) is det.
+%   The block the seed renders: the decl rows (catalog_rows/4, byte-stable),
+%   then the plane rows (catalog_plane_rows/9: the Rules-derivable families
+%   plus the level-statement families). DepartureRefs, PreRefs and
+%   RuleLevelStatements mirror the lower_program/2 call-site derivations so a
+%   plane row exists exactly where its DDL mint site emitted.
 catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
-                 Types, AllRows) :-
+                 Types, RuleLevelStatements, AllRows) :-
     catalog_decl_rows(ModuleName, Rules, RelPlans, DeclRows, Context),
     catalog_plane_rows(Mode, ModuleName, RelPlans, DepartureRefs, PreRefs,
-                       Types, Context, PlaneRows),
+                       Types, RuleLevelStatements, Context, PlaneRows),
     append(DeclRows, PlaneRows, AllRows).
 
 % The plane half is appended after the rels+columns block (plan 4) so no
@@ -807,15 +830,18 @@ catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
 % PreRefs, declared_type_name), so a plane row cannot describe a table the
 % lowering did not create. That is the whole point of this step.
 catalog_plane_rows(Mode, _ModuleName, RelPlans, DepartureRefs, PreRefs,
-                   Types,
+                   Types, RuleLevelStatements,
                    ctx(ModuleHash, ModuleId, RelIdMap, _ListIdMap, StartId),
                    PlaneRows) :-
     catalog_rel_plane_rows(Mode, RelPlans, DepartureRefs, PreRefs, RelIdMap,
                            ModuleHash, ModuleId, StartId, RelPlaneRows,
                            IdAfterRel),
     dict_plane_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash, ModuleId,
-                    IdAfterRel, DictRows, _IdAfterDict),
-    append(RelPlaneRows, DictRows, PlaneRows).
+                    IdAfterRel, DictRows, IdAfterDict),
+    catalog_level_plane_rows(RelPlans, RuleLevelStatements, RelIdMap,
+                             ModuleHash, ModuleId, IdAfterDict, LevelRows,
+                             _IdAfterLevel),
+    append([RelPlaneRows, DictRows, LevelRows], PlaneRows).
 
 % ── per-rel planes ─────────────────────────────────────────────────────────
 catalog_rel_plane_rows(_Mode, [], _DepartureRefs, _PreRefs, _RelIdMap,
@@ -968,10 +994,143 @@ catalog_ref_dict_rows(Mode, [relplan(Name/_, _, Columns, _, ColumnTypes)
                           Id1, RestRows, IdFinal),
     append(RefRows, RestRows, Rows).
 
+% ── level-statement planes ────────────────────────────────────────────────
+% Per level head: the refcount family (refcount, refcount staging, and the
+% recursive-recursion expand/dred waves) and the aggregate family (scope, avg
+% accumulator). Existence mirrors ref_count_ddl/2 and aggregate_scope_ddl/2
+% clause for clause, keyed off the levelstmt's RefCountSql and AggregateSql.
+catalog_level_plane_rows(_RelPlans, [], _RelIdMap, _ModuleHash, _ModuleId,
+                         Id, [], Id).
+catalog_level_plane_rows(RelPlans, [Stmt | Rest], RelIdMap, ModuleHash,
+                         ModuleId, Id0, Rows, IdFinal) :-
+    Stmt = levelstmt(HeadRef, _, _, _, RefCountSql, AggregateSql, _),
+    HeadRef = Name/RelArity,
+    rel_row_id(RelIdMap, Name, RelId),
+    rel_h_id(ModuleHash, Name, RelArity, RelHId),
+    relplan_columns(RelPlans, HeadRef, Columns),
+    relplan_column_types(RelPlans, HeadRef, ColumnTypes),
+    catalog_one_level_stmt_planes(HeadRef, RelId, RelHId, ModuleId, Columns,
+                                  ColumnTypes, RefCountSql, AggregateSql,
+                                  Id0, ThisRows, Id1),
+    catalog_level_plane_rows(RelPlans, Rest, RelIdMap, ModuleHash, ModuleId,
+                             Id1, RestRows, IdFinal),
+    append(ThisRows, RestRows, Rows).
+
+catalog_one_level_stmt_planes(HeadRef, RelId, RelHId, ModuleId, Columns,
+                              ColumnTypes, RefCountSql, AggregateSql,
+                              Id0, Rows, IdFinal) :-
+    length(Columns, HeadCount),
+    (   RefCountSql \== none
+    ->  ref_count_table_name(HeadRef, RefCountTable),
+        arrival_scratch_table_name(HeadRef, NewTable),
+        catalog_refcount_pair(ModuleId, RelId, RelHId, RefCountTable,
+                              NewTable, HeadCount, Id0, RefRows, IdAfterRef),
+        (   RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _,
+                                      ExpandPlan, DredPlan, _, _),
+            ExpandPlan = expandplan(_, _, _, _, _, _, _)
+        ->  expand_table_name(HeadRef, a, TableA),
+            expand_table_name(HeadRef, b, TableB),
+            catalog_expand_pair(ModuleId, RelId, RelHId, TableA,
+                                TableB, Columns, ColumnTypes, IdAfterRef,
+                                ExpRows, IdAfterExp),
+            (   DredPlan == none
+            ->  DredRows = [], IdAfterDred = IdAfterExp
+            ;   dred_ping_table_name(HeadRef, PingTable),
+                dred_pong_table_name(HeadRef, PongTable),
+                dred_cone_table_name(HeadRef, ConeTable),
+                catalog_dred_trio(ModuleId, RelId, RelHId, PingTable,
+                                  PongTable, ConeTable, Columns, ColumnTypes,
+                                  IdAfterExp, DredRows, IdAfterDred)
+            )
+        ;   ExpRows = [], DredRows = [], IdAfterDred = IdAfterRef
+        )
+    ;   RefRows = [], ExpRows = [], DredRows = [], IdAfterDred = Id0
+    ),
+    aggregate_scope_table_name(HeadRef, ScopeTable),
+    (   AggregateSql = aggsql(ScopeColumns, ScopeTypes, _, _, _, _, _)
+    ->  catalog_scope_row(ModuleId, RelId, RelHId, ScopeTable, ScopeColumns,
+                          ScopeTypes, IdAfterDred, ScopeRows, IdAfterScope),
+        AvgRows = [], IdFinal = IdAfterScope
+    ;   AggregateSql = avgsql(ScopeColumns, ScopeTypes, _, _, _, _, _)
+    ->  catalog_scope_row(ModuleId, RelId, RelHId, ScopeTable, ScopeColumns,
+                          ScopeTypes, IdAfterDred, ScopeRows, IdAfterScope),
+        avg_accumulator_table_name(HeadRef, AccTable),
+        catalog_avg_row(ModuleId, RelId, RelHId, AccTable, ScopeColumns,
+                        _ScopeTypes, IdAfterScope, AvgRows, IdFinal)
+    ;   ScopeRows = [], AvgRows = [], IdFinal = IdAfterDred
+    ),
+    append([RefRows, ExpRows, DredRows, ScopeRows, AvgRows], Rows).
+
+% A refcount head table and its staging scratch are both created by
+% ref_count_head_ddl/4; each is the head's columns plus __refcount.
+catalog_refcount_pair(ModuleId, RelId, RelHId, RefCountTable, NewTable,
+                      HeadCount, Id0, [RefRow, NewRow], Id2) :-
+    RefArity is HeadCount + 1,
+    rel_h_id(RelHId, RefCountTable, RefArity, RefHId),
+    rel_h_id(RelHId, NewTable, RefArity, NewHId),
+    RefRow = row(Id0, RelId, 0, RefCountTable, refcount, 0, RefArity,
+                 ModuleId, RefHId, '', ''),
+    Id1 is Id0 + 1,
+    NewRow = row(Id1, RelId, 0, NewTable, refcount_staging, 0, RefArity,
+                 ModuleId, NewHId, '', ''),
+    Id2 is Id1 + 1.
+
+% Both expand tables carry the head's own columns.
+catalog_expand_pair(ModuleId, RelId, RelHId, TableA, TableB, Columns,
+                    ColumnTypes, Id0, [RowA, RowB], Id2) :-
+    length(Columns, Arity),
+    rel_h_id(RelHId, TableA, Arity, HIdA),
+    rel_h_id(RelHId, TableB, Arity, HIdB),
+    schema_hash(Columns, ColumnTypes, none, Schema),
+    RowA = row(Id0, RelId, 0, TableA, expand, 0, Arity, ModuleId, HIdA,
+               Schema, ''),
+    Id1 is Id0 + 1,
+    RowB = row(Id1, RelId, 0, TableB, expand, 0, Arity, ModuleId, HIdB,
+               Schema, ''),
+    Id2 is Id1 + 1.
+
+% The three dred tables carry the head's own columns.
+catalog_dred_trio(ModuleId, RelId, RelHId, PingTable, PongTable, ConeTable,
+                  Columns, ColumnTypes, Id0, [RowPing, RowPong, RowCone],
+                  Id3) :-
+    length(Columns, Arity),
+    rel_h_id(RelHId, PingTable, Arity, PingHId),
+    rel_h_id(RelHId, PongTable, Arity, PongHId),
+    rel_h_id(RelHId, ConeTable, Arity, ConeHId),
+    schema_hash(Columns, ColumnTypes, none, Schema),
+    RowPing = row(Id0, RelId, 0, PingTable, dred, 0, Arity, ModuleId,
+                  PingHId, Schema, ''),
+    Id1 is Id0 + 1,
+    RowPong = row(Id1, RelId, 0, PongTable, dred, 0, Arity, ModuleId,
+                  PongHId, Schema, ''),
+    Id2 is Id1 + 1,
+    RowCone = row(Id2, RelId, 0, ConeTable, dred, 0, Arity, ModuleId,
+                  ConeHId, Schema, ''),
+    Id3 is Id2 + 1.
+
+% The scope table's columns are the aggregate's group columns.
+catalog_scope_row(ModuleId, RelId, RelHId, ScopeTable, ScopeColumns,
+                  ScopeTypes, Id0, [Row], Id1) :-
+    length(ScopeColumns, Arity),
+    rel_h_id(RelHId, ScopeTable, Arity, ScopeHId),
+    schema_hash(ScopeColumns, ScopeTypes, none, Schema),
+    Row = row(Id0, RelId, 0, ScopeTable, scope, 0, Arity, ModuleId,
+              ScopeHId, Schema, ''),
+    Id1 is Id0 + 1.
+
+% The avg accumulator is the scope columns plus __sum and __count.
+catalog_avg_row(ModuleId, RelId, RelHId, AccTable, ScopeColumns, _ScopeTypes,
+                Id0, [Row], Id1) :-
+    length(ScopeColumns, ScopeArity),
+    AccArity is ScopeArity + 2,
+    rel_h_id(RelHId, AccTable, AccArity, AccHId),
+    Row = row(Id0, RelId, 0, AccTable, avg_accumulator, 0, AccArity,
+              ModuleId, AccHId, '', ''),
+    Id1 is Id0 + 1.
 
 %! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
 %   The relplan carries each column's full type, ref(_) and list(_) included.
-%   The decl half only; the plane half is appended by catalog_all_rows/8.
+%   The decl half only; the plane half is appended by catalog_all_rows/9.
 catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
     catalog_decl_rows(ModuleName, Rules, RelPlans, AllRows, _).
 
@@ -5184,8 +5343,9 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     program_uses_catalog(prog(Decls, Rules), UsesCatalog),
     ( UsesCatalog == true
     -> catalog_table_ddl(CatalogTableDdl),
+       % Ordering: must run after level_statement_groups (RuleLevelStatements is its input).
        catalog_row_ddl(Mode, Name, Rules, RelPlans, DepartureRefs, PreRefs,
-                       LoweringTypes, CatalogRowDdl)
+                       LoweringTypes, RuleLevelStatements, CatalogRowDdl)
     ;  CatalogTableDdl = [], CatalogRowDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
