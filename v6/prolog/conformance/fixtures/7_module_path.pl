@@ -8,7 +8,7 @@
 
 % rx: the resolved head rel is one stream; the dotted spelling is a
 % compile-time name, zero runtime rows.
-fixture(module_path_in_head_refuses_by_name,
+fixture(module_path_in_head_resolves_and_contributes,
     prog(
         [ col_type(harvest/2, tree_id, int),
           col_type(harvest/2, picked, int),
@@ -27,7 +27,7 @@ fixture(module_path_in_head_refuses_by_name,
     ]).
 
 % rx: join against the resolved target's stream, identical to naming it flat.
-fixture(module_path_in_body_refuses_by_name,
+fixture(module_path_in_body_reads_the_flat_rel,
     prog(
         [ col_type(orchard__fruit/2, tree_id, int),
           col_type(orchard__fruit/2, picked, int),
@@ -46,7 +46,7 @@ fixture(module_path_in_body_refuses_by_name,
 
 % `north` is an interior room no decl of its own names, so the walk has to
 % mint it from the path and still find `tree` under it.
-fixture(module_path_three_segments_keeps_every_segment,
+fixture(module_path_three_segments_resolve_through_the_rooms,
     prog(
         [ col_type(orchard__north__tree/1, tree_id, int),
           rel_path_decl(orchard__north__tree/1, [orchard, north, tree]),
