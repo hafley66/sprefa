@@ -38,6 +38,7 @@
               [ type_definitions/2, type_definition/4, column_storage/3,
                 declared_type_name/2 ]).
 :- use_module('conformance/body', [rel_ref/2]).
+:- use_module('0_rel_record', [relplan_column_types/3]).
 :- use_module('compile/registry',
               [ surface_for_term/6,
                 body_surface_for_term/6,
@@ -1079,7 +1080,7 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
     ; BodyAtoms = []
     ),
     rel_ref(Head, HeadRef),
-    memberchk(relplan(HeadRef, _, _, _, HeadColumnTypes), RelPlans),
+    relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     Head =.. [_ | HeadArgs],
     forall(( nth1(HeadPosition, HeadArgs, HeadArg), var(HeadArg),
              nth1(HeadPosition, HeadColumnTypes, HeadColumnType),
@@ -1087,7 +1088,7 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
              rel_ref(BodyAtom, BodyRef),
              BodyAtom =.. [_ | BodyArgs],
              nth1(BodyPosition, BodyArgs, BodyArg), BodyArg == HeadArg,
-             memberchk(relplan(BodyRef, _, _, _, BodyColumnTypes), RelPlans),
+             relplan_column_types(RelPlans, BodyRef, BodyColumnTypes),
              nth1(BodyPosition, BodyColumnTypes, BodyColumnType),
              BodyColumnType \== HeadColumnType ),
            throw(unsupported_construct(edge_head_column_type_mismatch(HeadRef, HeadPosition, BodyColumnType, HeadColumnType)))).

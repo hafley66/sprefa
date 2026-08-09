@@ -1,0 +1,1 @@
+rel session(token: option(text), user_id: int) key(1).

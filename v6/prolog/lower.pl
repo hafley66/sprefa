@@ -4,13 +4,8 @@
 %   lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements,
 %           DeltaStatements, RelPlans, ArrivalTargets)
 %     Ddl              : list of CREATE TABLE SQL strings.
-%     RelPlans         : list of relplan(Ref, log|set, Columns, key(Ps)|none,
-%                        ColumnTypes) -- ColumnTypes (PHASE C2 RULING 1) is a
-%                        int|text list parallel to Columns, chosen upstream
-%                        by analyze.pl:rel_column_types/7 from declaration
-%                        authority when present, otherwise from the fixture's
-%                        literal witnesses; column_def/3 below is the one
-%                        place that reads it.
+%     RelPlans         : 0_rel_record.pl's rel/4 list, unchanged from the plan;
+%                        column_def/4 below is the only reader of its storage.
 %     ArrivalStatements: list of arrivalstmt(Ref, Kind, AddSql, DelSqlOrNone,
 %                        IncrementalAddSql, IncrementalDelSqlOrNone).
 %     EdgeStatements   : list of edgestmt(HeadRef, TriggerRef, HeadColumns,
@@ -119,7 +114,7 @@
 % inside one group is refused at strat.pl:topo_order_group/2.
 
 :- module(lower,
-          [ lower_program/2, boot_statements/7, relplan_kind/3,
+          [ lower_program/2, boot_statements/7,
             % The interning contract's mode vocabulary. compile.pl resolves
             % the compile option into the atom the plan term carries.
             intern_mode/2, interned_column/2, string_dictionary_table/1,
@@ -159,6 +154,7 @@
 :- use_module(library(apply)).
 :- use_module(library(crypto)).
 :- use_module(analyze).
+:- use_module('0_rel_record').
 :- use_module('compile/registry', [expression/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
               [ type_definition/4, column_storage/3,
@@ -264,12 +260,6 @@ sql_literal(Atom, Literal) :-
     ;  sql_text_literal(Atom, Literal) ).
 sql_literal(bool_lit(true), '1') :- !.
 sql_literal(bool_lit(false), '0') :- !.
-
-% ═══ relplan lookup ══════════════════════════════════════════════════════════
-
-relplan_columns(RelPlans, Ref, Columns) :- memberchk(relplan(Ref, _, Columns, _, _), RelPlans).
-relplan_kind(RelPlans, Ref, Kind) :- memberchk(relplan(Ref, Kind, _, _, _), RelPlans).
-relplan_column_types(RelPlans, Ref, ColumnTypes) :- memberchk(relplan(Ref, _, _, _, ColumnTypes), RelPlans).
 
 % ═══ pattern-argument compiler (level-rule bodies; unchanged from round 1) ══
 % Binding = bind | check; a check (negated atom) never introduces a binding, so
@@ -401,7 +391,8 @@ positive_use_table(_, Ref, Table) :- table_name(Ref, Table).
 % instead of manufacturing JSON or performing a hidden target write.
 bind_reference_target_identity(RelPlans, Name/Arity, Args, Alias,
                                Bound0, Bound) :-
-    member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, _, _, _, _, ColumnTypes),
     memberchk(ref(Name), ColumnTypes),
     !,
     length(Args, Arity),
@@ -853,7 +844,7 @@ catalog_rel_plane_rows(_Mode, [], _DepartureRefs, _PreRefs, _RelIdMap,
                        _ModuleHash, _ModuleId, Id, [], Id).
 catalog_rel_plane_rows(Mode, [RelPlan | Rest], DepartureRefs, PreRefs,
                        RelIdMap, ModuleHash, ModuleId, Id0, Rows, IdFinal) :-
-    RelPlan = relplan(Ref, _Kind, Columns, _KeyOrNone, ColumnTypes),
+    relplan_parts(RelPlan, Ref, _Kind, Columns, _KeyOrNone, ColumnTypes),
     Ref = Name/RelArity,
     rel_row_id(RelIdMap, Name, RelId),
     rel_h_id(ModuleHash, Name, RelArity, RelHId),
@@ -971,17 +962,18 @@ dict_plane_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash, ModuleId, Id0,
     append(StrRows, RefRows, Rows).
 
 catalog_has_interned_column(Mode, RelPlans) :-
-    member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, _, _, _, _, ColumnTypes),
     any_interned_column(Mode, ColumnTypes).
 
 % __ref_<Type> exists once per declared struct type, mirroring the rel_ddl/6
 % set-arm that creates the reference view.
 catalog_ref_dict_rows(_Mode, [], _Types, _RelIdMap, _ModuleHash, _ModuleId,
                       Id, [], Id).
-catalog_ref_dict_rows(Mode, [relplan(Name/_, _, Columns, _, ColumnTypes)
-                             | Rest],
+catalog_ref_dict_rows(Mode, [RelPlan | Rest],
                       Types, RelIdMap, ModuleHash, ModuleId, Id0, Rows,
                       IdFinal) :-
+    relplan_parts(RelPlan, Name/_, _, Columns, _, ColumnTypes),
     (   declared_type_name(Types, Name)
     ->  rel_row_id(RelIdMap, Name, RelId),
         length(Columns, ColumnCount),
@@ -1178,9 +1170,9 @@ catalog_port_plane_rows([Decl | Rest], RelIdMap, ModuleHash, ModuleId,
 % whose rel row is at id R sits at R+j (catalog_column_rows/9's positional id
 % assignment), so the storage row parents on that column row's own id.
 catalog_storage_rows(_Mode, [], _RelIdMap, _ModuleHash, _ModuleId, Id, [], Id).
-catalog_storage_rows(Mode, [relplan(Name/RelArity, _, Columns, _, ColumnTypes)
-                            | Rest], RelIdMap, ModuleHash, ModuleId, Id0,
-                     Rows, IdFinal) :-
+catalog_storage_rows(Mode, [RelPlan | Rest], RelIdMap, ModuleHash, ModuleId,
+                     Id0, Rows, IdFinal) :-
+    relplan_parts(RelPlan, Name/RelArity, _, Columns, _, ColumnTypes),
     rel_row_id(RelIdMap, Name, RelId),
     rel_h_id(ModuleHash, Name, RelArity, RelHId),
     catalog_one_rel_storage(Mode, Columns, ColumnTypes, RelHId, RelId, 1,
@@ -1251,7 +1243,8 @@ catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
 % outer so a nested list's own row id exists before the outer row references it.
 catalog_list_types(RelPlans, OrderedTypes) :-
     findall(ListType,
-            ( member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, _, _, _, _, ColumnTypes),
               member(ColumnType, ColumnTypes),
               list_subtypes(ColumnType, SubTypes),
               member(ListType, SubTypes) ),
@@ -1297,7 +1290,8 @@ list_element_type_id(Element, _ListIdMap, TypeId) :-
 % Pass A: rel names and their ids, assigned by position, each rel consuming one
 % row plus one row per column exactly as pass B emits them.
 catalog_rel_id_map([], _Id, Acc, Acc).
-catalog_rel_id_map([relplan(Name/RelArity, _, _, _, _) | Rest], Id0, Acc0, Acc) :-
+catalog_rel_id_map([RelPlan | Rest], Id0, Acc0, Acc) :-
+    relplan_parts(RelPlan, Name/RelArity, _, _, _, _),
     IdAfterRel is Id0 + 1 + RelArity,
     catalog_rel_id_map(Rest, IdAfterRel, [Name-Id0 | Acc0], Acc).
 
@@ -1307,7 +1301,7 @@ catalog_rel_rows([], _BodiesMap, _ModuleId, _ModuleHash, _RelIdMap, _ListIdMap,
                  Id, Id, []).
 catalog_rel_rows([RelPlan | Rest], BodiesMap, ModuleId, ModuleHash, RelIdMap,
                  ListIdMap, Id0, FinalId, Rows) :-
-    RelPlan = relplan(Name/RelArity, _Kind, Columns, KeyOrNone, ColumnTypes),
+    relplan_parts(RelPlan, Name/RelArity, _Kind, Columns, KeyOrNone, ColumnTypes),
     rel_h_id(ModuleHash, Name, RelArity, RelHId),
     schema_hash(Columns, ColumnTypes, KeyOrNone, HSchema),
     rule_hash(BodiesMap, Name/RelArity, HRule),
@@ -1559,7 +1553,8 @@ any_interned_column(Mode, ColumnTypes) :-
     !.
 
 program_intern_ddl(Mode, RelPlans, Ddl) :-
-    (   member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+    (   member(RelPlan, RelPlans),
+        relplan_parts(RelPlan, _, _, _, _, ColumnTypes),
         any_interned_column(Mode, ColumnTypes)
     ->  intern_ddl(Mode, Ddl)
     ;   Ddl = []
@@ -1710,7 +1705,8 @@ text_intern_plan(Mode, RelPlans, textintern(InternSql, LookupSql, RelColumns)) :
            'SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN ~w s ON s."content" = i.value',
            [QuotedDictionary]),
     findall(Name-Flags,
-            ( member(relplan(Name/_, _, _, _, ColumnTypes), RelPlans),
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Name/_, _, _, _, ColumnTypes),
               any_interned_column(Mode, ColumnTypes),
               maplist(interned_column_flag(Mode), ColumnTypes, Flags) ),
             RelColumns).
@@ -1743,7 +1739,9 @@ text_read_table(Mode, Table, ColumnTypes, ReadTable) :-
 % absorb_set_arrival/5 replaces by key. An unkeyed arrival target retains the
 % all-column primary key used for exact-row Set membership.
 
-rel_ddl(Mode, _, _, _, _, relplan(Ref, log, Columns, _, ColumnTypes), Ddls) :- !,
+rel_ddl(Mode, _, _, _, _, RelPlan, Ddls) :-
+    relplan_parts(RelPlan, Ref, log, Columns, _, ColumnTypes),
+    !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
@@ -1755,7 +1753,8 @@ rel_ddl(Mode, _, _, _, _, relplan(Ref, log, Columns, _, ColumnTypes), Ddls) :- !
     text_view_ddls(Mode, Table, Columns, ColumnTypes, [], ViewDdls),
     Ddls = [Ddl | ViewDdls].
 rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
-        relplan(Ref, set, Columns, KeyOrNone, ColumnTypes), Ddls) :-
+        RelPlan, Ddls) :-
+    relplan_parts(RelPlan, Ref, set, Columns, KeyOrNone, ColumnTypes),
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
@@ -2013,13 +2012,16 @@ dictionary_ref_type(Types, DeclaredType, RefType) :-
 % a compound value that ARRIVES into an untyped column is stored as canonical
 % term text, and that encoding question is SLOT-TERM-STRUCT's, not this one's.
 
+% Compiler-minted storage tables: no col_type/3 names their columns, so every
+% column is `inferred` however the mirrored type_decl/2 was written.
 dictionary_relplans(Types, Plans) :-
-    findall(relplan(Name/DictArity, set, ['__id' | Columns], none,
-                    [ref(TypeName) | StorageKinds]),
+    findall(rel(Name/DictArity, set, Cols, none),
             ( member(type_def(TypeName, Columns, ColumnTypes), Types),
               dictionary_table_name(TypeName, Name),
               length(Columns, Width), DictArity is Width + 1,
-              maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds) ),
+              maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds),
+              inferred_cols(['__id' | Columns], [ref(TypeName) | StorageKinds],
+                            Cols) ),
             Plans).
 
 % ═══ relation-value terms as dictionary joins ═══════════════════════════════
@@ -2449,8 +2451,10 @@ incremental_json_select_exprs_from(N, Index, [Expr | More]) :-
 
 % ═══ arrival statement templates (round 2: Log rel drops tick/seq params) ═══
 
-arrival_statement(relplan(Ref, log, Columns, _, _),
-                  arrivalstmt(Ref, log, AddSql, none, IncrementalAddSql, none)) :- !,
+arrival_statement(RelPlan,
+                  arrivalstmt(Ref, log, AddSql, none, IncrementalAddSql, none)) :-
+    relplan_parts(RelPlan, Ref, log, Columns, _, _),
+    !,
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
@@ -2459,8 +2463,9 @@ arrival_statement(relplan(Ref, log, Columns, _, _),
     format(atom(AddSql), 'INSERT INTO ~w (~w) VALUES (~w)', [QuotedTable, ColumnsSql, PlaceholdersSql]),
     incremental_arrival_add_sql('INSERT INTO', '', QuotedTable, ColumnsSql, QuotedColumns,
                                 IncrementalAddSql).
-arrival_statement(relplan(Ref, set, Columns, KeyOrNone, _),
+arrival_statement(RelPlan,
                   arrivalstmt(Ref, set, AddSql, DelSql, IncrementalAddSql, IncrementalDelSql)) :-
+    relplan_parts(RelPlan, Ref, set, Columns, KeyOrNone, _),
     table_name(Ref, Table), quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
@@ -2645,7 +2650,7 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     rel_ref(Head, HeadRef),
     relplan_kind(RelPlans, HeadRef, HeadKind),
     ( HeadKind == set
-    -> ( memberchk(relplan(HeadRef, set, _, key(KeyPositions), _), RelPlans) -> true
+    -> ( relplan_key(RelPlans, HeadRef, key(KeyPositions)) -> true
        ; throw(unsupported_construct(edge_into_unkeyed_set(HeadRef))) )
     ; true  % log: no key concept, KeyPositions unused below
     ),
@@ -2750,7 +2755,8 @@ reference_trigger_samples(RelPlans, ordered_arrival, TriggerAtom,
 reference_trigger_samples(_, _, _, OtherAtoms, OtherAtoms).
 
 reference_target_ref(RelPlans, Name/_Arity) :-
-    member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, _, _, _, _, ColumnTypes),
     memberchk(ref(Name), ColumnTypes).
 
 member_same_term(Term, [Candidate | _]) :- Term == Candidate, !.
@@ -4974,8 +4980,9 @@ is_negative_use(use(_, _, neg, _)).
 % because it is a SQL-generation decision a future emit_rust.pl would want
 % identically, not a TypeScript-specific rendering choice.
 
-delta_statement(Mode, relplan(Ref, _Kind, Columns, _, ColumnTypes),
+delta_statement(Mode, RelPlan,
                 deltastmt(Ref, SelectSql, DeltaTable, BoundarySql, StoredSelectSql)) :-
+    relplan_parts(RelPlan, Ref, _Kind, Columns, _, ColumnTypes),
     table_name(Ref, Table),
     text_read_table(Mode, Table, ColumnTypes, ReadTable),
     quote_ident(ReadTable, QuotedTable),
@@ -4998,7 +5005,7 @@ retention_statement(RelPlans, keep(Ref, count(Limit)),
                     retentionstmt(Ref, Limit, DeleteSql)) :-
     integer(Limit),
     Limit >= 0,
-    memberchk(relplan(Ref, log, Columns, _, _), RelPlans),
+    relplan_shape(RelPlans, Ref, log, Columns, _, _),
     table_name(Ref, Table),
     quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -5016,7 +5023,7 @@ retention_statements(Decls, RelPlans, RetentionStatements) :-
             RetentionStatements).
 
 delta_ddl(Mode, DepartureRefs, RelPlan, Ddl) :-
-    RelPlan = relplan(Ref, _, Columns, _, ColumnTypes),
+    relplan_parts(RelPlan, Ref, _, Columns, _, ColumnTypes),
     delta_ddl(Mode, RelPlan, BaseDdl),
     (   memberchk(Ref, DepartureRefs)
     ->  departure_frontier_ddl(Ref, Columns, ColumnTypes, DepartureDdl),
@@ -5038,7 +5045,7 @@ departure_frontier_ddl(Ref, Columns, ColumnTypes, [TableDdl]) :-
            [QuotedDepartureTable, ColumnsSql]).
 
 pre_ddl(Mode, RelPlans, Ref, Ddl) :-
-    memberchk(relplan(Ref, _, Columns, KeyOrNone, ColumnTypes), RelPlans),
+    relplan_shape(RelPlans, Ref, _, Columns, KeyOrNone, ColumnTypes),
     pre_table_name(Ref, PreTable),
     quote_ident(PreTable, QuotedPreTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -5057,7 +5064,8 @@ pre_ddl(Mode, RelPlans, Ref, Ddl) :-
 
 % No _phase index on the next-frontier: nothing filters that table by phase
 % (0 of 747 emitted modules had a query plan choose one).
-delta_ddl(Mode, relplan(Ref, _Kind, Columns, _, ColumnTypes), Ddls) :-
+delta_ddl(Mode, RelPlan, Ddls) :-
+    relplan_parts(RelPlan, Ref, _Kind, Columns, _, ColumnTypes),
     delta_table_name(Ref, DeltaTable),
     quote_ident(DeltaTable, QuotedDeltaTable),
     maplist(quote_ident, Columns, QuotedColumns),
@@ -5257,9 +5265,12 @@ canonical_column_expr(Column, Expr) :-
 % it runs `boot` after DDL and before the tick fold, confirmed by that
 % script's own header comment.
 
-boot_seed_statement(Mode, Decls, Types, relplan(Ref, log, Columns, _, ColumnTypes), Initial, Statements) :- !,
+boot_seed_statement(Mode, Decls, Types, RelPlan, Initial, Statements) :-
+    relplan_parts(RelPlan, Ref, log, Columns, _, ColumnTypes),
+    !,
     boot_rows_statements(Mode, Decls, Types, 'INSERT INTO', Ref, Columns, ColumnTypes, Initial, Statements).
-boot_seed_statement(Mode, Decls, Types, relplan(Ref, set, Columns, _, ColumnTypes), Initial, Statements) :-
+boot_seed_statement(Mode, Decls, Types, RelPlan, Initial, Statements) :-
+    relplan_parts(RelPlan, Ref, set, Columns, _, ColumnTypes),
     boot_rows_statements(Mode, Decls, Types, 'INSERT OR IGNORE INTO', Ref, Columns, ColumnTypes, Initial, Statements).
 
 boot_rows_statements(Mode, Decls, Types, Insert, Ref, Columns, ColumnTypes, Initial, Statements) :-
@@ -5442,7 +5453,9 @@ lower_program(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans, ArrivalTar
                      SeedDdl),
     append([InternDdl, SeedDdl, BodyDdl], Ddl).
 
-arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Ref, ArrivalTargets).
+arrival_target_relplan(ArrivalTargets, RelPlan) :-
+    relplan_parts(RelPlan, Ref, _, _, _, _),
+    memberchk(Ref, ArrivalTargets).
 
 % Boot statements, computed on demand (needs Initial, which plan/6 does not
 % carry -- compile.pl calls this directly with the fixture's Initial list).
@@ -5461,7 +5474,7 @@ boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements,
     append(SeedStatements, LevelBootStatements, BootStatements).
 
 boot_seed_statement_for(Mode, Decls, Types, Initial, RelPlan, Statements) :-
-    RelPlan = relplan(Name/_, _, _, _, _),
+    relplan_parts(RelPlan, Name/_, _, _, _, _),
     boot_seed_statement(Mode, Decls, Types, RelPlan, Initial, Statements0),
     tag_boot_statements(Name, Statements0, Statements).
 

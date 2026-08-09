@@ -43,6 +43,7 @@
   {"name":"struct_type_cycle_rejected","file":"4_struct_values.pl","bucket":"unsupported","reason":"type_cycle([node])"},
   {"name":"struct_type_mutual_cycle_rejected","file":"4_struct_values.pl","bucket":"unsupported","reason":"type_cycle([left,right])"},
   {"name":"struct_column_type_unknown_rejected","file":"4_struct_values.pl","bucket":"unsupported","reason":"column_type_unknown(spann)"},
+  {"name":"key_range_reported_before_unknown_column_type","file":"4_struct_values.pl","bucket":"unsupported","reason":"key_position_out_of_range(finding/2,3,2)"},
   {"name":"struct_host_output_type_unknown_rejected","file":"4_struct_values.pl","bucket":"unsupported","reason":"column_type_unknown(spann)"},
   {"name":"struct_arrival_missing_key_rejected","file":"4_struct_values.pl","bucket":"unsupported","reason":"type_arrival_shape_mismatch(finding/2,at,span,missing_key(span,end))"},
   {"name":"struct_arrival_field_type_rejected","file":"4_struct_values.pl","bucket":"unsupported","reason":"type_arrival_shape_mismatch(finding/2,at,span,field_not_int(span,end,nine))"},

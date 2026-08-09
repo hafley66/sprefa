@@ -13,6 +13,7 @@
 :- use_module('../../emit_ts', [ emit_program/5 ]).
 :- use_module('../parse_dl', [ parse_dl/4, parse_dl_file/4 ]).
 :- use_module('../../analyze', [ declared_refs/2 ]).
+:- use_module('../../0_rel_record', [ relplan_parts/6 ]).
 :- use_module('../../0_body_walk',
               [ body_relation_atoms/4, body_wrapper_refs/4 ]).
 
@@ -167,7 +168,10 @@ test(golden_flex_cone_invariants) :-
                  -Bindings, Plan),
     Plan = plan(_, prog(_, Rules), _, RelPlans, _, _, _, Cone, _),
     Cone \== [],
-    findall(Ref, member(relplan(Ref, _, _, _, _), RelPlans), AllRefs0),
+    findall(Ref,
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _, _, _, _) ),
+            AllRefs0),
     sort(AllRefs0, AllRefs),
     subtract(Cone, AllRefs, []),
     % Both query rels, and every rel their own rule bodies read.

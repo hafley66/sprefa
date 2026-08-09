@@ -32,6 +32,11 @@
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
+:- use_module('../../0_rel_record',
+              [ inferred_cols/3, relplan_parts/6, relplan_shape/6,
+                relplan_columns/3, relplan_column_types/3, relplan_of/3,
+                relplan_declared/2, relplan_declared_types/3,
+                relplan_origins/2 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../0_ast_expand',
@@ -106,6 +111,15 @@
 % happened to still exist on this machine by coincidence).
 :- dynamic(test_dir_fact/1).
 :- prolog_load_context(directory, Here), assertz(test_dir_fact(Here)).
+
+% Hand-built rel records for the units that feed lower.pl directly. The spec
+% names storage kinds, so every column comes out `inferred`; a unit that needs
+% the declared slot builds the record through program_plan/2 like the compiler.
+inferred_relplans(Specs, RelPlans) :- maplist(inferred_relplan, Specs, RelPlans).
+
+inferred_relplan(rel_spec(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
+                 rel(Ref, Kind, Cols, KeyOrNone)) :-
+    inferred_cols(Columns, ColumnTypes, Cols).
 
 fixture_file(File) :-
     test_dir_fact(Here),
@@ -210,8 +224,8 @@ test(self_recursive_level_rule_remains_in_p2_order) :-
 
 % analyze.pl:rel_columns/4 mines column names from the fixture's OWN surface
 % variable names (via read_fixture_term/4's variable_names preservation),
-% not from any hardcoded per-fixture table. relplan(Ref, Kind, Columns, Key,
-% ColumnTypes) -- ColumnTypes (PHASE C2 RULING 1) all TEXT here: neither
+% not from any hardcoded per-fixture table. Storage kinds (PHASE C2 RULING 1)
+% are all TEXT here: neither
 % fixture's own literal values (Schedule/Initial/rule literals) ever put an
 % integer at any of these positions, so analyze.pl:rel_column_types/5's
 % "zero int witnesses -> text" default is exactly what fires, including for
@@ -220,19 +234,76 @@ test(self_recursive_level_rule_remains_in_p2_order) :-
 
 test(switch_as_keyed_replace_columns) :-
     load_plan(switch_as_keyed_replace, plan(_, _, _, RelPlans, _, _, _, _, _)),
-    memberchk(relplan(open_scope/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
-    memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
-    memberchk(relplan(route_view/2, set, [route_id, body], none, [text, text]), RelPlans),
-    memberchk(relplan(route_change/2, log, [session_id, route_id], none, [text, text]), RelPlans),
-    memberchk(relplan(route_row/2, set, [route_id, body], none, [text, text]), RelPlans).
+    relplan_shape(RelPlans, open_scope/2, set, [session_id, target], key([1]), [text, text]),
+    relplan_shape(RelPlans, demanded/2, set, [target, session_id], none, [text, text]),
+    relplan_shape(RelPlans, route_view/2, set, [route_id, body], none, [text, text]),
+    relplan_shape(RelPlans, route_change/2, log, [session_id, route_id], none, [text, text]),
+    relplan_shape(RelPlans, route_row/2, set, [route_id, body], none, [text, text]).
 
 test(demand_laziness_columns) :-
     load_plan(demand_laziness_effect_rows, plan(_, _, _, RelPlans, _, _, _, _, _)),
-    memberchk(relplan(open_feed/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
-    memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
-    memberchk(relplan(effect_call/1, set, [target], none, [text]), RelPlans).
+    relplan_shape(RelPlans, open_feed/2, set, [session_id, target], key([1]), [text, text]),
+    relplan_shape(RelPlans, demanded/2, set, [target, session_id], none, [text, text]),
+    relplan_shape(RelPlans, effect_call/1, set, [target], none, [text]).
 
 :- end_tests(column_naming).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% THE THREE-SLOT REL RECORD (0_rel_record.pl)
+%
+% col(Name, declared(WrittenType)|inferred, Storage). The two facts are not
+% interchangeable: the arrival gate reads the declared slot and refuses to
+% guess on a partially typed rel, while column_def/4 reads Storage at every
+% column whether or not anything was written down.
+
+:- begin_tests(rel_record).
+
+record_mixed_plan(Plan) :-
+    Prog = prog(
+      [ kind(reading/2, set),
+        col_type(reading/2, sensor_name, text) ],
+      [ (echo(SensorName, Celsius) <- reading(SensorName, Celsius)) ]),
+    program_plan(fixture(record_mixed, Prog, [reading(probe_a, 21)], [], [])
+                 -['SensorName'=SensorName, 'Celsius'=Celsius],
+                 Plan).
+
+% A rel typed at one column and witnessed at the other: Storage is answered
+% for both, the declared slot only for the one with a colon.
+test(one_declared_column_beside_one_inferred) :-
+    once(record_mixed_plan(plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_of(RelPlans, reading/2, Reading),
+    relplan_origins(Reading, [declared(text), inferred]),
+    relplan_column_types(RelPlans, reading/2, [text, int]).
+
+% The gate map's all-or-nothing rule IS relplan_declared_types/3 failing.
+test(a_partly_typed_rel_has_no_declared_shape, [fail]) :-
+    record_mixed_plan(plan(_, _, _, RelPlans, _, _, _, _, _)),
+    relplan_declared_types(RelPlans, reading/2, _).
+
+% The derived rel is written nowhere, so every column is inferred and it takes
+% its storage from the producer it copies.
+test(a_derived_rel_is_inferred_at_every_column) :-
+    once(record_mixed_plan(plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_of(RelPlans, echo/2, Echo),
+    relplan_origins(Echo, [inferred, inferred]),
+    \+ relplan_declared(Echo, _),
+    relplan_column_types(RelPlans, echo/2, [text, int]).
+
+% A fully typed rel keeps the SURFACE spelling in the declared slot while its
+% Storage carries the resolved kind; `at: span` is the case where they differ.
+test(a_struct_column_declares_its_type_name_and_stores_a_ref) :-
+    Prog = prog(
+      [ type_decl(span, [col(start, int), col(end, int)]),
+        kind(finding/2, set),
+        col_type(finding/2, path, text),
+        col_type(finding/2, at, span) ],
+      []),
+    program_plan(fixture(record_struct, Prog, [], [], [])-[],
+                 plan(_, _, _, RelPlans, _, _, _, _, _)),
+    relplan_declared_types(RelPlans, finding/2, [text, span]),
+    relplan_column_types(RelPlans, finding/2, [text, ref(span)]).
+
+:- end_tests(rel_record).
 
 :- begin_tests(sql_text_snapshots).
 
@@ -579,11 +650,11 @@ test(acyclic_ref_count_statements_are_emitted) :-
     once(sub_atom(InsertNewSql, _, _, _, 'INSERT OR IGNORE INTO "effect_call"')).
 
 test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
-    RelPlans = [
-        relplan(root/1, set, [node], none, [int]),
-        relplan(edge/2, set, [parent, child], none, [int, int]),
-        relplan(path/1, set, [node], none, [int])
-    ],
+    inferred_relplans([
+        rel_spec(root/1, set, [node], none, [int]),
+        rel_spec(edge/2, set, [parent, child], none, [int, int]),
+        rel_spec(path/1, set, [node], none, [int])
+    ], RelPlans),
     Rules = [
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child))
@@ -636,12 +707,12 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
 % A NEGATED body atom retracts a head row on an ARRIVAL, which stages no -1
 % for a DRed seed to read, so the head keeps the refCount recompute instead.
 test(negated_body_refuses_the_in_place_plan) :-
-    RelPlans = [
-        relplan(root/1, set, [node], none, [int]),
-        relplan(edge/2, set, [parent, child], none, [int, int]),
-        relplan(blocked/1, set, [node], none, [int]),
-        relplan(path/1, set, [node], none, [int])
-    ],
+    inferred_relplans([
+        rel_spec(root/1, set, [node], none, [int]),
+        rel_spec(edge/2, set, [parent, child], none, [int, int]),
+        rel_spec(blocked/1, set, [node], none, [int]),
+        rel_spec(path/1, set, [node], none, [int])
+    ], RelPlans),
     Rules = [
         (path(Node) <- root(Node)),
         (path(Child) <- path(Parent), edge(Parent, Child), not(blocked(Child)))
@@ -755,11 +826,11 @@ test(fixpoint_ir_arith_carries_the_int_division_answer) :-
 % The same two rules over a `legs` column that is int in one plan, float in the
 % other; nothing else moves.
 fixpoint_ir_share_walk(LegsType, FixpointIr) :-
-    RelPlans = [
-        relplan(share_seed/2, set, [node, total], none, [int, int]),
-        relplan(hop/3, set, [parent, child, legs], none, [int, int, LegsType]),
-        relplan(share/2, set, [node, total], none, [int, int])
-    ],
+    inferred_relplans([
+        rel_spec(share_seed/2, set, [node, total], none, [int, int]),
+        rel_spec(hop/3, set, [parent, child, legs], none, [int, int, LegsType]),
+        rel_spec(share/2, set, [node, total], none, [int, int])
+    ], RelPlans),
     Rules = [
         (share(Node, Total) <- share_seed(Node, Total)),
         (share(Child, Each) <-
@@ -783,11 +854,11 @@ fixpoint_ir_first_arith(fixpointir(_, fixplan(_, _, _, _, Hops, _, _), _, _, _),
 % fixpoint_ir_columns/4's {int,text,float,bool} fence; a SOURCE rel is where the
 % wider domain shows up, and the walk still joins on those columns.
 test(fixpoint_ir_storage_separates_class_from_declared_type) :-
-    RelPlans = [
-        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
-                [int, int, bool, ref(node_rel), text]),
-        relplan(walk/1, set, [node], none, [int])
-    ],
+    inferred_relplans([
+        rel_spec(edge_row/5, set, [parent, child, flag, owner, label], none,
+                 [int, int, bool, ref(node_rel), text]),
+        rel_spec(walk/1, set, [node], none, [int])
+    ], RelPlans),
     Rules = [
         (walk(Parent) <- edge_row(Parent, _, _, _, _)),
         (walk(Child) <- ( walk(Parent), edge_row(Parent, Child, _, _, _) ))
@@ -918,9 +989,10 @@ test(catalog_rows_are_one_statement) :-
 % keep their exact ids and rows, only now followed by the plane block, so the
 % TS const (which renders only catalog_rows/4) is byte-identical to before.
 test(catalog_all_rows_equals_decl_rows) :-
-    RelPlans = [ relplan(node/1, set, [id], none, [int]),
-                 relplan(holder/1, set, [item, target], none, [text, ref(node)]),
-                 relplan(items/1, set, [list_col], none, [list(text)]) ],
+    inferred_relplans([ rel_spec(node/1, set, [id], none, [int]),
+                        rel_spec(holder/1, set, [item, target], none, [text, ref(node)]),
+                        rel_spec(items/1, set, [list_col], none, [list(text)]) ],
+                      RelPlans),
     lower:catalog_rows(catalog_all_eq, [], RelPlans, DeclRows),
     lower:catalog_all_rows(direct, catalog_all_eq, [], RelPlans, [], [], [],
                            [], [], AllRows),
@@ -1460,8 +1532,9 @@ test(storage_row_raw_under_direct) :-
 % A ref column carries its target rel's rel_id; no lists present, so node/1
 % lands on 7 and holder's `item` column (id 10) points at it.
 test(catalog_ref_column_carries_target_rel_id) :-
-    RelPlans = [ relplan(node/1, set, [id], none, [int]),
-                 relplan(holder/1, set, [item], none, [ref(node)]) ],
+    inferred_relplans([ rel_spec(node/1, set, [id], none, [int]),
+                        rel_spec(holder/1, set, [item], none, [ref(node)]) ],
+                      RelPlans),
     lower:catalog_rows(catalog_ref, [], RelPlans, Rows),
     memberchk(row(7, 6, 0, node, rel, 0, 1, 6, _, _, _), Rows),
     memberchk(row(10, 9, 1, item, column, 7, 0, 6, _, '', ''), Rows).
@@ -1469,7 +1542,8 @@ test(catalog_ref_column_carries_target_rel_id) :-
 % A list(text) column carries the synthetic list row's id (6); that row's own
 % type_id is the element id 1 (text). The new row shifts every id after it.
 test(catalog_list_column_carries_element_typed_row) :-
-    RelPlans = [ relplan(items/1, set, [list_col], none, [list(text)]) ],
+    inferred_relplans([ rel_spec(items/1, set, [list_col], none, [list(text)]) ],
+                      RelPlans),
     lower:catalog_rows(catalog_list, [], RelPlans, Rows),
     memberchk(row(6, 0, 0, 'list(text)', list, 1, 0, 0, '', '', ''), Rows),
     memberchk(row(9, 8, 1, list_col, column, 6, 0, 7, _, '', ''), Rows).
@@ -1477,7 +1551,8 @@ test(catalog_list_column_carries_element_typed_row) :-
 % Nested list(list(text)) mints two synthetic rows, the inner list(text) row
 % before the outer one, and the column points at the outer row's id (7).
 test(catalog_nested_list_emits_inner_before_outer) :-
-    RelPlans = [ relplan(items/1, set, [list_col], none, [list(list(text))]) ],
+    inferred_relplans([ rel_spec(items/1, set, [list_col], none, [list(list(text))]) ],
+                      RelPlans),
     lower:catalog_rows(catalog_nested, [], RelPlans, Rows),
     nth0(5, Rows, row(6, 0, 0, 'list(text)', list, 1, 0, 0, _, _, _)),
     nth0(6, Rows, row(7, 0, 0, 'list(list(text))', list, 6, 0, 0, _, _, _)),
@@ -1486,8 +1561,9 @@ test(catalog_nested_list_emits_inner_before_outer) :-
 % Byte-stability receipt: a no-ref no-list two-rel program emits today's ids,
 % so pass A did not reorder. Module 6, first rel 7, second rel 9.
 test(catalog_no_ref_no_list_ids_unchanged) :-
-    RelPlans = [ relplan(a_rel/1, set, [c1], none, [text]),
-                 relplan(b_rel/1, set, [c2], none, [int]) ],
+    inferred_relplans([ rel_spec(a_rel/1, set, [c1], none, [text]),
+                        rel_spec(b_rel/1, set, [c2], none, [int]) ],
+                      RelPlans),
     lower:catalog_rows(catalog_plain, [], RelPlans, Rows),
     memberchk(row(6, 0, 0, catalog_plain, module, 0, 0, 6, _, _, _), Rows),
     memberchk(row(7, 6, 0, a_rel, rel, 0, 1, 6, _, _, _), Rows),
@@ -1498,8 +1574,9 @@ test(catalog_no_ref_no_list_ids_unchanged) :-
 % An inferred rel has no declaration, so the catalog once typed its list column
 % as unknown while the emitted DDL enforced array-ness on the same column.
 test(catalog_inferred_list_column_resolves_to_the_list_row) :-
-    RelPlans = [ relplan(declared/1, set, [payloads], none, [list(json)]),
-                 relplan(inferred/1, set, [payloads], none, [list(json)]) ],
+    inferred_relplans([ rel_spec(declared/1, set, [payloads], none, [list(json)]),
+                        rel_spec(inferred/1, set, [payloads], none, [list(json)]) ],
+                      RelPlans),
     lower:catalog_rows(catalog_inferred, [], RelPlans, Rows),
     memberchk(row(ListId, 0, 0, 'list(json)', list, _, _, _, _, _, _), Rows),
     forall(member(row(_, _, _, payloads, column, TypeId, _, _, _, _, _), Rows),
@@ -1958,9 +2035,9 @@ test(head_arithmetic_column_is_int_not_text_collapse) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
            program_plan(Term-Bindings, plan(_, _, _, RelPlans, _, _, _, _, _)) )),
-    memberchk(relplan(union_size/3, _, _, _, UnionTypes), RelPlans),
+    relplan_column_types(RelPlans, union_size/3, UnionTypes),
     assertion(UnionTypes == [text, text, int]),
-    memberchk(relplan(callee_set_size/2, _, _, _, CalleeTypes), RelPlans),
+    relplan_column_types(RelPlans, callee_set_size/2, CalleeTypes),
     assertion(CalleeTypes == [text, int]).
 
 % Same collapse one hop further out: `Sum := Base + Extra` binds a variable
@@ -1971,7 +2048,7 @@ test(bind_result_column_is_int_not_text_collapse) :-
     once(( read_fixture_term(File, bind_computes_derived_value_then_comparison_filters,
                              Term, Bindings),
            program_plan(Term-Bindings, plan(_, _, _, RelPlans, _, _, _, _, _)) )),
-    memberchk(relplan(over_budget/2, _, _, _, Types), RelPlans),
+    relplan_column_types(RelPlans, over_budget/2, Types),
     assertion(Types == [text, int]).
 
 % concat/1 is the other direction of the same boundary: an Int piece
@@ -1984,7 +2061,7 @@ test(concat_result_column_stays_text) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, interpolation_desugars_to_concat, Term, Bindings),
            program_plan(Term-Bindings, plan(_, _, _, RelPlans, _, _, _, _, _)) )),
-    memberchk(relplan(message/3, _, _, _, Types), RelPlans),
+    relplan_column_types(RelPlans, message/3, Types),
     assertion(Types == [text, int, text]).
 
 % ═══ Q4 reconciliation (plans/2026-07-29-sqlite-udf-graft-verdict.md) ═══════
@@ -2564,11 +2641,9 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
               Program, [], [], [])-Bindings,
       Plan),
     Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
-    memberchk(
-      relplan('__host_response_scan_span'/4, set,
-              [witness_digest, ordinal, path, at],
-              key([1, 2]), [text, int, text, ref(span)]),
-      RelPlans),
+    relplan_shape(RelPlans, '__host_response_scan_span'/4, set,
+                  [witness_digest, ordinal, path, at],
+                  key([1, 2]), [text, int, text, ref(span)]),
     lower_program(Plan, Lowered),
     Plan = plan(_, prog(Decls, _), Types, _, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
@@ -3381,6 +3456,18 @@ test(key_position_out_of_range_both_doors) :-
     OracleVerdict == key_position_out_of_range(current/2, 3, 2),
     CompilerVerdict ==
         unsupported_construct(key_position_out_of_range(current/2, 3, 2)).
+
+% THE CHECKS-FIRST LOCK, both doors, one program with two live violations.
+% Conformance twin: 4_struct_values.pl key_range_reported_before_unknown_column_type.
+test(key_range_outranks_unknown_column_type_both_doors) :-
+    Prog = prog([ col_type(finding/2, path, text),
+                  col_type(finding/2, at, spann),
+                  keyed(finding/2, [3]) ], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == key_position_out_of_range(finding/2, 3, 2),
+    CompilerVerdict ==
+        unsupported_construct(key_position_out_of_range(finding/2, 3, 2)).
 
 test(key_position_duplicate_both_doors) :-
     Prog = prog([keyed(current/2, [1, 1])], []),
@@ -4268,7 +4355,7 @@ test(arithmetic_operator_constraint_keeps_unwitnessed_scan_state_numeric) :-
             Next := Total + 1) ]),
     program_plan(fixture(scan_numeric_constraint, Prog, [], [], [])-[], Plan),
     Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
-    memberchk(relplan(counter/2, _, _, _, [text, int]), RelPlans).
+    relplan_column_types(RelPlans, counter/2, [text, int]).
 
 :- end_tests(phase5_value_plane).
 
@@ -4413,14 +4500,16 @@ depth_program(Rules, plan(depth, prog(Decls, Rules), Types, RelPlans, [raw/4],
               col_type(raw/4, repo_name, text), col_type(raw/4, path_name, text),
               col_type(raw/4, start, int), col_type(raw/4, end, int),
               col_type(seen/1, start, int) ],
-    RelPlans = [ relplan(repo/1,  set, [name], none, [text]),
-                 relplan(fpath/1, set, [name], none, [text]),
-                 relplan(file/2,  set, [repo, at], none, [ref(repo), ref(fpath)]),
-                 relplan(span/3,  set, [file, start, end], none,
-                         [ref(file), int, int]),
-                 relplan(raw/4,   set, [repo_name, path_name, start, end], none,
-                         [text, text, int, int]),
-                 relplan(seen/1,  set, [start], none, [int]) ],
+    inferred_relplans([ rel_spec(repo/1,  set, [name], none, [text]),
+                        rel_spec(fpath/1, set, [name], none, [text]),
+                        rel_spec(file/2,  set, [repo, at], none,
+                                 [ref(repo), ref(fpath)]),
+                        rel_spec(span/3,  set, [file, start, end], none,
+                                 [ref(file), int, int]),
+                        rel_spec(raw/4,   set, [repo_name, path_name, start, end],
+                                 none, [text, text, int, int]),
+                        rel_spec(seen/1,  set, [start], none, [int]) ],
+                      RelPlans),
     type_definitions(Decls, Types),
     include(rule_is_level, Rules, LevelRules),
     include(rule_is_edge, Rules, EdgeRules).
@@ -5280,7 +5369,8 @@ ddl_containing(Ddl, Needle, Statement) :-
     sub_atom(Statement, _, _, _, Needle).
 
 interned_relplan(RelPlans, Name, Columns, ColumnTypes) :-
-    member(relplan(Name/_, _, Columns, _, ColumnTypes), RelPlans),
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, Name/_, _, Columns, _, ColumnTypes),
     memberchk(text, ColumnTypes).
 
 % One dictionary per program, never one per rel or per key shape: a second one
@@ -5298,7 +5388,8 @@ test(no_dictionary_ddl_at_direct) :-
 test(every_text_column_stores_an_id) :-
     interning_lowered(dict, switch_as_keyed_replace,
                       lowered(_, Ddl, _, _, _, _, RelPlans, _)),
-    forall(( member(relplan(Name/_, _, Columns, _, ColumnTypes), RelPlans),
+    forall(( member(RelPlan, RelPlans),
+             relplan_parts(RelPlan, Name/_, _, Columns, _, ColumnTypes),
              nth1(Index, ColumnTypes, text),
              nth1(Index, Columns, Column) ),
            ( format(atom(TableHead), 'CREATE TABLE "~w" (', [Name]),
@@ -5311,7 +5402,8 @@ test(every_text_column_stores_an_id) :-
 test(every_text_column_stays_text_at_direct) :-
     interning_lowered(direct, switch_as_keyed_replace,
                       lowered(_, Ddl, _, _, _, _, RelPlans, _)),
-    forall(( member(relplan(Name/_, _, Columns, _, ColumnTypes), RelPlans),
+    forall(( member(RelPlan, RelPlans),
+             relplan_parts(RelPlan, Name/_, _, Columns, _, ColumnTypes),
              nth1(Index, ColumnTypes, text),
              nth1(Index, Columns, Column) ),
            ( format(atom(TableHead), 'CREATE TABLE "~w" (', [Name]),
@@ -5365,11 +5457,12 @@ test(boundary_reads_name_the_table_at_direct) :-
 
 % The mode is a compile INPUT carried by the plan, not a flag read at emit time.
 % One recursive head, one text column in a source rel, two modes.
-interning_walk_relplans([
-        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
-                [int, int, bool, ref(node_rel), text]),
-        relplan(walk/1, set, [node], none, [int])
-    ]).
+interning_walk_relplans(RelPlans) :-
+    inferred_relplans([
+        rel_spec(edge_row/5, set, [parent, child, flag, owner, label], none,
+                 [int, int, bool, ref(node_rel), text]),
+        rel_spec(walk/1, set, [node], none, [int])
+    ], RelPlans).
 
 interning_walk_rules([
         (walk(Parent) <- edge_row(Parent, _, _, _, _)),
@@ -5399,7 +5492,8 @@ test(fixpoint_ir_encoding_agrees_with_ddl) :-
     forall(member(Mode, [dict, direct]),
            ( interning_lowered(Mode, switch_as_keyed_replace,
                                lowered(_, _, _, _, _, _, RelPlans, _)),
-             forall(( member(relplan(_, _, Columns, _, ColumnTypes), RelPlans),
+             forall(( member(RelPlan, RelPlans),
+                      relplan_parts(RelPlan, _, _, Columns, _, ColumnTypes),
                       nth1(Index, Columns, Column),
                       nth1(Index, ColumnTypes, ColumnType) ),
                     ( format(atom(QuotedColumn), '"~w"', [Column]),
@@ -5433,11 +5527,12 @@ test(text_literal_filter_fences_the_ir_at_dict) :-
 
 % ── text literals in the id space (contract §5.3 rule two, lane I-C) ────────
 
-interning_literal_relplans([
-        relplan(edge_row/5, set, [parent, child, flag, owner, label], none,
-                [int, int, bool, ref(node_rel), text]),
-        relplan(tagged/2, set, [node, tag], none, [int, text])
-    ]).
+interning_literal_relplans(RelPlans) :-
+    inferred_relplans([
+        rel_spec(edge_row/5, set, [parent, child, flag, owner, label], none,
+                 [int, int, bool, ref(node_rel), text]),
+        rel_spec(tagged/2, set, [node, tag], none, [int, text])
+    ], RelPlans).
 
 interning_literal_seed_sql(Mode, Rules, SeedSql) :-
     interning_literal_relplans(RelPlans),
@@ -5499,8 +5594,9 @@ test(every_resolved_literal_is_seeded) :-
 
 % ── the boot seed (contract §23, the silent TEXT-into-INTEGER write) ────────
 
-interning_boot_relplans([ relplan(tagged/2, set, [node, tag], none,
-                                  [int, text]) ]).
+interning_boot_relplans(RelPlans) :-
+    inferred_relplans([ rel_spec(tagged/2, set, [node, tag], none, [int, text]) ],
+                      RelPlans).
 
 interning_boot(Mode, Boot) :-
     interning_boot_relplans(RelPlans),
@@ -5708,9 +5804,11 @@ test(edge_arms_intern_nothing_at_direct) :-
 % to put the intern write, so the construct is refused by name.
 test(a_recursive_head_refuses_a_built_string,
      throws(unsupported_construct(built_text_in_recursive_head(walk/1)))) :-
-    RelPlans = [ relplan(edge_row/5, set, [parent, child, flag, owner, label],
-                         none, [int, int, bool, ref(node_rel), text]),
-                 relplan(walk/1, set, [node], none, [text]) ],
+    inferred_relplans([ rel_spec(edge_row/5, set,
+                                 [parent, child, flag, owner, label], none,
+                                 [int, int, bool, ref(node_rel), text]),
+                        rel_spec(walk/1, set, [node], none, [text]) ],
+                      RelPlans),
     level_ref_count_sql(dict, RelPlans, walk/1,
         [ (walk(Label) <- edge_row(_, _, _, _, Label)),
           (walk(concat([Node, '/'])) <- ( walk(Node), edge_row(_, _, _, _, _) )) ],
@@ -5759,7 +5857,7 @@ test(the_door_flags_every_text_column) :-
                       lowered(_, _, _, _, _, _, RelPlans, _)),
     program_text_intern_plan(dict, RelPlans, textintern(_, _, RelColumns)),
     forall(member(Name-Flags, RelColumns),
-           ( memberchk(relplan(Name/_, _, _, _, ColumnTypes), RelPlans),
+           ( relplan_column_types(RelPlans, Name/_, ColumnTypes),
              length(Flags, Arity),
              length(ColumnTypes, Arity),
              forall(( nth1(Index, ColumnTypes, ColumnType),

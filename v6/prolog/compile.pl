@@ -44,6 +44,7 @@
 :- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
+:- use_module('0_rel_record', [rel_cols/4]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -85,15 +86,8 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %      SubscribedRels, InternMode)
 %   Types: 0_type_plane.pl:type_definitions/2 over Prog's Decls; carried so
 %          plan consumers read it instead of re-deriving it.
-%   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone,
-%             ColumnTypes) covering every ref program_refs/2 or typed
-%             declaration finds (arrival
-%             targets and derived rels alike -- the tick log envelope
-%             reports both). ColumnTypes (PHASE C2 RULING 1) is int|text per
-%             Columns position, inferred by analyze.pl:rel_column_types/5
-%             from declaration types when present, otherwise from the
-%             fixture's own literal values -- lower.pl:column_def/3 is the
-%             only SQL storage reader.
+%   RelPlans: 0_rel_record.pl's rel/4, one per ref program_refs/2 or a typed
+%             declaration finds; arrival targets and derived rels alike.
 %   RuleOrder: level rules in strat.pl:sql_rule_order/2 order.
 %   EdgeRules: edge rules, program order (engine.pl tries edge rules in
 %              program order for each occurrence; with at most one edge rule
@@ -216,12 +210,14 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
             RefColumns),
     program_column_types(Decls, Types, Rules, Initial, Schedule, AllRefs,
                          RefColumns, RefTypes),
-    findall(relplan(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
+    findall(rel(Ref, Kind, Cols, KeyOrNone),
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),
               memberchk(Ref-Columns, RefColumns),
               memberchk(Ref-ColumnTypes, RefTypes),
-              ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none )
+              ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none ),
+              maplist(column_origin(Decls, Ref), Columns, Origins),
+              rel_cols(Columns, Origins, ColumnTypes, Cols)
             ), RelPlans),
     % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it
     % runs here rather than inside check_supported_subset/1 above (which
@@ -236,6 +232,14 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     intern_mode(Options, InternMode),
     Plan = plan(Name, Prog, Types, RelPlans, ArrivalTargets, RuleOrder,
                 EdgeRules, SubscribedRels, InternMode).
+
+% The same test analyze.pl:seed_column_contribution/9 freezes a type on, so
+% the record's declared slot and the fixpoint's `frozen` cannot disagree.
+column_origin(Decls, Ref, Column, Origin) :-
+    (   memberchk(col_type(Ref, Column, DeclaredType), Decls)
+    ->  Origin = declared(DeclaredType)
+    ;   Origin = inferred
+    ).
 
 % ═══ the compiler-owned `__` namespace ══════════════════════════════════════
 % SQLite gives tables and views one namespace, so a user `__txt_x` collides.

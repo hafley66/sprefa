@@ -1,0 +1,1 @@
+rel measurement(sensor_id: int, label: option(text), reading: option(int)) key(1).
