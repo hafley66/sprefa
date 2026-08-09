@@ -306,3 +306,19 @@ fixture(numeric_inequality_operator_filters,
   [ row(1), row(2), row(3) ],
   [],
   [ final(kept/1, [ kept(1), kept(3) ]) ]).
+
+% ═══ a comparison under not/1 flips to its complement ════════════════════════
+% not(Value > 1) refused while Value =< 1 lowered. The expansion phase inverts
+% the operator: not(X > 1) -> X =< 1, and both doors run that phase, so the
+% rewritten program is what compiles and what the oracle solves.
+fixture(negated_ordered_guard_flips_to_complement,
+  prog([], [ (small(Value) <- row(Value), not(Value > 1)) ]),
+  [ row(1), row(2), row(3) ],
+  [],
+  [ final(small/1, [ small(1) ]) ]).
+
+fixture(negated_identity_guard_flips_to_complement,
+  prog([], [ (distinct(Left, Right) <- pair(Left, Right), not(Left == Right)) ]),
+  [ pair(a, a), pair(a, b) ],
+  [],
+  [ final(distinct/2, [ distinct(a, b) ]) ]).

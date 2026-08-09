@@ -1602,12 +1602,8 @@ check_level_rule_shape((Head <- Body)) :-
     -> check_aggregate_rule_shape(Head, Body)
     ; true ).
 
-% A comparison or bind nested under not/1. compile_negative_uses/4 renders a
-% negated atom as a bare NOT EXISTS over rel columns and never sees the
-% conjunction's other goals, so a guard inside the negation would be SILENTLY
-% DROPPED (the exact silent-filter-loss class the phase-C sweep found for
-% un-negated comparisons). No corpus fixture writes one; refused by name
-% rather than left to miscompile.
+% A bind, or a guard inside a conjunction, under not/1 (a not/1 over a single
+% comparison flips to its complement at expansion). Refused rather than dropped.
 negated_guard_goal(Body, Goal) :-
     conjunction_goals(Body, Goals),
     member(NegatedGoal, Goals),

@@ -212,6 +212,8 @@
   {"name":"typed_int_contradicts_text_witness","file":"expressions.pl","bucket":"unsupported","reason":"type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))"},
   {"name":"numeric_equality_operator_filters","file":"expressions.pl","bucket":"compiled","reason":""},
   {"name":"numeric_inequality_operator_filters","file":"expressions.pl","bucket":"compiled","reason":""},
+  {"name":"negated_ordered_guard_flips_to_complement","file":"expressions.pl","bucket":"compiled","reason":""},
+  {"name":"negated_identity_guard_flips_to_complement","file":"expressions.pl","bucket":"compiled","reason":""},
   {"name":"braces_literal_canonicalizes","file":"json_arm.pl","bucket":"unsupported","reason":"json_value_expression({stars:4,name:A})"},
   {"name":"braces_in_head_position","file":"json_arm.pl","bucket":"unsupported","reason":"json_value_expression({repo:A})"},
   {"name":"decode_open_pattern_binds_nested","file":"json_arm.pl","bucket":"unsupported","reason":"decode_source_not_struct(decode(A,{name:B}))"},

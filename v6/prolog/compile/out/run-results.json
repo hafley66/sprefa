@@ -980,6 +980,20 @@
     "final_detail": ""
   },
   {
+    "name": "negated_ordered_guard_flips_to_complement",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "negated_identity_guard_flips_to_complement",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_array_spread_fans_out_correlated_siblings",
     "bucket": "identical",
     "detail": "",

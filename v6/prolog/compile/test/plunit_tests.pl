@@ -3415,7 +3415,8 @@ test(declared_phase_order) :-
     findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
     msort(Unordered, Ordered),
     Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match,
-                42-seq, 44-dot, 45-coalesce, 46-ast, 50-relation_edge].
+                42-seq, 44-dot, 45-coalesce, 46-ast, 47-negated_guard,
+                50-relation_edge].
 
 test(spread_phases_are_placeholders) :-
     expansion_phase(20, decl_spread, unwired),

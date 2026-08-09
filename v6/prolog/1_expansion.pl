@@ -18,6 +18,7 @@
 :- use_module('0_seq_expand', []).
 :- use_module('0_coalesce_expand', []).
 :- use_module('0_dot_expand', []).
+:- use_module('0_negated_guard_expand', []).
 :- use_module('0_relation_edge_expand', []).
 :- use_module('0_ast_expand', []).
 
@@ -49,6 +50,12 @@ expansion_phase(44, dot,         dot_expand:expand_dot_in_context).
 %                 stratification.
 expansion_phase(45, coalesce,    coalesce_expand:expand_coalesce_in_context).
 expansion_phase(46, ast,         ast_expand:expand_ast_in_context).
+% AFTER coalesce, BEFORE relation_edge: a comparison under not/1 is inverted
+% into its complement (not(X > 1) -> X =< 1) so a guard is never dropped by
+% the NOT EXISTS lowering; the checks that follow see the complement, not the
+% negation.
+expansion_phase(47, negated_guard,
+                negated_guard_expand:expand_negated_guards_in_context).
 expansion_phase(50, relation_edge,
                 relation_edge_expand:expand_relation_edges_in_context).
 
