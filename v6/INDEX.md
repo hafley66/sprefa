@@ -21,6 +21,7 @@
 | [TELEMETRY.md](TELEMETRY.md) | 118 | TELEMETRY |
 | [bench-cli/CONTRACT.md](bench-cli/CONTRACT.md) | 645 | Language-agnostic CLI bench contract |
 | [bench-cli/STANDINGS.md](bench-cli/STANDINGS.md) | 225 | bench-cli standings |
+| [boop/tests/fixtures/CONVENTION.md](boop/tests/fixtures/CONVENTION.md) | 44 | Fixture corpus convention |
 | [dl/fixtures/ghcacher-findings.md](dl/fixtures/ghcacher-findings.md) | 372 | ghcacher expression in v6 dl — findings + grading receipts |
 | [findings/HYPOTHESES.md](findings/HYPOTHESES.md) | 27 | v6 HYPOTHESES — the idea ledger (don't lose a good one) |
 | [findings/INSIGHTS.md](findings/INSIGHTS.md) | 242 | v6 INSIGHTS — SQL · Rust · Graph (one living ledger) |
@@ -296,6 +297,13 @@
 192:### two_hop_join/100k
 202:### cross_join/1k
 212:## N/A and disqualification reasons
+```
+
+### boop/tests/fixtures/CONVENTION.md
+```
+1:# Fixture corpus convention
+8:## `sessions.json`
+37:## Adding a new adapter's corpus
 ```
 
 ### dl/fixtures/ghcacher-findings.md
