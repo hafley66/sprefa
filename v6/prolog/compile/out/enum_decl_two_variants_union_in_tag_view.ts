@@ -152,6 +152,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "result_error" ("id" INTEGER NOT NULL, "message" INTEGER NOT NULL, PRIMARY KEY ("message")) WITHOUT ROWID`,
   `CREATE TEMP VIEW "__txt_result_error" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."message") AS "message" FROM "result_error" t`,
   `CREATE TABLE "result_ok" ("id" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE UNIQUE INDEX "result_ok_id" ON "result_ok" ("id")`,
   `CREATE TEMP VIEW "__txt_result_ok" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "result_ok" t`,
   `CREATE TABLE "result_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP VIEW "__txt_result_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "result_tag" t`,

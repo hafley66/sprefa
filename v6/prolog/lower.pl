@@ -689,18 +689,27 @@ catalog_ddl_contract('__rel',
 catalog_ddl_key('__rel', [1]).
 
 %! set_rel_pk_sql(+Ref, +KeyOrNone, +EdgeHeadedRefs, +ArrivalTargetRefs,
-%!                +Columns, +QuotedColumns, -PkSql) is det.
+%!                +Columns, -PkSql) is det.
 %   The PK for a set rel: its declared key when edge-headed or an arrival
 %   target, its surrogate key when a catalog table, else all columns.
 
 set_rel_pk_sql(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs, Columns,
-               QuotedColumns, PkSql) :-
+               PkSql) :-
+    set_rel_key_positions(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
+                          Columns, KeyPositions),
+    nth1_list(KeyPositions, Columns, KeyColumns),
+    maplist(quote_ident, KeyColumns, QuotedKeyColumns),
+    atomic_list_concat(QuotedKeyColumns, ', ', PkSql).
+
+% A keyed set rel's PK is its declared key (when edge-headed or an arrival
+% target, or a catalog table), else all columns. Yields the positions so the
+% option some-table scope check can reuse the same computation.
+set_rel_key_positions(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
+                      Columns, KeyPositions) :-
     ( set_rel_has_key(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
                       KeyPositions)
-    -> nth1_list(KeyPositions, Columns, KeyColumns),
-       maplist(quote_ident, KeyColumns, QuotedKeyColumns),
-       atomic_list_concat(QuotedKeyColumns, ', ', PkSql)
-    ;  atomic_list_concat(QuotedColumns, ', ', PkSql)
+    -> true
+    ;  length(Columns, Arity), numlist(1, Arity, KeyPositions)
     ).
 
 % A level-headed keyed rel must keep its all-column PK: that is what
@@ -713,6 +722,24 @@ set_rel_has_key(Ref, _KeyOrNone, _EdgeHeadedRefs, _ArrivalTargetRefs,
                 KeyPositions) :-
     Ref = Name/_,
     catalog_ddl_key(Name, KeyPositions).
+
+% The option enum split's some-table is the id + value payload keyed on the
+% value alone (content identity, 0_option_expand.pl variant rewrite). The
+% value-direction primary key gives no id-side point read, so the id lookup
+% carries its own unique index.
+option_some_table(Ref, Columns, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs) :-
+    Columns == [id, value],
+    set_rel_key_positions(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
+                          Columns, KeyPositions),
+    KeyPositions == [2].
+
+option_some_index_ddl(Table, IndexDdl) :-
+    atomic_list_concat([Table, '_id'], IndexName),
+    quote_ident(IndexName, QuotedIndexName),
+    quote_ident(Table, QuotedTable),
+    format(atom(IndexDdl),
+           'CREATE UNIQUE INDEX ~w ON ~w ("id")',
+           [QuotedIndexName, QuotedTable]).
 
 % The CREATE TABLE comes from the ordinary rel_ddl/6 path, because compile.pl
 % injects the contract's col_type decls; only the child-walk index is minted here.
@@ -1761,7 +1788,7 @@ rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', SelectColumnsSql),
     ( set_rel_pk_sql(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
-                     Columns, QuotedColumns, PkSql) ),
+                     Columns, PkSql) ),
     ( memberchk(Ref, LevelHeadedRefs)
     -> RefCountColumn = ', "__refcount" INTEGER NOT NULL DEFAULT 1',
        RefCountPassThrough = ['__refcount']
@@ -1784,7 +1811,12 @@ rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
     ;  format(atom(Ddl),
               'CREATE TABLE ~w (~w~w, PRIMARY KEY (~w)) WITHOUT ROWID',
               [QuotedTable, ColumnsSql, RefCountColumn, PkSql]),
-       TableDdls = [Ddl],
+       ( option_some_table(Ref, Columns, KeyOrNone, EdgeHeadedRefs,
+                           ArrivalTargetRefs)
+       -> option_some_index_ddl(Table, SomeIndexDdl),
+          TableDdls = [Ddl, SomeIndexDdl]
+       ;  TableDdls = [Ddl]
+       ),
        PassThroughColumns = RefCountPassThrough
     ),
     text_view_ddls(Mode, Table, Columns, ColumnTypes, PassThroughColumns,

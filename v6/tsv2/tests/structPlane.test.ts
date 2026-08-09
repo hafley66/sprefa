@@ -77,6 +77,7 @@ import type {
 import * as order_a from "../gen_emitted/struct_intern_order_a.ts";
 import * as order_b from "../gen_emitted/struct_intern_order_b.ts";
 import * as shared from "../gen_emitted/struct_shared_child_survives_one_release.ts";
+import * as option_text from "../gen_emitted/option_text_column_reads_through_tag_join.ts";
 
 type EmittedProgram = IGenProgram & { readonly boot: readonly IBootStatement[] };
 
@@ -368,6 +369,37 @@ test("plan: the boundary render of a ref column SEARCHes the target view by rowi
   assert.ok(
     /CORRELATED SCALAR SUBQUERY/.test(plan) && /SEARCH t USING INTEGER PRIMARY KEY \(rowid=\?\)/.test(plan),
     `the target render must be a rowid SEARCH, never a SCAN, got: ${plan}`,
+  );
+});
+
+// ── OPTION SOME-TABLE: the value-direction PK cannot serve an id lookup ────
+//
+// The option enum split (0_option_expand.pl) keys the some-table on `value`
+// (content identity), so a point read by `id` has no index to use: before the
+// id index landed it SCANned the whole present set. The emitted CREATE UNIQUE
+// INDEX must exist and the id lookup must SEARCH it, not SCAN (formerly-
+// quadratic law: EXPLAIN, never end-state equality).
+test("plan: an id lookup on an option some-table SEARCHes the emitted id index", async () => {
+  const seam = ScratchStore.open(":memory:");
+  await firstValueFrom(ScratchStore.boot(seam, option_text.program.ddl));
+  assert.ok(
+    option_text.program.ddl.some((line) =>
+      line.includes('CREATE UNIQUE INDEX "__opt_text_some_id" ON "__opt_text_some" ("id")'),
+    ),
+    "the option some-table must emit its id index, got: " +
+      option_text.program.ddl.filter((line) => line.includes("__opt_text_some")).join(" | "),
+  );
+  const plan = await firstValueFrom(
+    seam.runner
+      .execute(seam.db, {
+        sql: 'EXPLAIN QUERY PLAN SELECT "value" FROM "__opt_text_some" WHERE "id" = ?',
+        args: [501],
+      })
+      .pipe(map((result) => result.rows.map((row) => String(row.detail)))),
+  );
+  assert.ok(
+    plan.some((line) => line.includes("SEARCH") && line.includes("__opt_text_some_id")),
+    `an id lookup must SEARCH the emitted id index, never a SCAN, got: ${plan.join(" | ")}`,
   );
 });
 
