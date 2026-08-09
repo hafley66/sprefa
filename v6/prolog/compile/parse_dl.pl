@@ -640,36 +640,50 @@ decl_a_column(column(Name, Type), S0, S) :-
     ; Type = none, S = S3
     ).
 
-typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
-typed_column_type(text, S0, S) :- word(`text`, S0, S), !.
-typed_column_type(json, S0, S) :- word(`json`, S0, S), !.
-typed_column_type(bool, S0, S) :- word(`bool`, S0, S), !.
+% ruling option_surface: `option(T)` and `T?` are BOTH legal and retain the
+% same option(T) term; 0_option_expand.pl owns the desugar, never the parser.
+typed_column_type(Type, S0, S) :-
+    typed_column_type_base(BaseType, S0, S1),
+    ( lit_dcg(`?`, S1, S2)
+    -> Type = option(BaseType), S = S2
+    ; Type = BaseType, S = S1
+    ).
+
+typed_column_type_base(int, S0, S) :- word(`int`, S0, S), !.
+typed_column_type_base(text, S0, S) :- word(`text`, S0, S), !.
+typed_column_type_base(json, S0, S) :- word(`json`, S0, S), !.
+typed_column_type_base(bool, S0, S) :- word(`bool`, S0, S), !.
+typed_column_type_base(option(Element), S0, S) :-
+    word(`option`, S0, S1), !,
+    ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
+    typed_column_type(Element, S4, S5), ws0(S5, S6),
+    lit_dcg(`)`, S6, S).
 % ruling list_spelling = json_list. The ONE parametric type, and its
 % argument is a bare type word, never a nested list: 0_type_plane.pl's
 % column_storage/3 refuses list(list(_)) and list(<struct>) by name, so the
 % grammar stays permissive and the unsupported construct stays where the reason lives.
 % The retained prolog term stays `list(T)`; only the text-door spelling is
 % json_list(T), so expansion and runtime semantics do not acquire another arrow family.
-typed_column_type(list(Element), S0, S) :-
+typed_column_type_base(list(Element), S0, S) :-
     word(`json_list`, S0, S1), !,
     ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
     typed_column_type(Element, S4, S5), ws0(S5, S6),
     lit_dcg(`)`, S6, S).
 % Hard rename, no alias: a program writing list(T) gets the named unsupported
 % removed_word(list) finding (the message names json_list as the spelling).
-typed_column_type(list(Element), S0, S) :-
+typed_column_type_base(list(Element), S0, S) :-
     word(`list`, S0, S1), !,
     record_finding(unsupported_surface(removed_word(list))),
     ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
     typed_column_type(Element, S4, S5), ws0(S5, S6),
     lit_dcg(`)`, S6, S).
-typed_column_type(float, S0, S) :- word(`float`, S0, S), !.
+typed_column_type_base(float, S0, S) :- word(`float`, S0, S), !.
 % STRUCT-AS-ROWS (ruling compound_storage): a bare identifier in type
 % position names a referenced relation value, and the column stores a ref to
 % that relation's dictionary. A name with no matching `rel` declaration is
 % not silently a text column: 0_type_plane.pl:column_storage/3 throws
 % column_type_unknown, so a typo remains a named unsupported construct.
-typed_column_type(Name, S0, S) :- ident(Name, S0, S).
+typed_column_type_base(Name, S0, S) :- ident(Name, S0, S).
 
 enum_decl_variants((First ; Rest), S0, S) :-
     enum_decl_variant(First, S0, S1),

@@ -1,0 +1,5 @@
+{"tick":1,"deltas":{"__opt_text_some":{"add":[[501,"chris@example.com"]],"del":[]},"__opt_text_tag":{"add":[[501,"some"]],"del":[]}}}
+{"tick":2,"deltas":{"email_state":{"add":[[1,"some"]],"del":[]},"user_profile":{"add":[[1,501]],"del":[]}}}
+{"tick":3,"deltas":{"__opt_text_none":{"add":[[502]],"del":[]},"__opt_text_tag":{"add":[[502,"none"]],"del":[]}}}
+{"tick":4,"deltas":{"email_state":{"add":[[2,"none"]],"del":[]},"user_profile":{"add":[[2,502]],"del":[]}}}
+{"tick":5,"deltas":{"email_state":{"add":[],"del":[[2,"none"]]},"user_profile":{"add":[],"del":[[2,502]]}}}

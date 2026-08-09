@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__opt_int_none":{"add":[[701]],"del":[]},"__opt_int_tag":{"add":[[701,"none"]],"del":[]},"__opt_text_some":{"add":[[601,"warm"]],"del":[]},"__opt_text_tag":{"add":[[601,"some"]],"del":[]}}}
+{"tick":2,"deltas":{"measurement":{"add":[[1,601,701]],"del":[]}}}

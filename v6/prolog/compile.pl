@@ -261,9 +261,16 @@ reserved_namespace_violation(Decls, Rules, Name) :-
         reserved_namespace_name(Name)
     ;   member(Name/_, RuleRefs),
         reserved_namespace_name(Name),
-        \+ compiler_owned_contract(Name)
+        \+ compiler_owned_contract(Name),
+        \+ option_enum_generated_name(Name)
     ),
     !.
+
+% Reading a minted '__opt_<t>' rel in a body is ordinary enum consumption;
+% declaring or head-writing one stays a reserved-namespace refusal.
+option_enum_generated_name(Name) :-
+    atom(Name),
+    sub_atom(Name, 0, _, _, '__opt_').
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 

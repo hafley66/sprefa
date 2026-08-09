@@ -28,6 +28,27 @@
     "final_detail": ""
   },
   {
+    "name": "option_text_column_reads_through_tag_join",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "option_scalar_enums_mint_per_element_type",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "option_rel_ref_desugars_to_companion_split_rel",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "list_of_json_documents_round_trips",
     "bucket": "identical",
     "detail": "",
