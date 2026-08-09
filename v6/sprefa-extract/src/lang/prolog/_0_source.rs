@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfEdgeKind, DfF, DfNodeKind,
-    ProjectEdge, Specifier, SpecifierKind, TypeEntityKind, TypeF,
+    ProjectEdge, RefPosition, Reference, Specifier, SpecifierKind, TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, ProjectCx, Resolve};
@@ -171,6 +171,7 @@ fn project_calls(
     for clause in clauses(root) {
         let Some((head, body, dcg)) = head_body(clause, src) else {
             project_directive(clause, src, strings, sink);
+            walk_directive_refs(clause, src, strings, sink);
             continue;
         };
         let Some((name, arity)) = callable_name_arity(head, src) else {
@@ -180,9 +181,179 @@ fn project_calls(
             Node::new(span(clause), CallKind::Free)
                 .with_name(strings.intern(&predicate_key(&name, arity, dcg))),
         );
+        walk_head_refs(head, src, strings, sink);
         if let Some(body) = body {
             walk_goals(body, src, dcg, strings, sink, None);
+            walk_goals_refs(body, src, strings, sink);
         }
+    }
+}
+
+fn push_ref(
+    node: tree_sitter::Node,
+    functor: &str,
+    position: RefPosition,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    sink.aux.refs.push(Reference {
+        span: span(node),
+        functor: strings.intern(functor),
+        position,
+    });
+}
+
+/// Every compound inside a clause HEAD's arguments is a `head_arg` reference.
+/// The head's own functor is the definition, not a reference.
+fn walk_head_refs(
+    head: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    if head.kind() == "compound_term" {
+        let mut cursor = head.walk();
+        for arg in head.children_by_field_name("argument", &mut cursor) {
+            walk_data_refs(arg, RefPosition::HeadArg, src, strings, sink);
+        }
+    }
+}
+
+/// Every compound anywhere in a data subtree is a reference at `position`.
+fn walk_data_refs(
+    node: tree_sitter::Node,
+    position: RefPosition,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    match node.kind() {
+        "compound_term" => {
+            if let Some((name, arity)) = callable_name_arity(node, src) {
+                push_ref(
+                    node,
+                    &predicate_key(&name, arity, false),
+                    position,
+                    strings,
+                    sink,
+                );
+            }
+            let mut cursor = node.walk();
+            for arg in node.children_by_field_name("argument", &mut cursor) {
+                walk_data_refs(arg, position, src, strings, sink);
+            }
+        }
+        "atom" | "unquoted_atom" | "quoted_atom" | "operator_atom" | "variable" | "number"
+        | "string" | "back_quoted_string" => {}
+        _ => {
+            for child in named_children(node) {
+                walk_data_refs(child, position, src, strings, sink);
+            }
+        }
+    }
+}
+
+/// Goal-position references: the top-level body conjuncts that are executed,
+/// plus the data compounds nested inside their arguments (`term_arg`). Metacall
+/// arguments (call/findall/maplist) are NOT unwrapped as goals; their contents
+/// fall through to `term_arg`, matching the existing walker, which models no
+/// metacalls.
+fn walk_goals_refs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    match node.kind() {
+        "parenthesized" | "curly_block" => {
+            for child in named_children(node) {
+                walk_goals_refs(child, src, strings, sink);
+            }
+        }
+        "unary_operation" => {
+            let op = operator(node, src);
+            if op == "\\+" {
+                if let Some(operand) = field(node, "operand") {
+                    walk_goals_refs(operand, src, strings, sink);
+                }
+            } else {
+                // A prefix-operator goal (dynamic/1, initialization/1, ...).
+                push_ref(node, &format!("{op}/1"), RefPosition::Goal, strings, sink);
+                if let Some(operand) = field(node, "operand") {
+                    walk_data_refs(operand, RefPosition::TermArg, src, strings, sink);
+                }
+            }
+        }
+        "binary_operation" => {
+            let op = operator(node, src);
+            match op {
+                "," | ";" | "|" | "->" | "*->" => {
+                    if let Some(left) = field(node, "left") {
+                        walk_goals_refs(left, src, strings, sink);
+                    }
+                    if let Some(right) = field(node, "right") {
+                        walk_goals_refs(right, src, strings, sink);
+                    }
+                }
+                ":" => {
+                    if let Some(right) = field(node, "right") {
+                        walk_goals_refs(right, src, strings, sink);
+                    }
+                }
+                ":-" | "-->" | "::" => {}
+                _ => {
+                    push_ref(node, &format!("{op}/2"), RefPosition::Goal, strings, sink);
+                    for child in named_children(node) {
+                        walk_data_refs(child, RefPosition::TermArg, src, strings, sink);
+                    }
+                }
+            }
+        }
+        "compound_term" => {
+            if let Some((name, arity)) = callable_name_arity(node, src) {
+                push_ref(
+                    node,
+                    &predicate_key(&name, arity, false),
+                    RefPosition::Goal,
+                    strings,
+                    sink,
+                );
+            }
+            let mut cursor = node.walk();
+            for arg in node.children_by_field_name("argument", &mut cursor) {
+                walk_data_refs(arg, RefPosition::TermArg, src, strings, sink);
+            }
+        }
+        "atom" | "unquoted_atom" | "quoted_atom" | "operator_atom" => {
+            push_ref(
+                node,
+                &format!("{}/0", atom_text(node, src)),
+                RefPosition::Goal,
+                strings,
+                sink,
+            );
+        }
+        "cut" => push_ref(node, "!/0", RefPosition::Goal, strings, sink),
+        _ => walk_data_refs(node, RefPosition::TermArg, src, strings, sink),
+    }
+}
+
+/// A directive body (`:- Goal`) is executed at load time: same reference walk
+/// as a clause body (goals `goal`, argument data `term_arg`).
+fn walk_directive_refs(
+    clause: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let Some(term) = clause_term(clause) else {
+        return;
+    };
+    if term.kind() != "unary_operation" || operator(term, src) != ":-" {
+        return;
+    }
+    if let Some(operand) = field(term, "operand") {
+        walk_goals_refs(operand, src, strings, sink);
     }
 }
 

@@ -226,6 +226,10 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             // Module specifier rows are v6-ONLY (no v5 oracle facet): reported
             // by the ledger test below, never asserted.
             FlatFact::Specifier { .. } => {}
+            // Prolog term-occurrence references are what this lane adds and are
+            // not a v5 oracle facet; they are reported by the reference ledger
+            // test in 1a_prolog_refs.rs, never asserted here.
+            FlatFact::Reference { .. } => {}
             // Project-mode rows: `flatten` never produces these either. They
             // come out of `project::resolve_project`, and the CLI goldens in
             // 1_resolve_cli.rs pin their shapes.

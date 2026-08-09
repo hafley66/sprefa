@@ -157,25 +157,31 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
             + locals.len()
             + impls.len(),
     );
-    out.extend(defs.into_iter().map(|(symbol, file, repo)| {
-        FlatFact::ScipDefRow {
-            symbol: symbol.to_string(),
-            file: file.to_string(),
-            repo,
-        }
-    }));
-    out.extend(names.into_iter().map(|(symbol, name)| FlatFact::ScipNameRow {
-        symbol: symbol.to_string(),
-        name,
-    }));
-    out.extend(refs.into_iter().map(|(file, symbol, def_file, repo)| {
-        FlatFact::ScipRefRow {
-            file: file.to_string(),
-            symbol: symbol.to_string(),
-            def_file: def_file.to_string(),
-            repo,
-        }
-    }));
+    out.extend(
+        defs.into_iter()
+            .map(|(symbol, file, repo)| FlatFact::ScipDefRow {
+                symbol: symbol.to_string(),
+                file: file.to_string(),
+                repo,
+            }),
+    );
+    out.extend(
+        names
+            .into_iter()
+            .map(|(symbol, name)| FlatFact::ScipNameRow {
+                symbol: symbol.to_string(),
+                name,
+            }),
+    );
+    out.extend(
+        refs.into_iter()
+            .map(|(file, symbol, def_file, repo)| FlatFact::ScipRefRow {
+                file: file.to_string(),
+                symbol: symbol.to_string(),
+                def_file: def_file.to_string(),
+                repo,
+            }),
+    );
     out.extend(
         edges
             .into_iter()
@@ -193,12 +199,14 @@ pub fn v5_rel_rows(index: &ScipIndex, root: &Path, slug: &str) -> Vec<FlatFact> 
                 callee: callee.to_string(),
             }),
     );
-    out.extend(callee_types.into_iter().map(|(sym, receiver_type)| {
-        FlatFact::ScipCalleeTypeRow {
-            sym: sym.to_string(),
-            receiver_type,
-        }
-    }));
+    out.extend(
+        callee_types
+            .into_iter()
+            .map(|(sym, receiver_type)| FlatFact::ScipCalleeTypeRow {
+                sym: sym.to_string(),
+                receiver_type,
+            }),
+    );
     out.extend(
         locals
             .into_iter()

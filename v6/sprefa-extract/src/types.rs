@@ -403,6 +403,36 @@ pub struct CallSite {
     pub callee_path: Option<NameId>,
 }
 
+/// A Prolog term-occurrence reference: a compound constructed or destructured in
+/// argument position. The only family that emits these is the Prolog front-end;
+/// the field rides the shared `CallFAux` so the wire needs no per-lang slot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reference {
+    pub span: Span,
+    /// The interned `functor/arity` key, arity 0 for a bare name used as a goal.
+    pub functor: NameId,
+    pub position: RefPosition,
+}
+
+/// Where a Prolog compound sits: executed as a goal, inside a clause head's
+/// arguments, or inside another term's arguments (data).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RefPosition {
+    Goal,
+    HeadArg,
+    TermArg,
+}
+
+impl RefPosition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RefPosition::Goal => "goal",
+            RefPosition::HeadArg => "head_arg",
+            RefPosition::TermArg => "term_arg",
+        }
+    }
+}
+
 /// A phase-1 module specifier (import / use / from / require), AS WRITTEN — the
 /// resolution input the Resolve<TypeF>/Resolve<CallF> arms bind through.
 /// ADDENDUM 4a: the row shape ONLY is declared (no lang emission code) so 4b+
@@ -467,6 +497,9 @@ impl SpecifierKind {
 pub struct CallFAux {
     pub sites: Vec<CallSite>,
     pub specifiers: Vec<Specifier>,
+    /// Prolog term-occurrence references. Only the Prolog front-end populates
+    /// this; other languages leave it empty.
+    pub refs: Vec<Reference>,
 }
 
 impl Family for CallF {
@@ -1435,6 +1468,18 @@ pub enum FlatFact {
         /// The source module as written, null when the language puts the
         /// module in `name` (path-only forms).
         module: Option<String>,
+    },
+    /// A Prolog term-occurrence reference: a compound in argument position,
+    /// tagged goal | head_arg | term_arg. Deliberately exceeds the LSP/SCIP
+    /// reference set (a data term in argument position is a reference nowhere
+    /// else emits one).
+    Reference {
+        family: FamilyTag,
+        span: SpanOut,
+        /// The interned `functor/arity` key, e.g. `relplan/5`.
+        functor: String,
+        /// goal | head_arg | term_arg
+        position: String,
     },
     /// A project-phase (cross-file) resolved edge: `to` lives in ANOTHER blob,
     /// content-keyed by `to_blob` (hex). The 4a wire ruling: ONE arm carries

@@ -50,16 +50,16 @@ pub use project::{
     scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
     FsBlobSource, ProjectError, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode,
 };
-pub use scip_ensure::{
-    default_cache_dir, detect, ensure_index, index_path, EnsureReport, IndexBudget, Indexer,
-    IndexerSkip, SkipReason, INDEXERS,
-};
-pub use scip_v5_rels::v5_rel_rows;
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, definition_of, join_documents, site_occurrence, ScipGo, ScipRust, ScipTypescript,
 };
+pub use scip_ensure::{
+    default_cache_dir, detect, ensure_index, index_path, EnsureReport, IndexBudget, Indexer,
+    IndexerSkip, SkipReason, INDEXERS,
+};
 pub use scip_rows::{flatten_scip_records, ScipRecords, SCIP_RECORD_KINDS};
+pub use scip_v5_rels::v5_rel_rows;
 pub use seams::{
     build_def_index, containing_def_site, corpus_defs, covering_def, def_named, own_blob,
     BlobSource, DefIndex, DefSite, FileSet, IndexBag, ManifestMap, OccurrenceRole, ParseError,

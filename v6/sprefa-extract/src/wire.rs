@@ -132,7 +132,10 @@ fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact
 /// edges land with `Resolve<CallF>`.
 fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact> {
     let mut out = Vec::with_capacity(
-        bundle.nodes.len() + bundle.aux.sites.len() + bundle.aux.specifiers.len(),
+        bundle.nodes.len()
+            + bundle.aux.sites.len()
+            + bundle.aux.specifiers.len()
+            + bundle.aux.refs.len(),
     );
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
@@ -157,6 +160,14 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             name: strings.lookup(spec.name).to_string(),
             kind: spec.kind.as_str().to_string(),
             module: spec.module.map(|id| strings.lookup(id).to_string()),
+        });
+    }
+    for reference in &bundle.aux.refs {
+        out.push(FlatFact::Reference {
+            family: CallF::TAG,
+            span: SpanOut::new(reference.span.start, reference.span.end()),
+            functor: strings.lookup(reference.functor).to_string(),
+            position: reference.position.as_str().to_string(),
         });
     }
     out
