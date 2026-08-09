@@ -181,42 +181,6 @@ impl Store {
     }
 }
 
-impl Store {
-    /// Totals over a half-open time range, optionally one session.
-    pub fn query_usage_totals(
-        &self,
-        session: Option<&str>,
-        since: Option<u64>,
-        until: Option<u64>,
-    ) -> Result<Vec<Row>> {
-        let mut sql = String::from(
-            "SELECT COUNT(*) AS calls,
-                    COALESCE(SUM(input_tokens), 0) AS input_tokens,
-                    COALESCE(SUM(output_tokens), 0) AS output_tokens,
-                    COALESCE(SUM(cache_create_5m_tokens), 0) AS cache_create_5m_tokens,
-                    COALESCE(SUM(cache_create_1h_tokens), 0) AS cache_create_1h_tokens,
-                    COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
-                    MIN(ts) AS first_ts, MAX(ts) AS last_ts
-             FROM agent_usage WHERE 1=1",
-        );
-        let mut values: Vec<rusqlite::types::Value> = Vec::new();
-        if let Some(session) = session {
-            sql.push_str(
-                " AND session_id = (SELECT id FROM dict_session WHERE value = ?)",
-            );
-            values.push(session.to_string().into());
-        }
-        if let Some(since) = since {
-            sql.push_str(" AND ts >= ?");
-            values.push((since as i64).into());
-        }
-        if let Some(until) = until {
-            sql.push_str(" AND ts < ?");
-            values.push((until as i64).into());
-        }
-        self.rows(&sql, values)
-    }
-}
 
 #[cfg(test)]
 mod tests {

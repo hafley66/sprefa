@@ -20,8 +20,8 @@ pub struct Store {
 }
 
 /// Bumped whenever stored rows mean something different. 2 = dense per-session
-/// turn ordinals and per-transcript sync cursors. 3 = token usage.
-pub const SCHEMA_VERSION: i64 = 3;
+/// turn ordinals and per-transcript cursors. 3 = token usage. 4 = rate table.
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// A row returned to the CLI, joined back from ids to the TEXT the query
 /// surface exposes.
@@ -315,6 +315,15 @@ impl Store {
             |row| row.get(0),
         )?;
         Ok(max as u64)
+    }
+
+    pub(crate) fn connection(&self) -> &Connection {
+        &self.connection
+    }
+
+    /// Intern a natural key into a dictionary, for callers outside this module.
+    pub(crate) fn intern_public(&self, table: &str, value: &str) -> Result<i64> {
+        self.intern(table, value)
     }
 
     /// Run a SELECT and hand back one JSON object per row, keyed by column
@@ -922,6 +931,7 @@ CREATE TABLE IF NOT EXISTS dict_agenttype (id INTEGER PRIMARY KEY, value TEXT NO
 CREATE TABLE IF NOT EXISTS dict_status (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_model (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_service_tier (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS dict_price_source (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 
 -- request_id is NOT NULL with '' for absent: SQLite treats NULLs in a UNIQUE
 -- index as distinct, and 8.4% of measured records carry no requestId.
@@ -1030,6 +1040,19 @@ CREATE TABLE IF NOT EXISTS agent_usage (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_request ON agent_usage(request_ref);
 CREATE INDEX IF NOT EXISTS idx_usage_ts ON agent_usage(ts);
 CREATE INDEX IF NOT EXISTS idx_usage_model_ts ON agent_usage(model_id, ts);
+
+-- Rates are USD per MILLION tokens: LiteLLM's per-token values are readable
+-- only when scaled, and REAL keeps the precision either way.
+CREATE TABLE IF NOT EXISTS model_price (
+  model_id INTEGER PRIMARY KEY,
+  input_per_mtok REAL NOT NULL,
+  output_per_mtok REAL NOT NULL,
+  cache_write_5m_per_mtok REAL NOT NULL,
+  cache_write_1h_per_mtok REAL NOT NULL,
+  cache_read_per_mtok REAL NOT NULL,
+  source_id INTEGER NOT NULL,
+  fetched_ts INTEGER NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS agent_live (
   session_id INTEGER PRIMARY KEY,

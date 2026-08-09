@@ -25,6 +25,7 @@ mod query;
 mod registry;
 mod tail;
 mod tmux;
+mod usage;
 mod worktree;
 
 #[derive(Parser)]
@@ -636,10 +637,9 @@ fn refuse_stale(store: &ident::Store) -> Result<()> {
         return Ok(());
     }
     anyhow::bail!(
-        "store is schema version {}, this boop writes version {}: \
-         turn ordinals stored before the dense-ordinal fix cannot be appended to. \
-         Run `boop sync --rebuild` to drop every stored row and re-project every \
-         transcript from byte 0.",
+        "store is schema version {}, this boop writes version {}: rows stored under \
+         an older schema cannot be appended to. Run `boop db sync create --rebuild` \
+         to drop every stored row and re-project every transcript from byte 0.",
         store.schema_version()?,
         ident::SCHEMA_VERSION
     )
@@ -1726,10 +1726,19 @@ enum DbCmd {
         #[command(subcommand)]
         cmd: EdgeCmd,
     },
-    /// Tokens and cost.
+    /// Tokens and cost. A leaf with --group-by, and a parent of blocks and
+    /// burn-rate; clap needs both attributes to accept the two forms.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Usage {
         #[command(flatten)]
         args: UsageArgs,
+        #[command(subcommand)]
+        cmd: Option<UsageCmd>,
+    },
+    /// The rate table cost is computed from.
+    Price {
+        #[command(subcommand)]
+        cmd: PriceCmd,
     },
     /// Ingest new transcript bytes.
     Sync {
@@ -1753,6 +1762,12 @@ enum DbCmd {
 
 #[derive(clap::Args, Clone, Default)]
 struct UsageArgs {
+    /// Bucket the report; omit for one totals row.
+    #[arg(long, value_enum)]
+    group_by: Option<usage::GroupBy>,
+    /// Fold the session's whole spawn subtree into the numbers.
+    #[arg(long)]
+    rollup_subtree: bool,
     #[arg(long)]
     session: Option<String>,
     #[arg(long)]
@@ -1780,6 +1795,48 @@ struct FactArgs {
     limit: Option<u64>,
     #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
     format: QueryFormat,
+}
+
+#[derive(Subcommand)]
+enum UsageCmd {
+    /// Gap-aware billing windows.
+    Blocks {
+        #[arg(long, default_value_t = 5)]
+        window_hours: u64,
+        /// Only the window that is still open.
+        #[arg(long)]
+        active: bool,
+        #[command(flatten)]
+        args: UsageArgs,
+    },
+    /// Tokens per minute and dollars per hour over a trailing window.
+    BurnRate {
+        #[arg(long, default_value_t = 60)]
+        window_minutes: u64,
+        #[command(flatten)]
+        args: UsageArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum PriceCmd {
+    List,
+    /// Write one rate row by hand, in USD per million tokens.
+    Set {
+        model: String,
+        #[arg(long)]
+        input_per_mtok: f64,
+        #[arg(long)]
+        output_per_mtok: f64,
+        #[arg(long)]
+        cache_write_5m_per_mtok: f64,
+        #[arg(long)]
+        cache_write_1h_per_mtok: f64,
+        #[arg(long)]
+        cache_read_per_mtok: f64,
+        #[arg(long, default_value = "manual")]
+        source: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2190,7 +2247,19 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
                 emit_edges(&store, session.as_deref(), limit)
             }
         },
-        DbCmd::Usage { args } => run_usage(&args),
+        DbCmd::Usage { args, cmd } => match cmd {
+            None => run_usage(&args),
+            Some(UsageCmd::Blocks {
+                window_hours,
+                active,
+                args,
+            }) => run_usage_blocks(&args, window_hours, active),
+            Some(UsageCmd::BurnRate {
+                window_minutes,
+                args,
+            }) => run_usage_burn_rate(&args, window_minutes),
+        },
+        DbCmd::Price { cmd } => run_price(cmd),
         DbCmd::Sync { cmd } => match cmd {
             SyncCmd::Create { rebuild, forever } => {
                 if forever {
@@ -2314,11 +2383,97 @@ fn run_whoami(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `db usage` totals over a time range. Group-by, billing windows, burn rate
-/// and cost arrive with the pricing table.
+fn usage_filter(args: &UsageArgs) -> usage::UsageQuery {
+    usage::UsageQuery {
+        session: args.session.clone(),
+        since: args.since,
+        until: args.until,
+        rollup_subtree: args.rollup_subtree,
+        limit: args.limit,
+    }
+}
+
+/// `db usage`: one totals row, or one row per bucket. The report names the
+/// models it could not price rather than folding them in as zero.
 fn run_usage(args: &UsageArgs) -> Result<()> {
     let store = open_store()?;
-    let rows = store.query_usage_totals(args.session.as_deref(), args.since, args.until)?;
+    let filter = usage_filter(args);
+    let rows = store.usage_report(args.group_by, &filter)?;
     emit_json_rows(&rows, args.format);
+    for row in store.unpriced_models(&filter)? {
+        line(&serde_json::json!({
+            "unpriced_model": row["model"],
+            "calls": row["calls"],
+        })
+        .to_string());
+    }
     Ok(())
+}
+
+fn run_usage_blocks(args: &UsageArgs, window_hours: u64, active_only: bool) -> Result<()> {
+    let store = open_store()?;
+    let window_ms = (window_hours * 3_600_000) as i64;
+    let blocks = store.usage_blocks(window_ms, &usage_filter(args))?;
+    let now = now_ms() as i64;
+    let rows: Vec<ident::Row> = blocks
+        .iter()
+        .filter(|block| !active_only || block.last_ts + window_ms > now)
+        .map(|block| {
+            serde_json::json!({
+                "window_start": block.window_start,
+                "first_ts": block.first_ts,
+                "last_ts": block.last_ts,
+                "calls": block.calls,
+                "total_tokens": block.total_tokens,
+                "is_gap": block.is_gap,
+                "is_active": !block.is_gap && block.last_ts + window_ms > now,
+            })
+        })
+        .collect();
+    emit_json_rows(&rows, args.format);
+    if let Some(ceiling) = usage::p90_ceiling(&blocks) {
+        line(&serde_json::json!({ "p90_token_ceiling": ceiling }).to_string());
+    }
+    Ok(())
+}
+
+fn run_usage_burn_rate(args: &UsageArgs, window_minutes: u64) -> Result<()> {
+    let store = open_store()?;
+    let mut filter = usage_filter(args);
+    if filter.since.is_none() {
+        filter.since = Some(now_ms().saturating_sub(window_minutes * 60_000));
+    }
+    emit_json_rows(&store.usage_burn_rate(&filter)?, args.format);
+    Ok(())
+}
+
+fn run_price(cmd: PriceCmd) -> Result<()> {
+    let store = open_store()?;
+    match cmd {
+        PriceCmd::List => {
+            emit_json_rows(&store.price_list()?, QueryFormat::Ndjson);
+            Ok(())
+        }
+        PriceCmd::Set {
+            model,
+            input_per_mtok,
+            output_per_mtok,
+            cache_write_5m_per_mtok,
+            cache_write_1h_per_mtok,
+            cache_read_per_mtok,
+            source,
+        } => {
+            store.price_set(&usage::ModelPrice {
+                model: &model,
+                input_per_mtok,
+                output_per_mtok,
+                cache_write_5m_per_mtok,
+                cache_write_1h_per_mtok,
+                cache_read_per_mtok,
+                source: &source,
+            })?;
+            line(&format!("priced {model}"));
+            Ok(())
+        }
+    }
 }
