@@ -560,9 +560,11 @@ fn run_sync_all(registry: &Registry, rebuild: bool) -> Result<()> {
                 .checked_div(elapsed_ms.max(1))
                 .unwrap_or(0) as u64;
             println!(
-                "events={} dropped={} sparse_sessions={sparse} elapsed_ms={elapsed_ms} rate={rate}/s db_bytes={db_bytes} counts={}",
+                "events={} dropped={} usage_new={} usage_updated={} sparse_sessions={sparse} elapsed_ms={elapsed_ms} rate={rate}/s db_bytes={db_bytes} counts={}",
                 stat.written,
                 stat.dropped,
+                stat.usage_written,
+                stat.usage_updated,
                 serde_json::to_string(&counts)?
             );
         }
