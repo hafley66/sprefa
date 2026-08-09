@@ -10,7 +10,7 @@
             edge_headed_refs/2, level_headed_refs/2, seeded_refs/2,
             rule_head_ref/2, rule_is_edge/1, rule_is_level/1,
             body_ref_uses/2, rel_columns/4, rel_columns/5,
-            rel_column_types/5, rel_column_types/7, snake_name/2,
+            snake_name/2,
             check_supported_subset/1, check_supported_subset_expanded/1,
             edge_trigger_shape/2,
             conjunction_goals/2, check_edge_head_column_types/2,
@@ -390,19 +390,6 @@ snake_codes([Code | Rest], Out) :-
 % observation behind the heuristic (Finding 3): no fixture here quotes a
 % digit string, so Prolog's own reader never hands this scan an ambiguous
 % integer-vs-atom token.
-rel_column_types(Rules, Initial, Schedule, Name/Arity, Types) :-
-    numlist(1, Arity, Positions),
-    maplist(column_type_at(Rules, Initial, Schedule, Name/Arity), Positions, Types).
-
-rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, ColumnTypes) :-
-    rel_columns(Decls, Rules, Bindings, Ref, Columns),
-    Ref = _Name/Arity,
-    numlist(1, Arity, Positions),
-    type_definitions(Decls, Types),
-    maplist(column_type_at_decl(Decls, Types, Rules, Initial, Schedule, Ref,
-                                Columns),
-            Positions, ColumnTypes).
-
 % STRUCT-AS-ROWS: the declared type goes through 0_type_plane.pl:
 % column_storage/3 before it becomes a STORAGE kind, so `int`/`text` are
 % unchanged, `json` resolves to text (the untyped-json inline path, which used
