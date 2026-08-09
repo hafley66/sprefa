@@ -188,65 +188,16 @@ fn collect_tool_use(
     }
 }
 
-/// Parse an ISO-8601 UTC timestamp (`YYYY-MM-DDTHH:MM:SS.mmmZ`) into ms since
-/// the epoch. The transcript corpus writes this exact shape.
+/// Parse an ISO-8601 UTC timestamp into ms since the epoch.
 fn parse_iso_ms(text: &str) -> Option<u64> {
-    let digits = text.as_bytes();
-    if digits.len() < 19 || digits[4] != b'-' || digits[7] != b'-' || digits[10] != b'T' {
-        return None;
-    }
-    let year = atoi(&digits[0..4])?;
-    let month = atoi(&digits[5..7])?;
-    let day = atoi(&digits[8..10])?;
-    let hour = atoi(&digits[11..13])?;
-    let minute = atoi(&digits[14..16])?;
-    let second = atoi(&digits[17..19])?;
-
-    let mut milli = 0u64;
-    if digits.get(19) == Some(&b'.') {
-        let fraction_digits: Vec<u8> = digits[20..]
-            .iter()
-            .copied()
-            .take_while(|byte| byte.is_ascii_digit())
-            .take(3)
-            .collect();
-        if fraction_digits.is_empty() {
-            return None;
-        }
-        milli = atoi(&fraction_digits)?;
-    }
-
-    let days = days_from_civil(year, month, day)?;
-    let seconds = days * 86400 + hour * 3600 + minute * 60 + second;
-    Some(seconds * 1000 + milli)
-}
-
-fn atoi(bytes: &[u8]) -> Option<u64> {
-    let mut value: u64 = 0;
-    for byte in bytes {
-        if !byte.is_ascii_digit() {
-            return None;
-        }
-        value = value * 10 + (byte - b'0') as u64;
-    }
-    Some(value)
-}
-
-/// Number of days since 1970-01-01 for a civil date (Hinnant's civil algorithm).
-fn days_from_civil(year: u64, month: u64, day: u64) -> Option<u64> {
-    if !(1..=12).contains(&month) || day == 0 {
-        return None;
-    }
-    let mut year = year as i64;
-    let month = month as i64;
-    year -= i64::from(month <= 2);
-    let era = if year >= 0 { year } else { year - 399 } / 400;
-    let year_of_era = (year - era * 400) as u64;
-    let shift = if month > 2 { -3 } else { 9 };
-    let day_of_year = (153 * (month + shift) + 2) / 5 + day as i64 - 1;
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year as u64;
-    let epoch_days = era * 146097 + day_of_era as i64 - 719468;
-    u64::try_from(epoch_days).ok()
+    use time::format_description::well_known::Rfc3339;
+    use time::OffsetDateTime;
+    let parsed = OffsetDateTime::parse(text, &Rfc3339).ok()?;
+    let seconds = parsed.unix_timestamp();
+    u64::try_from(seconds)
+        .ok()?
+        .checked_mul(1000)?
+        .checked_add(parsed.millisecond() as u64)
 }
 
 #[cfg(test)]

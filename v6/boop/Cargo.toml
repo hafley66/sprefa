@@ -23,6 +23,16 @@ anyhow = "1"
 dirs = "5"
 # Walk ~/.claude/projects/{encoded-cwd}/*.jsonl; can skip subtrees.
 walkdir = "2"
+# Layer 0: process tree, cpu, rss, cwd in one cross-platform API.
+sysinfo = "0.39"
+# Layer 1: typed tmux command argv builder.
+tmux_interface = "0.4"
+# Layer 3: the SQLite store at ~/.agent/boop.db. `bundled` compiles SQLite in,
+# so no system SQLite version can disagree with it. Applies the repo's
+# surrogate-key law (interning natural TEXT keys to INTEGER ids).
+rusqlite = { version = "0.40", features = ["bundled"] }
+# Transcript timestamps parse against Rfc3339; hand-rolled date math is gone.
+time = { version = "0.3", features = ["parsing", "formatting"] }
 
 [[bin]]
 name = "boop"
