@@ -1,4 +1,5 @@
 //! The claude adapter: transcripts under `~/.claude/projects/<encoded-cwd>/`.
+#![allow(dead_code)]
 
 use std::fs::File;
 use std::path::PathBuf;
@@ -8,7 +9,7 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::event::{Access, AgentEvent, ToolPath};
-use crate::harness::{Harness, ReadChunk, SessionRef};
+use crate::harness::{Capabilities, Harness, ReadChunk, SendOutcome, SessionRef, SpawnSpec};
 use crate::tail;
 
 /// The claude harness. Stateless; the trait methods read straight from disk.
@@ -50,6 +51,9 @@ impl Harness for Claude {
                 git_branch,
                 modified_ms,
                 size,
+                tmux: None,
+                tmux_socket: None,
+                parent: None,
             });
         }
         sessions.sort_by_key(|session| session.modified_ms);
@@ -77,6 +81,94 @@ impl Harness for Claude {
             skipped,
         })
     }
+
+    fn capabilities(&self) -> crate::harness::Capabilities {
+        Capabilities {
+            send_midflight: true,
+            resume: true,
+            spawn: true,
+            subagent_visible: true,
+        }
+    }
+
+    fn spawn(&self, spec: &SpawnSpec) -> anyhow::Result<SessionRef> {
+        let session_id = format!("agent-{}", random_hex());
+        let tmux_name = format!("boop-{session_id}");
+        let cwd = spec
+            .worktree_dir
+            .clone()
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let command = launch_command(spec);
+        crate::tmux::new_detached_session(
+            spec.socket.as_deref(),
+            &tmux_name,
+            &cwd.display().to_string(),
+            &command,
+        )?;
+        Ok(SessionRef {
+            harness: "claude",
+            session_id: session_id.clone(),
+            path: cwd.join(session_id).with_extension("jsonl"),
+            cwd: Some(cwd.display().to_string()),
+            git_branch: Some(spec.branch.clone()),
+            modified_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+            size: 0,
+            tmux: Some(tmux_name),
+            tmux_socket: spec.socket.clone(),
+            parent: None,
+        })
+    }
+
+    fn send(&self, session: &SessionRef, text: &str) -> anyhow::Result<SendOutcome> {
+        match &session.tmux {
+            Some(tmux) => {
+                crate::tmux::send_keys_literal(session.tmux_socket.as_deref(), tmux, text)?;
+                Ok(SendOutcome::Injected)
+            }
+            None => Ok(SendOutcome::QueuedForNextSpawn),
+        }
+    }
+
+    fn stop(&self, session: &SessionRef) -> anyhow::Result<()> {
+        if let Some(tmux) = &session.tmux {
+            if crate::tmux::has_session(session.tmux_socket.as_deref(), tmux)? {
+                crate::tmux::kill_session(session.tmux_socket.as_deref(), tmux)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The claude command line a spawn runs. Resuming an existing session wins
+/// over a fresh prompt.
+fn launch_command(spec: &SpawnSpec) -> String {
+    match &spec.resume_session {
+        Some(id) => format!("claude --resume {id}"),
+        None => format!("claude {}", shell_quote(&spec.prompt)),
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+fn random_hex() -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(8);
+    for _ in 0..8 {
+        let _ = write!(out, "{:02x}", randish());
+    }
+    out
+}
+
+fn randish() -> u8 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| (d.as_nanos() >> 8) as u8)
+        .unwrap_or(0)
 }
 
 fn claude_projects_dir() -> anyhow::Result<PathBuf> {
@@ -209,7 +301,7 @@ mod tests {
     use crate::harness::Harness;
     use crate::harness::SessionRef;
 
-    use super::{parse_iso_ms, Claude};
+    use super::{launch_command, parse_iso_ms, Claude};
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("boop_claude_{}_{}", std::process::id(), name))
@@ -232,6 +324,9 @@ mod tests {
             git_branch: None,
             modified_ms: 0,
             size,
+            tmux: None,
+            tmux_socket: None,
+            parent: None,
         }
     }
 
@@ -281,5 +376,118 @@ mod tests {
         assert_eq!(event.paths[0].path, "/tmp/x.rs");
         assert_eq!(event.paths[1].path, "/tmp/y.rs");
         assert_eq!(event.urls, vec!["https://example.com"]);
+    }
+
+    // ---- facet 3 ----
+
+    /// A throwaway tmux server on its own socket; drop kills the whole server.
+    struct TmuxGuard {
+        socket: String,
+    }
+
+    impl TmuxGuard {
+        fn new() -> TmuxGuard {
+            let socket = format!("boop-test-{}-ctl", std::process::id());
+            let _ = std::process::Command::new("tmux")
+                .args(["-L", &socket, "kill-server"])
+                .status();
+            TmuxGuard { socket }
+        }
+    }
+
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("tmux")
+                .args(["-L", &self.socket, "kill-server"])
+                .status();
+        }
+    }
+
+    fn spec(guard: &TmuxGuard) -> crate::harness::SpawnSpec {
+        crate::harness::SpawnSpec {
+            harness: "claude",
+            branch: "lane-test".to_owned(),
+            base_sha: "0000000000000000000000000000000000000000".to_owned(),
+            main_tree: false,
+            setup: Vec::new(),
+            prompt: "do the lane".to_owned(),
+            resume_session: None,
+            socket: Some(guard.socket.clone()),
+            worktree_dir: Some(std::env::temp_dir()),
+        }
+    }
+
+    #[test]
+    fn claude_capabilities_are_measured() {
+        let c = Claude.capabilities();
+        assert!(c.send_midflight);
+        assert!(c.resume);
+        assert!(c.spawn);
+        assert!(c.subagent_visible);
+    }
+
+    #[test]
+    fn claude_spawn_returns_handle_and_stop_tears_down() {
+        let guard = TmuxGuard::new();
+        let claude = Claude;
+        let session = claude.spawn(&spec(&guard)).unwrap();
+        assert_eq!(session.tmux.as_deref().map(|t| t.starts_with("boop-agent-")), Some(true));
+        assert_eq!(session.tmux_socket.as_deref(), Some(guard.socket.as_str()));
+        claude.stop(&session).unwrap();
+        // Whatever claude did after launch, the plain shell the test keeps
+        // alive must be gone when stop reports success.
+        assert!(!has_session_on(&guard, session.tmux.as_deref().unwrap()));
+    }
+
+    #[test]
+    fn claude_send_injects_into_a_live_pane() {
+        let guard = TmuxGuard::new();
+        // A plain shell session stays alive so the injected text can be read
+        // back; the transport is what this capability proves.
+        let name = format!("ctl-{}", std::process::id());
+        let status = std::process::Command::new("tmux")
+            .args(["-L", &guard.socket, "new-session", "-d", "-s", &name])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let session = SessionRef {
+            harness: "claude",
+            session_id: "ctl".to_owned(),
+            path: PathBuf::from("/tmp/ctl.jsonl"),
+            cwd: None,
+            git_branch: None,
+            modified_ms: 0,
+            size: 0,
+            tmux: Some(name.clone()),
+            tmux_socket: Some(guard.socket.clone()),
+            parent: None,
+        };
+        let claude = Claude;
+        let outcome = claude.send(&session, "hello from boop").unwrap();
+        assert_eq!(outcome, crate::harness::SendOutcome::Injected);
+        let pane = std::process::Command::new("tmux")
+            .args(["-L", &guard.socket, "capture-pane", "-t", &name, "-p"])
+            .output()
+            .unwrap()
+            .stdout;
+        assert!(
+            String::from_utf8_lossy(&pane).contains("hello from boop"),
+            "injected text not found in pane"
+        );
+    }
+
+    #[test]
+    fn claude_launch_resumes_with_session_id() {
+        let mut s = spec(&TmuxGuard::new());
+        s.resume_session = Some("abc123".to_owned());
+        assert!(launch_command(&s).contains("--resume abc123"));
+    }
+
+    fn has_session_on(guard: &TmuxGuard, name: &str) -> bool {
+        std::process::Command::new("tmux")
+            .args(["-L", &guard.socket, "has-session", "-t", name])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 }

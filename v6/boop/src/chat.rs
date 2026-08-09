@@ -225,6 +225,9 @@ mod tests {
             git_branch: Some("main".to_owned()),
             modified_ms: 0,
             size: 0,
+            tmux: None,
+            tmux_socket: None,
+            parent: None,
         }
     }
 
