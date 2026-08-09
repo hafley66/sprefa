@@ -72,6 +72,8 @@ removed_word_replacement(scan,
     'file enumeration is files(glob, path, digest) over the worktree and files_at(rev, glob, path, digest) over a pinned revision') :- !.
 removed_word_replacement(set,
     'a bare rel declaration is already a set table') :- !.
+removed_word_replacement(list,
+    'the json array column type is json_list(T), e.g. json_list(text)') :- !.
 removed_word_replacement(_, 'the language assigns it no meaning').
 
 fallback_reason_text(ReasonName, Text) :-

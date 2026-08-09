@@ -644,12 +644,22 @@ typed_column_type(int, S0, S) :- word(`int`, S0, S), !.
 typed_column_type(text, S0, S) :- word(`text`, S0, S), !.
 typed_column_type(json, S0, S) :- word(`json`, S0, S), !.
 typed_column_type(bool, S0, S) :- word(`bool`, S0, S), !.
-% ruling list_spelling = list_of_type. The ONE parametric type, and its
+% ruling list_spelling = json_list. The ONE parametric type, and its
 % argument is a bare type word, never a nested list: 0_type_plane.pl's
 % column_storage/3 refuses list(list(_)) and list(<struct>) by name, so the
 % grammar stays permissive and the unsupported construct stays where the reason lives.
+% The retained prolog term stays `list(T)`; only the text-door spelling is
+% json_list(T), so expansion and runtime semantics do not acquire another arrow family.
+typed_column_type(list(Element), S0, S) :-
+    word(`json_list`, S0, S1), !,
+    ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
+    typed_column_type(Element, S4, S5), ws0(S5, S6),
+    lit_dcg(`)`, S6, S).
+% Hard rename, no alias: a program writing list(T) gets the named unsupported
+% removed_word(list) finding (the message names json_list as the spelling).
 typed_column_type(list(Element), S0, S) :-
     word(`list`, S0, S1), !,
+    record_finding(unsupported_surface(removed_word(list))),
     ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
     typed_column_type(Element, S4, S5), ws0(S5, S6),
     lit_dcg(`)`, S6, S).

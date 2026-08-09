@@ -1,1 +1,1 @@
-rel batch(id: int, payloads: list(text)).
+rel batch(id: int, payloads: json_list(text)).

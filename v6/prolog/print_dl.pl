@@ -284,7 +284,17 @@ decl_line(Decls, Rules, Bindings, Ref, Line) :-
     format(atom(Line), "rel ~w(~w)~w~w.~n", [Name, ColsText, Sep, ModifiersText]).
 
 print_host_column(col(Name, Type), Text) :-
-    format(atom(Text), "~w: ~w", [Name, Type]).
+    print_column_type(Type, TypeText),
+    format(atom(Text), "~w: ~w", [Name, TypeText]).
+
+% The retained internal term stays list(T); only the text-door rendering spells
+% it json_list(T) (hard rename, no alias).
+print_column_type(list(Element), Text) :-
+    !,
+    print_column_type(Element, InnerText),
+    format(atom(Text), "json_list(~w)", [InnerText]).
+print_column_type(Type, Text) :-
+    format(atom(Text), "~w", [Type]).
 
 quote_template(Template, Text) :-
     string_codes(Template, Codes),
@@ -307,7 +317,8 @@ decl_is_modifier(keyed(Ref, _), Ref).
 
 print_decl_column(Decls, Ref, Column, Text) :-
     ( memberchk(col_type(Ref, Column, Type), Decls)
-    -> format(atom(Text), "~w: ~w", [Column, Type])
+    -> print_column_type(Type, TypeText),
+       format(atom(Text), "~w: ~w", [Column, TypeText])
     ; Text = Column
     ).
 
@@ -334,7 +345,8 @@ print_enum_variant(Variant, Text) :-
 
 print_enum_field(Field, Text) :-
     Field =.. [':', ColumnName, TypeName],
-    format(atom(Text), "~w: ~w", [ColumnName, TypeName]).
+    print_column_type(TypeName, TypeText),
+    format(atom(Text), "~w: ~w", [ColumnName, TypeText]).
 
 % ═══ rule line : `HeadText <- BodyText.` / `HeadText <+ BodyText.` ══════════
 
