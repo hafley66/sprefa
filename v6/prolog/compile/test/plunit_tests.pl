@@ -27,7 +27,7 @@
                 intern_write_sql/4,
                 catalog_ddl_contract/2,
                 catalog_rows/4,
-                catalog_all_rows/5,
+                catalog_all_rows/8,
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
@@ -49,6 +49,7 @@
                 reset_parse_counts/0, parse_count/2 ]).
 :- use_module('../../0_cst_query', [ parse_cst_query/2 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
+:- use_module('../../0_type_plane', [ type_definitions/2 ]).
 :- use_module('../../print_dl', [ print_dl_program/3, print_term/5 ]).
 :- use_module('../registry',
               [ surface/5, expression/5, host_execution/3,
@@ -912,32 +913,62 @@ test(catalog_rows_are_one_statement) :-
               sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') ),
             [_OneSeed]).
 
-% Step 2 scaffold receipt: with the plane half empty, the full producer emits
-% exactly the decl rows, so nothing delivered before step 3 moves.
+% Step 3 ids-stability receipt: with the plane half populated, the decl rows
+% keep their exact ids and rows, only now followed by the plane block, so the
+% TS const (which renders only catalog_rows/4) is byte-identical to before.
 test(catalog_all_rows_equals_decl_rows) :-
     RelPlans = [ relplan(node/1, set, [id], none, [int]),
                  relplan(holder/1, set, [item, target], none, [text, ref(node)]),
                  relplan(items/1, set, [list_col], none, [list(text)]) ],
     lower:catalog_rows(catalog_all_eq, [], RelPlans, DeclRows),
-    lower:catalog_all_rows(direct, catalog_all_eq, [], RelPlans, AllRows),
-    AllRows == DeclRows.
+    lower:catalog_all_rows(direct, catalog_all_eq, [], RelPlans, [], [], [],
+                           AllRows),
+    append(DeclRows, PlaneRows, AllRows),
+    % the plane half is non-empty (nine frontier rows) so the stability is not
+    % vacuous, and it never touches a decl row's id.
+    length(PlaneRows, 9),
+    !.
 
-% The split's receipt at the DDL level: rendering the decl half and the full
-% list yields the SAME statement, and that statement is what the live seed
-% emits, so the seed is byte-identical before and after the split.
+% The split's receipt at the DDL level: the live seed is exactly the full row
+% list's render, and the decl prefix inside it is byte-identical to the TS
+% const's render, so plane rows only APPEND and never move a seed id.
 test(catalog_seed_ddl_byte_identical_after_split) :-
     catalog_program(Term),
     once(program_plan(Term-[], [intern(direct)], Plan)),
-    Plan = plan(Name, prog(_, Rules), RelPlans, _, _, _, _, _),
-    lower:catalog_rows(Name, Rules, RelPlans, DeclRows),
-    lower:catalog_all_rows(direct, Name, Rules, RelPlans, AllRows),
-    catalog_seed_render(DeclRows, DeclSeed),
+    Plan = plan(Name, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+    findall(PreRef,
+            ( member((_ <+ EdgeBody), Rules),
+              level_body_pre_ref(EdgeBody, PreRef) ),
+            PreRefs0),
+    sort(PreRefs0, PreRefs),
+    listened_departure_refs(Rules, DepartureRefs),
+    type_definitions(Decls, Types),
+    lower:catalog_all_rows(Mode, Name, Rules, RelPlans, DepartureRefs,
+                           PreRefs, Types, AllRows),
     catalog_seed_render(AllRows, AllSeed),
-    DeclSeed == AllSeed,
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
     once(( member(Seed, Ddl),
            sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') )),
-    Seed == DeclSeed.
+    Seed == AllSeed,
+    % the decl rows are an exact prefix (ids untouched); plane rows append
+    % after them and carry only the step-3 family names.
+    lower:catalog_rows(Name, Rules, RelPlans, DeclRows),
+    append(DeclRows, PlaneRows, AllRows),
+    PlaneRows \== [],
+    forall(member(row(_, _, _, LocalName, Kind, _, _, _, _, _, _), PlaneRows),
+           plane_kind_for(LocalName, Kind)),
+    !.
+
+plane_kind_for(LocalName, Kind) :-
+    (   atom_concat('__delta_', _, LocalName) -> Kind == delta
+    ;   atom_concat('__frontier_', _, LocalName) -> Kind == frontier
+    ;   atom_concat('__next_frontier_', _, LocalName) -> Kind == next_frontier
+    ;   atom_concat('__departure_frontier_', _, LocalName) -> Kind == departure
+    ;   atom_concat('__pre_', _, LocalName) -> Kind == pre
+    ;   atom_concat('__txt_', _, LocalName) -> Kind == view
+    ;   LocalName == '__str' -> Kind == dictionary
+    ;   atom_concat('__ref_', _, LocalName) -> Kind == dictionary
+    ).
 
 % Reconstruct the seed statement the way catalog_row_ddl/5 does, in direct
 % mode where every text column literal is plain single-quoted.
@@ -1078,6 +1109,112 @@ test(refuses_two_arities_of_one_rel_name,
     lower_program(Plan, _).
 
 :- end_tests(catalog_g1).
+
+% ═══ the step-3 plane rail ═════════════════════════════════════════════════
+% The single highest-value artifact of the catalog backbone (plan 7.3): a
+% corpus-wide family check in the shape of the interned-storage rail, never a
+% per-fixture check. For every emitted module the set of CREATE "__x" names in
+% its DDL must equal the set of plane-row local_name values its producer plans.
+% A plane row that names a table the lowering did not create -- or a table
+% with no row -- is the sixth bypass door this step exists to stop.
+
+:- begin_tests(catalog_plane_rail).
+
+test(plane_rows_name_every_emitted_plane_table) :-
+    findall(Name,
+            ( corpus_plan_lowered(Name, Plan, Lowered),
+              Lowered = lowered(_, Ddl, _, _, _, _, _, _),
+              findall(Table,
+                      ( member(Statement, Ddl),
+                        ddl_created_plane(Statement, Table) ),
+                      DdlNames0),
+              sort(DdlNames0, DdlNames),
+              catalog_plane_local_names(Plan, PlaneNames0),
+              sort(PlaneNames0, PlaneNames),
+              PlaneNames \== DdlNames ),
+            Mis),
+    Mis == [].
+
+% The DDL door is the plan's own: existence must mirror text_view_ddls/6 and
+% delta_ddl/3, so the names are read out of the emitted SQL, not restated.
+ddl_created_plane(Statement, Table) :-
+    created_name(Statement, Table),
+    plane_name(Table).
+
+created_name(Statement, Table) :-
+    atom_codes(Statement, Codes),
+    member(Prefix, [ "CREATE TABLE \"",
+                      "CREATE TEMP TABLE \"",
+                      "CREATE TEMP VIEW \"" ]),
+    atom_codes(Prefix, PrefixCodes),
+    append(PrefixCodes, AfterOpen, Codes),
+    append(TableCodes, [0'" | _], AfterOpen),
+    !,
+    atom_codes(Table, TableCodes).
+
+plane_name(Name) :-
+    (   atom_concat('__delta_', _, Name)
+    ;   atom_concat('__frontier_', _, Name)
+    ;   atom_concat('__next_frontier_', _, Name)
+    ;   atom_concat('__departure_frontier_', _, Name)
+    ;   atom_concat('__txt_', _, Name)
+    ;   atom_concat('__pre_', _, Name)
+    ;   Name == '__str'
+    ;   atom_concat('__ref_', _, Name)
+    ).
+
+% Reproduce the exact inputs lower_program/2 passes to the producer, so the
+% planned rows match what the DDL minted, family by family.
+catalog_plane_local_names(Plan, LocalNames) :-
+    Plan = plan(Name, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+    findall(PreRef,
+            ( member((_ <+ EdgeBody), Rules),
+              level_body_pre_ref(EdgeBody, PreRef) ),
+            PreRefs0),
+    sort(PreRefs0, PreRefs),
+    listened_departure_refs(Rules, DepartureRefs),
+    type_definitions(Decls, Types),
+    lower:catalog_all_rows(Mode, Name, Rules, RelPlans, DepartureRefs,
+                           PreRefs, Types, AllRows),
+    findall(LocalName,
+            ( member(row(_, _, _, LocalName, Kind, _, _, _, _, _, _), AllRows),
+              plane_kind(Kind) ),
+            LocalNames).
+
+plane_kind(delta). plane_kind(frontier). plane_kind(next_frontier).
+plane_kind(departure). plane_kind(view). plane_kind(pre). plane_kind(dictionary).
+
+corpus_plan_lowered(Name, Plan, Lowered) :-
+    corpus_path(Path),
+    open(Path, read, Stream),
+    call_cleanup(rail_fixture_terms(Stream, Terms), close(Stream)),
+    member(fixture(Name, Prog, Initial, Schedule, Expectations)-Bindings, Terms),
+    catch(( program_plan(fixture(Name, Prog, Initial, Schedule,
+                                 Expectations)-Bindings, [intern(dict)], Plan),
+            lower_program(Plan, Lowered) ),
+          _, fail).
+
+rail_fixture_terms(Stream, Terms) :-
+    read_term(Stream, Candidate, [variable_names(Bindings)]),
+    (   Candidate == end_of_file
+    ->  Terms = []
+    ;   Candidate = (:- Directive)
+    ->  catch(call(Directive), _, true), rail_fixture_terms(Stream, Terms)
+    ;   Candidate = fixture(_, _, _, _, _)
+    ->  Terms = [Candidate-Bindings | Rest], rail_fixture_terms(Stream, Rest)
+    ;   rail_fixture_terms(Stream, Terms)
+    ).
+
+corpus_path(Path) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures'], Dir),
+    directory_files(Dir, Entries),
+    msort(Entries, Ordered),
+    member(Entry, Ordered),
+    sub_atom(Entry, _, 3, 0, '.pl'),
+    atomic_list_concat([Dir, '/', Entry], Path).
+
+:- end_tests(catalog_plane_rail).
 
 :- begin_tests(catalog_type_ids).
 
