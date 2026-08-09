@@ -86,13 +86,6 @@ text_scalar_value(rtrim, [Text, Chars], Out) :-
     reverse(RevTrimmed, Trimmed),
     atom_codes(Out, Trimmed).
 
-drop_leading_in_set([], _, []).
-drop_leading_in_set([Code | Rest], Chars, Out) :-
-    ( memberchk(Code, Chars)
-    -> drop_leading_in_set(Rest, Chars, Out)
-    ;  Out = [Code | Rest]
-    ).
-
 % SQLite replace(X, Y, Z): replace every occurrence of Y in X with Z.
 text_scalar_value(replace, [Text, From, To], Out) :-
     ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
@@ -101,6 +94,13 @@ text_scalar_value(replace, [Text, From, To], Out) :-
     atom_codes(To, ToCodes),
     replace_codes(TextCodes, FromCodes, ToCodes, OutCodes),
     atom_codes(Out, OutCodes).
+
+drop_leading_in_set([], _, []).
+drop_leading_in_set([Code | Rest], Chars, Out) :-
+    ( memberchk(Code, Chars)
+    -> drop_leading_in_set(Rest, Chars, Out)
+    ;  Out = [Code | Rest]
+    ).
 
 replace_codes([], _, _, []).
 replace_codes(Codes, [], _, Codes) :- !.
