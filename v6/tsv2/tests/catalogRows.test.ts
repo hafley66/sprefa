@@ -25,8 +25,8 @@
  * `primitive`, `rel`, `column`; a column is a CHILD row of its rel, so
  * parent_id is the rel's rel_id and ordinal is the 1-based argument
  * position; a rel row has parent_id and ordinal both 0; a column's type_id
- * points at a primitive's rel_id, and is 0 when the type is not one of the
- * five primitives.
+ * points at its type's row -- a primitive row, a list row, or a ref's rel
+ * row (lower.pl catalog_column_type_id/4).
  *
  * SABOTAGE RECEIPTS:
  *   1. Change the seed's `INSERT OR IGNORE` to a plain `INSERT` and the
@@ -54,7 +54,7 @@ import { ScratchStore } from "../runtime/scratchStore.ts";
 import type { ISqlSeam } from "../runtime/types.ts";
 
 const CATALOG_DDL: readonly string[] = [
-  `CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule")) WITHOUT ROWID`,
+  `CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, PRIMARY KEY ("rel_id")) WITHOUT ROWID`,
   `CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")`,
   `INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule") VALUES (1,0,0,'text','primitive',0,0,0,'','',''),(2,0,0,'int','primitive',0,0,0,'','',''),(3,0,0,'float','primitive',0,0,0,'','',''),(4,0,0,'bool','primitive',0,0,0,'','',''),(5,0,0,'json','primitive',0,0,0,'','',''),(6,0,0,'catalog','module',0,0,6,'652f55016243bf1b','',''),(7,6,0,'flow_edge','rel',0,2,6,'e088c4e83f6bd590','76bdfb91a44e84a1',''),(8,7,1,'from_path','column',1,0,6,'8e573bdafd8b831d','',''),(9,7,2,'to_path','column',1,0,6,'6ab063888c4aeed5','',''),(10,6,0,'flow_reach','rel',0,2,6,'fbdcdb48481fdfb8','76bdfb91a44e84a1',''),(11,10,1,'from_path','column',1,0,6,'8e573bdafd8b831d','',''),(12,10,2,'to_path','column',1,0,6,'6ab063888c4aeed5','','')`,
 ];
@@ -153,6 +153,19 @@ test("the parent index is used, never a scan", async () => {
   assert.ok(details.includes("SEARCH"), `the parent lookup must SEARCH, got: ${details}`);
   assert.ok(details.includes("__rel_parent"), `the parent lookup must use __rel_parent, got: ${details}`);
   assert.ok(!details.includes("SCAN"), `the parent lookup must not scan, got: ${details}`);
+});
+
+test("rel_id is the primary key: an id equality lookup SEARCHes, never scans", async () => {
+  const seam = ScratchStore.open(":memory:");
+  await firstValueFrom(ScratchStore.boot(seam, CATALOG_DDL));
+
+  const plan = await run(
+    seam,
+    `EXPLAIN QUERY PLAN SELECT local_name FROM "__rel" WHERE rel_id = 7`,
+  );
+  const details = plan.rows.map((row) => String(row.detail)).join("\n");
+  assert.ok(details.includes("SEARCH"), `the rel_id lookup must SEARCH, got: ${details}`);
+  assert.ok(!details.includes("SCAN"), `the rel_id lookup must not scan, got: ${details}`);
 });
 
 test("every rel row carries a non-empty h_schema", async () => {
