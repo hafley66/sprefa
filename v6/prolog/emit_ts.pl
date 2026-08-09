@@ -21,6 +21,7 @@
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
+:- use_module('0_type_plane', [type_definitions/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -760,8 +761,12 @@ rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Li
 
 % ═══ the catalog rows, the same list the INSERT renders ════════════════════
 % Emitted even for a program that never queries `__rel`, so a reload compares.
-program_catalog_rows(Name, plan(_, prog(_, Rules), _, _, _, _, _, _), RelPlans, Rows) :-
-    lower:catalog_rows(Name, Rules, RelPlans, Rows).
+% The full catalog_all_rows/10 block (decl + plane), so the emitted const
+% carries the plane rows at compile time (ruling catalog_plane_in_const).
+program_catalog_rows(Mode, Name, Decls, Rules, RelPlans, DepartureRefs, PreRefs,
+                     Types, RuleLevelStatements, Rows) :-
+    lower:catalog_all_rows(Mode, Name, Rules, RelPlans, DepartureRefs, PreRefs,
+                           Types, RuleLevelStatements, Decls, Rows).
 
 rel_catalog_lines([], []) :- !.
 rel_catalog_lines(Rows, Lines) :-
@@ -2721,7 +2726,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     rel_column_types_lines(RelPlans, RelColumnTypesLines),
-    program_catalog_rows(Name, Plan, RelPlans, CatalogRows),
+    type_definitions(PlanDecls, LoweringTypes),
+    program_catalog_rows(InternMode, Name, PlanDecls, PlanRules, RelPlans,
+                         DepartureRefs, PreRefs, LoweringTypes,
+                         RuleLevelStatements, CatalogRows),
     rel_catalog_lines(CatalogRows, RelCatalogLines),
     rel_declared_column_types_lines(PlanDecls, RelPlans, RelDeclaredColumnTypesLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),

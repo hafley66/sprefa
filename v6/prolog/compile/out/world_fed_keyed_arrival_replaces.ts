@@ -175,6 +175,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "world_mode", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "d19a14970a9061a4", h_schema: "959f9ff0725663ea", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "col1", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "8c8b82ecd2a13c42", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "col2", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ba89e414c7b2bbf9", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "__delta_world_mode", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "a4be1b1177bbb0ae", h_schema: "0b625e3404b3b8a5", h_rule: "" },
+  { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "__frontier_world_mode", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "3ffa6c6f82eb85d1", h_schema: "a9ad28741624f135", h_rule: "" },
+  { rel_id: 12, parent_id: 7, ordinal: 0, local_name: "__next_frontier_world_mode", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "807dbd710dc440a6", h_schema: "a9ad28741624f135", h_rule: "" },
+  { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "__txt_world_mode", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "130fd5a5b60913dc", h_schema: "df1cb47113637daf", h_rule: "" },
+  { rel_id: 14, parent_id: 10, ordinal: 0, local_name: "__txt___delta_world_mode", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "455f5aa3060d17f2", h_schema: "df1cb47113637daf", h_rule: "" },
+  { rel_id: 15, parent_id: 6, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 6, h_id: "73dcb1cbc33d2bb1", h_schema: "", h_rule: "" },
+  { rel_id: 16, parent_id: 8, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "9b8849d3851786e1", h_schema: "", h_rule: "" },
+  { rel_id: 17, parent_id: 9, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "0a9b78cbb6afafa9", h_schema: "", h_rule: "" },
 ];
 
 const rel_declared_column_types: Record<string, readonly string[]> = {
