@@ -38,6 +38,8 @@
 :- use_module(library(http/json)).
 :- use_module('../../compile', [ read_fixture_term/4, program_plan/2 ]).
 :- use_module('../../lower', [ lower_program/2, boot_statements/7 ]).
+:- use_module('../../0_rel_record',
+              [ relplan_parts/6, relplan_of/3, relplan_columns/3 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -125,7 +127,7 @@ snapshot_all(DbFile, DeltaStatements, RelPlans, ByRef) :-
     findall(Ref-Terms,
             ( member(deltastmt(Ref, SelectSql, _, _, _), DeltaStatements),
               query_json(DbFile, SelectSql, Rows),
-              memberchk(relplan(Ref, _, Columns, _, _), RelPlans),
+              relplan_columns(RelPlans, Ref, Columns),
               ref_table_name(Ref, Name),
               maplist(row_to_term(Name, Columns), Rows, Terms)
             ), ByRef).
@@ -188,7 +190,7 @@ resolve_and_apply_edge_writes(DbFile, RelPlans, edgestmt(HeadRef, TriggerRef, He
               substitute_params(ProjectSql, Values, Executable),
               query_json(DbFile, Executable, [json(Pairs)]),
               maplist(column_value(Pairs), HeadColumns, RawValues),
-              memberchk(relplan(HeadRef, _, _, _, _), RelPlans),
+              relplan_of(RelPlans, HeadRef, _),
               ref_table_name(HeadRef, Name),
               maplist(decode_cell, RawValues, DecodedValues),
               Term =.. [Name | DecodedValues]
@@ -289,7 +291,8 @@ decode_cell(Raw, Decoded) :-
 
 query_final_rows(DbFile, RelPlans, FinalByRef) :-
     findall(Ref-Terms,
-            ( member(relplan(Ref, _Kind, Columns, _, _), RelPlans),
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _Kind, Columns, _, _),
               ref_table_name(Ref, Name),
               maplist(quoted_ident_test, Columns, QuotedColumns),
               atomic_list_concat(QuotedColumns, ', ', ColumnsSql),

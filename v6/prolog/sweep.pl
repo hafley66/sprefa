@@ -14,6 +14,7 @@
 :- use_module(lower, [ lower_program/2, boot_statements/7 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
 :- use_module('conformance/body', [ rel_ref/2 ]).
+:- use_module('0_rel_record', [ relplan_column_types/3 ]).
 :- use_module('0_type_plane',
               [ type_canonical_json/4,
                 canonical_json_text/2, escape_json_codes/2 ]).
@@ -144,7 +145,7 @@ arrival_json(Types, RelPlans, -Atom, Json) :- !, arrival_json_signed(Types, RelP
 arrival_json_signed(Types, RelPlans, Atom, Sign, Json) :-
     rel_ref(Atom, Ref), Ref = Name/_Arity,
     Atom =.. [_ | Args],
-    ( memberchk(relplan(Ref, _, _, _, ColumnTypes), RelPlans) -> true ; ColumnTypes = [] ),
+    ( relplan_column_types(RelPlans, Ref, ColumnTypes) -> true ; ColumnTypes = [] ),
     maplist(arrival_value_json(Types), ColumnTypes, Args, ArgJsons),
     atomic_list_concat(ArgJsons, ',', RowInner),
     json_string(Name, NameJson),

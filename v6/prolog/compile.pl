@@ -44,6 +44,7 @@
 :- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
+:- use_module('0_rel_record', [relplan_parts/6]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -216,12 +217,13 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
             RefColumns),
     program_column_types(Decls, Types, Rules, Initial, Schedule, AllRefs,
                          RefColumns, RefTypes),
-    findall(relplan(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
+    findall(RelPlan,
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),
               memberchk(Ref-Columns, RefColumns),
               memberchk(Ref-ColumnTypes, RefTypes),
-              ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none )
+              ( decl_key(Decls, Ref, Positions) -> KeyOrNone = key(Positions) ; KeyOrNone = none ),
+              relplan_parts(RelPlan, Ref, Kind, Columns, KeyOrNone, ColumnTypes)
             ), RelPlans),
     % PHASE C2 RULING 1 x RULING 2: this needs RelPlans (ColumnTypes), so it
     % runs here rather than inside check_supported_subset/1 above (which

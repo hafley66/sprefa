@@ -10,11 +10,11 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
-% relplan_kind/3 supplies trigger kind to the per-arm resolver.
-:- use_module(lower, [ relplan_kind/3, departure_frontier_table_name/2,
+:- use_module(lower, [ departure_frontier_table_name/2,
                        departure_read_sql/3, struct_type_plans/3,
                        program_text_intern_plan/3,
                        statement_rule_ids/3 ]).
+:- use_module('0_rel_record').
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
@@ -305,7 +305,8 @@ struct_ref_entry(TypeName, Text) :- js_string(TypeName, Text).
 
 struct_ref_column_entries(RelPlans, Lines) :-
     findall(Line,
-            ( member(relplan(Ref, _, _, _, ColumnTypes), RelPlans),
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _, _, _, ColumnTypes),
               memberchk(ref(_), ColumnTypes),
               ref_name(Ref, Name),
               maplist(column_type_ref_entry, ColumnTypes, RefTexts),
@@ -740,7 +741,8 @@ rel_columns_lines(RelPlans, Lines) :-
     maplist(rel_columns_entry_line, RelPlans, EntryLines),
     append([ ['const rel_columns: Record<string, readonly string[]> = {'], EntryLines, ['};'] ], Lines).
 
-rel_columns_entry_line(relplan(Ref, _Kind, Columns, _Key, _ColumnTypes), Line) :-
+rel_columns_entry_line(RelPlan, Line) :-
+    relplan_parts(RelPlan, Ref, _Kind, Columns, _Key, _ColumnTypes),
     ref_name(Ref, Name),
     quoted_string_array_text(Columns, ColumnsSql),
     js_object_key(Name, NameKey),
@@ -751,7 +753,8 @@ rel_column_types_lines(RelPlans, Lines) :-
     append([ ['const rel_column_types: Record<string, readonly IRowColumnType[]> = {'],
              EntryLines, ['};'] ], Lines).
 
-rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Line) :-
+rel_column_types_entry_line(RelPlan, Line) :-
+    relplan_parts(RelPlan, Ref, _Kind, _Columns, _Key, ColumnTypes),
     ref_name(Ref, Name),
     maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
     quoted_string_array_text(BoundaryTypes, TypesText),
@@ -796,7 +799,8 @@ rel_catalog_entry_line(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
 % declines to guess there, so this declines too.
 rel_declared_column_types_lines(Decls, RelPlans, Lines) :-
     findall(EntryLine,
-            ( member(relplan(Ref, _, _, _, _), RelPlans),
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _, _, _, _),
               declared_column_types(Decls, Ref, DeclaredTypes),
               rel_declared_types_entry_line(Ref, DeclaredTypes, EntryLine) ),
             EntryLines),
@@ -871,7 +875,8 @@ snapshot_type_lines(RelPlans, Lines) :-
     maplist(snapshot_field_line, RelPlans, FieldLines),
     append([ ['type Snapshot = {'], FieldLines, ['};'] ], Lines).
 
-snapshot_field_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
+snapshot_field_line(RelPlan, Line) :-
+    relplan_parts(RelPlan, Ref, _Kind, _Columns, _Key, _ColumnTypes),
     ref_name(Ref, Name),
     format(atom(Line), '  readonly ~w: readonly IRow[];', [Name]).
 
@@ -1048,8 +1053,7 @@ incremental_relation_lines(RelPlans, Rules, ArrivalStatements, DeltaStatements,
 incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, DepartureRefs,
         deltastmt(Ref, _SelectSql, DeltaTable, BoundarySql, _StoredSelectSql), Line) :-
     ref_name(Ref, Name),
-    relplan_kind(RelPlans, Ref, Kind),
-    memberchk(relplan(Ref, _, Columns, KeyOrNone, ColumnTypes), RelPlans),
+    relplan_shape(RelPlans, Ref, Kind, Columns, KeyOrNone, ColumnTypes),
     quoted_string_array_text(Columns, ColumnsText),
     maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
     quoted_string_array_text(BoundaryTypes, ColumnTypesText),
@@ -1166,7 +1170,7 @@ incremental_level_statement_entry_line(RelPlans,
                   AggregateSql, DeltaInternSqls), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
-    memberchk(relplan(HeadRef, _, HeadColumns, _, _), RelPlans),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
     quoted_string_array_text(HeadColumns, ColumnsText),
     optional_sql_template(DeltaInsertSql, DeltaInsertTemplate),
     maplist(quote_ident_local, HeadColumns, QuotedHeadColumns),
@@ -1516,7 +1520,7 @@ edge_resolver_blocks(EdgeStatements, RelPlans, ConstLines, FnLines) :-
 edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind, EdgeInterns), ConstLines, FnLines) :-
     relplan_kind(RelPlans, TriggerRef, TriggerKind),
     relplan_kind(RelPlans, HeadRef, HeadKind),
-    memberchk(relplan(TriggerRef, _, TriggerColumns, _, _), RelPlans),
+    relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _, EdgeTriggerKind, EdgeInterns), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines).
 
 % HeadKind decides how projected rows become SqlStatements (engine.pl
@@ -1709,7 +1713,7 @@ plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Refs) :-
     sort(Refs0, Refs).
 
 pre_snapshot_statement(RelPlans, Ref, Statements) :-
-    memberchk(relplan(Ref, _, Columns, _, _), RelPlans),
+    relplan_columns(RelPlans, Ref, Columns),
     ref_name(Ref, Name),
     maplist(quote_ident_local, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
@@ -1799,7 +1803,7 @@ ordered_arrival_accept_line(RelPlans, TriggerRef, Line) :-
 
 ordered_departure_read_entry(RelPlans, TriggerRef, Line) :-
     ref_name(TriggerRef, TriggerName),
-    memberchk(relplan(TriggerRef, _, TriggerColumns, _, _), RelPlans),
+    relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     departure_read_sql(TriggerRef, TriggerColumns, Sql),
     js_template(Sql, SqlTemplate),
     quoted_string_array_text(TriggerColumns, ColumnsText),
@@ -1809,7 +1813,7 @@ ordered_departure_read_entry(RelPlans, TriggerRef, Line) :-
 
 ordered_carry_read_entry(RelPlans, TriggerRef, Line) :-
     ref_name(TriggerRef, TriggerName),
-    memberchk(relplan(TriggerRef, _, TriggerColumns, _, _), RelPlans),
+    relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     maplist(quote_ident_local, TriggerColumns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     format(atom(Sql),
@@ -2159,12 +2163,14 @@ build_deltas_fn_lines(RelPlans, EdgeStatements, _RetentionStatements,
 
 % Retention runs between the before and after snapshots, so multiset_diff must
 % retain reclaimed rows as deletions; no keep-specific suppression is needed.
-diff_local_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
+diff_local_line(RelPlan, Line) :-
+    relplan_parts(RelPlan, Ref, _Kind, _Columns, _Key, _ColumnTypes),
     ref_name(Ref, Name),
     format(atom(Line), '  const ~w = multiset_diff(before.~w, after.~w);',
            [Name, Name, Name]).
 
-rel_entry_line(relplan(Ref, _Kind, _Columns, _Key, _ColumnTypes), Line) :-
+rel_entry_line(RelPlan, Line) :-
+    relplan_parts(RelPlan, Ref, _Kind, _Columns, _Key, _ColumnTypes),
     ref_name(Ref, Name),
     format(atom(Line), '      { rel: "~w", add: ~w.add, del: ~w.del },', [Name, Name, Name]).
 
