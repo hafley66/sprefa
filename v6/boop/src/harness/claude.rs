@@ -461,18 +461,14 @@ mod tests {
                 std::process::id(),
                 NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             );
-            let _ = std::process::Command::new("tmux")
-                .args(["-L", &socket, "kill-server"])
-                .status();
+            crate::tmux::kill_test_server(&socket);
             TmuxGuard { socket }
         }
     }
 
     impl Drop for TmuxGuard {
         fn drop(&mut self) {
-            let _ = std::process::Command::new("tmux")
-                .args(["-L", &self.socket, "kill-server"])
-                .status();
+            crate::tmux::kill_test_server(&self.socket);
         }
     }
 

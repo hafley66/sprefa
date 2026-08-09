@@ -92,7 +92,7 @@ fn split_two(rest: &str) -> (String, String) {
 /// A long-lived `tmux -C` child, kept across questions instead of forking a
 /// tmux process per command the way `bus` does.
 pub struct ControlClient {
-    _child: Child,
+    child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
     /// tmux emits an empty attach block on connect before any command; the
@@ -119,7 +119,7 @@ impl ControlClient {
         let stdin = child.stdin.take().context("tmux control stdin")?;
         let stdout = child.stdout.take().context("tmux control stdout")?;
         Ok(ControlClient {
-            _child: child,
+            child,
             stdin,
             stdout: BufReader::new(stdout),
             first_block: true,
@@ -212,8 +212,45 @@ fn next_line(reader: &mut BufReader<ChildStdout>, deadline: std::time::Instant) 
     }
 }
 
-/// One-shot `tmux list-sessions -F '#{session_name}'`. Returns `None` when tmux
-/// itself is unreachable, which is NOT the same as "no sessions".
+/// Rust does not reap a child on drop, so without this every dropped client
+/// leaves a live `tmux -C` process holding its server open.
+impl Drop for ControlClient {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Kill a throwaway test server AND unlink its socket: tmux leaves the socket
+/// file behind on macOS, so kill-server alone still litters /tmp.
+#[cfg(test)]
+pub(crate) fn kill_test_server(socket: &str) {
+    let reported = Command::new("tmux")
+        .args(["-L", socket, "display-message", "-p", "#{socket_path}"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        .filter(|path| !path.is_empty());
+    let _ = Command::new("tmux")
+        .args(["-L", socket, "kill-server"])
+        .status();
+    // A dead server cannot report its path, so the convention is tried too.
+    let uid = Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        .unwrap_or_default();
+    let base = std::env::var("TMUX_TMPDIR").unwrap_or_else(|_| "/tmp".to_owned());
+    let conventional = format!("{base}/tmux-{uid}/{socket}");
+    for path in reported.into_iter().chain(std::iter::once(conventional)) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// One-shot `tmux list-sessions`. `None` means tmux itself is unreachable,
+/// which is NOT the same as "no sessions".
 pub fn live_sessions(socket: Option<&str>) -> Option<LiveSessions> {
     let mut builder = Command::new("tmux");
     if let Some(socket) = socket {
@@ -344,9 +381,7 @@ mod tests {
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             );
-            let _ = Command::new("tmux")
-                .args(["-L", &socket, "kill-server"])
-                .status();
+            super::kill_test_server(&socket);
             TestServer { socket }
         }
 
@@ -361,9 +396,7 @@ mod tests {
 
     impl Drop for TestServer {
         fn drop(&mut self) {
-            let _ = Command::new("tmux")
-                .args(["-L", &self.socket, "kill-server"])
-                .status();
+            super::kill_test_server(&self.socket);
         }
     }
 
@@ -414,6 +447,28 @@ mod tests {
             .unwrap();
         assert!(first.iter().any(|line| line.trim() == name));
         assert!(second.iter().any(|line| line.trim() == name));
+    }
+
+    /// FAIL-FIRST (D7). Measured before the Drop impl: 60 live tmux processes
+    /// from earlier suite runs, the oldest at 13h36m.
+    #[test]
+    fn a_dropped_control_client_leaves_no_tmux_process() {
+        let server = TestServer::new();
+        server.create_session(&session_name());
+        for _ in 0..3 {
+            let mut client = ControlClient::spawn(Some(&server.socket)).unwrap();
+            let _ = client.command(&["list-sessions", "-F", "#{session_name}"]);
+        }
+        let pattern = format!("tmux -L {} -C", server.socket);
+        let found = Command::new("pgrep")
+            .args(["-f", &pattern])
+            .output()
+            .expect("pgrep available");
+        let pids = String::from_utf8_lossy(&found.stdout);
+        assert!(
+            pids.trim().is_empty(),
+            "dropped clients left tmux processes: {pids}"
+        );
     }
 
     #[test]
