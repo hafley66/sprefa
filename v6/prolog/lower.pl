@@ -1214,7 +1214,7 @@ catalog_one_rel_storage(Mode, [ColumnName | RestColumns], ColumnTypes,
 
 %! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
 %   The relplan carries each column's full type, ref(_) and list(_) included.
-%   The decl half only; the plane half is appended by catalog_all_rows/9.
+%   The decl half only; the plane half is appended by catalog_all_rows/10.
 catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
     catalog_decl_rows(ModuleName, Rules, RelPlans, AllRows, _).
 
