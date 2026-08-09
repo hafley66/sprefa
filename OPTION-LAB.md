@@ -61,7 +61,14 @@ type). This lab decides WHERE the desugar runs and proves the first step.
 ## Results (filled as steps land)
 
 - [x] baseline gates recorded
-- [ ] probes executed with exact outputs
-- [ ] Path B first step + gate slice
-- [ ] Path C cascade receipt
-- [ ] verdict
+- [x] probes executed (exact outputs in plans/2026-08-09-option-path-REPORT.md)
+- [x] Path B first step landed (commit 09a0b5ef): conformance 334/0,
+      plunit 496/0, sweep manifest +4 (3 compiled, key-ban unsupported),
+      TEXT_DOOR 234/234 byte-identical, ARCH green; sabotage receipt red
+- [x] Path C cascade receipt: 3 walls in one probe
+      (0_type_plane.pl:127 -> 0_program_check.pl:342 ->
+      decl_type_conflicts_witness from the typing fixpoint); 9 non-test
+      files by the list(T) precedent; patches reverted, not committed
+- [x] verdict: B wins. A killed: the oracle door (engine.pl:548) never
+      parses, so parse-time desugar leaves fixtures unable to spell option.
+      C killed: blast radius with no capability over B.
