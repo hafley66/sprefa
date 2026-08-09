@@ -43,6 +43,12 @@ pub trait Harness {
         Capabilities::default()
     }
 
+    /// The literal command a spawn would run for `spec`, with nothing
+    /// actually spawned. `None` means no accurate preview for this adapter.
+    fn preview_command(&self, _spec: &SpawnSpec) -> Option<String> {
+        None
+    }
+
     /// Spawn a session per `spec`, returning a handle to it.
     fn spawn(&self, _spec: &SpawnSpec) -> anyhow::Result<SessionRef> {
         anyhow::bail!("harness `{}` has no spawn support", self.id())

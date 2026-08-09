@@ -192,6 +192,16 @@ enum SubCmd {
         tmux: Option<String>,
         #[arg(long)]
         parent: Option<String>,
+        /// New branch name; with `--base-sha`, spawns in a worktree instead
+        /// of `--cwd` directly.
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        base_sha: Option<String>,
+        /// tmux socket to spawn on; a throwaway socket for tests, `None` for
+        /// the default server.
+        #[arg(long)]
+        socket: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
         #[arg(long)]
@@ -366,6 +376,8 @@ fn main() -> Result<()> {
                 resolve_wait,
                 main_tree,
                 base_sha,
+                branch: None,
+                worktree_dir: None,
             },
         ),
         SubCmd::Resolve { to, mail_dir } => run_resolve(&to, mail_dir.as_deref()),
@@ -408,6 +420,9 @@ fn main() -> Result<()> {
             model,
             tmux,
             parent,
+            branch,
+            base_sha,
+            socket,
             mail_dir,
             dry_run,
         } => run_lane(
@@ -420,6 +435,9 @@ fn main() -> Result<()> {
                 model,
                 tmux,
                 parent,
+                branch,
+                base_sha,
+                socket,
                 mail_dir,
                 dry_run,
             },
@@ -910,6 +928,12 @@ struct DispatchArgs {
     resolve_wait: u64,
     main_tree: bool,
     base_sha: Option<String>,
+    /// Overrides the branch name derived from `tmux`/`to`; `lane create`
+    /// sets this from its own `--branch` flag.
+    branch: Option<String>,
+    /// The worktree to create; `None` spawns in `cwd` (`main_tree` decides
+    /// whether that's a fast-forward check or a plain directory).
+    worktree_dir: Option<PathBuf>,
 }
 
 fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
@@ -917,7 +941,10 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
     // The caller is the PARENT of the lane being born, never its identity.
     let caller = identity::resolve(&bus::read_routes(&mail_dir(args.mail_dir.as_deref())?)?)?;
     let harness_id = adapter.id().to_owned();
-    let branch = args.tmux.clone().unwrap_or_else(|| args.to.clone());
+    let branch = args
+        .branch
+        .clone()
+        .unwrap_or_else(|| args.tmux.clone().unwrap_or_else(|| args.to.clone()));
     let base_sha = match &args.base_sha {
         Some(sha) => sha.clone(),
         None => git_head(&args.cwd)?.unwrap_or_else(|| "HEAD".into()),
@@ -945,7 +972,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         prompt: args.cmd.clone(),
         resume_session: args.session_id.clone(),
         socket: args.socket.clone(),
-        worktree_dir: None,
+        worktree_dir: args.worktree_dir.clone(),
         repo: std::path::PathBuf::from(&args.cwd),
         env_stamp: Some(identity::child_stamp(
             &args.to,
@@ -1304,6 +1331,10 @@ fn parse_iso_ms(text: &str) -> Option<u64> {
 // lane
 // ---------------------------------------------------------------------------
 
+/// Source of truth for the flash4 lane default; `Opencode::spawn` reads it
+/// via `BOOP_LANE_MODEL`, never hardcodes it.
+const DEFAULT_LANE_MODEL: &str = "openrouter/deepseek/deepseek-v4-flash-0731";
+
 struct LaneArgs {
     name: String,
     cwd: String,
@@ -1312,22 +1343,65 @@ struct LaneArgs {
     model: Option<String>,
     tmux: Option<String>,
     parent: Option<String>,
+    branch: Option<String>,
+    base_sha: Option<String>,
+    socket: Option<String>,
     mail_dir: Option<PathBuf>,
     dry_run: bool,
 }
 
+/// Register and spawn a lane. No match on harness id here; the adapter's own
+/// `spawn`/`preview_command` decides how `prompt` becomes a real invocation.
 fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
-    let harness = args.harness.unwrap_or_else(|| "opencode".into());
+    let harness_id = args.harness.clone().unwrap_or_else(|| "opencode".into());
+    let adapter = harness_by_id(registry, &harness_id)?;
     let brief = args
         .brief
+        .clone()
         .unwrap_or_else(|| PathBuf::from(&args.cwd).join("brief.md"));
-    let command = lane_command(&harness, &brief, args.model.as_deref());
+    let model = args.model.clone().unwrap_or_else(|| DEFAULT_LANE_MODEL.to_owned());
+    let prompt = brief.display().to_string();
+    let worktree_mode = args.branch.is_some() && args.base_sha.is_some();
+    let branch = args
+        .branch
+        .clone()
+        .unwrap_or_else(|| args.tmux.clone().unwrap_or_else(|| args.name.clone()));
+    let worktree_dir = worktree_mode
+        .then(|| PathBuf::from(&args.cwd).join(".boop-worktrees").join(&branch));
+
+    // preview_command reads BOOP_LANE_MODEL the same way a real spawn would,
+    // so a dry run shows exactly what would run.
+    std::env::set_var("BOOP_LANE_MODEL", &model);
+
     if args.dry_run {
+        let spec = boop::harness::SpawnSpec {
+            harness: harness_id.clone(),
+            branch: branch.clone(),
+            base_sha: args.base_sha.clone().unwrap_or_else(|| "HEAD".to_owned()),
+            main_tree: !worktree_mode,
+            setup: Vec::new(),
+            prompt: prompt.clone(),
+            resume_session: None,
+            socket: args.socket.clone(),
+            worktree_dir: worktree_dir.clone(),
+            repo: PathBuf::from(&args.cwd),
+            env_stamp: None,
+        };
+        let command = adapter
+            .preview_command(&spec)
+            .unwrap_or_else(|| format!("{} {}", adapter.id(), shell_quote(&prompt)));
         println!("cmd: {command}");
         println!("to: {}", args.name);
         println!("cwd: {}", args.cwd);
-        println!("harness: {harness}");
+        println!("harness: {harness_id}");
+        println!("branch: {branch}");
+        if let Some(worktree_dir) = &worktree_dir {
+            println!("worktree: {}", worktree_dir.display());
+        }
         println!("tmux: {}", args.tmux.as_deref().unwrap_or(&args.name));
+        if let Some(parent) = &args.parent {
+            println!("parent: {parent} (accepted, not wired to a completion hail)");
+        }
         return Ok(());
     }
     run_dispatch(
@@ -1335,14 +1409,14 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
         DispatchArgs {
             to: args.name,
             cwd: args.cwd,
-            cmd: build_lane_command(&command, args.parent.as_deref()),
+            cmd: prompt,
             from: None,
-            harness: Some(harness),
+            harness: Some(harness_id),
             session_id: None,
-            model: args.model,
+            model: Some(model),
             mode: Some("auto".into()),
             tmux: args.tmux,
-            socket: None,
+            socket: args.socket,
             body: Some(format!(
                 "Read and execute the lane brief at {}",
                 brief.display()
@@ -1350,38 +1424,16 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             r#ref: Some(brief.display().to_string()),
             mail_dir: args.mail_dir,
             resolve_wait: 3,
-            main_tree: false,
-            base_sha: None,
+            main_tree: !worktree_mode,
+            base_sha: args.base_sha,
+            branch: Some(branch),
+            worktree_dir,
         },
     )
 }
 
-/// When a parent lane is given, append a completion hail so the original cmd
-/// still runs and the lane re-raises its own exit code.
-fn build_lane_command(command: &str, parent: Option<&str>) -> String {
-    match parent {
-        Some(parent) => {
-            format!("{command}; __rc=$?; boop hail --to {parent} --kind result --body \"lane done rc=$__rc\"; exit $__rc")
-        }
-        None => command.to_owned(),
-    }
-}
-
-fn lane_command(harness: &str, brief: &std::path::Path, model: Option<&str>) -> String {
-    let brief = shell_quote_double(&brief.display().to_string());
-    match harness {
-        "opencode" => {
-            let model = model.map(shell_quote_double).unwrap_or_else(|| {
-                shell_quote_double("openrouter/deepseek/deepseek-v4-flash-0731")
-            });
-            format!("opencode run -m {model} --auto \"$(cat {brief})\"")
-        }
-        _ => format!("claude --auto \"$(cat {brief})\""),
-    }
-}
-
-fn shell_quote_double(value: &str) -> String {
-    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1600,6 +1652,16 @@ enum LaneCmd {
         tmux: Option<String>,
         #[arg(long)]
         parent: Option<String>,
+        /// New branch name; with `--base-sha`, spawns in a worktree instead
+        /// of `--cwd` directly.
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        base_sha: Option<String>,
+        /// tmux socket to spawn on; a throwaway socket for tests, `None` for
+        /// the default server.
+        #[arg(long)]
+        socket: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
         #[arg(long)]
@@ -1983,6 +2045,9 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             model,
             tmux,
             parent,
+            branch,
+            base_sha,
+            socket,
             mail_dir,
             dry_run,
         } => run_lane(
@@ -1995,6 +2060,9 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 model,
                 tmux,
                 parent,
+                branch,
+                base_sha,
+                socket,
                 mail_dir,
                 dry_run,
             },
