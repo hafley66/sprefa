@@ -24,8 +24,8 @@
 %                        referee. DeltaTable and BoundarySql carry P1's
 %                        tick-local change stream.
 %
-% plus boot_statements/6, a SEPARATE list of bootstmt(Rel, Sql, Params) (needs
-% Initial, which plan/6 does not carry, plus LevelStatements for the t=0
+% plus boot_statements/7, a SEPARATE list of bootstmt(Rel, Sql, Params) (needs
+% Initial, which the plan does not carry, plus LevelStatements for the t=0
 % level closure -- PHASE C2 RULING 2, boot_level_recompute_statements/2).
 %
 % The lowered representation contains SQL text and plain Prolog structures;
@@ -119,7 +119,7 @@
 % inside one group is refused at strat.pl:topo_order_group/2.
 
 :- module(lower,
-          [ lower_program/2, boot_statements/6, relplan_kind/3,
+          [ lower_program/2, boot_statements/7, relplan_kind/3,
             % The interning contract's mode vocabulary. compile.pl resolves
             % the compile option into the atom the plan term carries.
             intern_mode/2, interned_column/2, string_dictionary_table/1,
@@ -141,7 +141,7 @@
             % emitter can render the intern plan and the plunit units can pin
             % the exact SQL text.
             dictionary_table_name/2, dictionary_render_expr/3,
-            struct_type_plans/2,
+            struct_type_plans/3,
             % The compiler half of the json capture-type table, exported for
             % the unit that pins it equal to body.pl:json_capture_type/2.
             json_capture_json_type/2,
@@ -161,7 +161,7 @@
 :- use_module(analyze).
 :- use_module('compile/registry', [expression/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
-              [ type_definitions/2, type_definition/4, column_storage/3,
+              [ type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,
                 type_field_values/4, declared_type_name/2,
                 relation_columns_and_types/5, relation_value_shape/3,
@@ -795,10 +795,9 @@ catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
 %   the same level rows the DDL minted. Faithful because every step is the same
 %   predicate.
 plan_rule_level_statements(
-        plan(_Name, prog(Decls, _Rules), RelPlans, _ArrivalTargets, RuleOrder,
-             _EdgeRules, _SubscribedRels, Mode),
+        plan(_Name, prog(_Decls, _Rules), LoweringTypes, RelPlans,
+             _ArrivalTargets, RuleOrder, _EdgeRules, _SubscribedRels, Mode),
         RuleLevelStatements) :-
-    type_definitions(Decls, LoweringTypes),
     dictionary_relplans(LoweringTypes, DictionaryRelPlans),
     append(DictionaryRelPlans, RelPlans, BodyRelPlans),
     expand_relation_pattern_rules(LoweringTypes, BodyRelPlans, RuleOrder,
@@ -1908,8 +1907,7 @@ dictionary_render_expr(TypeName, Column, Expr) :-
 % parameter, so the statement count is FLAT in the number of arriving values
 % (v6/tsv2/tests/structPlane.test.ts is the count receipt). The N+1 law is
 % structural here, not a lint: there is no per-row shape to fall into.
-struct_type_plans(Decls, Plans) :-
-    type_definitions(Decls, Types),
+struct_type_plans(Decls, Types, Plans) :-
     (   Types == []
     ->  Plans = []
     ;   type_topological_order(Types, Ordered),
@@ -5366,9 +5364,8 @@ struct_intern_statements(Mode, Decls, Types, TypeName, Value, LookupSlot, Lookup
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
-lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder, EdgeRules, _SubscribedRels, Mode),
+lower_program(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans, ArrivalTargets, RuleOrder, EdgeRules, _SubscribedRels, Mode),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
-    type_definitions(Decls, LoweringTypes),
     findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),
     findall(LevelHeadedRef,
             ( member(LevelRule, RuleOrder), rule_head_ref(LevelRule, LevelHeadedRef) ),
@@ -5456,8 +5453,8 @@ arrival_target_relplan(ArrivalTargets, relplan(Ref, _, _, _, _)) :- memberchk(Re
 % (head_move_flips_current_tree_in_one_tick) only reached compilation once
 % unmarked edge triggers were accepted, and its "before" snapshot was empty
 % at tick 1 without this.
-boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, BootStatements) :-
-    type_definitions(Decls, Types),
+boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements,
+                BootStatements) :-
     maplist(boot_seed_statement_for(Mode, Decls, Types, Initial), RelPlans, SeedGroups),
     append(SeedGroups, SeedStatements),
     boot_level_recompute_statements(LevelStatements, LevelBootStatements),

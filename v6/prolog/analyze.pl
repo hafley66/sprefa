@@ -17,7 +17,7 @@
             aggregate_head_template/2, rule_is_aggregate/1,
             body_guard_goals/2, guard_goal/1, bind_goal/3, tick_goal/2,
             program_uses_tick/2, program_uses_catalog/2,
-            program_column_types/7, reset_body_use_cache/0,
+            program_column_types/8, reset_body_use_cache/0,
             literal_witness/1,
             level_body_latest_ref/2, level_body_pre_ref/2,
             listened_departure_refs/2, rel_rule_observers/3,
@@ -394,12 +394,14 @@ rel_column_types(Rules, Initial, Schedule, Name/Arity, Types) :-
     numlist(1, Arity, Positions),
     maplist(column_type_at(Rules, Initial, Schedule, Name/Arity), Positions, Types).
 
-rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, Types) :-
+rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, ColumnTypes) :-
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
     Ref = _Name/Arity,
     numlist(1, Arity, Positions),
-    maplist(column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns),
-            Positions, Types).
+    type_definitions(Decls, Types),
+    maplist(column_type_at_decl(Decls, Types, Rules, Initial, Schedule, Ref,
+                                Columns),
+            Positions, ColumnTypes).
 
 % STRUCT-AS-ROWS: the declared type goes through 0_type_plane.pl:
 % column_storage/3 before it becomes a STORAGE kind, so `int`/`text` are
@@ -412,11 +414,11 @@ rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, Types) :-
 % two scalar kinds. A ref column has no literal witness by construction (a
 % struct value is compound, never atomic/1), and a struct value in a column
 % declared int is already the type_arrival_shape_mismatch unsupported construct.
-column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Type) :-
+column_type_at_decl(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
+                    Position, Type) :-
     nth1(Position, Columns, Column),
     ( memberchk(col_type(Ref, Column, DeclaredType), Decls)
-    -> type_definitions(Decls, Types),
-       column_storage(Types, DeclaredType, Storage),
+    -> column_storage(Types, DeclaredType, Storage),
        findall(WitnessType,
                 ( column_source_args(Rules, Initial, Schedule, Ref, Args),
                   nth1(Position, Args, Witness),
@@ -504,17 +506,18 @@ literal_witnesses_type(Witnesses, Type) :-
 
 % RefColumns comes in because the caller's own rel plan needs the same map, and
 % rel_columns/5 walks every rule body for every column.
-program_column_types(Decls, Rules, Initial, Schedule, Refs, RefColumns, RefTypes) :-
+program_column_types(Decls, Types, Rules, Initial, Schedule, Refs, RefColumns,
+                     RefTypes) :-
     findall(Ref-Seeds,
             ( member(Ref, Refs),
               memberchk(Ref-Columns, RefColumns),
-              seed_column_contributions(Decls, Rules, Initial, Schedule, Ref,
-                                        Columns, Seeds) ),
+              seed_column_contributions(Decls, Types, Rules, Initial, Schedule,
+                                        Ref, Columns, Seeds) ),
             SeedMap),
     column_type_fixpoint(Rules, RefColumns, SeedMap, SeedMap, Settled),
-    findall(Ref-Types,
+    findall(Ref-ColumnTypes,
             ( member(Ref-Contributions, Settled),
-              maplist(contribution_to_type, Contributions, Types) ),
+              maplist(contribution_to_type, Contributions, ColumnTypes) ),
             RefTypes).
 
 contribution_to_type(frozen(Type), Type) :- !.
@@ -527,16 +530,19 @@ raw_contribution(open(Type), Type).
 % frozen(Type) = a declared col_type/3, the authority no rule contribution
 % may revise (the wave-2 spelling ruling). open(Contribution) = inferred,
 % still widenable.
-seed_column_contributions(Decls, Rules, Initial, Schedule, Ref, Columns, Seeds) :-
+seed_column_contributions(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
+                          Seeds) :-
     Ref = _Name/Arity,
     numlist(1, Arity, Positions),
-    maplist(seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns),
+    maplist(seed_column_contribution(Decls, Types, Rules, Initial, Schedule,
+                                     Ref, Columns),
             Positions, Seeds).
 
-seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Seed) :-
+seed_column_contribution(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
+                         Position, Seed) :-
     nth1(Position, Columns, Column),
     ( memberchk(col_type(Ref, Column, _), Decls)
-    -> column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns,
+    -> column_type_at_decl(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
                            Position, DeclaredType),
        Seed = frozen(DeclaredType)
     ;  findall(Witness,

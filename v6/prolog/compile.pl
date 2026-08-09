@@ -42,7 +42,8 @@
                 parse_dl_line_for_reason/2
               ]).
 :- use_module('diag', [emit_diag_file/2]).
-:- use_module('0_type_plane', [world_row_shape_violation/3]).
+:- use_module('0_type_plane',
+              [world_row_shape_violation/3, type_definitions/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -76,12 +77,14 @@ find_fixture(Stream, Name, Term, Bindings) :-
     ; find_fixture(Stream, Name, Term, Bindings)
     ).
 
-% @comment-ok: plan/8 field contract, the record's single documentation site
+% @comment-ok: plan/9 field contract, the record's single documentation site
 % ═══ the compile plan : everything lower.pl and emit_ts.pl need, computed
 % once so both stay pure functions of it rather than re-deriving it ═════════
 %
-% plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
+% plan(Name, Prog, Types, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
 %      SubscribedRels, InternMode)
+%   Types: 0_type_plane.pl:type_definitions/2 over Prog's Decls; carried so
+%          plan consumers read it instead of re-deriving it.
 %   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone,
 %             ColumnTypes) covering every ref program_refs/2 or typed
 %             declaration finds (arrival
@@ -171,6 +174,8 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     materialize_reference_target_rels(ExpandedProg, ReferencedProg),
     materialize_catalog_rel(ReferencedProg, Prog),
     Prog = prog(Decls, Rules),
+    % Every later plan step and every plan consumer reads this table.
+    type_definitions(Decls, Types),
     % ..._expanded/1, not check_supported_subset/1: Prog is ALREADY expanded
     % here, and the sugared entry expands again. That second expansion was the
     % redundant order site rank R3 removes.
@@ -209,8 +214,8 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     findall(Ref-Columns,
             ( member(Ref, AllRefs), rel_columns(Decls, Rules, Bindings, Ref, Columns) ),
             RefColumns),
-    program_column_types(Decls, Rules, Initial, Schedule, AllRefs, RefColumns,
-                         RefTypes),
+    program_column_types(Decls, Types, Rules, Initial, Schedule, AllRefs,
+                         RefColumns, RefTypes),
     findall(relplan(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
             ( member(Ref, AllRefs),
               rel_kind(Decls, Ref, Kind),
@@ -229,8 +234,8 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     findall(QueryAtom, member(query(QueryAtom), Decls), Queries),
     subscribed_rels(Decls, Rules, Queries, SubscribedRels),
     intern_mode(Options, InternMode),
-    Plan = plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
-                SubscribedRels, InternMode).
+    Plan = plan(Name, Prog, Types, RelPlans, ArrivalTargets, RuleOrder,
+                EdgeRules, SubscribedRels, InternMode).
 
 % ═══ the compiler-owned `__` namespace ══════════════════════════════════════
 % SQLite gives tables and views one namespace, so a user `__txt_x` collides.
@@ -418,11 +423,11 @@ compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
     run_compile_phase(lower,
                       lower_program(Plan, Lowered),
                       LowerMeasurement),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
     run_compile_phase(
         boot,
-        boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements,
+        boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements,
                         BootStatements),
         BootMeasurement),
     run_compile_phase(
