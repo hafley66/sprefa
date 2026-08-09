@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"person":{"add":[[7,"ada"]],"del":[]}}}
+{"tick":2,"deltas":{"commit":{"add":[[101],[102]],"del":[]}}}
+{"tick":3,"deltas":{"commit__reviewed_by":{"add":[[101,7]],"del":[]},"reviewed":{"add":[[101,"ada"]],"del":[]}}}
+{"tick":4,"deltas":{"commit__reviewed_by":{"add":[],"del":[[101,7]]},"reviewed":{"add":[],"del":[[101,"ada"]]}}}

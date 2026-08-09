@@ -1226,7 +1226,7 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % the count is the rail's twin, not a fresh check over different rows.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-40, refcount-281, refcount_staging-281,
+    Counts = [scope-40, refcount-286, refcount_staging-286,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
@@ -3844,7 +3844,7 @@ nonexhaustive_match(Program) :-
 test(declared_phase_order) :-
     findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
     msort(Unordered, Ordered),
-    Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match,
+    Ordered == [5-option, 10-enum, 20-decl_spread, 30-row_spread, 40-match,
                 42-seq, 44-dot, 45-coalesce, 46-ast, 47-negated_guard,
                 50-relation_edge].
 

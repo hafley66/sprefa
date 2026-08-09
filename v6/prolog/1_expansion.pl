@@ -14,6 +14,7 @@
 
 :- use_module(library(lists)).
 :- use_module('0_enum_expand', [enum_context/2]).
+:- use_module('0_option_expand', [expand_option_decls/2]).
 :- use_module('0_match_expand', []).
 :- use_module('0_seq_expand', []).
 :- use_module('0_coalesce_expand', []).
@@ -24,6 +25,7 @@
 
 % ── the order, stated once ───────────────────────────────────────────────────
 
+expansion_phase(5,  option,      option_expand:expand_option_in_context).
 expansion_phase(10, enum,        enum_expand:expand_enum_in_context).
 expansion_phase(20, decl_spread, unwired).
 expansion_phase(30, row_spread,  unwired).
@@ -73,7 +75,10 @@ expand_program_with_bindings(SurfaceProgram, Bindings,
 expand_program_run(SurfaceProgram, Bindings, ExpandedProgram,
                    ExpansionContext) :-
     SurfaceProgram = prog(SurfaceDecls, _),
-    enum_context(SurfaceDecls, EnumContext),
+    % The context must include the enums option expansion mints; the phase
+    % re-running inside the fold is a no-op (expand_option_decls idempotent).
+    expand_option_decls(SurfaceDecls, DeclsForEnumContext),
+    enum_context(DeclsForEnumContext, EnumContext),
     findall(Order-Name-Expander,
             expansion_phase(Order, Name, Expander),
             UnorderedPhases),
