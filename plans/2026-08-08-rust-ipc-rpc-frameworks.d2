@@ -1,0 +1,19 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+rung1: "1. run the binary\nCLI structured stdout"
+rung2: "2. stdio framed JSON\nLSP child process"
+rung3: "3. UDS + serde\nipc-channel, capnp,\ntarpc, zeromq"
+rung4: "4. JSON-RPC\njsonrpsee"
+rung5: "5. gRPC / Connect\ntonic, connectrpc\n(schema + codegen)"
+
+rung1 -> rung2: spawn
+rung2 -> rung3: frames
+rung3 -> rung4: dispatch
+rung4 -> rung5: contract

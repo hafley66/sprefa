@@ -1,0 +1,29 @@
+direction: right
+title: Rust same-machine IPC layer stack
+
+kernel: {
+  label: kernel\nmechanism
+  shm: memfd / mmap\nshared memory
+  uds: unix domain\nsocket
+  wake: eventfd /\nkqueue wake
+}
+transport: {
+  label: transport
+  sqlite: SQLite WAL\n(-shm)
+  iox2: iceoryx2
+  mm: memmap2 shm
+  ipc: interprocess\nUDS + pipes
+}
+framing: {
+  label: framing
+  nl: newline-json
+  len: length-\nprefixed
+}
+payload: {
+  label: payload\nformat
+  zc: rkyv / capnp\n / flatbuffers
+  bin: postcard /\nbincode / json
+}
+kernel -> transport: syscalls
+transport -> framing: frames
+framing -> payload: bytes
