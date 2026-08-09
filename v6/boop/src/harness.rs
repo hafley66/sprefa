@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::event::AgentEvent;
 
 pub mod claude;
+pub mod codex;
 pub mod opencode;
 
 /// One agent harness that writes transcripts to this machine.
