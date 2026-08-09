@@ -27,6 +27,7 @@
                 intern_write_sql/4,
                 catalog_ddl_contract/2,
                 catalog_rows/4,
+                catalog_all_rows/5,
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
@@ -910,6 +911,48 @@ test(catalog_rows_are_one_statement) :-
             ( member(Seed, Ddl),
               sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') ),
             [_OneSeed]).
+
+% Step 2 scaffold receipt: with the plane half empty, the full producer emits
+% exactly the decl rows, so nothing delivered before step 3 moves.
+test(catalog_all_rows_equals_decl_rows) :-
+    RelPlans = [ relplan(node/1, set, [id], none, [int]),
+                 relplan(holder/1, set, [item, target], none, [text, ref(node)]),
+                 relplan(items/1, set, [list_col], none, [list(text)]) ],
+    lower:catalog_rows(catalog_all_eq, [], RelPlans, DeclRows),
+    lower:catalog_all_rows(direct, catalog_all_eq, [], RelPlans, AllRows),
+    AllRows == DeclRows.
+
+% The split's receipt at the DDL level: rendering the decl half and the full
+% list yields the SAME statement, and that statement is what the live seed
+% emits, so the seed is byte-identical before and after the split.
+test(catalog_seed_ddl_byte_identical_after_split) :-
+    catalog_program(Term),
+    once(program_plan(Term-[], [intern(direct)], Plan)),
+    Plan = plan(Name, prog(_, Rules), RelPlans, _, _, _, _, _),
+    lower:catalog_rows(Name, Rules, RelPlans, DeclRows),
+    lower:catalog_all_rows(direct, Name, Rules, RelPlans, AllRows),
+    catalog_seed_render(DeclRows, DeclSeed),
+    catalog_seed_render(AllRows, AllSeed),
+    DeclSeed == AllSeed,
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    once(( member(Seed, Ddl),
+           sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"') )),
+    Seed == DeclSeed.
+
+% Reconstruct the seed statement the way catalog_row_ddl/5 does, in direct
+% mode where every text column literal is plain single-quoted.
+catalog_seed_render(Rows, Statement) :-
+    maplist(catalog_seed_part, Rows, Parts),
+    atomic_list_concat(Parts, ',', ValuesText),
+    format(atom(Statement),
+           'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule") VALUES ~w',
+           [ValuesText]).
+
+catalog_seed_part(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
+                       ModuleId, HId, HSchema, HRule), Part) :-
+    format(atom(Part), '(~d,~d,~d,\'~w\',\'~w\',~d,~d,~d,\'~w\',\'~w\',\'~w\')',
+           [RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
+            ModuleId, HId, HSchema, HRule]).
 
 % Ids are positional and self-description terminates in ONE pass: the catalog
 % rel gets its own row and its six column rows, then the user's rel follows.
