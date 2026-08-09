@@ -613,9 +613,19 @@ decl_a_stmt(DeclList, S0, S) :-
     typed_decl_entries(Ref, Specs, TypedDecls),
     decl_a_modifiers(Ref, Modifiers, S9, S10),
     module_path_decls(Segments, Ref, PathDecls),
-    append([TypedDecls, Modifiers, PathDecls], DeclList),
+    column_less_decls(Ref, Specs, Modifiers, UnitDecls),
+    append([TypedDecls, Modifiers, PathDecls, UnitDecls], DeclList),
     ws0(S10, S11),
     lit_dcg(`.`, S11, S).
+
+% A module IS a rel/0, so the degenerate rel has to be declarable; with no
+% column, kind/2 is the only entry that can carry that it was declared.
+column_less_decls(_, Specs, _, []) :- Specs \== [], !.
+column_less_decls(Ref, _, Modifiers, Decls) :-
+    (   memberchk(kind(Ref, _), Modifiers)
+    ->  Decls = []
+    ;   Decls = [kind(Ref, set)]
+    ).
 
 % One segment joins to the same atom it always was, so a flat decl is
 % unchanged. Column order records under this name, so named args resolve here.

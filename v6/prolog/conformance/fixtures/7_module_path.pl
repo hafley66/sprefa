@@ -307,3 +307,29 @@ fixture(nested_child_and_an_option_column_coexist,
         final(labelled/2, [labelled(7, some)]),
         ticks(2)
     ]).
+
+% A child declaring NO columns still captures: the parent ref is its only
+% column, so the marker is one row per parent row and never one row total.
+% rx: distinct-by-parent, the degenerate groupBy where each group holds one.
+fixture(nested_zero_column_child_is_one_row_per_parent,
+    prog(
+        [ col_type(orchard/1, orchard_id, int),
+          rel_path_decl(orchard__flag/0, [orchard, flag]),
+          kind(orchard__flag/0, set),
+          col_type(planted/2, orchard_id, int),
+          col_type(planted/2, tree_id, int),
+          col_type(flagged/1, orchard_id, int)
+        ],
+        [ (orchard(OrchardId) <- planted(OrchardId, _)),
+          (orchard__flag <- orchard(Oid), planted(Oid, _)),
+          (flagged(1) <- orchard__flag) ]),
+    [],
+    [
+        [+planted(1, 7), +planted(1, 8), +planted(2, 9)]
+    ],
+    [
+        final(orchard__flag/1, [orchard__flag(obj([orchard_id-1])),
+                                orchard__flag(obj([orchard_id-2]))]),
+        final(flagged/1, [flagged(1)]),
+        ticks(1)
+    ]).

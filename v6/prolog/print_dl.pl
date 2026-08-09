@@ -228,6 +228,9 @@ decl_order_item(Decl, Decl) :- Decl = type_decl(_, _).
 decl_order_item(Decl, Decl) :- Decl = sh_decl(_, _, _, _).
 decl_order_item(Decl, Decl) :- Decl = bind_decl(_, _).
 decl_order_item(kind(Ref, log), Ref).
+% Arity 0 only: a column-bearing rel prints from its col_type entries, and a
+% kind(Ref, set) line there would double the decl.
+decl_order_item(kind(Name/0, set), Name/0).
 decl_order_item(keyed(Ref, _), Ref).
 decl_order_item(keep(Ref, _), Ref).
 decl_order_item(col_type(Ref, _, _), Ref).
@@ -271,6 +274,18 @@ decl_line(_, _, _, bind_decl(Name, Columns), Line) :-
     maplist(print_host_column, Columns, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
     format(atom(Line), "bind ~w(~w).~n", [Name, ColumnsText]).
+% rel_columns/5 runs numlist(1, Arity, _), which fails outright at arity 0.
+decl_line(Decls, _Rules, _Bindings, Name/0, Line) :-
+    !,
+    decl_ref_spelling(Decls, Name/0, Spelling),
+    findall(Decl, ( member(Decl, Decls), decl_is_modifier(Decl, Name/0) ),
+            RefDecls),
+    maplist(print_decl_modifier, RefDecls, ModifierTexts),
+    ( ModifierTexts == []
+    -> ModifiersText = '', Sep = ''
+    ; atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
+    ),
+    format(atom(Line), "rel ~w()~w~w.~n", [Spelling, Sep, ModifiersText]).
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
     decl_ref_spelling(Decls, Ref, Name),
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
@@ -367,13 +382,27 @@ rule_line(Bindings, match(SourceAtom, Arms), Text) :-
     atomic_list_concat(ArmTexts, "\n  ; ", ArmsText),
     format(atom(Text), "match ~w (\n  ; ~w\n).~n", [SourceText, ArmsText]).
 rule_line(Bindings, (Head <- Body), Line) :- !,
-    print_term(Head, Bindings, 0, top, HeadText),
+    print_goal_term(Head, Bindings, HeadText),
     print_body(Body, Bindings, BodyText),
     format(atom(Line), "~w <- ~w.~n", [HeadText, BodyText]).
 rule_line(Bindings, (Head <+ Body), Line) :- !,
-    print_term(Head, Bindings, 0, top, HeadText),
+    print_goal_term(Head, Bindings, HeadText),
     print_body(Body, Bindings, BodyText),
     format(atom(Line), "~w <+ ~w.~n", [HeadText, BodyText]).
+
+% A rel/0 atom is a GOAL and the SAME atom in an argument is a data value, so
+% the `name()` spelling belongs to head and goal positions alone.
+print_goal_term(Term, Bindings, Text) :-
+    (   relation_atom_of_arity_zero(Term)
+    ->  format(atom(Text), "~w()", [Term])
+    ;   print_term(Term, Bindings, 0, top, Text)
+    ).
+
+% The surface-word clause of print_body_item/3 runs first, so anything still
+% a bare atom at this point is an ordinary relation.
+relation_atom_of_arity_zero(Term) :-
+    atom(Term),
+    Term \== true.
 
 query_line(Bindings, query(Atom), Line) :-
     print_term(Atom, Bindings, 0, top, AtomText),
@@ -422,6 +451,9 @@ print_body_item(cst(Path, Digest, Language, Query), Bindings, Text) :-
 print_body_item(Term, Bindings, Text) :-
     body_surface_for_term(Term, _, _, _, LowerRole, _), !,
     print_surface_body_item(LowerRole, Term, Bindings, Text).
+print_body_item(Term, Bindings, Text) :-
+    relation_atom_of_arity_zero(Term), !,
+    print_goal_term(Term, Bindings, Text).
 print_body_item(Term, Bindings, Text) :-
     print_term(Term, Bindings, 0, top, Text).
 

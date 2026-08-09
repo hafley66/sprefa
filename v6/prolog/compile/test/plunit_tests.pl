@@ -1296,12 +1296,11 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % Step 4's families, counted across the same corpus the name rail walks. The
 % six level-statement families must mint in step with their DDL mint sites, so
 % the count is the rail's twin, not a fresh check over different rows.
-% Measured with the compiler change and the OLD fixture file: the counts hold
-% at 40/293/293/8/12/2, so every move here is a new module_path fixture and
-% never a lowering that grew.
+% Re-measured each time against the OLD fixture file (40/293/293, then
+% 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-41, refcount-309, refcount_staging-309,
+    Counts = [scope-41, refcount-312, refcount_staging-312,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
@@ -5534,6 +5533,90 @@ test(a_mangle_colliding_with_an_option_companion_takes_the_digest) :-
     memberchk(col_type(Digested/1, note, text), Decls).
 
 :- end_tests(module_path_decls).
+
+:- begin_tests(rel_zero_arity).
+
+parsed_zero_arity_program(Source, Decls, Rules) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(Decls, Rules), _, [])).
+
+% A module IS a rel/0, so the degenerate rel has to be declarable. Before
+% column_less_decls/4, `rel foo().` produced NO decl at all: every entry it
+% could carry is derived from a column it does not have.
+test(a_column_less_rel_declares_itself_through_its_kind) :-
+    parsed_zero_arity_program('rel foo().', Decls, _),
+    Decls == [kind(foo/0, set)].
+
+test(a_column_less_log_rel_does_not_double_its_kind) :-
+    parsed_zero_arity_program('rel foo() log.', Decls, _),
+    Decls == [kind(foo/0, log)].
+
+test(a_column_bearing_rel_keeps_carrying_only_its_columns) :-
+    parsed_zero_arity_program('rel foo(n: int).', Decls, _),
+    Decls == [col_type(foo/1, n, int)].
+
+% CANONICAL TEXT FORM, chosen here: `name()` in every rule position, which is
+% what head_atom/6 and relatom_item/6 already parse. A bare atom is NOT it --
+% print_dl emitted 'foo' and the reparse read a quoted value.
+zero_arity_round_trip(Source, Program, RoundTripped, Text) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    once(print_dl_program(Program, Bindings, Text)),
+    atom_codes(Text, PrintedCodes),
+    once(parse_dl(PrintedCodes, RoundTripped, _, [])).
+
+test(a_root_rel_zero_prints_and_reparses) :-
+    zero_arity_round_trip(
+        'rel foo().\nrel seed(n: int).\nfoo() <- seed(1).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel foo().')),
+    once(sub_atom(Text, _, _, _, 'foo() <- seed(1).')),
+    Program =@= RoundTripped.
+
+test(a_rel_zero_read_in_a_body_prints_at_goal_position) :-
+    zero_arity_round_trip(
+        'rel foo().\nrel seed(n: int).\nrel lit(n: int).\nfoo() <- seed(1).\nlit(1) <- foo().',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'lit(1) <- foo().')),
+    Program =@= RoundTripped.
+
+% The same atom as a DATA value keeps its value spelling: `name()` is a
+% goal-position spelling, never a term-shape one.
+test(a_rel_zero_name_used_as_a_value_keeps_its_value_spelling) :-
+    Program = prog([col_type(note/1, word, text)],
+                   [(note(foo) <- seed(1))]),
+    once(print_dl_program(Program, [], Text)),
+    once(sub_atom(Text, _, _, _, 'note(\'foo\')')).
+
+test(a_column_less_nested_rel_prints_at_its_path) :-
+    zero_arity_round_trip(
+        'rel orchard(orchard_id: int).\nrel orchard.flag().\nrel planted(orchard_id: int).\norchard.flag() <- orchard(OrchardId), planted(OrchardId).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel orchard.flag().')),
+    Program =@= RoundTripped.
+
+% GAP PINNED, NOT FIXED. A ROOT rel/0 parses, prints and round-trips, then has
+% no storage: analyze.pl:rel_columns/4 opens with numlist(1, Arity, _), which
+% FAILS at arity 0, so no relplan is built for the ref and lower_program/2
+% fails silently -- no DDL, no refusal, no output. The numlist guard alone is
+% not the fix: SQLite has no zero-column table, so a true rel/0 needs a
+% unit-row storage decision (one sentinel column holding 0 or 1 rows) threaded
+% through every level-statement family. A NESTED rel/0 is unaffected, since
+% the implicit parent ref makes it arity 1 with ordinary storage.
+% rx: a rel/0 is a proposition, so its stream carries the unit tuple and reads
+% as isEmpty()/defaultIfEmpty() rather than as a row set.
+test(a_root_rel_zero_still_has_no_storage) :-
+    parsed_zero_arity_program(
+        'rel foo().\nrel seed(n: int).\nfoo() <- seed(1).', Decls, Rules),
+    memberchk(kind(foo/0, set), Decls),
+    once(program_plan(fixture(root_rel_zero, prog(Decls, Rules), [], [], [])-[],
+                      [intern(dict)], Plan)),
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
+    \+ memberchk(rel(foo/0, _, _, _), RelPlans),
+    \+ analyze:rel_columns(Rules, [], foo/0, _),
+    \+ lower_program(Plan, _).
+
+:- end_tests(rel_zero_arity).
 
 fact_probe_text("rel max_run(limit_lines: int).
 rel doubled_limit(limit_doubled: int).

@@ -616,6 +616,13 @@
     "final_detail": ""
   },
   {
+    "name": "nested_zero_column_child_is_one_row_per_parent",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_string_control_escapes_are_valid_json",
     "bucket": "identical",
     "detail": "",
