@@ -1721,6 +1721,30 @@ sites but not against new code. **missing** = nothing.
   installing violates the worktree-dispatch law's "working around a blocked
   command" clause.
 
+## 44. A receipt script whose findall swallows plain failure (green gate, zero comparisons)
+
+- INCIDENT (2026-08-09): `just text-door` printed `TEXT_DOOR compiled=0
+  byte_identical=0 failures=0` and exited 0 on main. It had compared ZERO
+  programs since `863fe1d5` (interning arc, 2026-08-08) grew the plan term
+  from `plan/7` to `plan/8`: `text_door_receipt.pl:188` destructured 7 args,
+  the unification FAILED without throwing, `grade_text_door` failed, and the
+  enumerating `findall/3` dropped every entry silently. 196 fixtures' term-vs-
+  text byte-comparisons vanished; the PR #57-#61 wave merged behind the empty
+  green gate. Surfaced by lane catalog1's deviation report (fresh worktree
+  read 0/0/0; a stash run proved it pre-existing at base).
+- RCA, two defects in firing order: (1) `plan/N` grew without a consumer grep;
+  the receipt script consults compile.pl from outside, so no load-time arity
+  error exists to catch it. (2) The findall goal had failure statuses only for
+  THROWN errors — a plainly-failing `grade_one` produced no status at all, and
+  the header's dynamic-count contract ("no frozen count") made 0 a legal total.
+- FIX: `plan/8` destructure; the findall goal wraps `grade_one` in if-then-else
+  minting `failure(Name, grade_pipeline_failed)` on plain failure. Receipt on
+  one tree: `compiled=0` before, `compiled=231 byte_identical=231 failures=0`
+  after (196 grew to 231 with the revival fixtures).
+- RAIL: the `grade_pipeline_failed` arm — proven fail-pre-fix by reverting the
+  arity fix alone: all 231 entries land in failures and the script halts 1.
+  Any future `plan/N` drift turns this gate red instead of empty.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
