@@ -72,8 +72,8 @@ grade(cons, cardinality, best,
 %
 %   1. one column_storage/3 clause     -- list(T) stores TEXT
 %   2. one element-type guard          -- T must be a scalar type
-%   3. one named refusal for list(Rel) -- ids would enter the tick log
-%   4. one named refusal for list(list(_)) -- nesting is `json`, not list(T)
+%   3. one named unsupported construct for list(Rel) -- ids would enter the tick log
+%   4. one named unsupported construct for list(list(_)) -- nesting is `json`, not list(T)
 %
 % There is no type variable, no unification, no instantiation: T ranges over a
 % CLOSED four-element set of scalar types. That is why list(T) can be the only
@@ -207,7 +207,7 @@ SELECT count(*) FROM indexed_elem WHERE array_id=99;',
     format("PASS T5 carrier distinguishes [] from absent; indexed rows cannot without a header~n").
 
 % T6 -- the checker delta, executed: four clauses buy the whole feature, and
-% the two refusals are named rather than silent.
+% the two unsupported constructs are named rather than silent.
 receipt_checker_delta_is_four_clauses :-
     forall(member(Element, [int, text, bool, float]),
            proto_column_storage([], list(Element), text)),

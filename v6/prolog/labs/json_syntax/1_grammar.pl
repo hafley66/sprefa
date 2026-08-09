@@ -419,7 +419,7 @@ receipt_trailing_comma_and_comment :-
 % R7 -- EXTENSIBILITY, the directive's "`{` will later be abused beyond json".
 % The seam is free in the prolog term form: swipl already reads `tag{...}` as a
 % native dict, a term shape that CANNOT unify with `{}/1`. So reserving
-% `Tag{...}` today costs one refusal and zero ambiguity, and the later
+% `Tag{...}` today costs one unsupported construct and zero ambiguity, and the later
 % non-json brace form has a home that does not move the json spelling.
 receipt_brace_tag_seam_is_free_in_prolog :-
     term_to_atom(Plain, '{a: 1}'),

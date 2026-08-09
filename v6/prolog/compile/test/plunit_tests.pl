@@ -17,8 +17,8 @@
               [ read_fixture_term/4, program_plan/2, program_plan/3,
                 compile_dl6/2, default_intern_mode/1,
                 compiler_owned_contract/1 ]).
-:- use_module('../../0_refusal_messages',
-              [ refusal_inventory/1, refusal_message_clause_count/1 ]).
+:- use_module('../../0_unsupported_messages',
+              [ unsupported_inventory/1, unsupported_message_clause_count/1 ]).
 :- use_module('../../strat', [ stratum_groups/2 ]).
 :- use_module('../../lower',
               [ lower_program/2, compile_expr/7, compile_comparison/4,
@@ -40,7 +40,7 @@
                 expand_program_with_bindings/4 ]).
 % remaining_line_column/3 is exported for the parse_error_positions unit, which
 % checks the line table against a prefix walk at every index of a text; going
-% through parse_dl/4 alone only reaches the positions a refusal happens to land
+% through parse_dl/4 alone only reaches the positions a unsupported construct happens to land
 % on.
 :- use_module('../../compile/parse_dl', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
 :- use_module('../../use_resolve',
@@ -1084,7 +1084,7 @@ test(catalog_inferred_list_column_resolves_to_the_list_row) :-
 % guard itself fires rather than silently passing through.
 
 % EXPRESSION + AGGREGATE LIFT: count/sum/min/max are LOWERED now, so the
-% blanket aggregate refusal is gone and the gate must accept them.
+% blanket aggregate unsupported construct is gone and the gate must accept them.
 test(accepts_count_aggregate_head) :-
     Prog = prog([], [ (total(count(X)) <- item(X)) ]),
     check_supported_subset(Prog).
@@ -1141,7 +1141,7 @@ test(rejects_self_reading_aggregate_head,
 % ═══ compound pattern against a WORLD-FED rel (the two encodings) ══════════
 %
 % FAIL-FIRST RECEIPT (fork_join_malformed_json arc, brief
-% plans/2026-07-31-forkjoin-defect-brief.md). Before the refusal existed both
+% plans/2026-07-31-forkjoin-defect-brief.md). Before the unsupported construct existed both
 % tests below were RED, and the second one is the one that mattered:
 %   RED (rejects_compound_pattern_on_arrival_rel): no_exception -- the program
 %        compiled clean and the emitted module then died at run time with
@@ -1158,7 +1158,7 @@ test(rejects_self_reading_aggregate_head,
 %        non-JSON text is an ERROR in sqlite, not NULL:
 %          sqlite> SELECT json_extract('ok(body_one)', '$.fn');
 %          Error: stepping, malformed JSON
-%   GREEN: the refusal below, and the accept case still accepting.
+%   GREEN: the unsupported construct below, and the accept case still accepting.
 %
 % The oracle deliberately keeps EXECUTING this program (operators.pl's
 % fork_join_error_arm_is_a_value has a complete two-tick log): unifying
@@ -1176,7 +1176,7 @@ test(rejects_compound_pattern_on_arrival_rel,
 % column is written by the head expression that produced it and therefore
 % carries the json1 tagged encoding the destructure reads. This is
 % scopes.pl:switch_as_keyed_replace's shape (`demanded(route_data(RouteId), _)`
-% over a level-headed `demanded`), the fixture the refusal must not touch.
+% over a level-headed `demanded`), the fixture the unsupported construct must not touch.
 test(accepts_compound_pattern_on_derived_rel) :-
     Prog = prog([ keyed(open_scope/2, [1]) ],
                 [ (open_scope(SessionId, route_data(RouteId)) <+
@@ -1188,15 +1188,15 @@ test(accepts_compound_pattern_on_derived_rel) :-
 
 % An EDGE trigger argument is already refused, and more precisely, as
 % trigger_arg_not_var: a trigger position must be a plain variable, full stop.
-% The first draft of the refusal above walked edge bodies too and silently
+% The first draft of the unsupported construct above walked edge bodies too and silently
 % restated state_machine.pl:async_state_machine_with_pattern_scan and
 % same_tick_error_then_fresh_chains_arms as the new class, rewriting their
 % dl_view along with it. This pins the split of ownership, not just the fact
 % that something refuses.
 % trigger_arg_not_var is thrown by lower.pl:compile_trigger_bound/4, LATER than
 % check_supported_subset/1, so the gate has to stay silent here for the
-% lowering to reach its own sharper refusal at all.
-test(edge_trigger_compound_keeps_its_own_refusal,
+% lowering to reach its own sharper unsupported construct at all.
+test(edge_trigger_compound_keeps_its_own_unsupported,
      [throws(unsupported_construct(trigger_arg_not_var(error(_))))]) :-
     Prog = prog([ kind(fetch_result/2, log), keep(fetch_result/2, all),
                   keyed(phase/2, [1]) ],
@@ -1210,7 +1210,7 @@ test(edge_trigger_compound_keeps_its_own_refusal,
 % its own branch for it, ahead of the compound branch, and emits a plain
 % column literal with no json1 anywhere. bool_relation_negation_is_two_valued
 % reads a world-fed `disabled(Name, bool_lit(true))` and compiles today; the
-% refusal must exclude it by the same test the lowering uses.
+% unsupported construct must exclude it by the same test the lowering uses.
 test(accepts_bool_literal_pattern_on_arrival_rel) :-
     Prog = prog([ col_type(disabled/2, name, text),
                   col_type(disabled/2, flag, bool) ],
@@ -1228,12 +1228,12 @@ test(rejects_guard_under_negation,
 % FAIL-FIRST RECEIPT: not/1 in an edge body.
 %
 % This test read `throws(unsupported_construct(edge_body_needs_negation(_)))`
-% until the edge-body negation lowering landed, and that refusal is what went
+% until the edge-body negation lowering landed, and that unsupported construct is what went
 % RED first:
 %   RED (before the lowering, this exact clause as an acceptance test):
 %     [.../125] accepts_negated_atom_in_edge_body
 %       unsupported_construct(edge_body_needs_negation((open(_),not(closed(_)))))
-%   RED (after the lowering, the old refusal clause left in place):
+%   RED (after the lowering, the old unsupported construct clause left in place):
 %     ERROR: test supported_subset_gate:rejects_edge_body_with_extra_goal:
 %            no_exception
 %   GREEN: both directions below.
@@ -1253,7 +1253,7 @@ test(rejects_negated_conjunction_in_edge_body,
                 [ (scope(X) <+ (open(X), not((closed(X), budget(X))))) ]),
     check_supported_subset(Prog).
 
-% Comparisons and `:=` binds in an edge body were their own named refusals
+% Comparisons and `:=` binds in an edge body were their own named unsupported constructs
 % (edge_body_needs_comparison / edge_body_needs_bind) until this arc; they now
 % ride the same guard fold a level body uses.
 test(accepts_comparison_and_bind_in_edge_body) :-
@@ -1295,7 +1295,7 @@ test(rejects_now_with_non_variable_argument,
                 [ (seen_at(Name, 7) <+ ping(Name), now(7)) ]),
     check_supported_subset(Prog).
 
-% Compiler-only refusal (0_program_check.pl and engine.pl are deliberately
+% Compiler-only unsupported construct (0_program_check.pl and engine.pl are deliberately
 % untouched): a level body has no tick in its emitted DELETE/INSERT pair.
 test(rejects_now_in_level_rule,
      [throws(unsupported_construct(now_in_level_rule(_, _)))]) :-
@@ -1334,7 +1334,7 @@ test(initial_only_ref_still_gets_a_table) :-
 % edge_body_joins_arrival_fed_level (a runtime-seam placeholder); now both
 % pipelines freeze the mid-tick level plane where engine.pl freezes it, so it
 % compiles. FAIL-FIRST RECEIPT for the runtime half, captured before the
-% phase-order change with the refusal switched off, on the fixture this
+% phase-order change with the unsupported construct switched off, on the fixture this
 % program is a reduction of (check_eventing.pl:clock_rel_join_storms, BOTH
 % emitter modes, tick 3):
 %   actual  "diag_seen":{"add":[["a_rs",3,..],["a_rs",5,..],["a_rs",7,..]]}
@@ -1505,7 +1505,7 @@ test(accepts_edge_derived_edge_trigger) :-
 %   RED 1 (pre-lift)  : program_plan/2 throws
 %                       unsupported_construct(head_arithmetic(...)) -- the
 %                       phase-C guard that turned this exact miscompile into
-%                       a refusal.
+%                       a unsupported construct.
 %   RED 2 (naive lift): the guard is gone and the arithmetic fuses into SQL,
 %                       but union_size/3's third column has NO literal
 %                       witness of its own (its only occurrences are the
@@ -1757,24 +1757,24 @@ test(enum_match_requires_every_variant,
             ]),
         _).
 
-test(keyed_level_head_is_a_named_compile_refusal,
+test(keyed_level_head_is_a_named_compile_unsupported,
      [throws(unsupported_construct(keyed_level_head(current/2)))]) :-
     check_supported_subset(
         prog(
             [keyed(current/2, [1])],
             [(current(Key, Value) <- source(Key, Value))])).
 
-test(key_position_zero_is_a_named_compile_refusal,
+test(key_position_zero_is_a_named_compile_unsupported,
      [throws(unsupported_construct(
                  key_position_out_of_range(current/2, 0, 2)))]) :-
     check_supported_subset(prog([keyed(current/2, [0])], [])).
 
-test(key_position_above_arity_is_a_named_compile_refusal,
+test(key_position_above_arity_is_a_named_compile_unsupported,
      [throws(unsupported_construct(
                  key_position_out_of_range(current/2, 3, 2)))]) :-
     check_supported_subset(prog([keyed(current/2, [3])], [])).
 
-test(duplicate_key_position_is_a_named_compile_refusal,
+test(duplicate_key_position_is_a_named_compile_unsupported,
      [throws(unsupported_construct(
                  key_position_duplicate(current/2, 1)))]) :-
     check_supported_subset(prog([keyed(current/2, [1, 1])], [])).
@@ -1917,10 +1917,10 @@ test(host_input_and_bind_columns_read_the_full_type_vocabulary) :-
                         [col(kilos, float), col(ok, bool), col(at, patch)]),
               Decls).
 
-% The wrapper refusal the widened clause must NOT swallow: `Key(...)` and its
+% The wrapper unsupported construct the widened clause must NOT swallow: `Key(...)` and its
 % two siblings are dead spellings, and they stay named rather than becoming a
 % parse error or a struct type called Key.
-test(host_input_column_wrapper_is_still_a_named_refusal) :-
+test(host_input_column_wrapper_is_still_a_named_unsupported) :-
     string_codes(
       "sh weigh(path: Key(text)) -> (note: text) = `run {path}`.\n",
       Codes),
@@ -1972,7 +1972,7 @@ test(plain_non_host_rhs_remains_relation_atom) :-
       Codes),
     parse_dl(Codes, prog([], [(result(Value) <- source(Value))]), _, []).
 
-test(plain_host_arity_mismatch_reaches_existing_named_refusal,
+test(plain_host_arity_mismatch_reaches_existing_named_unsupported,
      [throws(probe_mismatch(probe(fetch, [repo], [], [])))]) :-
     string_codes(
       "sh fetch(ep: text) -> (status: int) = `run {ep}`.\nresult('missing') <- fetch('repo').\n",
@@ -2016,7 +2016,7 @@ test(named_partial_head_is_refused) :-
     parse_dl(Codes, _, _,
              [unsupported_surface(partial_head(source/3))]).
 
-test(host_unreferenced_input_refusal,
+test(host_unreferenced_input_unsupported,
      [throws(template_mismatch(unreferenced_input(prev)))]) :-
     compile_host_decl(
       sh_decl(local_fetch,
@@ -2043,7 +2043,7 @@ test(host_contract_matches_name_columns_and_types_not_name_alone) :-
       host_plan(fetch, _, _, _, _, _,
                 input_roles([identity, identity]))).
 
-test(host_output_reference_refusal,
+test(host_output_reference_unsupported,
      [throws(template_mismatch(output_used_as_input(status)))]) :-
     compile_host_decl(
       sh_decl(fetch,
@@ -2052,7 +2052,7 @@ test(host_output_reference_refusal,
               template("{ep} $status")),
       _).
 
-test(host_unknown_column_refusal,
+test(host_unknown_column_unsupported,
      [throws(template_mismatch(unknown_column(missing)))]) :-
     compile_host_decl(
       sh_decl(fetch,
@@ -2100,7 +2100,7 @@ test(extract_host_refuses_non_path_input,
               template("\"$DL_EXTRACT_BIN\" --family call {file}")),
       _).
 
-test(host_overlap_refusal,
+test(host_overlap_unsupported,
      [throws(column_mismatch(input_output_overlap(ep)))]) :-
     compile_host_decl(
       sh_decl(fetch,
@@ -2109,7 +2109,7 @@ test(host_overlap_refusal,
               template("{ep}")),
       _).
 
-test(host_duplicate_column_refusal,
+test(host_duplicate_column_unsupported,
      [throws(column_mismatch(input, duplicate(ep)))]) :-
     compile_host_decl(
       sh_decl(fetch,
@@ -2152,7 +2152,7 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
       '"__host_response_scan_span": [null, null, null, "span"]')),
     !.
 
-% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, refusal direction:
+% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, unsupported construct direction:
 % the former decl-B fallback erased `spann` to none and stopped at the generic
 % column_type_wrapper finding. The parser now preserves the spelling so the
 % shared program check names column_type_unknown(spann).
@@ -2167,7 +2167,7 @@ test(host_unknown_struct_output_refuses_by_type_name,
               Program, [], [], [])-Bindings,
       _).
 
-test(probe_arity_refusal,
+test(probe_arity_unsupported,
      [throws(probe_mismatch(probe(fetch, [repo], [], [])))]) :-
     prepare_program(
       program(
@@ -2177,7 +2177,7 @@ test(probe_arity_refusal,
         []),
       _, _, _, _).
 
-test(bind_and_rule_head_refusal,
+test(bind_and_rule_head_unsupported,
      [throws(bind_and_rule_head(interval))]) :-
     prepare_program(
       program(
@@ -2260,7 +2260,7 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _, 'export const host_plans')),
-    % PHASE 2 (runtime bridge arc): the two named refusals are gone; both world
+    % PHASE 2 (runtime bridge arc): the two named unsupported constructs are gone; both world
     % terms now carry the executor the served runtime dispatches on. The bind's
     % `literals` list is EMPTY for this fixture on purpose -- it declares
     % `bind interval(...)` and seeds an `interval(300, 1)` Initial row, but no
@@ -2365,7 +2365,7 @@ test(backslash_survives_print_and_reparse) :-
     Program =@= Reparsed.
 
 % The reserved-column list is STATED in 1_host_expand.pl and has to match the
-% columns that file's own generator emits, or the refusal protects the wrong
+% columns that file's own generator emits, or the unsupported construct protects the wrong
 % names. Rather than trusting the list, compile an ordinary host and read the
 % generated column names back off the two relations: every name the generator
 % adds beyond the author's own columns is a name no author may declare.
@@ -2378,7 +2378,7 @@ test(backslash_survives_print_and_reparse) :-
 % SABOTAGE RECEIPT: commenting out reserved_host_column(identity_digest)
 % turns exactly this test red (`hosts_wiring:reserved_host_columns_are_
 % exactly_the_generated_ones: failed`) while every other test stays green,
-% including the refusal test below, which iterates the same list and so
+% including the unsupported construct test below, which iterates the same list and so
 % cannot notice a name missing from it.
 test(reserved_host_columns_are_exactly_the_generated_ones) :-
     Program = program(
@@ -2403,7 +2403,7 @@ generated_host_relation(Name/_) :-
 % Each reserved name refuses on the side it collides on, naming the host, the
 % side, and the column. `identity_digest` sits on the demand relation only,
 % so an OUTPUT may not carry it either: outputs and inputs both flow into the
-% response relation and the refusal is stated once for the whole declaration.
+% response relation and the unsupported construct is stated once for the whole declaration.
 test(every_reserved_host_column_refuses_by_name) :-
     forall(reserved_host_column(Column),
            ( InputDecl = sh_decl(probe_host, [col(Column, text)],
@@ -2598,7 +2598,7 @@ walk_golden(not_mixed,
 % `pos,trigger`. The golden was recording a disagreement between two
 % projections of one body: the analyzer saw triggers, the engine saw none, so
 % `out(X) <+ next(a(X))` was a rule with no trigger item at all -- statically
-% dead, no refusal, while the compiler emitted the same arrival statement it
+% dead, no unsupported construct, while the compiler emitted the same arrival statement it
 % emits for a bare atom. engine.pl:trigger_items/2 splices now and the two
 % projections agree; see that predicate's header for the measured receipt.
 walk_golden(next_wrapper,
@@ -2996,7 +2996,7 @@ test(keep_on_non_log_rel_both_doors) :-
 % Two edge arms on a log head carrying a count bound. Retention prunes at tick
 % END across every write in the tick, so the surviving row is whichever arm ran
 % last, and arm order is source line order: swapping the two rules changes the
-% final state with no diagnostic. Measured at 80ba9db6, before the refusal
+% final state with no diagnostic. Measured at 80ba9db6, before the unsupported construct
 % existed, the same program gave [journal(second)] and [journal(first)].
 %
 % Broader than its keyed sibling edge_head_conflict_risk on purpose. That one
@@ -3031,7 +3031,7 @@ test(two_arms_on_unbounded_log_stay_accepted_at_both_doors) :-
 % An aggregate spelling NEITHER door implements. Same term at both doors,
 % because there is nothing for the two vocabularies to disagree about: the
 % word is not evaluable anywhere. The payload lists the aggregates that do
-% lower, read off the registry, which is the only actionable thing a refusal
+% lower, read off the registry, which is the only actionable thing a unsupported construct
 % for a word the author reasonably expected can carry.
 %
 % Before the registry row, this program compiled clean at both doors and
@@ -3058,7 +3058,7 @@ test(unimplemented_aggregate_refuses_at_both_doors) :-
 % the oracle, which has no lowering, does not. Both compiler terms are exactly
 % what its own local scan produced before the move, which is the property that
 % makes this a consolidation and not a rename.
-test(reserved_word_refusal_payloads) :-
+test(reserved_word_unsupported_payloads) :-
     ZipProg = prog([], [ (pair(Left, Right) <- zip(src_a(Left), src_b(Right))) ]),
     door_verdict(oracle, ZipProg, ZipOracle),
     door_verdict(compiler, ZipProg, ZipCompiler),
@@ -3097,7 +3097,7 @@ test(every_reserved_body_word_refuses_at_both_doors) :-
              CompilerVerdict = unsupported_construct(_) )).
 
 % Fills every argument of the probe goal with a distinct relation atom, which
-% is the shape each reserved wrapper takes; the refusal fires on the FUNCTOR,
+% is the shape each reserved wrapper takes; the unsupported construct fires on the FUNCTOR,
 % so the arguments only have to be well formed.
 reserved_probe_body(Goal, Goal) :-
     Goal =.. [_ | Args],
@@ -3132,9 +3132,9 @@ test(pre_in_level_rule_both_doors) :-
 %
 % TICK PHASE ALIGNMENT target 2 forced the repair rather than choosing it.
 % finalize/1 became a LIVE registry row (it is the departure trigger in an edge
-% body), which deleted the generic path this refusal was riding on -- measured,
+% body), which deleted the generic path this unsupported construct was riding on -- measured,
 % not assumed: with the row flipped and nothing else changed, this exact
-% program compiled ACCEPTED. analyze.pl's shared_refusal list gained
+% program compiled ACCEPTED. analyze.pl's shared_unsupported list gained
 % finalize_in_level_rule in the position engine.pl's own engine_check_order/1
 % gives it, so the two doors now name the same class AND agree on which class a
 % program violating several of them reports.
@@ -3168,7 +3168,7 @@ test(nested_not_pre_parity) :-
 
 % finalize/1 is a departure occurrence and has no level-plane meaning at any
 % negation depth. Both doors use the shared program check and name the same
-% refusal.
+% unsupported construct.
 test(nested_not_finalize_refused_by_both_doors) :-
     Prog = prog([], [ (out(Item) <- (src(Item), not(finalize(gone(Item))))) ]),
     door_verdict(oracle, Prog, OracleVerdict),
@@ -3222,7 +3222,7 @@ test(numeric_aggregate_over_a_text_column_refuses_at_the_oracle_door) :-
              OracleVerdict == aggregate_operand_not_number(Kind, src/2, tag,
                                                            text) )).
 
-% The compiler is UNCHANGED by the class above: its refusal is inferred, not
+% The compiler is UNCHANGED by the class above: its unsupported construct is inferred, not
 % declared, so it lives at lowering and its check gate still accepts. Pinned
 % so the shared trigger cannot quietly migrate the compiler's diagnostic from
 % lower.pl to the door and change both its phase and its payload.
@@ -3291,12 +3291,12 @@ test(plain_edge_head_still_accepted_by_both_doors) :-
 % ═══════════════════════════════════════════════════════════════════════════
 % REFUSAL MESSAGE UMBRELLA
 
-:- begin_tests(refusal_messages).
+:- begin_tests(unsupported_messages).
 
-test(every_named_refusal_renders_one_line) :-
-    refusal_message_clause_count(ClauseCount),
+test(every_named_unsupported_renders_one_line) :-
+    unsupported_message_clause_count(ClauseCount),
     ClauseCount =:= 1,
-    refusal_inventory(Inventory),
+    unsupported_inventory(Inventory),
     Inventory = [_ | _],
     forall(member(Name/_Arity-Example, Inventory),
            ( message_to_string(unsupported_construct(Example), Text),
@@ -3306,7 +3306,7 @@ test(every_named_refusal_renders_one_line) :-
              split_string(Text, "\n", "", [_])
            )).
 
-:- end_tests(refusal_messages).
+:- end_tests(unsupported_messages).
 
 % ═══════════════════════════════════════════════════════════════════════════
 % DECLARATION QUERY PARITY (rank R9)
@@ -3393,7 +3393,7 @@ test(decl_key_agrees_across_doors) :-
 %
 % and for the exhaustive twin the two orders produced IDENTICAL expanded
 % terms. So no output diff and no tick log could have caught the loss; only
-% the refusal disappears. That is what these tests hold onto.
+% the unsupported construct disappears. That is what these tests hold onto.
 
 :- begin_tests(expansion_order).
 
@@ -3561,7 +3561,7 @@ test(coalesce_edge_arm_samples_instead_of_triggering) :-
                                        not(name(TreeId, _)),
                                        Label := unnamed)) ].
 
-% The survival refusal. Without it a nested coalesce reaches analyze.pl, whose
+% The survival unsupported construct. Without it a nested coalesce reaches analyze.pl, whose
 % refs_of_arg role reads the source atom as an ordinary join and drops the
 % default in silence.
 test(coalesce_off_the_conjunction_spine_is_refused) :-
@@ -3912,7 +3912,7 @@ test(aggregate_axis_carries_three_distinct_roles) :-
             refused).
 
 % The both-doors half of this row lives in the cross_plane_check_parity unit,
-% beside every other shared refusal, because door_verdict/3 is that unit's.
+% beside every other shared unsupported construct, because door_verdict/3 is that unit's.
 
 % The oracle stays WIDER than the compiler. Both json rows are refused by the
 % compiler and both are still oracle aggregates.
@@ -3954,7 +3954,7 @@ test(non_aggregate_compound_head_argument_stays_plain) :-
 % nothing about the compiler's, and it was right about the fixture and wrong
 % about the situation: the reference engine RAN both programs, so the two doors
 % answered differently and nothing in the corpus noticed (burrs B3/B4/B9 of
-% plans/2026-07-30-relpattern-adversarial-review.md). Both are shared refusals
+% plans/2026-07-30-relpattern-adversarial-review.md). Both are shared unsupported constructs
 % now -- relation_value_under_negation and relation_value_in_edge_rule in
 % 0_program_check.pl, which states why refusing beat lowering -- and both have
 % graded fixtures.
@@ -4081,9 +4081,9 @@ test(head_value_that_is_a_body_atom_needs_no_dictionary_join) :-
 %
 % SABOTAGE RECEIPT, run before this group was written: deleting the
 % `refuse_tagged_brace/1` call from factor/5 turns
-% tagged_brace_is_reserved_with_a_named_refusal red with
+% tagged_brace_is_reserved_with_a_named_unsupported red with
 % `dl_parse_error(trailing_input([123,97,58,32,49,125]))` -- the exact
-% unnamed failure the refusal replaces, and the reason the refusal exists at
+% unnamed failure the unsupported construct replaces, and the reason the unsupported construct exists at
 % all rather than the spelling being merely unsupported.
 
 :- begin_tests(json_grammar).
@@ -4166,11 +4166,11 @@ test(empty_array_is_the_empty_list) :-
 % CARD-BRACE-TAG, settled by measurement: `_{...}` and `Tag{...}` are SWI
 % DICT syntax (term_to_atom gives a dict, not `{}`/1), so the term door could
 % never agree with a text door that read them as json. Reserved, named.
-test(tagged_brace_is_reserved_with_a_named_refusal,
+test(tagged_brace_is_reserved_with_a_named_unsupported,
      [throws(unsupported_construct(tagged_brace_reserved(point)))]) :-
     parsed_pattern('point{a: v}', _).
 
-test(underscore_brace_is_reserved_with_a_named_refusal,
+test(underscore_brace_is_reserved_with_a_named_unsupported,
      [throws(unsupported_construct(tagged_brace_reserved('_')))]) :-
     parsed_pattern('_{a: v}', _).
 
@@ -4243,7 +4243,7 @@ test(capture_types_agree_across_doors) :-
            ( json_capture_json_type(Type, _),
              % "does not throw", never "succeeds": a live type MAY fail on a
              % value of the wrong kind (that failure IS the filter). Only the
-             % refusal arm distinguishes an unknown type name.
+             % unsupported construct arm distinguishes an unknown type name.
              catch(( json_capture_type(Type, 0) -> true ; true ),
                    Thrown, true),
              ( var(Thrown) -> true
@@ -4274,7 +4274,7 @@ test(oracle_capture_types_match_their_json_type_answer) :-
 % ═══════════════════════════════════════════════════════════════════════════
 % PARSE ERROR POSITIONS
 %
-% The line:column a refusal prints is the MAXIMUM position mark_furthest saw
+% The line:column a unsupported construct prints is the MAXIMUM position mark_furthest saw
 % during the parse, so which positions get marked is free to change only while
 % that maximum does not. These cases pin the reported position for each shape
 % of marking parse_dl.pl does -- whitespace stop, comment run, partially
@@ -4368,7 +4368,7 @@ parse_outcome(Text, Outcome) :-
           Error,
           Outcome = Error).
 
-test(refusal_position_is_exact,
+test(unsupported_position_is_exact,
      [forall(parse_position_case(Label, Text, Expected))]) :-
     parse_outcome(Text, Outcome),
     ( Outcome == Expected
@@ -4457,7 +4457,7 @@ expanded_dot_rules(Source, Rules) :-
     parsed_dot_rules(Source, Parsed),
     expand_program(prog([], Parsed), prog(_, Rules), _).
 
-dot_refusal(Source, Refusal) :-
+dot_unsupported(Source, Refusal) :-
     parsed_dot_rules(Source, Parsed),
     catch(( expand_program(prog([], Parsed), _, _), Refusal = none ),
           unsupported_construct(Caught),
@@ -4602,14 +4602,14 @@ test(a_rule_without_a_dot_is_returned_unchanged) :-
     expand_program(Program, prog(_, Rules), _),
     Rules =@= [(out(Value2) <- source(Value2))].
 
-% ── refusals ─────────────────────────────────────────────────────────────────
+% ── unsupported constructs ─────────────────────────────────────────────────────────────────
 
 test(unbound_receiver_in_a_bind_refuses_by_name) :-
-    dot_refusal('out(Leaf) <- other(Rec), Leaf := Missing.at.', Refusal),
+    dot_unsupported('out(Leaf) <- other(Rec), Leaf := Missing.at.', Refusal),
     Refusal == unresolvable_member(at).
 
 test(unbound_receiver_in_the_head_refuses_by_name) :-
-    dot_refusal('dcoord(Missing.at.name, Start, End) <- span(FileRec, Start, End).',
+    dot_unsupported('dcoord(Missing.at.name, Start, End) <- span(FileRec, Start, End).',
                 Refusal),
     Refusal == unresolvable_member('at.name').
 
@@ -4624,7 +4624,7 @@ test(atom_rooted_chain_refuses_with_the_whole_path) :-
     Refusal == unresolvable_member('fileRec.at.name').
 
 % Text-door programs cannot reach member_not_a_goal: a dot chain at goal
-% position is a parse error, so the refusal is the term door's alone.
+% position is a parse error, so the unsupported construct is the term door's alone.
 test(dot_chain_at_goal_position_is_a_parse_error) :-
     atom_codes('out(Value) <- source(Rec), Rec.at, Value := 1.', Codes),
     catch(( parse_dl(Codes, _, _, _), Outcome = parsed ),
@@ -4672,7 +4672,7 @@ dl6_compile_text(Text, OutFile, Result) :-
 
 % A bodiless ground clause must seed a boot row for its rel, and the same
 % program's derived rule must still lower. The non-ground variant keeps the
-% bodiless-clause refusal.
+% bodiless-clause unsupported construct.
 :- begin_tests(fact_seeding).
 
 test(dl6_fact_seeds_initial) :-
@@ -5193,7 +5193,7 @@ test(a_characters_side_join_resolves_to_an_id) :-
 %          edge_delta_project_interns_before_the_projection
 %   recursive_arm_builds_no_string/2's [] clause
 %       -> a_recursive_head_refuses_a_built_string is the inverted pin: the
-%          refusal IS what it asserts, so sabotaging the guard turns it red
+%          unsupported construct IS what it asserts, so sabotaging the guard turns it red
 %          from the other side.
 % Every `_at_direct` twin stayed green through both.
 
@@ -5339,7 +5339,7 @@ test(no_door_at_direct) :-
 
 % ── the uniform-encoding invariant (contract §5.6) ──────────────────────────
 % Tested by CALLING the predicate, never by a fixture: no program can build a
-% mixed list, and a refusal no fixture can turn red is untested code posing as
+% mixed list, and a unsupported construct no fixture can turn red is untested code posing as
 % a guard.
 
 test(uniform_text_encoding_admits_one_encoding) :-
@@ -5725,11 +5725,11 @@ assert_parsed_once(Dir, Name) :-
     parse_count(Canonical, 1).
 
 % FAIL-FIRST RECEIPT: with a bare catch/3 and no Refused marker, all four
-% refusal cases below passed against a loader that threw nothing at all,
+% unsupported construct cases below passed against a loader that threw nothing at all,
 % because `length(Chain, 3)` on an unbound Chain invents a 3-element list and
 % `Text = "nope.dl6"` on an unbound Text just binds it.
-use_refusal(Entry, Pattern, Refused) :-
-    catch(( expand_uses(Entry, [], [], _, _, _), Refused = no_refusal ),
+use_unsupported(Entry, Pattern, Refused) :-
+    catch(( expand_uses(Entry, [], [], _, _, _), Refused = no_unsupported ),
           Pattern,
           Refused = refused).
 
@@ -5810,21 +5810,21 @@ test(use_cycle_refuses_naming_the_chain) :-
         [ "a.dl6" = "use \"b.dl6\".\nrel a(x:int).\n",
           "b.dl6" = "use \"a.dl6\".\nrel b(y:int).\n" ]),
     use_entry(Dir, 'a.dl6', Entry),
-    use_refusal(Entry, use_cycle(Chain), Refused),
+    use_unsupported(Entry, use_cycle(Chain), Refused),
     Refused == refused,
     length(Chain, 3).
 
 test(use_self_refuses) :-
     make_use_fixture(Dir, ["self.dl6" = "use \"self.dl6\".\nrel s(w:int).\n"]),
     use_entry(Dir, 'self.dl6', Entry),
-    use_refusal(Entry, use_cycle([Self]), Refused),
+    use_unsupported(Entry, use_cycle([Self]), Refused),
     Refused == refused,
     file_base_name(Self, 'self.dl6').
 
 test(use_missing_file_refuses_naming_the_roots) :-
     make_use_fixture(Dir, ["m.dl6" = "use \"nope.dl6\".\nrel top(z:int).\n"]),
     use_entry(Dir, 'm.dl6', Entry),
-    use_refusal(Entry, use_path_unresolved(Text, Roots), Refused),
+    use_unsupported(Entry, use_path_unresolved(Text, Roots), Refused),
     Refused == refused,
     Text == "nope.dl6",
     Roots == [Dir].
@@ -5835,7 +5835,7 @@ test(use_same_rel_conflicting_cols_refuses) :-
           "cb.dl6" = "rel cf(v:text).\n",
           "top.dl6" = "use \"ca.dl6\".\nuse \"cb.dl6\".\nrel top(z:int).\ntop(1).\n" ]),
     use_entry(Dir, 'top.dl6', Entry),
-    use_refusal(Entry, rel_col_conflict(cf/1, PathA, PathB), Refused),
+    use_unsupported(Entry, rel_col_conflict(cf/1, PathA, PathB), Refused),
     Refused == refused,
     file_base_name(PathA, 'ca.dl6'),
     file_base_name(PathB, 'cb.dl6').
@@ -6121,8 +6121,8 @@ test(list_storage_kind_survives_for_json_and_nested_elements) :-
     type_plane:column_storage([], list(list(text)), list(list(text))),
     type_plane:column_storage([], list(text), list(text)).
 
-% A relation ref as the element keeps its distinct named refusal.
-test(list_of_relation_refs_keeps_its_refusal) :-
+% A relation ref as the element keeps its distinct named unsupported construct.
+test(list_of_relation_refs_keeps_its_unsupported) :-
     Types = [type_def(span, [start, end], [int, int])],
     catch(type_plane:column_storage(Types, list(span), _), Thrown, true),
     Thrown == unsupported_construct(list_of_relation_refs(span)).

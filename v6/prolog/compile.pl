@@ -26,7 +26,7 @@
           ]).
 
 :- use_module(library(lists)).
-:- use_module('0_refusal_messages', []).
+:- use_module('0_unsupported_messages', []).
 :- use_module('1_expansion',
               [ expand_program/3, expand_program_with_bindings/4 ]).
 :- use_module('1_host_expand', [prepare_program/5]).
@@ -97,14 +97,14 @@ find_fixture(Stream, Name, Term, Bindings) :-
 %   SubscribedRels: 2_subscribe.pl's cone, sorted Name/Arity. Computed here
 %              and threaded to emission; nothing else reads it.
 
-% 1_host_expand.pl is SHARED with the reference engine, so its refusals are
+% 1_host_expand.pl is SHARED with the reference engine, so its unsupported constructs are
 % thrown in the oracle's vocabulary: a bare term. This door wraps them, the
 % same way analyze.pl wraps every trigger it takes from 0_program_check.pl,
-% because "every compiler refusal is unsupported_construct/1" is what the
-% refusal-message umbrella and the sweep's supported/unsupported split both
+% because "every compiler unsupported construct is unsupported_construct/1" is what the
+% unsupported construct-message umbrella and the sweep's supported/unsupported split both
 % read -- scripts/text_door_receipt.pl:classify_term_door_error/3 treats
-% anything else as a HARNESS failure, which is how the first host-refusal
-% fixtures in the corpus surfaced this. Six host refusals predate them
+% anything else as a HARNESS failure, which is how the first host-unsupported construct
+% fixtures in the corpus surfaced this. Six host unsupported constructs predate them
 % (refused_host_decl, column_mismatch, probe_mismatch, bind_mismatch,
 % host_executor_mismatch, query_mismatch) and none had a fixture, so nothing
 % had ever put one through this door.
@@ -116,12 +116,12 @@ find_fixture(Stream, Name, Term, Bindings) :-
 % compilation wraps.
 prepare_program_for_compiler(SugaredProg, HostProg) :-
     catch(prepare_program(SugaredProg, HostProg, _, _, _), Refusal,
-          throw_as_compiler_refusal(Refusal)).
+          throw_as_compiler_unsupported(Refusal)).
 
-throw_as_compiler_refusal(unsupported_construct(Reason)) :-
+throw_as_compiler_unsupported(unsupported_construct(Reason)) :-
     !,
     throw(unsupported_construct(Reason)).
-throw_as_compiler_refusal(Refusal) :-
+throw_as_compiler_unsupported(Refusal) :-
     throw(unsupported_construct(Refusal)).
 
 materialize_reference_target_rels(prog(Decls0, Rules), prog(Decls, Rules)) :-
@@ -179,7 +179,7 @@ program_plan(fixture(Name, SugaredProg, Initial, Schedule, _Expectations)-Bindin
     % oracle refuses the same rows in engine.pl:check_world_shapes/3; here it
     % runs at PLAN time so a malformed program never reaches emission and
     % lands in the sweep's `unsupported` bucket beside every other named
-    % refusal, rather than compiling and then throwing mid-replay.
+    % unsupported construct, rather than compiling and then throwing mid-replay.
     check_world_shapes(Prog, Initial, Schedule),
     % Union rule-derived refs with EVERY declared ref (analyze.pl:
     % declared_refs/2's header comment) -- a kind(Ref, _) decl that no rule
@@ -296,7 +296,7 @@ check_single_arity_per_name([_]) :- !.
 check_single_arity_per_name([Name/LowArity, Name/HighArity | _]) :-
     LowArity \== HighArity,
     !,
-    throw_as_compiler_refusal(rel_arity_collision(Name, LowArity, HighArity)).
+    throw_as_compiler_unsupported(rel_arity_collision(Name, LowArity, HighArity)).
 check_single_arity_per_name([_ | Rest]) :-
     check_single_arity_per_name(Rest).
 
@@ -368,7 +368,7 @@ fact_args_atomic(Fact) :-
     forall(member(Arg, Args), atomic(Arg)).
 
 % EXPORTED because `bop check` is the SECOND caller of the text door and was
-% getting an unlocated refusal for the identical file (cold-author defect D3):
+% getting an unlocated unsupported construct for the identical file (cold-author defect D3):
 % scripts/bop_check.pl calls compile_program/6 itself (it owns the temp output
 % file and the exit-code mapping), so wrapping only at compile_dl6/2's own
 % catch site left the CLI printing "rule-index unavailable" where the compile

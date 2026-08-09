@@ -63,7 +63,7 @@ surface(not/1,          sign,      arm(neg),                     wrapper(body_it
 % before analyze.pl or engine.pl ever sees a program. The gate word is
 % `expand(coalesce)` rather than `lower` because nothing in lower.pl handles
 % this functor and nothing should: a coalesce reaching the lowering would be a
-% phase-order defect, and the expander's own coalesce_not_top_level refusal is
+% phase-order defect, and the expander's own coalesce_not_top_level unsupported construct is
 % what makes that unreachable. The AnalyzeRole is stated honestly all the same,
 % so the pre-expansion readers (print_dl.pl's decl synthesis) see the source
 % relation as the sampled reference it is.
@@ -77,7 +77,7 @@ surface(now/1,          time,      no_refs,                      wrapper(expr, l
 % STRUCT-AS-ROWS (SLOT-DECODE-SURFACE): decode/2 stays on the surface as sugar
 % and lowers to a dictionary JOIN in a LEVEL body over a struct-typed column
 % (lower.pl expand_decode_rules/4). Every wider placement keeps a named
-% refusal: an edge body is edge_body_needs_json_destructure (the untyped
+% unsupported construct: an edge body is edge_body_needs_json_destructure (the untyped
 % compound-arrival encoding, SLOT-TERM-STRUCT), an untyped source is
 % decode_source_not_struct, a non-object pattern is decode_pattern_not_object,
 % and a key the type does not declare is decode_field_unknown.
@@ -121,7 +121,7 @@ surface(json_each/2,    guard,     no_refs,                      wrapper(expr_pa
 % Live capture types are `int` / `float` / `text`, one per json1 `json_type`
 % answer, checked identically at both doors (body.pl json_capture_type/2,
 % lower.pl json_capture_json_type/2). Anything else, `bool` included, is the
-% named refusal json_capture_type_unknown -- `bool` because json_flex card C4
+% named unsupported construct json_capture_type_unknown -- `bool` because json_flex card C4
 % measured a top-level json `true` degrading to the integer 1 through the real
 % emitted arrival statement, so its storage is an open card rather than a
 % settled type.
@@ -170,7 +170,7 @@ surface(json_group_array/1, aggregate, no_refs,                   head(lower),  
 surface(json_group_array/2, aggregate, no_refs,                   head(lower),                           live).
 surface(group_concat/2,     aggregate, no_refs,                   head(lower),                           live).
 surface(group_concat/3,     aggregate, no_refs,                   head(lower),                           live).
-% This old one-argument spelling remains a named refusal. The four writable
+% This old one-argument spelling remains a named unsupported construct. The four writable
 % forms above are the complete ordered aggregate surface.
 surface(group_concat/1,     aggregate, no_refs,                   head(refuse(not_implemented)),         refused).
 
@@ -536,7 +536,7 @@ cli_command(serve, '[--port <port>] [--db <url>]',
 cli_command(run,   '<file.dl6> [--ticks <n>] [--port <port>]',
             'compile + load a program on an in-process ephemeral server, stream ticks to stdout until quiescent or --ticks fires, then shut down cleanly.').
 cli_command(check, '<file.dl6>',
-            'validate a program through the text door; no server boots. Exit 0 clean, 2 named-refusal findings, 1 broken (parse/compile error).').
+            'validate a program through the text door; no server boots. Exit 0 clean, 2 named-unsupported construct findings, 1 broken (parse/compile error).').
 cli_command(load,  '<file.dl6> [--port <port>]',
             'POST a compiled program to an already-running bop serve; exit 1 if nothing is listening.').
 cli_command(q,     '<rel> [--port <port>] [--json]',

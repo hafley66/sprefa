@@ -37,9 +37,9 @@
 %                                      an optional lookup into a second firing
 %                                      source; graded by the tick count.
 %
-% and four named refusals, each thrown by the shared expander so the oracle and
+% and four named unsupported constructs, each thrown by the shared expander so the oracle and
 % the compiler cannot disagree about which programs are legal (the single-door
-% refusal is this repo's recurring defect class).
+% unsupported construct is this repo's recurring defect class).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -157,7 +157,7 @@ fixture(coalesce_in_edge_body_samples,
                         labelled(2, 'elm'),
                         labelled(2, 'unnamed') ]) ]).
 
-% ═══ named refusals ═════════════════════════════════════════════════════════
+% ═══ named unsupported constructs ═════════════════════════════════════════════════════════
 % All four are thrown by 0_coalesce_expand.pl, the ONE expansion both the
 % oracle and the compiler consult, so neither door can accept what the other
 % refuses.
@@ -196,7 +196,7 @@ fixture(coalesce_with_a_variable_default_is_refused,
   [ throws(unsupported_construct(
              coalesce_default_not_literal(latest_commit/2, variable))) ]).
 
-% A coalesce that is not on the conjunction spine. This refusal is what keeps
+% A coalesce that is not on the conjunction spine. This unsupported construct is what keeps
 % the construct from ever reaching analyze.pl, where the live registry row's
 % refs_of_arg role would read the source atom as an ordinary join and drop the
 % default in SILENCE.

@@ -23,7 +23,7 @@
 % EXPECTED-ABSENT rows carry a reason, and the gate asserts BOTH halves: the
 % reason text must appear in the golden's header (so the file explains itself)
 % and, for a row whose reason is its registry status, that status must still be
-% `refused` or `reserved`. A refusal that quietly becomes acceptance fails here
+% `refused` or `reserved`. A unsupported construct that quietly becomes acceptance fails here
 % too -- the gate is symmetric.
 %
 % Run: swipl -q -l golden_coverage.pl -g run -g halt
@@ -176,7 +176,7 @@ row_failure(Signature, surface(Status), _Signatures, _Code, _Source, Problem) :-
            [Signature, Reason, Status]).
 row_failure(Signature, Kind, _Signatures, _Code, _Source, Problem) :-
     format(atom(Problem),
-           "~w (~w) is a registry construct the golden does not exercise -- add it to golden-flex.dl6, or record a named refusal for it in expected_absent/2 AND in the golden's header",
+           "~w (~w) is a registry construct the golden does not exercise -- add it to golden-flex.dl6, or record a named unsupported construct for it in expected_absent/2 AND in the golden's header",
            [Signature, Kind]).
 
 % ═══ term walk ══════════════════════════════════════════════════════════════

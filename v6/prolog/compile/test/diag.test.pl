@@ -1,7 +1,7 @@
 % diag.test.pl : receipts for the dl6 diagnostic channel (compile/test).
 %
-% The rail the lane exists to hold: the refusal term is the ONE source of
-% truth and gets TWO renderers. The human renderer (0_refusal_messages.pl) and
+% The rail the lane exists to hold: the unsupported construct term is the ONE source of
+% truth and gets TWO renderers. The human renderer (0_unsupported_messages.pl) and
 % the JSON channel (diag.pl) must never disagree on the message text, so the
 % first test walks the whole inventory asserting both hold the same string.
 % The zero-based LSP conversion is tested as its own predicate, the emitted
@@ -15,7 +15,7 @@
 
 :- use_module('../../diag',
               [ lsp_position/4, diag_record/3, diag_position/3, diag_uri/2 ]).
-:- use_module('../../0_refusal_messages', [ refusal_inventory/1 ]).
+:- use_module('../../0_unsupported_messages', [ unsupported_inventory/1 ]).
 :- use_module('../parse_dl', [ parse_dl/4 ]).
 
 :- begin_tests(diag_channel).
@@ -31,14 +31,14 @@ test(one_based_to_zero_based) :-
 % The one-source-two-renderers rail, across the whole dynamic inventory: the
 % JSON `message` field of the record and the umbrella renderer's human line
 % are the same string, whatever the inventory's size is.
-test(json_message_equals_human_line, [forall(refusal_inventory(Inventory))]) :-
+test(json_message_equals_human_line, [forall(unsupported_inventory(Inventory))]) :-
     forall(member(_Sig-Example, Inventory),
            ( diag_record(unsupported_construct(Example), 'x.dl6', Record),
              message_to_string(unsupported_construct(Example), Human),
              Record.get(message) == Human )).
 
 % Every inventory member still renders through the human umbrella with no
-% "Unknown message" fallback; that guarantee is the existing refusal_messages
+% "Unknown message" fallback; that guarantee is the existing unsupported_messages
 % umbrella receipt, and the rail test above covers the JSON side of the same
 % walk, so it is not repeated here.
 
@@ -65,12 +65,12 @@ test(record_round_trips_as_json) :-
              Parsed.get(range).get(start).get(line) ==
                  Record.get(range).get(start).get(line) )).
 
-% DEFECT 1 FAIL-FIRST: a refusal must resolve to the statement that DEFINES
+% DEFECT 1 FAIL-FIRST: a unsupported construct must resolve to the statement that DEFINES
 % the offending relation (its head), not to the FIRST statement that merely
 % mentions the relation. counter/2 is named by the valid mirror rule on line
 % 5 and by the offending counter rule on line 6; the diagnostic must land on
 % line 6. The prior test passes only because its program has one statement.
-test(refusal_resolves_offending_rule_not_earlier_mention) :-
+test(unsupported_resolves_offending_rule_not_earlier_mention) :-
     Lines = [ "rel counter(name: text, total: int) key(1).",
               "rel tick(name: text).",
               "rel mirror(name: text, total: int).",
@@ -85,10 +85,10 @@ test(refusal_resolves_offending_rule_not_earlier_mention) :-
     Line == 6,
     Column == 1.
 
-% A refusal naming the offending relation resolves to that statement's real
+% A unsupported construct naming the offending relation resolves to that statement's real
 % line and column. `t(X) <- finalize(s(X)).` sits on line 3, first column,
 % and finalize_in_level_rule(s/1) resolves there through the retention.
-test(refusal_resolves_real_statement_position) :-
+test(unsupported_resolves_real_statement_position) :-
     Text = "rel s(x: int).\nrel t(x: int).\nt(X) <- finalize(s(X)).\n",
     string_codes(Text, Codes),
     catch(( parse_dl(Codes, _P, _B, _F) -> true ; true ), _E, true),

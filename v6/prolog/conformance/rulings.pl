@@ -314,7 +314,7 @@ ruling(host_residency, rows_stay_in_sqlite_host_sees_deltas, user,
 % (sqlite's expression engine is the target; it has the coverage).
 % Deopt to TypeScript ONLY where sqlite genuinely lacks the function,
 % never as a default path -- "we fuse it to sql deltas in rx". The
-% phase-C refusals (comparison/bind/head-arith) were guards against
+% phase-C unsupported constructs (comparison/bind/head-arith) were guards against
 % miscompiles whose causes typed columns removed; lifting them into
 % the incremental emitter is now an arc, not a hazard.
 ruling(expression_residency, fuse_to_sql_deltas_ts_deopt_last, user,
@@ -341,10 +341,10 @@ ruling(udf_residency, libsql_fuse_and_delta_deopt, user,
 
 % 2026-07-29 (second multiple-choice round, after plain-words
 % explanation). keyed() on a level-rule head is a COMPILE ERROR
-% (named refusal) in oracle and tsv2 both; keyed replace stays edge
+% (named unsupported construct) in oracle and tsv2 both; keyed replace stays edge
 % semantics. Closes the silently-inert defect from the hands-on
 % findings.
-ruling(keyed_level_head, named_refusal, user,
+ruling(keyed_level_head, named_unsupported, user,
        'user 2026-07-29: chose "Compile error" -- keyed stays an edge-rule thing').
 
 % 2026-07-29. keep(count(N)) retention is LOWERED FOR REAL in tsv2:
@@ -382,7 +382,7 @@ ruling(watcher_dep, fs_watch_until_bench_regression, user,
 % decl -- the oracle rewrites every world row to sorted-key obj/1 form
 % at load (canonicalize_world_rows/3, run_program) instead of refusing
 % out-of-order keys. keys_not_sorted is dead; missing/unknown/
-% wrong-type refusals stay. The emitted runtime already canonicalized
+% wrong-type unsupported constructs stay. The emitted runtime already canonicalized
 % at intern; divergence stays unreachable, now from the accepting side.
 ruling(struct_arrival_key_order, decl_induced_canonicalize, user,
        'user 2026-07-29: "we know the types order so we can induce it"').
@@ -480,15 +480,15 @@ ruling(null_design, get_else_use_site_never_storage, user,
        'user 2026-07-30: "do what makes best least brouhaha, i like none/some etc. but idk how enum wrappers and generics work here"').
 
 % 2026-07-30. Rel-as-stream cards, settled across the session (lab =
-% plans/2026-07-30-rel-as-stream-lab.md; card 4's refusal proposal was
+% plans/2026-07-30-rel-as-stream-lab.md; card 4's unsupported construct proposal was
 % superseded mid-session by retention_minus making finalize-over-log fire).
 ruling(stream_ordinal_spelling, seq_column_type_sugar, user,
        'card 1b: seq(name) column type, one expansion stamps the cursor rel + four rules; tier-0 (a). 1c engine-minted @ binding is DEAD: user "i HATE the @ symbol in code, its a harbinger of stupid"').
 ruling(zip_reserved_row, keep_with_join_naming_message, user,
-       'card 2b: user "do the least fucky thing" -- deleting the row would make a typo a silent empty EDB; the refusal message names the one-line equijoin').
+       'card 2b: user "do the least fucky thing" -- deleting the row would make a typo a silent empty EDB; the unsupported construct message names the one-line equijoin').
 ruling(stream_backpressure, watermark_gated_writer_visible_overflow, user,
        'card 3a: zero new constructs; overflow lands in a visible dropped rel instead of vanishing. User: "visible overflow being lowerable is one thing but like yea we need a way to do csp and our clock system for it i guess at some point" -- CSP = pending log + one-per-drain-tick queue + clock-joined drain, banked as a future arc, no construct known missing yet').
-ruling(latest_over_log, load_time_refusal_naming_max_ordinal, user,
+ruling(latest_over_log, load_time_unsupported_naming_max_ordinal, user,
        'card 5b: latest() over a log rel refuses with the max(Ordinal) rewrite in the message; defining it as newest would make latest mean two things by callee decl').
 ruling(stream_decl_word, no_word_convention_only, user,
        'card 6a: log + ordinal + keep bound IS the definition; a stream word would hide the retention choice, the one an author must make on purpose').
@@ -504,7 +504,7 @@ ruling(cross_rel_drain_order, non_contract_documented, user,
 ruling(json_null_token, reserved_ground_compound_never_atom, user,
        'user 2026-07-30: "do not use None lmfao use something else i guess, what about ()" -- () explained atom-cursed, compound accepted by delegation').
 ruling(json_dup_key_fate, refuse_both_doors, user,
-       'user 2026-07-30: "emitter throws if oracle throws i gues[s]" -- oracle already throws json_dup_key; emitter gains the matching refusal/guard instead of silent last-wins').
+       'user 2026-07-30: "emitter throws if oracle throws i gues[s]" -- oracle already throws json_dup_key; emitter gains the matching unsupported construct/guard instead of silent last-wins').
 
 % 2026-07-30. Naming tiebreak, user word after the ordered-aggregate landing
 % ("k when in doubt can we just stick to ansi or any form of a sql or sql
@@ -533,9 +533,9 @@ ruling(glob_dialect, node_matcher_both_halves, user,
 ruling(bench_reference, proven_engine_reference, user,
        'user 2026-07-31: "2->b?". Big-scale referee = a pinned engine (tsv2 first) that EARNS reference status: byte-proven against the swipl oracle over the entire oracle-reachable corpus on every sweep; final-state hash retained as a third check at all scales. swipl stays the semantic authority where it reaches; rust graded tick-log byte-diff vs the proven reference beyond.').
 ruling(type_gate_widening, arrival_gate_all_types_all_positions, user,
-       'user 2026-07-31: "widen yes, do what sql would do". The decl-type refusal gate extends to all column types at all positions; coercion semantics where types CAN mix = SQLite affinity (int accepted at REAL column widens to float). Eats the bool-head card: non-boolean at a bool position = named refusal, never silent drop/coerce.').
+       'user 2026-07-31: "widen yes, do what sql would do". The decl-type unsupported construct gate extends to all column types at all positions; coercion semantics where types CAN mix = SQLite affinity (int accepted at REAL column widens to float). Eats the bool-head card: non-boolean at a bool position = named unsupported construct, never silent drop/coerce.').
 ruling(wide_int_fate, refuse_everywhere_with_todo, user,
-       'user 2026-07-31: "we dont need turbo big ints this is not finance yet lol but put todo/warn comment". int beyond 2^53-1 = named refusal int_out_of_range at every reach point incl the json-capture read-back (the bigint_seam_normalize surface); a TODO comment at the seam marks the future bigint door.').
+       'user 2026-07-31: "we dont need turbo big ints this is not finance yet lol but put todo/warn comment". int beyond 2^53-1 = named unsupported construct int_out_of_range at every reach point incl the json-capture read-back (the bigint_seam_normalize surface); a TODO comment at the seam marks the future bigint door.').
 ruling(files_naming, files_unmarked_worktree_marked_rev, user,
        'user 2026-07-31: "do not use word scan... files works fine... we want 1 that means [worktree] without a string, and the other is 1 that means a specific rev, thought we already had this figured out". Consistent with the standing worktree-unmarked spine ruling: `files(glob, ...)` = live worktree feed (no WORK atom, no string), `files_at(rev, glob, ...)` = the marked pinned case. The word scan is BANNED for file enumeration (spent twice in-tree already).').
 ruling(org_fanout, repos_host_on_clock, user,
@@ -549,7 +549,7 @@ ruling(gen_word_banned, needs_rx_prolog_sql_name, user,
 % the language moving a rule up or down is safe, and the wanted semantics
 % already has a loud spelling: a keyed rel.
 ruling(bounded_log_arm_order, refuse_two_arms_on_bounded_log, user,
-       'user 2026-08-03: "refuse it". Named retention_head_conflict_risk(HeadRef, count(N)), sibling of the keyed edge_head_conflict_risk at analyze.pl:1350 and broader than it: no shared-trigger condition, because retention prunes at tick end rather than per occurrence, so arms on different triggers still collide. Covers count(N) for every N, not only count(1). Measured before ruling: ZERO tracked programs carry the shape, so the refusal breaks nothing.').
+       'user 2026-08-03: "refuse it". Named retention_head_conflict_risk(HeadRef, count(N)), sibling of the keyed edge_head_conflict_risk at analyze.pl:1350 and broader than it: no shared-trigger condition, because retention prunes at tick end rather than per occurrence, so arms on different triggers still collide. Covers count(N) for every N, not only count(1). Measured before ruling: ZERO tracked programs carry the shape, so the unsupported construct breaks nothing.').
 
 ruling(repo_column_spelling, distinct_name_hosts, user,
        'user 2026-07-31: "we want A bc no magic strings repeated all the time since we dont have defaults or nulls" -- repo-scoped enumeration is its own host pair (repo_files(repo, glob, ...), repo_files_at(repo, rev, glob, ...)) beside the unscoped files/files_at, never a required leading column with a repeated cwd literal. Follows the repo_grep_at precedent and the no-defaults/no-nulls design line: a coordinate the program does not vary is a host the program does not name.').

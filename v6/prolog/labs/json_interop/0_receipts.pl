@@ -269,14 +269,14 @@ receipt_opt_out_storage :-
     \+ (member(Sql, Ddl), sub_string(Sql, _, _, _, "json_object(")),
     catch(
         program_plan(
-            fixture(json_aggregate_current_refusal,
+            fixture(json_aggregate_current_unsupported,
                     prog([], [(bag(json_array(Value)) <- item(Value))]),
                     [], [], [])-[],
             _),
         unsupported_construct(aggregate_head(_)),
         AggregateRefused = true),
     AggregateRefused == true,
-    format("PASS non-JSON program allocates no reference target; JSON aggregate stays named refusal~n").
+    format("PASS non-JSON program allocates no reference target; JSON aggregate stays named unsupported construct~n").
 
 sqlite_scalar(Sql, Expected) :-
     sqlite_command([':memory:', Sql], Text),

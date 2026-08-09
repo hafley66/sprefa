@@ -34,7 +34,7 @@ directive(list_types_and_generics,
 card_answered('CARD-KEY-CAPTURE', recovery_doc, json_syntax_native,
   'holes ARE the directive; the lowering is json_each(key,value), zero new SQL machinery (receipt L3). Residue is one spelling pick: CARD-KEY-HOLE-SPELLING.').
 card_answered('CARD-ARRAY-FANOUT', recovery_doc, json_as_rel_type,
-  'q:[... {...}] executes as one json_each join over a json column; the gh-cache flagship runs end to end (receipt L2). Lifting the json_each compiler refusal is a dispatch, not a ruling.').
+  'q:[... {...}] executes as one json_each join over a json column; the gh-cache flagship runs end to end (receipt L2). Lifting the json_each compiler unsupported construct is a dispatch, not a ruling.').
 card_answered('CARD-CONSTRUCTION', recovery_doc, json_as_rel_type,
   '"lowers to sqlite json1" IS json_group_array/json_group_object; already ruled emittable by json_ticklog_encoding. Dispatch, not a ruling.').
 card_answered('CARD-RECURSIVE-KEY', recovery_doc, json_syntax_native,
@@ -60,7 +60,7 @@ card_open('CARD-PATTERN-GOAL-SPELLING', new_from_directives,
 card_open('CARD-LIST-SPELLING', new_from_directives,
   'the surface for the one parametric type. The checker delta is measured at four clauses (receipt T6); only the spelling is open.').
 card_open('CARD-BRACE-TAG', new_from_directives,
-  'do we reserve `Tag{...}` NOW for the later non-json abuse of `{`? swipl already reads it as a distinct term shape (receipt R7), so reserving costs one refusal clause and buys the directive''s stated future.').
+  'do we reserve `Tag{...}` NOW for the later non-json abuse of `{`? swipl already reads it as a distinct term shape (receipt R7), so reserving costs one unsupported construct clause and buys the directive''s stated future.').
 card_open('CARD-JSON5-SUBSET', new_from_directives,
   'exactly which json5 affordances the literal takes. The draft takes unquoted keys, trailing commas and `#` comments (receipt R6) and excludes null, NaN/Infinity, hex/plus/leading-dot numbers.').
 card_open('CARD-STRING-QUOTE', new_from_directives,
@@ -118,10 +118,10 @@ spelling('CARD-LIST-SPELLING', json_only,
 
 spelling('CARD-BRACE-TAG', reserve_now,
   'rel diag(at: json).\ndiag(point{x: 1, y: 2}).    % => refused: tagged_brace_reserved(point)',
-  'one refusal clause. swipl already reads `point{...}` as a dict term that cannot unify with {}/1 (receipt R7), so the seam exists before we write anything.').
+  'one unsupported construct clause. swipl already reads `point{...}` as a dict term that cannot unify with {}/1 (receipt R7), so the seam exists before we write anything.').
 spelling('CARD-BRACE-TAG', do_not_reserve,
   'diag(point{x: 1, y: 2}).    % => refused: unexpected token after identifier',
-  'nothing to build today; the later non-json brace form arrives as a breaking parse change instead of an already-named refusal.').
+  'nothing to build today; the later non-json brace form arrives as a breaking parse change instead of an already-named unsupported construct.').
 
 spelling('CARD-JSON5-SUBSET', json5_draft,
   '{ # the repo name\n  name: ''cli'',\n  stars: 4,\n  tags: [''go'', ''rust''],\n}',

@@ -4,7 +4,7 @@
 
 % An enum variant field declared float stays float. The removed catch-all
 % used to flatten every non-int non-text field to int; a 2.5 arrival at an
-% int column is the field_not_int refusal, so this fixture would refuse under
+% int column is the field_not_int unsupported construct, so this fixture would refuse under
 % the old ruleset and passes only when float survives into the variant.
 fixture(variant_field_float_stays_float,
     prog(

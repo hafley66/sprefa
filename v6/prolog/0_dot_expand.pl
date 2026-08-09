@@ -26,7 +26,7 @@
 % whole body: the leaf is read by the head alone.
 %
 % Resolution is receiver-bound-first: the chain's ROOT must be a variable the
-% rule body binds, else the named refusal unresolvable_member. There is no
+% rule body binds, else the named unsupported construct unresolvable_member. There is no
 % module half in scope, so a chain whose root is not a bound body variable is
 % never silently repairable.
 %

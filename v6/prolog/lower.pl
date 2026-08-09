@@ -281,7 +281,7 @@ relplan_column_types(RelPlans, Ref, ColumnTypes) :- memberchk(relplan(Ref, _, _,
 % floored correction only over integers, and a comparison between an
 % INTEGER-affinity column and a TEXT one silently applies affinity conversion
 % where the oracle's ==/2 is term identity. Carrying the type beside the text
-% is what lets each of those be a NAMED refusal instead of a silent answer.
+% is what lets each of those be a NAMED unsupported construct instead of a silent answer.
 compile_pattern_arg(Mode, Arg, ColumnExpr, ColumnType, Bound0, Bound, WhereParts, Binding) :-
     column_encoding(Mode, ColumnType, Encoding),
     ( var(Arg)
@@ -465,7 +465,7 @@ compile_negative_atom_args(Mode, [Arg | RestArgs], [Column | RestColumns], [Colu
 %        real driver: -7/2 = -3, 7/-2 = -3), so the operator maps straight
 %        across -- but ONLY while both operands really are INTEGER storage
 %        class. A TEXT-affinity operand turns it into float division, which
-%        is why a non-int operand is a named refusal below rather than a
+%        is why a non-int operand is a named unsupported construct below rather than a
 %        cast.
 %  `mod` engine.pl uses Prolog `mod`, which is FLOORED (sign of the DIVISOR):
 %        7 mod -2 = -1, -7 mod 2 = 1. SQLite's `%` is C's (sign of the
@@ -570,7 +570,7 @@ text_scalar_rendering(ascii_alnum_lower, ArgumentSql, Sql) :-
 % obj([|](-(name,cli),[|](-(stars,4),[]))) -- right-nested cons text, not a
 % json1 object.
 %
-% MEASURED, not predicted: with only the bind lift in place and no refusal
+% MEASURED, not predicted: with only the bind lift in place and no unsupported construct
 % here, json_arm.pl's braces_literal_canonicalizes compiled clean and stored
 % the text "null" where the oracle holds
 % obj([|](-(name,cli),[|](-(stars,4),[]))), and braces_in_head_position (which
@@ -733,7 +733,7 @@ canonical_hash_key(Term, KeyAtom) :-
 
 % Ids are positional for a byte-stable recompile: primitives, list rows,
 % module, then each rel and its columns.
-catalog_row_ddl(Mode, ModuleName, Decls, Rules, RelPlans, [Statement]) :-
+catalog_row_ddl(Mode, ModuleName, _Decls, Rules, RelPlans, [Statement]) :-
     catalog_rows(ModuleName, Rules, RelPlans, AllRows),
     foldl(catalog_row_part(Mode), AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
@@ -975,7 +975,7 @@ compile_comparison(Mode, Goal, Bound, Text) :-
 % Family, SQL text and type rule all come from registry.pl's expression/5
 % (rank R5). The two type rules are named there: both_int for the ordered
 % comparisons (the Int-only law), same_type for the identity ones. The
-% refusal terms are unchanged, and an operator with no row still refuses by
+% unsupported construct terms are unchanged, and an operator with no row still refuses by
 % name rather than lowering to something that means something else.
 comparison_operator_sql(Operator, Goal, LeftType, RightType, OperatorSql) :-
     expression(Operator/2, Family, _, infix(OperatorSql), TypeRule),
@@ -1537,7 +1537,7 @@ dictionary_ref_type(Types, DeclaredType, RefType) :-
 % points at it, so join_column_types_agree/4 sees one domain and the
 % cross-type join guard stays meaningful.
 %
-% Edge bodies keep the refusal (analyze.pl edge_body_needs_json_destructure):
+% Edge bodies keep the unsupported construct (analyze.pl edge_body_needs_json_destructure):
 % a compound value that ARRIVES into an untyped column is stored as canonical
 % term text, and that encoding question is SLOT-TERM-STRUCT's, not this one's.
 
@@ -1571,7 +1571,7 @@ dictionary_relplans(Types, Plans) :-
 % compiled to `json_extract(b1."repo", '$.fn') = 'repo'` against b1."repo",
 % which is the INTEGER endpoint the level above just wrote.
 % json_extract(<integer>, ...) is NULL, so the rule was permanently empty with
-% no refusal (plans/2026-07-30-file-span-spine-reconciled.md section 3.1).
+% no unsupported construct (plans/2026-07-30-file-span-spine-reconciled.md section 3.1).
 %
 % The rewrite, per rule:
 %
@@ -1616,7 +1616,7 @@ dictionary_relplans(Types, Plans) :-
 % trigger occurrence against RelPlans alone -- the dictionary plans are level-
 % body-only by construction (Edge 2, see the comment at the call site) -- so
 % there is nowhere for the per-level join to go. A relation value in an edge
-% rule is therefore a named compiler refusal rather than the whole-atom
+% rule is therefore a named compiler unsupported construct rather than the whole-atom
 % endpoint bind it used to get at depth 1, which agreed with nothing: the
 % oracle stores the canonical object and prints its JSON, and the depth-1 bind
 % printed prolog term text. The reference engine keeps executing all of these;
@@ -1860,7 +1860,7 @@ expand_decode_rule(_, _, Rule, Rule).
 % THE DISPATCH, and the only place it is made: a decode whose source is bound
 % by a positive body atom at a column declared `json` lowers to json1 SQL, not
 % to a dictionary join. Everything else keeps the struct arm, including its
-% decode_source_not_struct refusal for a source with no typed binding at all.
+% decode_source_not_struct unsupported construct for a source with no typed binding at all.
 %
 % Deliberately a separate walk from decode_binding_type/5 rather than one
 % widened predicate: that one commits (cut) on the first ref-typed binding it
@@ -1894,7 +1894,7 @@ decode_goal_atoms(Types, RelPlans, BodyGoals, decode(Source, Pattern), Acc0, Acc
 
 % The declared type of the variable decode/2 reads, resolved from whichever
 % positive body atom (or already-emitted dictionary atom) binds it. A source
-% with no ref-typed binding is a NAMED refusal, never a lowering that answers
+% with no ref-typed binding is a NAMED unsupported construct, never a lowering that answers
 % something: the untyped-json arm still needs its own encoding decision, which
 % is SLOT-TERM-STRUCT's question and not this one's.
 decode_source_type(Types, RelPlans, BodyGoals, DictAtoms, Goal, TypeName) :-
@@ -3453,7 +3453,7 @@ ir_rel_storage(Mode, RelPlans, Ref, relstorage(IrRef, ColumnClasses)) :-
     maplist(ir_column_class(Mode), Columns, ColumnTypes, ColumnClasses),
     uniform_text_encoding(ColumnClasses).
 
-% INVARIANT, not a refusal: two encodings on one program's text columns would
+% INVARIANT, not a unsupported construct: two encodings on one program's text columns would
 % put the two sides of a text join in different id spaces, silently empty.
 % Unreachable while interned_column/2 is one clause; it exists so that the day
 % a per-column waiver returns, it fires at compile time instead.
@@ -4011,7 +4011,7 @@ json_pattern_sql(Pattern, Position, Index, Index, Bound0, Bound, [], WhereTexts)
     ;   % text, not json: this is the same reading compile_sub_args/7 already
         % gives a destructured value -- json_extract's result carries no
         % declared column type, so calling it text is what lets it flow into
-        % an ordinary text head column without a cross-type join refusal.
+        % an ordinary text head column without a cross-type join unsupported construct.
         Bound = [Pattern-typed(ValueSql, text, direct) | Bound0],
         format(atom(NotNull), '~w IS NOT NULL', [ValueSql]),
         WhereTexts = [NotNull]
@@ -4093,7 +4093,7 @@ json_object_guard(Position, Text) :-
 % by the byte-identical tick-log grade). Each maps to exactly ONE json1
 % `json_type` answer, which is what keeps the guard a single equality; `bool`
 % is absent for the reason body.pl states (json_flex card C4) and lands on the
-% same named refusal a typo does.
+% same named unsupported construct a typo does.
 json_capture_json_type(int,   integer) :- !.
 json_capture_json_type(float, real) :- !.
 json_capture_json_type(text,  text) :- !.
@@ -4198,7 +4198,7 @@ brace_pattern_pairs(Key: Sub, [Key-Sub]).
 %             returns INTEGER (measured through the real driver).
 %   min/max   min_list/2 and max_list/2 accept NUMBERS ONLY -- they fail
 %             outright on an atom -- so a non-int aggregated expression is a
-%             named refusal here rather than a silent lexicographic min.
+%             named unsupported construct here rather than a silent lexicographic min.
 aggregate_select_statement(Mode, HeadColumnTypes, Head, Template, Bound, FromSql,
                            AllWhereTexts, SelectStatement, InternSqls) :-
     Head =.. [_ | Args],
@@ -4856,7 +4856,7 @@ slot_desc_params([slot_desc(_, Params) | Rest], All) :-
 
 % Post-order: every referenced target insert precedes its parent's insert, so
 % a parent's ref column can resolve by declared key against a row that already
-% exists. The current type-cycle refusal is what makes this terminate.
+% exists. The current type-cycle unsupported construct is what makes this terminate.
 struct_intern_statements(Mode, Decls, Types, TypeName, Value, LookupSlot, LookupParams, Statements) :-
     type_definition(Types, TypeName, Columns, ColumnTypes),
     type_field_values(Types, TypeName, Value, FieldValues),

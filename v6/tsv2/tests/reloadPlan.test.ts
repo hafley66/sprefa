@@ -5,7 +5,7 @@
  * KEYED BY (module_id, local_name), NOT by h_id. rel_h_id hashes the module
  * hash, the name AND the arity (v6/prolog/lower.pl rel_h_id/4), so adding a
  * column moves h_id. Keying on h_id therefore read a column addition as "the
- * old rel vanished, a stranger arrived": a refusal plus a create, for a routine
+ * old rel vanished, a stranger arrived": a unsupported construct plus a create, for a routine
  * edit. MEASURED on one file compiled three ways, same module name:
  *   2 cols                 h_id 975158fcc67ee6af  h_schema 76bdfb91a44e84a1
  *   to_path text -> int    h_id 975158fcc67ee6af  h_schema fa2a45594779d533
@@ -31,9 +31,9 @@
  *   4. `verdicts.set(key, "keep")` -> "create": an unchanged program, a new rel
  *      creates, only rel rows are compared.
  *   5. `if (next_rels.has(key)) continue;` -> `continue;`: all three drop cases.
- *   6. the `refusals.push` template -> a literal: the refused-by-name case.
+ *   6. the `unsupported.push` template -> a literal: the refused-by-name case.
  *   7. rel_key returns row.h_id: all 13, since every keyed lookup then misses.
- *      The semantic half is the refusal assertion in "a column added
+ *      The semantic half is the unsupported construct assertion in "a column added
  *      recreates", which is the defect this keying exists to prevent.
  *
  * An eighth sabotage was RUN and DELETED THE CODE IT TESTED: the condition
@@ -99,7 +99,7 @@ test("cold boot is all create", () => {
   const plan = ReloadPlanner.plan([], [EDGE], false);
   assert.equal(plan.verdicts.get(EDGE_KEY), "create");
   assert.equal(plan.statements.length, 0);
-  assert.equal(plan.refusals.length, 0);
+  assert.equal(plan.unsupported.length, 0);
 });
 
 test("an unchanged program keeps everything", () => {
@@ -108,21 +108,21 @@ test("an unchanged program keeps everything", () => {
   assert.equal(plan.verdicts.get(EDGE_KEY), "keep");
   assert.equal(plan.verdicts.get(REACH_KEY), "keep");
   assert.equal(plan.statements.length, 0);
-  assert.equal(plan.refusals.length, 0);
+  assert.equal(plan.unsupported.length, 0);
 });
 
 test("a column added recreates", () => {
   const plan = ReloadPlanner.plan([EDGE], [EDGE_COLUMN_ADDED], false);
   assert.equal(plan.verdicts.get(EDGE_KEY), "recreate");
   assert.deepEqual(plan.statements, ['DROP TABLE IF EXISTS "edge"']);
-  assert.equal(plan.refusals.length, 0, "a column addition is not a drop");
+  assert.equal(plan.unsupported.length, 0, "a column addition is not a drop");
 });
 
 test("a column dropped recreates", () => {
   const plan = ReloadPlanner.plan([EDGE_COLUMN_ADDED], [EDGE], false);
   assert.equal(plan.verdicts.get(EDGE_KEY), "recreate");
   assert.deepEqual(plan.statements, ['DROP TABLE IF EXISTS "edge"']);
-  assert.equal(plan.refusals.length, 0);
+  assert.equal(plan.unsupported.length, 0);
 });
 
 test("a type change recreates", () => {
@@ -164,14 +164,14 @@ test("a drop without allow-drop is refused by name", () => {
   const plan = ReloadPlanner.plan([EDGE], [], false);
   assert.equal(plan.verdicts.has(EDGE_KEY), false);
   assert.equal(plan.statements.length, 0);
-  assert.deepEqual(plan.refusals, ["rel_drop_needs_allow_drop(edge)"]);
+  assert.deepEqual(plan.unsupported, ["rel_drop_needs_allow_drop(edge)"]);
 });
 
 test("a drop with allow-drop drops", () => {
   const plan = ReloadPlanner.plan([EDGE], [], true);
   assert.equal(plan.verdicts.get(EDGE_KEY), "drop");
   assert.deepEqual(plan.statements, ['DROP TABLE IF EXISTS "edge"']);
-  assert.equal(plan.refusals.length, 0);
+  assert.equal(plan.unsupported.length, 0);
 });
 
 test("a reshape and a rule change in one load", () => {
@@ -197,5 +197,5 @@ test("only rel rows are compared", () => {
   const plan = ReloadPlanner.plan([EDGE, column, primitive], [EDGE], false);
   assert.equal(plan.verdicts.size, 1);
   assert.equal(plan.verdicts.get(EDGE_KEY), "keep");
-  assert.equal(plan.refusals.length, 0, "an ignored row cannot be refused as a drop");
+  assert.equal(plan.unsupported.length, 0, "an ignored row cannot be refused as a drop");
 });

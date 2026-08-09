@@ -1,7 +1,7 @@
 /**
  * serveCompileBudget.test.ts — THE COMPILE DOOR'S TIMEOUT GUN (timeout-gun
  * lane, 2026-07-31). Standing law: every compute invocation runs under a budget
- * with a NAMED timeout failure. A resource cliff is a named refusal, never a
+ * with a NAMED timeout failure. A resource cliff is a named unsupported construct, never a
  * hang, never an OOM death.
  *
  * The incident: `3_clock_check.pl`'s simple-path enumeration ground 9m40s into

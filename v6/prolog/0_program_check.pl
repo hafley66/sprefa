@@ -326,7 +326,7 @@ regexp_pattern_pcre_error(Pattern, Message) :-
 % its children's content keys, so a cyclic reference graph has no key at all
 % (types-as-rels verdict: interned_graph_is_a_dag, and the crack the round-1
 % lab named). The entity plane -- extrinsic ids, which DO permit cycles -- is
-% out of this arc's scope, so this is a refusal, not a capability gap.
+% out of this arc's scope, so this is a unsupported construct, not a capability gap.
 program_violation(type_cycle, prog(Decls, _), Names) :-
     type_definitions(Decls, Types),
     type_cycle_witness(Types, Names).
@@ -355,7 +355,7 @@ program_violation(column_type_unknown, prog(Decls, _), Name) :-
 % compiled any compound argument into `json_extract(<column>, '$.fn') = ...`;
 % for a ref column that column holds an INTEGER endpoint, so the extract was
 % always NULL and the rule answered nothing. The pre-existing
-% join_column_type_mismatch refusal fired only when the phantom TEXT expression
+% join_column_type_mismatch unsupported construct fired only when the phantom TEXT expression
 % happened to land against an INT column -- a coincidence of the OTHER
 % operand's typing. Against a text column, and `path` is text, nothing fired.
 % (plans/2026-07-30-file-span-spine-reconciled.md section 3.2.)
@@ -436,7 +436,7 @@ program_violation(relation_column_type_conflict, prog(Decls, Rules),
 %
 % What is allowed to mix is SQLite's own numeric widening, and only in the
 % direction affinity performs losslessly: an int column's value entering a
-% float column becomes a double. The reverse is a refusal -- REAL to INTEGER
+% float column becomes a double. The reverse is a unsupported construct -- REAL to INTEGER
 % converts only when the value happens to have no fractional part, so the same
 % program would keep or lose a row depending on the data.
 %
@@ -494,7 +494,7 @@ program_violation(head_column_type_conflict, prog(Decls, Rules),
 %   reference engine runs and the compiler rejects cannot be graded, so its
 %   behaviour is whatever the engine happens to do, unpinned. Refusing on both
 %   doors makes the boundary a fact of the LANGUAGE, one name, one fixture,
-%   gradeable -- and deleting a shared refusal is how the capability arrives
+%   gradeable -- and deleting a shared unsupported construct is how the capability arrives
 %   later, with the fixtures flipping from throws/1 to rows.
 %
 % The compiler's own residue guards stay where they are, as the last-resort
@@ -529,7 +529,7 @@ program_violation(relation_value_in_edge_rule, prog(Decls, Rules),
 % What claimed it instead was the edb_definition ruling: a rel no rule heads is
 % pure input, so `call/3` became a REAL relation with synthesized columns and a
 % real table that no world push ever fills. Three spellings, zero rows, zero
-% refusal, on both doors.
+% unsupported construct, on both doors.
 %
 % Refused by name, and by the name the question already has:
 % labs/generic_scan_instantiation reached the same boundary from the other
@@ -664,13 +664,13 @@ program_violation(aggregate_head_shape, prog(_, Rules), Name/Arity) :-
 %             json_object('fn','group_concat','args',json_array(b0."col1"))
 %
 % One row per input holding the TEXT of the call, where the author asked for
-% one grouped row. It is the worst shape a refusal can replace: not an error,
+% one grouped row. It is the worst shape a unsupported construct can replace: not an error,
 % not empty, a plausible-looking wrong answer.
 %
 % The payload carries the aggregates that DO work, read off the registry so it
-% cannot go stale, because that list is the only thing this refusal can tell a
+% cannot go stale, because that list is the only thing this unsupported construct can tell a
 % cold author that they can act on -- the one-line message renderer has no
-% room for per-refusal prose and the refusal_messages unit holds it to a
+% room for per-unsupported construct prose and the unsupported_messages unit holds it to a
 % single clause.
 %
 % LEVEL rules only. An aggregate in an EDGE head is already

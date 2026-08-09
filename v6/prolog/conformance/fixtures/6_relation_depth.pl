@@ -66,13 +66,13 @@
 % `json_extract(b1."repo", '$.fn') = 'repo'` against b1."repo", which is the
 % INTEGER __id the depth-1 statement had just written.
 % json_extract(<integer>, '$.fn') is NULL, measured, so the WHERE was never
-% true and the rel was permanently empty with no refusal. Plan section 3.1's
+% true and the rel was permanently empty with no unsupported construct. Plan section 3.1's
 % "oracle right, emitter empty". And `file` disagrees at DEPTH 1 on the bytes
 % -- `{"name":"acme"}` against `"repo(acme)"` -- which is the oracle-side
 % defect above, never before graded because no fixture built a relation value
 % in a rule head.
 %
-% The three refusal fixtures COMPILED CLEAN on the emitter at that commit
+% The three unsupported construct fixtures COMPILED CLEAN on the emitter at that commit
 % (manifest bucket `compiled`), which is exactly the silence 3.2 describes.
 %
 % ── WHAT THE FIX PINS ───────────────────────────────────────────────────────
@@ -473,8 +473,8 @@ fixture(relation_depth3_many_rows,
 % not a check on ref columns at all. Against a text column it compiled clean
 % and answered nothing.
 %
-% All three shapes below are now the same named refusal on both doors, and the
-% refusal names the ref column rather than whatever the phantom collided with.
+% All three shapes below are now the same named unsupported construct on both doors, and the
+% unsupported construct names the ref column rather than whatever the phantom collided with.
 
 % A bare text literal where a relation value belongs.
 fixture(relation_pattern_text_literal_in_ref_column_rejected,
@@ -533,7 +533,7 @@ fixture(relation_pattern_target_arity_rejected,
 % ═══ the guard the guard did not cover ══════════════════════════════════════
 %
 % D3 / burr B1 of plans/2026-07-30-relpattern-adversarial-review.md. The three
-% refusals above all use CONCRETE arguments, and relation_argument_violation/6
+% unsupported constructs above all use CONCRETE arguments, and relation_argument_violation/6
 % opens with nonvar(Value), so a VARIABLE carrying a text leaf into a ref
 % column passed both doors. The emitter then wrote that text straight into a
 % column its own DDL declares INTEGER NOT NULL and puts in the primary key:
@@ -588,7 +588,7 @@ fixture(relation_ref_column_fed_by_text_variable_rejected,
 
 % The negative leg: a variable flowing between two columns of the SAME
 % declared relation type is the ordinary way a value moves, and the new
-% refusal must not touch it.
+% unsupported construct must not touch it.
 fixture(relation_ref_column_fed_by_ref_variable_accepted,
   prog([ type_decl(fpath, [col(name, text)]),
          col_type(fpath/1, name, text),

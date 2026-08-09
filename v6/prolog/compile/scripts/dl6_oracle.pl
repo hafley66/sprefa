@@ -46,7 +46,7 @@
 % mapping above, byte for byte.
 %
 % A non-scalar value at a json column is a NAMED REFUSAL rather than a
-% structural map, and the refusal is the point: accepting `{"repo":"cli"}` as
+% structural map, and the unsupported construct is the point: accepting `{"repo":"cli"}` as
 % a raw object here would make this door accept a schedule the served door
 % answers 400 to, which is the divergence-by-unilateral-fix the json_flex
 % verdict named (its Q2). Widening the arrival grammar to take a raw object is

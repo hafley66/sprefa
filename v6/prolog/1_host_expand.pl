@@ -84,7 +84,7 @@ program_parts(program(Decls, Rules, Queries), Decls, Rules, Queries).
 % reads as wrong -- there is simply one relation where the author wrote two.
 %
 % The overload that a cold author reaches for is what the repo-scoped pair in
-% fixtures/files-hosts.dl6 spells instead, and this refusal is the other half of
+% fixtures/files-hosts.dl6 spells instead, and this unsupported construct is the other half of
 % ruling repo_column_spelling = distinct_name_hosts: the ruling says the repo
 % case gets its own name, and this says the language will not let it not.
 % A DECLARED HOST DECLARES ITS RELATIONS, probe or no probe.
@@ -274,7 +274,7 @@ disjoint_columns(Inputs, Outputs) :-
 % The three names are stated here rather than derived because they are stated
 % in two other places already (generated_host_decls/7 below builds the
 % columns, project() above fills them) and a fourth restatement that could
-% silently disagree is exactly what this refusal exists to prevent; the
+% silently disagree is exactly what this unsupported construct exists to prevent; the
 % host_reserved_column_inventory unit pins this list against the columns
 % generated_host_decls/7 actually emits.
 %
@@ -362,7 +362,7 @@ host_relation_refs(Name, DemandRef, ResponseRef) :-
     DemandRef = DemandName,
     ResponseRef = ResponseName.
 
-% A BIND IS NOT WHERE `repo` GOES, and the refusal is named rather than left to
+% A BIND IS NOT WHERE `repo` GOES, and the unsupported construct is named rather than left to
 % the generic bind_mismatch below, because `bind watch(repo, glob, path,
 % digest)` is the obvious next thought once repo_files/repo_files_at exist and
 % the generic message ("these are not watch's columns") answers the wrong
@@ -388,7 +388,7 @@ host_relation_refs(Name, DemandRef, ResponseRef) :-
 %      receipt.
 %
 % This is a REFUSAL, not a ruling against the shape forever: it is decidable at
-% load, so the day a program proves the gap the refusal is where the argument
+% load, so the day a program proves the gap the unsupported construct is where the argument
 % gets reopened.
 validate_bind_decl(Name, Columns, Rules) :-
     ( memberchk(col(repo, _), Columns)

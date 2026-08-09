@@ -73,14 +73,14 @@ test("receipt (a) guard: a batch naming a rel that is not an arrival target is a
   }
 });
 
-test("receipt (a) refusal: a program the compiler refuses is a 400 and leaves the running program alone", async () => {
+test("receipt (a) unsupported construct: a program the compiler refuses is a 400 and leaves the running program alone", async () => {
   const source = readFileSync(DOOR_DL6, "utf8");
   const served = await start_served();
   try {
     assert.equal((await post_program(served.port, source)).statusCode, 200);
     await post_arrivals(served.port, [{ rel: "event", sign: "add", row: [1, "boot"] }]);
 
-    // `latest` in a level rule is a live named refusal (review-B2).
+    // `latest` in a level rule is a live named unsupported construct (review-B2).
     const rejected = await post_program(
       served.port,
       "rel event(id: int, kind: text) log keep(all).\nrel current(id: int, kind: text).\ncurrent(Id, Kind) <- latest(event(Id, Kind)).\n",

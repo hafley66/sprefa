@@ -17,7 +17,7 @@
 %             fixture grades that half.
 %   compiler  REFUSES it by name, unsupported_construct(trigger_arg_not_var(200)),
 %             thrown by lower.pl:compile_trigger_bound/4. analyze.pl's
-%             front gate passes the program first; the refusal is a lowering-time
+%             front gate passes the program first; the unsupported construct is a lowering-time
 %             one, which is why nothing earlier in the compiler reports it.
 %
 % MEASURED on base 1e7b6843, one program text, both doors:

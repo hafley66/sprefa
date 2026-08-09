@@ -4,16 +4,16 @@
 % a parallel validation path, and writes its answer as an EXIT CODE per the
 % user's CLI contract:
 %
-%   0  clean    -- zero parse findings, compiles without a named refusal
+%   0  clean    -- zero parse findings, compiles without a named unsupported construct
 %   1  broken   -- the file does not parse at all (parse_dl_file FAILS, or
 %                  throws something that is not one of the compiler's own
 %                  named-reason exceptions below), or any other uncaught
 %                  fault during compilation
 %   2  findings -- parse_dl_file returned unsupported_surface(...) findings,
 %                  OR the compile pipeline threw one of its own NAMED
-%                  refusal reasons
+%                  unsupported construct reasons
 %
-% Named refusal reasons are a closed list. Other uncaught errors are broken.
+% Named unsupported construct reasons are a closed list. Other uncaught errors are broken.
 %
 % v6/tsv2/cli/bop.ts's `classifyCompileFailureText` mirrors this same list
 % for the `run`/`load` verbs, which hit this same compile door over HTTP and
@@ -32,7 +32,7 @@
 % never break the invocation the way `-g "bop_check('$FILE')"` would.)
 %
 % SABOTAGE RECEIPT (run at authoring time, reverted): flipping
-% `result_code(from_error(Error), Code)`'s refusal branch from `Code = 2` to
+% `result_code(from_error(Error), Code)`'s unsupported construct branch from `Code = 2` to
 % `Code = 1` made `ghcacher.dl6` (a real fixture that hits
 % `unsupported_construct(recursive_stratum(...))`) exit 1 instead of 2;
 % v6/tsv2/tests/bopCheck.test.ts's findings-fixture assertion goes red
@@ -41,12 +41,12 @@
 %
 % SECOND SABOTAGE RECEIPT (cold-author defect D3, run 2026-07-31, reverted):
 % deleting compile_pure/3's catch/3 wrapper below put the CLI back on the
-% unlocated refusal it shipped with:
-%   refusal: rule-index unavailable: unsupported_construct: compiler refused
+% unlocated unsupported construct it shipped with:
+%   unsupported construct: rule-index unavailable: unsupported_construct: compiler refused
 %            rule 'log_on_level_headed_rel' for rel 'beat/1' (...)
-% bopCheck.test.ts's located-refusal test goes red on exactly the FILE:LINE
+% bopCheck.test.ts's located-unsupported construct test goes red on exactly the FILE:LINE
 % match against that mutant (it asserts the path and the line together, so a
-% refusal naming neither, or naming a wrong line, both fail) and green again
+% unsupported construct naming neither, or naming a wrong line, both fail) and green again
 % once the wrapper is back.
 
 :- module(bop_check, [bop_check/1, bop_check_env/0]).
@@ -85,14 +85,14 @@ check_result(File, Result) :-
 % swallows that (the temp path is not information a caller of `check` wants),
 % leaving stderr as the only channel this script writes on purpose.
 %
-% The catch/3 around compile_program/6 is what gives a refusal its FILE:LINE
+% The catch/3 around compile_program/6 is what gives a unsupported construct its FILE:LINE
 % (cold-author defect D3). compile_dl6/2 wraps its own compile in exactly this
 % call; this script cannot reuse compile_dl6/2 wholesale because it owns the
 % temp output file and needs parse findings as a SEPARATE result from a thrown
-% refusal, so it reuses the wrapper instead. Rethrowing keeps the term shape
+% unsupported construct, so it reuses the wrapper instead. Rethrowing keeps the term shape
 % every branch below reads: `unsupported_construct(at(File, Line, Reason))` has
 % the same functor as the unlocated form, so result_code/2's named-reason test
-% and its exit code are untouched, and 0_refusal_messages.pl's at/3 arm renders
+% and its exit code are untouched, and 0_unsupported_messages.pl's at/3 arm renders
 % the location that was already sitting in its message clause unused.
 compile_pure(File, Prog, Bindings) :-
     file_base_name(File, BaseName),
@@ -115,7 +115,7 @@ result_code(broken(Reason), 1) :-
     print_rendered_error("broken", Reason).
 result_code(from_error(Error), Code) :-
     ( compound(Error), functor(Error, Functor, _), named_reason_functor(Functor)
-    -> print_rendered_error("refusal", Error), Code = 2
+    -> print_rendered_error("unsupported", Error), Code = 2
     ;  print_rendered_error("broken", Error), Code = 1
     ).
 

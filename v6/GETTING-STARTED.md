@@ -351,7 +351,7 @@ beat(bucket) <- interval(1, bucket).
 ```console
 $ "$BOP" check broken.dl6; echo "exit $?"
 {"code":"log_on_level_headed_rel/1","message":"<workdir>/broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)","range": {"end": {"character":0,"line":3},"start": {"character":0,"line":3}},"severity":1,"source":"dl6","uri":"file://<workdir>/broken.dl6"}
-refusal: <workdir>/broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
+unsupported: <workdir>/broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
 exit 2
 ```
 
@@ -359,7 +359,7 @@ The JSON line is the diagnostic channel (`v6/prolog/diag.pl`), one LSP
 `Diagnostic` record per refusal, carrying the same message an editor would
 draw. It goes to stderr by default; set `DL6_DIAG_JSONL=<path>` to send it to a
 file instead, which is what a separate process watching for diagnostics wants.
-The human `refusal:` line below it is rendered from the same term, so the two
+The human `unsupported:` line below it is rendered from the same term, so the two
 cannot disagree.
 
 `log` declares an append-only relation, and `beat` is also the head of a

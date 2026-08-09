@@ -112,7 +112,7 @@ solve_comparison(Left \== Right) :- eval_expr(Left, LeftV), eval_expr(Right, Rig
 
 % ═══ json ═══════════════════════════════════════════════════════════════════
 
-% An unbound value is a named refusal. It must not unify with the empty object.
+% An unbound value is a named unsupported construct. It must not unify with the empty object.
 json_canon(Value, _) :- var(Value), !, throw(json_value_unbound).
 % The EMPTY object is the atom `{}`, not `{}`/1: that is what the term door's
 % own reader produces for `{}` (term_to_atom gives arity 0), so the text door

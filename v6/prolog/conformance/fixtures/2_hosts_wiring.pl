@@ -249,7 +249,7 @@ fixture(native_ts_query_term,
 % 1_host_expand.pl:generated_host_decls/7 and filled BY LITERAL NAME by
 % v6/tsv2/serve/1_hosts.ts:project(), which tests the runtime names FIRST.
 %
-% FAIL-FIRST RECEIPT for this exact declaration, before the refusal existed:
+% FAIL-FIRST RECEIPT for this exact declaration, before the unsupported construct existed:
 % it prepared clean and produced a response relation of ARITY 4 carrying
 % THREE column names,
 %

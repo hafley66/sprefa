@@ -12,7 +12,7 @@
             scan_spec/6,
             scan_plan_fact/3,
             specialize_scan/3,
-            scan_refusal/2
+            scan_unsupported/2
           ]).
 
 :- use_module('../../conformance/engine',
@@ -168,65 +168,65 @@ scan_plan_fact(Name, specialization(Hash), helper(Helper)) :-
     scan_specialization_hash(Name, Hash),
     helper_name(Hash, Helper).
 
-% Static refusals. Ground relation names are the compile-time boundary.
+% Static unsupported constructs. Ground relation names are the compile-time boundary.
 
-scan_refusal(scan_request(_, EventRef, _, _, _, _),
+scan_unsupported(scan_request(_, EventRef, _, _, _, _),
              dynamic_relation_name(event)) :-
     \+ ground(EventRef),
     !.
-scan_refusal(scan_request(_, _, StateRef, _, _, _),
+scan_unsupported(scan_request(_, _, StateRef, _, _, _),
              dynamic_relation_name(state)) :-
     \+ ground(StateRef),
     !.
-scan_refusal(scan_request(_, _, _, InitRef, _, _),
+scan_unsupported(scan_request(_, _, _, InitRef, _, _),
              dynamic_relation_name(init)) :-
     \+ ground(InitRef),
     !.
-scan_refusal(scan_request(_, _, _, _, StepRef, _),
+scan_unsupported(scan_request(_, _, _, _, StepRef, _),
              dynamic_relation_name(step)) :-
     \+ ground(StepRef),
     !.
-scan_refusal(Name, unknown_relation(Role, Ref)) :-
+scan_unsupported(Name, unknown_relation(Role, Ref)) :-
     scan_plan_fact(Name, role(Role), Ref),
     memberchk(Role, [event, state, init]),
     \+ rel_def(Ref, _, _, _, _),
     !.
-scan_refusal(Name, unknown_step(StepRef)) :-
+scan_unsupported(Name, unknown_step(StepRef)) :-
     scan_plan_fact(Name, role(step), StepRef),
     \+ step_sig(StepRef, _, _, _, _, _),
     !.
-scan_refusal(Name, state_requires_key(StateRef)) :-
+scan_unsupported(Name, state_requires_key(StateRef)) :-
     scan_spec(Name, _, StateRef, _, _, _),
     rel_def(StateRef, _, _, _, Key),
     Key \= key(_),
     !.
-scan_refusal(Name, recursive_reducer(StepRef)) :-
+scan_unsupported(Name, recursive_reducer(StepRef)) :-
     scan_spec(Name, _, _, _, StepRef, _),
     step_reaches_itself(StepRef),
     !.
-scan_refusal(Name, reducer_cardinality(StepRef, Cardinality)) :-
+scan_unsupported(Name, reducer_cardinality(StepRef, Cardinality)) :-
     scan_spec(Name, _, _, _, StepRef, _),
     step_sig(StepRef, _, _, _, cardinality(Cardinality), _),
     Cardinality \== det,
     !.
-scan_refusal(Name, reducer_effect(StepRef)) :-
+scan_unsupported(Name, reducer_effect(StepRef)) :-
     scan_spec(Name, _, _, _, StepRef, _),
     step_sig(StepRef, _, _, _, _, effects(Effects)),
     Effects \== [],
     !.
-scan_refusal(Name, reducer_grade(StepRef, Grade)) :-
+scan_unsupported(Name, reducer_grade(StepRef, Grade)) :-
     scan_spec(Name, _, _, _, StepRef, _),
     step_sig(StepRef, _, _, grade(Grade), _, _),
     Grade =\= 0,
     !.
-scan_refusal(Name, type_mismatch(TypeError)) :-
+scan_unsupported(Name, type_mismatch(TypeError)) :-
     scan_spec(Name, _, _, _, _, _),
     catch(scan_type_bindings(Name, _, _, _),
           scan_type_error(TypeError),
           true),
     nonvar(TypeError),
     !.
-scan_refusal(Name, invalid_key_map(Reason)) :-
+scan_unsupported(Name, invalid_key_map(Reason)) :-
     scan_spec(Name, _, _, _, _, _),
     catch(validate_key_map(Name), scan_key_error(Reason), true),
     nonvar(Reason),
@@ -241,7 +241,7 @@ step_reaches_itself(StepRef) :-
 
 valid_scan(Name) :-
     scan_spec(Name, _, _, _, _, _),
-    \+ scan_refusal(Name, _).
+    \+ scan_unsupported(Name, _).
 
 % Type substitution.
 
@@ -496,7 +496,7 @@ go :-
     receipt_separate_and_shared_state,
     receipt_nested_scan,
     receipt_missing_init,
-    receipt_refusals,
+    receipt_unsupported,
     receipt_first_order_composition,
     format("11 PASS~n").
 
@@ -631,20 +631,20 @@ receipt_missing_init :-
     rel_rows(total/2, Final, []),
     format("PASS current N-1 behavior proves the remaining gap: event before init writes zero rows~n").
 
-receipt_refusals :-
-    scan_refusal(unknown_init_scan,
+receipt_unsupported :-
+    scan_unsupported(unknown_init_scan,
                  unknown_relation(init, unknown_seed/2)),
-    scan_refusal(text_type_mismatch, type_mismatch(_)),
-    scan_refusal(multi_reducer_scan,
+    scan_unsupported(text_type_mismatch, type_mismatch(_)),
+    scan_unsupported(multi_reducer_scan,
                  reducer_cardinality(ambiguous_step/3, multi)),
-    scan_refusal(recursive_reducer_scan,
+    scan_unsupported(recursive_reducer_scan,
                  recursive_reducer(recursive_step/3)),
     scalar_key_map(Map),
     Request =
         scan_request(dynamic_scan, EventRef, total/2, total_seed/2,
                      add_step/3, Map),
     var(EventRef),
-    scan_refusal(Request, dynamic_relation_name(event)),
+    scan_unsupported(Request, dynamic_relation_name(event)),
     format("PASS unknown init, type mismatch, multi reducer, recursion, and dynamic rel names refuse before lowering~n").
 
 receipt_first_order_composition :-

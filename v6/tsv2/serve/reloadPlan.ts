@@ -24,7 +24,7 @@ export const ReloadPlanner: IReloadPlanner = {
 
     const verdicts = new Map<string, RelVerdict>();
     const statements: string[] = [];
-    const refusals: string[] = [];
+    const unsupported: string[] = [];
 
     for (const [key, next_row] of next_rels) {
       const prev_row = prev_rels.get(key);
@@ -47,10 +47,10 @@ export const ReloadPlanner: IReloadPlanner = {
         verdicts.set(key, "drop");
         statements.push(`DROP TABLE IF EXISTS "${prev_row.local_name}"`);
       } else {
-        refusals.push(`rel_drop_needs_allow_drop(${prev_row.local_name})`);
+        unsupported.push(`rel_drop_needs_allow_drop(${prev_row.local_name})`);
       }
     }
 
-    return { verdicts, statements, refusals };
+    return { verdicts, statements, unsupported };
   },
 };

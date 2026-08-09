@@ -403,7 +403,7 @@ fixture(shared_demand_refcount,
 % honestly, not a workaround: the redteam finding is that the minimal kernel
 % moved the scope tree into rule text where no check reads it. Obligation 1
 % of the subscription_kernel ruling (rulings.pl) is scope_cover_check, a
-% static scope-key column-flow refusal for exactly this shape (ARCH.pl:
+% static scope-key column-flow unsupported construct for exactly this shape (ARCH.pl:
 % task(scope_cover_check, unbuilt, [mode_lab])). It does not exist yet. WHEN
 % IT LANDS, this fixture's expectations flip from the leak below to
 % throws(scope_cover_violation(live_detail/2)) or whatever term the checker

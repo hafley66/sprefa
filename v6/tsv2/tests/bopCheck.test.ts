@@ -1,12 +1,12 @@
 /**
  * bopCheck.test.ts — the CLI's `check` verb, exit-code contract only (0 clean
- * / 2 named-refusal findings / 1 broken). `check` boots no server (spec:
+ * / 2 named-unsupported construct findings / 1 broken). `check` boots no server (spec:
  * "NO server needed if compilation is pure"), so this file spawns the CLI
  * itself as a subprocess and reads only its exit code + stderr, the same
  * black-box shape a real caller sees.
  *
  * SABOTAGE RECEIPT (run at authoring time against bop_check.pl, reverted --
- * full transcript in that file's own header): flipping the compile-refusal
+ * full transcript in that file's own header): flipping the compile-unsupported construct
  * branch's exit code from 2 to 1 made the findings-fixture assertion below go
  * red (ghcacher.dl6 reported 1, asserted 2) and green again once reverted.
  */
@@ -33,7 +33,7 @@ test("check: a program with zero findings that compiles clean exits 0, silently"
   assert.equal(outcome.status, 0, outcome.stderr);
 });
 
-test("check: a program that hits a named compiler refusal exits 2 and names it on stderr", () => {
+test("check: a program that hits a named compiler unsupported construct exits 2 and names it on stderr", () => {
   const outcome = run_check(FINDINGS_DL6);
   assert.equal(outcome.status, 2, outcome.stderr);
   assert.match(outcome.stderr, /unsupported_construct/);
@@ -47,15 +47,15 @@ test("check: a file that does not exist exits 1, broken", () => {
 /* Cold-author defect D3: `check` and compile_dl6.sh are two doors onto one
  * compile, and only the script's door threaded the location -- the CLI printed
  * "rule-index unavailable" for the very file the script located at line 4. The
- * assertion is the FILE and the LINE together, not the word "at": a refusal
- * that names neither is the defect, and a refusal that names a wrong line is
+ * assertion is the FILE and the LINE together, not the word "at": a unsupported construct
+ * that names neither is the defect, and a unsupported construct that names a wrong line is
  * worse than none.
  *
  * FAIL-FIRST RECEIPT (run at authoring time, reverted): with bop_check.pl's
  * catch/3 around compile_program/6 removed, this test reads
- *   refusal: rule-index unavailable: unsupported_construct: ...
+ *   unsupported construct: rule-index unavailable: unsupported_construct: ...
  * and goes red on the location match; restoring the catch makes it green. */
-test("check: a located refusal names file and line, the same location compile_dl6.sh prints", () => {
+test("check: a located unsupported construct names file and line, the same location compile_dl6.sh prints", () => {
   const work_dir = mkdtempSync(join(tmpdir(), "bop-check-located-"));
   const program_path = join(work_dir, "broken.dl6");
   // `beat` is declared `log` and headed by a level rule, which is
@@ -76,7 +76,7 @@ test("check: a located refusal names file and line, the same location compile_dl
   assert.match(outcome.stderr, /log_on_level_headed_rel/);
   assert.ok(
     outcome.stderr.includes(`${program_path}:4:`),
-    `expected the refusal to carry ${program_path}:4, got: ${outcome.stderr}`,
+    `expected the unsupported construct to carry ${program_path}:4, got: ${outcome.stderr}`,
   );
 });
 

@@ -53,7 +53,7 @@ scalar_schedule_value(Value, Atom) :- term_to_atom(Value, Atom).
 json_column_term(_Context, _Rel, Value, Term) :- string(Value), !,
     json_text_term(Value, Term).
 json_column_term(_Context, _Rel, Value, Value) :- number(Value), !.
-% Both refusals lead with the LANGUAGE's name for them, not the door's.
+% Both unsupported constructs lead with the LANGUAGE's name for them, not the door's.
 % A json column rejecting its arrival is the same fact as any other column
 % rejecting one (0_type_plane.pl:world_row_shape_violation/3), and a reader --
 % cold author or grading harness -- should not have to know that json arrivals

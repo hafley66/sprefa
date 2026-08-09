@@ -17,9 +17,9 @@ expand_ast_program(Program, Expanded) :-
     expand_ast_program_with_bindings(Program, [], Expanded).
 
 expand_ast_program_with_bindings(Program, Bindings, Expanded) :-
-    cst_refusal(Program),
+    cst_unsupported(Program),
     normalize_cst_program(Program, Normalized),
-    ast_refusal(Normalized),
+    ast_unsupported(Normalized),
     Normalized = prog(Decls, Rules0),
     rewrite_rules(Rules0, Bindings, 1, [], Rules, HostDecls, RelationDecls),
     append([Decls, HostDecls, RelationDecls], ExpandedDecls),
@@ -32,33 +32,33 @@ expand_ast_in_context(Context, Program, Expanded) :-
 context_bindings(expansion_context(_, Bindings), Bindings) :- !.
 context_bindings(_, []).
 
-ast_refusal(Program) :-
+ast_unsupported(Program) :-
     first_violation(
         Program,
         [ast_query_not_literal, ast_lang_unknown,
          ast_query_single_quote, ast_no_named_capture],
         violation(Name, Payload)),
-    ast_refusal_term(Name, Payload, Reason),
+    ast_unsupported_term(Name, Payload, Reason),
     throw(unsupported_construct(Reason)).
-ast_refusal(_).
+ast_unsupported(_).
 
-cst_refusal(Program) :-
+cst_unsupported(Program) :-
     first_violation(
         Program,
         [cst_capture_unused, cst_variable_uncaptured,
          cst_regexp_pattern_not_literal, cst_regexp_pattern_outside_subset,
          cst_regexp_pattern_invalid],
         violation(Name, Payload)),
-    cst_refusal_term(Name, Payload, Reason),
+    cst_unsupported_term(Name, Payload, Reason),
     throw(unsupported_construct(Reason)).
-cst_refusal(_).
+cst_unsupported(_).
 
-cst_refusal_term(cst_capture_unused, Name, cst_capture_unused(Name)).
-cst_refusal_term(cst_variable_uncaptured, Name,
+cst_unsupported_term(cst_capture_unused, Name, cst_capture_unused(Name)).
+cst_unsupported_term(cst_variable_uncaptured, Name,
                  cst_variable_uncaptured(Name)).
-cst_refusal_term(cst_regexp_pattern_not_literal, Payload, Payload).
-cst_refusal_term(cst_regexp_pattern_outside_subset, Payload, Payload).
-cst_refusal_term(cst_regexp_pattern_invalid, Payload, Payload).
+cst_unsupported_term(cst_regexp_pattern_not_literal, Payload, Payload).
+cst_unsupported_term(cst_regexp_pattern_outside_subset, Payload, Payload).
+cst_unsupported_term(cst_regexp_pattern_invalid, Payload, Payload).
 
 normalize_cst_program(prog(Decls, Rules), prog(Decls, NormalizedRules)) :-
     maplist(normalize_cst_rule, Rules, NormalizedRules).
@@ -85,10 +85,10 @@ normalize_cst_body(cst(Path, Digest, Language, Query),
     serialize_ts_query(Query, Text).
 normalize_cst_body(Body, Body).
 
-ast_refusal_term(ast_query_not_literal, _, ast_query_not_literal).
-ast_refusal_term(ast_lang_unknown, Lang, ast_lang_unknown(Lang)).
-ast_refusal_term(ast_query_single_quote, _, ast_query_single_quote).
-ast_refusal_term(ast_no_named_capture, _, ast_no_named_capture).
+ast_unsupported_term(ast_query_not_literal, _, ast_query_not_literal).
+ast_unsupported_term(ast_lang_unknown, Lang, ast_lang_unknown(Lang)).
+ast_unsupported_term(ast_query_single_quote, _, ast_query_single_quote).
+ast_unsupported_term(ast_no_named_capture, _, ast_no_named_capture).
 
 rewrite_rules([], _, _, _, [], [], []).
 rewrite_rules([Rule0 | Rest], Bindings, Counter0, Mappings0,
