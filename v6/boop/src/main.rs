@@ -1512,12 +1512,12 @@ mod tests {
     #[test]
     fn dispatch_refuses_an_unregistered_harness() {
         let registry = Registry::discover();
-        let error = match resolve_dispatch_harness(&registry, Some("kimi")) {
+        let error = match resolve_dispatch_harness(&registry, Some("gemini-cli")) {
             Ok(_) => panic!("unregistered harness must be refused"),
             Err(error) => error,
         };
         let message = error.to_string();
-        assert!(message.contains("kimi"), "message: {message}");
+        assert!(message.contains("gemini-cli"), "message: {message}");
         assert!(message.contains("claude"), "registered set: {message}");
         assert!(message.contains("opencode"), "registered set: {message}");
     }
