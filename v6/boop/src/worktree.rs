@@ -166,6 +166,7 @@ mod tests {
             env_stamp: None,
             model: None,
             on_exit: None,
+            tmux: None,
         }
     }
 
