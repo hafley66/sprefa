@@ -286,13 +286,57 @@ arrival_target_refs(Rules, ArrivalRefs) :-
 % findall/bagof would COPY_TERM every solution's Args, which severs the
 % shared variable identity this whole scheme depends on (the same hazard
 % engine.pl's trigger_items comment calls out: "findall copies its template,
-% which would sever the trigger atom from the body"). column_name_at/4
-% therefore drives ref_occurrence_args/3 directly inside an if-then,
-% backtracking over the ORIGINAL term without ever collecting it into a list.
+% which would sever the trigger atom from the body"). column_name_at/5
+% therefore drives the occurrence list with member/2 directly inside an
+% if-then, backtracking over the ORIGINAL Args terms without ever collecting
+% them into a list by findall/bagof.
+%
+% The quadratic the index kills: the old code had column_name_at/4 call
+% ref_occurrence_args/3 -- a fresh member(Rule, Rules) scan over every rule
+% plus a full body_ref_uses body walk -- once per column position, so
+% rel_columns/4 cost columns x rules full body walks per ref. ref_occurrence_
+% args_list/3 collects that ref's occurrences ONCE (a single pass over Rules,
+% head before body uses), then the per-column maplist reads the list with
+% member/2 of the original Args instead of re-walking every rule.
 
 rel_columns(Rules, Bindings, Name/Arity, Columns) :-
     numlist(1, Arity, Positions),
-    maplist(column_name_at(Rules, Bindings, Name/Arity), Positions, Columns).
+    ref_occurrence_args_list(Rules, Name/Arity, Occurrences),
+    maplist(column_name_at(Occurrences, Bindings, Name/Arity), Positions, Columns).
+
+% Occurrences: every Args of Ref in program order -- rules in order, each
+% rule's head occurrence before its body uses, body uses in body order --
+% accumulated by list-cell unification (never findall, which would copy the
+% Args and sever the ==/2 identity column_name_at/5 reads).
+ref_occurrence_args_list(Rules, Ref, Occurrences) :-
+    collect_ref_occurrences(Rules, Ref, [], Rev),
+    reverse(Rev, Occurrences).
+
+collect_ref_occurrences([], _Ref, Acc, Acc).
+collect_ref_occurrences([Rule | Rest], Ref, Acc0, Acc) :-
+    rule_ref_occurrences(Rule, Ref, RuleOccs),
+    reverse(RuleOccs, RevRuleOccs),
+    append(RevRuleOccs, Acc0, Acc1),
+    collect_ref_occurrences(Rest, Ref, Acc1, Acc).
+
+rule_ref_occurrences(Rule, Ref, Occurrences) :-
+    ( rule_head(Rule, Head), rel_ref(Head, Ref), Head =.. [_ | HeadArgs]
+    -> HeadOccs = [HeadArgs]
+    ;  HeadOccs = []
+    ),
+    ( rule_body(Rule, Body)
+    -> body_ref_uses(Body, Uses),
+       body_ref_occs(Uses, Ref, BodyOccs)
+    ;  BodyOccs = []
+    ),
+    append(HeadOccs, BodyOccs, Occurrences).
+
+body_ref_occs([], _Ref, []).
+body_ref_occs([use(Ref, Args, _, _) | Rest], Ref, [Args | More]) :-
+    !,
+    body_ref_occs(Rest, Ref, More).
+body_ref_occs([_ | Rest], Ref, More) :-
+    body_ref_occs(Rest, Ref, More).
 
 rel_columns(Decls, Rules, Bindings, Ref, Columns) :-
     Ref = _Name/Arity,
@@ -317,8 +361,8 @@ ref_occurrence_args(Rules, Ref, Args) :-
     ( rule_head(Rule, Head), rel_ref(Head, Ref), Head =.. [_ | Args]
     ; rule_body(Rule, Body), body_ref_uses(Body, Uses), member(use(Ref, Args, _, _), Uses) ).
 
-column_name_at(Rules, Bindings, Ref, Position, ColumnName) :-
-    ( ref_occurrence_args(Rules, Ref, Args),
+column_name_at(Occurrences, Bindings, Ref, Position, ColumnName) :-
+    ( member(Args, Occurrences),
       nth1(Position, Args, Arg),
       member(SurfaceName = BoundVar, Bindings),
       Arg == BoundVar
