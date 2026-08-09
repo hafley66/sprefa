@@ -11,7 +11,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::bus::Route;
 use crate::event::AgentEvent;
-use crate::harness::SessionRef;
 use crate::registry::Registry;
 
 mod bus;
@@ -56,16 +55,10 @@ enum SubCmd {
         #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
-    /// Stream events across sessions, optionally filtered by time. (pass 1)
+    /// Stream turns across sessions, filtered from the db. (pass 4)
     Events {
-        /// Only sessions from this harness (its stable id).
-        #[arg(long)]
-        harness: Option<String>,
-        /// Only events at or after this timestamp (ms since the epoch).
-        #[arg(long)]
-        since_ms: Option<u64>,
-        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
-        format: OutputFormat,
+        #[command(flatten)]
+        query: QueryArgs,
     },
     /// List lanes and messages like `bus list`.
     List {
@@ -197,21 +190,53 @@ enum SubCmd {
     },
     /// Project sessions into NDJSON chat-repr turns (the zipf door).
     Chat {
-        /// The session id to project.
-        #[arg(long)]
-        session: Option<String>,
+        #[command(flatten)]
+        query: QueryArgs,
         /// Project every session the registry knows.
         #[arg(long)]
         all: bool,
-        /// Tail the session, one NDJSON line per new turn.
+        /// Tail new turns from the db, one NDJSON line per new turn.
         #[arg(long)]
         follow: bool,
-        /// Only turns at or after this ts (ms since the epoch).
-        #[arg(long)]
-        since: Option<u64>,
         #[arg(long)]
         json: bool,
     },
+    /// Tail every harness forward from stored offsets into the db.
+    Sync {},
+    /// Stream new facts into the db on a coarse poll (idle near-zero CPU).
+    Follow {},
+}
+
+/// The shared read filter, used by `chat` and `events`.
+#[derive(clap::Args, Clone, Default)]
+struct QueryArgs {
+    #[arg(long)]
+    harness: Option<String>,
+    #[arg(long)]
+    session: Option<String>,
+    #[arg(long)]
+    role: Option<String>,
+    #[arg(long)]
+    since: Option<u64>,
+    #[arg(long)]
+    until: Option<u64>,
+    #[arg(long)]
+    turn_from: Option<u64>,
+    #[arg(long)]
+    turn_to: Option<u64>,
+    #[arg(long)]
+    path: Option<String>,
+    #[arg(long)]
+    limit: Option<u64>,
+    #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
+    format: QueryFormat,
+}
+
+#[derive(Clone, Copy, ValueEnum, Default)]
+enum QueryFormat {
+    #[default]
+    Ndjson,
+    Text,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -229,8 +254,11 @@ fn main() -> Result<()> {
         SubCmd::Tail { session_id, from, format } => {
             run_tail(&registry, &session_id, from.unwrap_or(0), format)
         }
-        SubCmd::Events { harness, since_ms, format } => {
-            run_events(&registry, harness.as_deref(), since_ms, format)
+        SubCmd::Events { query } => run_query(&query),
+        SubCmd::Sync {} => run_sync_all(&registry),
+        SubCmd::Follow { } => run_follow(&registry),
+        SubCmd::Chat { query, all, follow, json } => {
+            run_chat_query(&query, all, follow, json)
         }
         SubCmd::List { agent, all, mail_dir } => run_list(mail_dir.as_deref(), agent.as_deref(), all),
         SubCmd::Measure { mail_dir } => run_measure(mail_dir.as_deref()),
@@ -323,9 +351,6 @@ fn main() -> Result<()> {
             mail_dir.as_deref(),
         ),
         SubCmd::Prune { mail_dir } => run_prune(mail_dir.as_deref()),
-        SubCmd::Chat { session, all, follow, since, json } => {
-            run_chat(&registry, session.as_deref(), all, follow, since, json)
-        }
     }
 }
 
@@ -380,86 +405,148 @@ fn run_tail(registry: &Registry, session_id: &str, offset: u64, format: OutputFo
     anyhow::bail!("no session found with id `{session_id}`")
 }
 
-fn run_events(
-    registry: &Registry,
-    harness_id: Option<&str>,
-    since_ms: Option<u64>,
-    format: OutputFormat,
-) -> Result<()> {
-    let harnesses: Vec<&dyn crate::harness::Harness> = match harness_id {
-        Some(id) => vec![resolve_harness(registry, id)?],
-        None => registry.all().iter().map(|boxed| boxed.as_ref()).collect(),
-    };
-    for adapter in harnesses {
-        for session in adapter.sessions()? {
-            let chunk = adapter.read_from(&session, 0)?;
-            emit_notes(chunk.reset, chunk.skipped);
-            for event in chunk.events.into_iter().filter(|event| {
-                since_ms.map(|since| event.ts_ms >= since).unwrap_or(true)
-            }) {
-                emit_event(&event, format);
-            }
-        }
+/// Resolve the shared filter set, with the session filter pinned externally
+/// so `--all` can clear it.
+fn query_from(q: &QueryArgs, session: Option<String>) -> ident::TurnQuery {
+    ident::TurnQuery {
+        harness: q.harness.clone(),
+        session,
+        role: q.role.clone(),
+        since: q.since,
+        until: q.until,
+        turn_from: q.turn_from,
+        turn_to: q.turn_to,
+        path: q.path.clone(),
+        limit: q.limit,
     }
+}
+
+/// Query the db with the shared filter set; emit raw rows, no interpretation.
+fn run_query(query: &QueryArgs) -> Result<()> {
+    let store = ident::Store::open(ident::Store::default_path()?)?;
+    let rows = store.query_turns(&query_from(query, query.session.clone()))?;
+    emit_rows(&rows, query.format);
     Ok(())
 }
 
-/// Project one session (or every session) into NDJSON chat-repr turns.
-fn run_chat(
-    registry: &Registry,
-    session_id: Option<&str>,
-    all: bool,
-    follow: bool,
-    since: Option<u64>,
-    _json: bool,
-) -> Result<()> {
-    if all {
-        for adapter in registry.all() {
-            for session in adapter.sessions()? {
-                let (turns, _) = crate::chat::snapshot(&session)?;
-                for turn in turns.into_iter().filter(|turn| since.map(|s| turn.ts_ms >= s).unwrap_or(true)) {
-                    println!("{}", serde_json::to_string(&turn)?);
-                }
-            }
-        }
-        return Ok(());
-    }
-    let Some(session_id) = session_id else {
-        anyhow::bail!("chat needs --session <id> or --all");
-    };
-    let session = find_session(registry, session_id)?;
+/// `boop chat`: like `query` but emits the chat-repr turn shape. `--all`
+/// clears the session filter; `--follow` re-queries in a loop.
+fn run_chat_query(query: &QueryArgs, all: bool, follow: bool, _json: bool) -> Result<()> {
+    let store = ident::Store::open(ident::Store::default_path()?)?;
+    let session = if all { None } else { query.session.clone() };
     if follow {
-        let mut seq = 1u64;
-        let mut offset = 0u64;
         loop {
-            let (turns, next) = crate::chat::read_turns(&session, offset, &mut seq)?;
-            for turn in turns {
-                if since.map(|s| turn.ts_ms >= s).unwrap_or(true) {
-                    println!("{}", serde_json::to_string(&turn)?);
-                }
-            }
+            let rows = store.query_turns(&query_from(query, session.clone()))?;
+            emit_rows(&rows, QueryFormat::Ndjson);
             std::io::Write::flush(&mut std::io::stdout())?;
-            offset = next;
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
     }
-    let (turns, _) = crate::chat::snapshot(&session)?;
-    for turn in turns.into_iter().filter(|turn| since.map(|s| turn.ts_ms >= s).unwrap_or(true)) {
-        println!("{}", serde_json::to_string(&turn)?);
+    let rows = store.query_turns(&query_from(query, session.clone()))?;
+    emit_rows(&rows, query.format);
+    Ok(())
+}
+
+fn emit_rows(rows: &[ident::Row], format: QueryFormat) {
+    for row in rows {
+        match format {
+            QueryFormat::Ndjson => {
+                if let Ok(line) = serde_json::to_string(row) {
+                    println!("{line}");
+                }
+            }
+            QueryFormat::Text => {
+                println!(
+                    "{} {} {} {} {}",
+                    row["session"].as_str().unwrap_or(""),
+                    row["turn"].as_i64().unwrap_or(0),
+                    row["role"].as_str().unwrap_or(""),
+                    row["ts"].as_i64().unwrap_or(0),
+                    row["said"].as_str().unwrap_or(""),
+                );
+            }
+        }
+    }
+}
+
+/// `boop sync`: tail every harness forward from stored offsets into the db.
+fn run_sync_all(registry: &Registry) -> Result<()> {
+    let started = std::time::Instant::now();
+    let store = ident::Store::open(ident::Store::default_path()?)?;
+    store.begin()?;
+    let result = (|| {
+        let mut events = 0u64;
+        for adapter in registry.all() {
+            for session in adapter.sessions()? {
+                events += ident::sync_session(&store, &session)?;
+            }
+        }
+        Ok::<u64, anyhow::Error>(events)
+    })();
+    match result {
+        Ok(events) => {
+            store.commit()?;
+            let elapsed_ms = started.elapsed().as_millis();
+            let counts = store.counts()?;
+            let db_bytes = store.db_bytes()?;
+            let rate = (events as u128)
+                .saturating_mul(1000)
+                .checked_div(elapsed_ms.max(1))
+                .unwrap_or(0) as u64;
+            println!(
+                "events={events} elapsed_ms={elapsed_ms} rate={}/s db_bytes={db_bytes} counts={}",
+                rate,
+                serde_json::to_string(&counts)?
+            );
+        }
+        Err(error) => {
+            let _ = store.rollback();
+            return Err(error);
+        }
     }
     Ok(())
 }
 
-fn find_session(registry: &Registry, session_id: &str) -> Result<SessionRef> {
+/// `boop follow`: the same projection on a coarse poll. Sessions and their
+/// mtimes are discovered once, and a file is only re-read when its mtime
+/// changed, so steady-state idle is a stat per file plus a sleep.
+fn run_follow(registry: &Registry) -> Result<()> {
+    let mut sessions = Vec::new();
     for adapter in registry.all() {
-        for session in adapter.sessions()? {
-            if session.session_id == session_id {
-                return Ok(session);
-            }
-        }
+        sessions.extend(adapter.sessions()?);
     }
-    anyhow::bail!("no session found with id `{session_id}`")
+    let mut last_mtime: std::collections::HashMap<String, u64> = sessions
+        .iter()
+        .map(|session| {
+            let mtime = file_mtime_ms(&session.path).unwrap_or(0);
+            (session.session_id.clone(), mtime)
+        })
+        .collect();
+    loop {
+        let store = ident::Store::open(ident::Store::default_path()?)?;
+        store.begin()?;
+        for session in &sessions {
+            let mtime = file_mtime_ms(&session.path).unwrap_or(0);
+            if last_mtime.get(&session.session_id).copied().unwrap_or(0) == mtime {
+                continue;
+            }
+            let _ = ident::sync_session(&store, session)?;
+            last_mtime.insert(session.session_id.clone(), mtime);
+        }
+        store.commit()?;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
 }
+
+fn file_mtime_ms(path: &std::path::Path) -> Result<u64> {
+    use std::time::UNIX_EPOCH;
+    let metadata = std::fs::metadata(path)?;
+    match metadata.modified() {
+        Ok(time) => Ok(time.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)),
+        Err(_) => Ok(0),
+    }
+}
+
 
 fn resolve_harness<'a>(registry: &'a Registry, id: &str) -> Result<&'a dyn crate::harness::Harness> {
     registry
@@ -637,17 +724,6 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
             }
             None => println!("{}\t{}\t-\t-\t-\t-", name, pane_pid),
         }
-    }
-
-    // Layer 3: keep the identity store in step with what is on disk so
-    // event/session/edge tables have rows to read.
-    let store = ident::Store::open(ident::Store::default_path()?)?;
-    for adapter in Registry::discover().all() {
-        let _ = ident::sync_harness(&store, adapter.as_ref())?;
-    }
-    eprintln!("synced {} sessions into {}", store.session_count()?, store.path().display());
-    for (relation, harness) in store.session_relations()? {
-        eprintln!("relation {relation} <- {harness}");
     }
     Ok(())
 }

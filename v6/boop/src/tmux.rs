@@ -329,73 +329,86 @@ mod tests {
 
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
-    /// A session this test owns; kills it on drop. Never touches a session it
-    /// did not create.
-    struct OwnedSession {
-        name: String,
+    /// A throwaway tmux server. Every tmux call in these tests goes through its
+    /// socket; drop kills the whole server so nothing leaks onto the live one.
+    struct TestServer {
+        socket: String,
     }
 
-    impl OwnedSession {
-        fn create() -> OwnedSession {
-            let name = format!(
-                "boop-test-{}-{}",
-                std::process::id(),
-                NEXT.fetch_add(1, Ordering::Relaxed)
-            );
+    impl TestServer {
+        fn new() -> TestServer {
+            let socket = format!("boop-test-{}", std::process::id());
+            // Clear any stale server from an earlier interleaved test run.
+            let _ = Command::new("tmux")
+                .args(["-L", &socket, "kill-server"])
+                .status();
+            TestServer { socket }
+        }
+
+        fn create_session(&self, name: &str) {
             let status = Command::new("tmux")
-                .args(["new-session", "-d", "-s", &name])
+                .args(["-L", &self.socket, "new-session", "-d", "-s", name])
                 .status()
                 .expect("tmux installed and reachable to create the test session");
             assert!(status.success(), "failed to create test session {name}");
-            OwnedSession { name }
         }
     }
 
-    impl Drop for OwnedSession {
+    impl Drop for TestServer {
         fn drop(&mut self) {
             let _ = Command::new("tmux")
-                .args(["kill-session", "-t", &self.name])
+                .args(["-L", &self.socket, "kill-server"])
                 .status();
         }
     }
 
+    fn session_name() -> String {
+        format!(
+            "boop-s{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
     #[test]
     fn lists_the_created_session_inside_one_block() {
-        let owned = OwnedSession::create();
-        let mut client = ControlClient::spawn(None).unwrap();
+        let server = TestServer::new();
+        let name = session_name();
+        server.create_session(&name);
+        let mut client = ControlClient::spawn(Some(&server.socket)).unwrap();
         let body = client
             .command(&["list-sessions", "-F", "#{session_name}"])
             .unwrap();
         assert!(
-            body.iter().any(|line| line.trim() == owned.name),
-            "expected {0} in {1:?}",
-            owned.name,
-            body
+            body.iter().any(|line| line.trim() == name),
+            "expected {name} in {body:?}"
         );
     }
 
     #[test]
     fn a_failing_command_returns_err_from_error_block() {
-        let _owned = OwnedSession::create();
-        let mut client = ControlClient::spawn(None).unwrap();
+        let server = TestServer::new();
+        let name = session_name();
+        server.create_session(&name);
+        let mut client = ControlClient::spawn(Some(&server.socket)).unwrap();
         let result = client.command(&["list-sessions", "-t", "boop-no-such-session"]);
         assert!(result.is_err(), "expected an Err from %error, got {result:?}");
     }
 
     #[test]
     fn two_commands_match_their_replies_by_number() {
-        let owned = OwnedSession::create();
-        let mut client = ControlClient::spawn(None).unwrap();
+        let server = TestServer::new();
+        let name = session_name();
+        server.create_session(&name);
+        let mut client = ControlClient::spawn(Some(&server.socket)).unwrap();
         let first = client
             .command(&["list-sessions", "-F", "#{session_name}"])
             .unwrap();
         let second = client
             .command(&["list-sessions", "-F", "#{session_name}"])
             .unwrap();
-        assert!(!first.is_empty());
-        assert!(!second.is_empty());
-        assert!(first.iter().any(|line| line.trim() == owned.name));
-        assert!(second.iter().any(|line| line.trim() == owned.name));
+        assert!(first.iter().any(|line| line.trim() == name));
+        assert!(second.iter().any(|line| line.trim() == name));
     }
 
     #[test]
@@ -409,11 +422,12 @@ mod tests {
 
     #[test]
     fn unreachable_is_not_the_same_as_empty() {
-        // A socket with no server behind it makes tmux fail: None (unreachable).
-        let nonexistent = format!("boop-nosock-{}", std::process::id());
+        // No server behind this socket makes tmux fail: None (unreachable).
+        let nonexistent = format!("boop-test-{}-noserver", std::process::id());
         assert!(live_sessions(Some(&nonexistent)).is_none());
-        // The default server is reachable, even though that says nothing about
-        // how many sessions exist: Some, never None.
-        assert!(live_sessions(None).is_some());
+        // A reachable server (even one with no lane of ours) is Some, never None.
+        let server = TestServer::new();
+        server.create_session(&session_name());
+        assert!(live_sessions(Some(&server.socket)).is_some());
     }
 }

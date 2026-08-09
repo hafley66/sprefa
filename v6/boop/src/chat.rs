@@ -5,6 +5,7 @@
 //! law included). It is the door the zipf/word-frequency analysis walks:
 //! `text` carries the human-visible words only, never tool payloads, base64,
 //! or file contents inside tool results.
+#![allow(dead_code)]
 
 use serde::Serialize;
 
