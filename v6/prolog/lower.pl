@@ -688,6 +688,37 @@ catalog_ddl_contract('__rel',
                        local_name-text, kind-text, type_id-int, arity-int,
                        module_id-int, h_id-text, h_schema-text, h_rule-text ]).
 
+%! catalog_ddl_key(+CatalogName, -KeyPositions) is semidet.
+%   rel_id is dense and positional by construction (catalog_rows/N), so the
+%   table declares the surrogate the producer already guarantees.
+catalog_ddl_key('__rel', [1]).
+
+%! set_rel_pk_sql(+Ref, +KeyOrNone, +EdgeHeadedRefs, +ArrivalTargetRefs,
+%!                +Columns, +QuotedColumns, -PkSql) is det.
+%   The PK for a set rel: its declared key when edge-headed or an arrival
+%   target, its surrogate key when a catalog table, else all columns.
+
+set_rel_pk_sql(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs, Columns,
+               QuotedColumns, PkSql) :-
+    ( set_rel_has_key(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
+                      KeyPositions)
+    -> nth1_list(KeyPositions, Columns, KeyColumns),
+       maplist(quote_ident, KeyColumns, QuotedKeyColumns),
+       atomic_list_concat(QuotedKeyColumns, ', ', PkSql)
+    ;  atomic_list_concat(QuotedColumns, ', ', PkSql)
+    ).
+
+% A level-headed keyed rel must keep its all-column PK: that is what
+% __refcount dedups against, so only edge, arrival and catalog keys fire.
+set_rel_has_key(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
+                KeyPositions) :-
+    ( ( memberchk(Ref, EdgeHeadedRefs) ; memberchk(Ref, ArrivalTargetRefs) ),
+      KeyOrNone = key(KeyPositions) ).
+set_rel_has_key(Ref, _KeyOrNone, _EdgeHeadedRefs, _ArrivalTargetRefs,
+                KeyPositions) :-
+    Ref = Name/_,
+    catalog_ddl_key(Name, KeyPositions).
+
 % The CREATE TABLE comes from the ordinary rel_ddl/6 path, because compile.pl
 % injects the contract's col_type decls; only the child-walk index is minted here.
 catalog_table_ddl([
@@ -1293,13 +1324,8 @@ rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
     maplist(column_def(Mode), QuotedColumns, ColumnTypes, ColumnDefs),
     atomic_list_concat(ColumnDefs, ', ', ColumnsSql),
     atomic_list_concat(QuotedColumns, ', ', SelectColumnsSql),
-    ( ( memberchk(Ref, EdgeHeadedRefs) ; memberchk(Ref, ArrivalTargetRefs) ),
-      KeyOrNone = key(KeyPositions)
-    -> nth1_list(KeyPositions, Columns, KeyColumns),
-       maplist(quote_ident, KeyColumns, QuotedKeyColumns),
-       atomic_list_concat(QuotedKeyColumns, ', ', PkSql)
-    ;  atomic_list_concat(QuotedColumns, ', ', PkSql)
-    ),
+    ( set_rel_pk_sql(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
+                     Columns, QuotedColumns, PkSql) ),
     ( memberchk(Ref, LevelHeadedRefs)
     -> RefCountColumn = ', "__refcount" INTEGER NOT NULL DEFAULT 1',
        RefCountPassThrough = ['__refcount']

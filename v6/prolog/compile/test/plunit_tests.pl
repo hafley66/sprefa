@@ -833,7 +833,7 @@ test(catalog_table_shape) :-
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule")) WITHOUT ROWID',
+    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, PRIMARY KEY ("rel_id")) WITHOUT ROWID',
     memberchk('CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")', Ddl).
 
 % FAIL-FIRST RECEIPT: the seed door bypassed the dictionary at dict, declaring
@@ -845,9 +845,20 @@ test(catalog_table_shape_at_dict) :-
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" INTEGER NOT NULL, "h_schema" INTEGER NOT NULL, "h_rule" INTEGER NOT NULL, PRIMARY KEY ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule")) WITHOUT ROWID',
+    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" INTEGER NOT NULL, "h_schema" INTEGER NOT NULL, "h_rule" INTEGER NOT NULL, PRIMARY KEY ("rel_id")) WITHOUT ROWID',
     catalog_first_seed_row(Ddl,
       '(1,0,0,(SELECT s."__id" FROM "__str" s WHERE s."content" = \'text\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'primitive\'),0,0,0,(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'))').
+
+% The dense rel_id is declared the single surrogate key in both storage
+% modes, replacing the old all-column composite PK.
+test(catalog_rel_id_is_the_key_in_both_modes) :-
+    forall(member(Mode, [direct, dict]),
+           ( catalog_lowered(Mode, catalog_shape, Ddl),
+             findall(Create,
+                     ( member(Create, Ddl),
+                       sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
+                     [OneCreate]),
+             sub_atom(OneCreate, _, _, _, 'PRIMARY KEY ("rel_id")') )).
 
 % Those lookups are total only if the seed's own strings reach "__str" first:
 % dictionary DDL, then the string seed, then the catalog seed.
