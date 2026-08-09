@@ -640,3 +640,8 @@ ruling(option_surface, both_spellings_per_instance_none_per_element_enum, user,
 % the const widening is one deliberate final step with a re-pin.
 ruling(catalog_plane_in_const, plane_rows_emitted_to_ts_const, user,
        'user 2026-08-09: "idgaf about regen-ing files when we add new things, its kinda the point of coding" then "A is fine". F2''s byte-neutrality justification becomes scaffold-only; the widening step may grow catalog_rows to /8 or render both halves.').
+
+% 2026-08-09: type-IR arc 2, ruled 1. The parallel decl records merge into ONE
+% kernel record and each column says where its type came from.
+ruling(type_ir_three_slot, one_rel_record_col_name_origin_storage, user,
+       'user 2026-08-09: "lets go 1 yes rx.merge all into 1 and mark where they came from/are, and we can use this as our kernel for all things". The record is 0_rel_record.pl rel(Ref, Kind, Cols, KeyOrNone) with Cols = col(Name, declared(WrittenType)|inferred, Storage); relplan/5, and the separate col_type/keyed/kind reads downstream of `plan`, are gone. Declared and inferred both survive because they answer different consumers: column_def/4 reads Storage at every column, the arrival gate reads declared only (decl-driven on both doors, ruling type_gate_widening) and stays all-or-nothing per rel. type_def/3 stays a SIBLING: column_storage/3 needs the type table to fill this record''s Storage slot, so the type table must exist before the first record does. Checks-first ordering is unmoved, pinned by fixture key_range_reported_before_unknown_column_type on both doors.').

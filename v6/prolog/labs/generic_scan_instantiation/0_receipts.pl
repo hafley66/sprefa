@@ -19,6 +19,7 @@
               [run_program/5, rel_rows/3, rel_deltas/3]).
 :- use_module('../../compile', [program_plan/2]).
 :- use_module('../../lower', [lower_program/2]).
+:- use_module('../../0_rel_record', [relplan_parts/6]).
 :- use_module('../../compile/registry', [expression/5]).
 :- use_module(library(crypto), [crypto_data_hash/3]).
 :- use_module(library(lists), [list_to_set/2]).
@@ -560,7 +561,10 @@ receipt_real_compiler :-
     Plan = plan(_, prog(_, Rules), _, RelPlans, _, _, _, _, _),
     \+ contains_functor(Rules, scan_spec/6),
     \+ contains_functor(Rules, add_step/3),
-    findall(Ref, member(relplan(Ref, _, _, _, _), RelPlans), Refs0),
+    findall(Ref,
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _, _, _, _) ),
+            Refs0),
     sort(Refs0, Refs),
     Refs == [add/3, total/2, total_seed/2],
     lower_program(Plan, Lowered),

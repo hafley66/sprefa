@@ -33,8 +33,10 @@
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
 :- use_module('../../0_rel_record',
-              [ relplan_parts/6, relplan_shape/6, relplan_columns/3,
-                relplan_column_types/3 ]).
+              [ inferred_cols/3, relplan_parts/6, relplan_shape/6,
+                relplan_columns/3, relplan_column_types/3, relplan_of/3,
+                relplan_declared/2, relplan_declared_types/3,
+                relplan_origins/2 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../0_ast_expand',
@@ -115,8 +117,9 @@
 % the declared slot builds the record through program_plan/2 like the compiler.
 inferred_relplans(Specs, RelPlans) :- maplist(inferred_relplan, Specs, RelPlans).
 
-inferred_relplan(rel_spec(Ref, Kind, Columns, KeyOrNone, ColumnTypes), RelPlan) :-
-    relplan_parts(RelPlan, Ref, Kind, Columns, KeyOrNone, ColumnTypes).
+inferred_relplan(rel_spec(Ref, Kind, Columns, KeyOrNone, ColumnTypes),
+                 rel(Ref, Kind, Cols, KeyOrNone)) :-
+    inferred_cols(Columns, ColumnTypes, Cols).
 
 fixture_file(File) :-
     test_dir_fact(Here),
@@ -221,8 +224,8 @@ test(self_recursive_level_rule_remains_in_p2_order) :-
 
 % analyze.pl:rel_columns/4 mines column names from the fixture's OWN surface
 % variable names (via read_fixture_term/4's variable_names preservation),
-% not from any hardcoded per-fixture table. relplan(Ref, Kind, Columns, Key,
-% ColumnTypes) -- ColumnTypes (PHASE C2 RULING 1) all TEXT here: neither
+% not from any hardcoded per-fixture table. Storage kinds (PHASE C2 RULING 1)
+% are all TEXT here: neither
 % fixture's own literal values (Schedule/Initial/rule literals) ever put an
 % integer at any of these positions, so analyze.pl:rel_column_types/5's
 % "zero int witnesses -> text" default is exactly what fires, including for
@@ -244,6 +247,63 @@ test(demand_laziness_columns) :-
     relplan_shape(RelPlans, effect_call/1, set, [target], none, [text]).
 
 :- end_tests(column_naming).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% THE THREE-SLOT REL RECORD (0_rel_record.pl)
+%
+% col(Name, declared(WrittenType)|inferred, Storage). The two facts are not
+% interchangeable: the arrival gate reads the declared slot and refuses to
+% guess on a partially typed rel, while column_def/4 reads Storage at every
+% column whether or not anything was written down.
+
+:- begin_tests(rel_record).
+
+record_mixed_plan(Plan) :-
+    Prog = prog(
+      [ kind(reading/2, set),
+        col_type(reading/2, sensor_name, text) ],
+      [ (echo(SensorName, Celsius) <- reading(SensorName, Celsius)) ]),
+    program_plan(fixture(record_mixed, Prog, [reading(probe_a, 21)], [], [])
+                 -['SensorName'=SensorName, 'Celsius'=Celsius],
+                 Plan).
+
+% A rel typed at one column and witnessed at the other: Storage is answered
+% for both, the declared slot only for the one with a colon.
+test(one_declared_column_beside_one_inferred) :-
+    once(record_mixed_plan(plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_of(RelPlans, reading/2, Reading),
+    relplan_origins(Reading, [declared(text), inferred]),
+    relplan_column_types(RelPlans, reading/2, [text, int]).
+
+% The gate map's all-or-nothing rule IS relplan_declared_types/3 failing.
+test(a_partly_typed_rel_has_no_declared_shape, [fail]) :-
+    record_mixed_plan(plan(_, _, _, RelPlans, _, _, _, _, _)),
+    relplan_declared_types(RelPlans, reading/2, _).
+
+% The derived rel is written nowhere, so every column is inferred and it takes
+% its storage from the producer it copies.
+test(a_derived_rel_is_inferred_at_every_column) :-
+    once(record_mixed_plan(plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_of(RelPlans, echo/2, Echo),
+    relplan_origins(Echo, [inferred, inferred]),
+    \+ relplan_declared(Echo, _),
+    relplan_column_types(RelPlans, echo/2, [text, int]).
+
+% A fully typed rel keeps the SURFACE spelling in the declared slot while its
+% Storage carries the resolved kind; `at: span` is the case where they differ.
+test(a_struct_column_declares_its_type_name_and_stores_a_ref) :-
+    Prog = prog(
+      [ type_decl(span, [col(start, int), col(end, int)]),
+        kind(finding/2, set),
+        col_type(finding/2, path, text),
+        col_type(finding/2, at, span) ],
+      []),
+    program_plan(fixture(record_struct, Prog, [], [], [])-[],
+                 plan(_, _, _, RelPlans, _, _, _, _, _)),
+    relplan_declared_types(RelPlans, finding/2, [text, span]),
+    relplan_column_types(RelPlans, finding/2, [text, ref(span)]).
+
+:- end_tests(rel_record).
 
 :- begin_tests(sql_text_snapshots).
 
@@ -3396,6 +3456,18 @@ test(key_position_out_of_range_both_doors) :-
     OracleVerdict == key_position_out_of_range(current/2, 3, 2),
     CompilerVerdict ==
         unsupported_construct(key_position_out_of_range(current/2, 3, 2)).
+
+% THE CHECKS-FIRST LOCK, both doors, one program with two live violations.
+% Conformance twin: 4_struct_values.pl key_range_reported_before_unknown_column_type.
+test(key_range_outranks_unknown_column_type_both_doors) :-
+    Prog = prog([ col_type(finding/2, path, text),
+                  col_type(finding/2, at, spann),
+                  keyed(finding/2, [3]) ], []),
+    door_verdict(oracle, Prog, OracleVerdict),
+    door_verdict(compiler, Prog, CompilerVerdict),
+    OracleVerdict == key_position_out_of_range(finding/2, 3, 2),
+    CompilerVerdict ==
+        unsupported_construct(key_position_out_of_range(finding/2, 3, 2)).
 
 test(key_position_duplicate_both_doors) :-
     Prog = prog([keyed(current/2, [1, 1])], []),

@@ -794,23 +794,17 @@ rel_catalog_entry_line(row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
 % engine's gate is decl-driven: a column with an inferred type but no colon
 % has no gate on either door.
 %
-% Entered all-or-nothing per rel, mirroring 0_type_plane.pl:ref_column_names/4
-% -- a partially typed decl would mis-locate its own positions, and the engine
-% declines to guess there, so this declines too.
-rel_declared_column_types_lines(Decls, RelPlans, Lines) :-
+% All-or-nothing per rel is relplan_declared/2's own shape; a partially typed
+% decl would mis-locate its own positions and the engine declines to guess.
+rel_declared_column_types_lines(RelPlans, Lines) :-
     findall(EntryLine,
             ( member(RelPlan, RelPlans),
               relplan_parts(RelPlan, Ref, _, _, _, _),
-              declared_column_types(Decls, Ref, DeclaredTypes),
+              relplan_declared(RelPlan, DeclaredTypes),
               rel_declared_types_entry_line(Ref, DeclaredTypes, EntryLine) ),
             EntryLines),
     append([ ['const rel_declared_column_types: Record<string, readonly string[]> = {'],
              EntryLines, ['};'] ], Lines).
-
-declared_column_types(Decls, Ref, Types) :-
-    Ref = _/Arity,
-    findall(Type, member(col_type(Ref, _, Type), Decls), Types),
-    length(Types, Arity).
 
 rel_declared_types_entry_line(Ref, DeclaredTypes, Line) :-
     ref_name(Ref, Name),
@@ -2735,7 +2729,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                          DepartureRefs, PreRefs, LoweringTypes,
                          RuleLevelStatements, CatalogRows),
     rel_catalog_lines(CatalogRows, RelCatalogLines),
-    rel_declared_column_types_lines(PlanDecls, RelPlans, RelDeclaredColumnTypesLines),
+    rel_declared_column_types_lines(RelPlans, RelDeclaredColumnTypesLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
     boot_lines(BootStatements, BootLines),
     snapshot_type_lines(RelPlans, SnapshotTypeLines),

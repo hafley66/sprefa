@@ -4,13 +4,8 @@
 %   lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements,
 %           DeltaStatements, RelPlans, ArrivalTargets)
 %     Ddl              : list of CREATE TABLE SQL strings.
-%     RelPlans         : list of relplan(Ref, log|set, Columns, key(Ps)|none,
-%                        ColumnTypes) -- ColumnTypes (PHASE C2 RULING 1) is a
-%                        int|text list parallel to Columns, chosen upstream
-%                        by analyze.pl:rel_column_types/7 from declaration
-%                        authority when present, otherwise from the fixture's
-%                        literal witnesses; column_def/3 below is the one
-%                        place that reads it.
+%     RelPlans         : 0_rel_record.pl's rel/4 list, unchanged from the plan;
+%                        column_def/4 below is the only reader of its storage.
 %     ArrivalStatements: list of arrivalstmt(Ref, Kind, AddSql, DelSqlOrNone,
 %                        IncrementalAddSql, IncrementalDelSqlOrNone).
 %     EdgeStatements   : list of edgestmt(HeadRef, TriggerRef, HeadColumns,
@@ -2017,14 +2012,16 @@ dictionary_ref_type(Types, DeclaredType, RefType) :-
 % a compound value that ARRIVES into an untyped column is stored as canonical
 % term text, and that encoding question is SLOT-TERM-STRUCT's, not this one's.
 
+% Compiler-minted storage tables: no col_type/3 names their columns, so every
+% column is `inferred` however the mirrored type_decl/2 was written.
 dictionary_relplans(Types, Plans) :-
-    findall(Plan,
+    findall(rel(Name/DictArity, set, Cols, none),
             ( member(type_def(TypeName, Columns, ColumnTypes), Types),
               dictionary_table_name(TypeName, Name),
               length(Columns, Width), DictArity is Width + 1,
               maplist(dictionary_storage_kind(Types), ColumnTypes, StorageKinds),
-              relplan_parts(Plan, Name/DictArity, set, ['__id' | Columns], none,
-                            [ref(TypeName) | StorageKinds]) ),
+              inferred_cols(['__id' | Columns], [ref(TypeName) | StorageKinds],
+                            Cols) ),
             Plans).
 
 % ═══ relation-value terms as dictionary joins ═══════════════════════════════

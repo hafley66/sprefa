@@ -99,6 +99,20 @@ fixture(struct_column_type_unknown_rejected,
   [],
   [ throws(column_type_unknown(spann)) ]).
 
+% THE CHECKS-FIRST LOCK. Same rel, two live violations at once: a key position
+% past the arity AND an unresolvable column type. Both doors run
+% key_position_out_of_range first (analyze.pl:check_supported_subset_expanded/1,
+% engine.pl:engine_check_order/1), and nothing that builds a column-type table
+% earlier -- 0_rel_record.pl's rel/4 among them -- may move which class fires.
+fixture(key_range_reported_before_unknown_column_type,
+  prog([ col_type(finding/2, path, text),
+         col_type(finding/2, at, spann),
+         keyed(finding/2, [3]) ],
+       []),
+  [],
+  [],
+  [ throws(key_position_out_of_range(finding/2, 3, 2)) ]).
+
 % HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, compiler unsupported construct direction:
 % before parse_dl.pl admitted a declared type name in a decl-B host column,
 % the text door reported

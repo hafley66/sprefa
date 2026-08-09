@@ -9,6 +9,8 @@
 :- use_module('../../compile',
               [read_fixture_term/4, program_plan/2]).
 :- use_module('../../lower', [lower_program/2]).
+:- use_module('../../0_rel_record',
+              [relplan_parts/6, relplan_shape/6, inferred_cols/3]).
 :- use_module('../../analyze',
               [body_ref_uses/2, rule_head_ref/2,
                rule_is_edge/1, rule_is_level/1]).
@@ -54,7 +56,10 @@ fixture_model(File, Name, Model) :-
     make_model(Name, SurfaceProgram, Initial, Schedule, Bindings, Model).
 
 model_refs(model(_, RelPlans, _, _), Refs) :-
-    findall(Ref, member(relplan(Ref, _, _, _, _), RelPlans), Refs0),
+    findall(Ref,
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _, _, _, _) ),
+            Refs0),
     sort(Refs0, Refs).
 
 relation_rules(model(prog(_, Rules), _, _, _), Ref, RefRules) :-
@@ -96,7 +101,7 @@ relation_shape_term(
     shape(kind(Kind), columns(Columns, Types), key(Key),
           plane(Plane), clock(Clock))) :-
     Model = model(_, RelPlans, _, _),
-    memberchk(relplan(Ref, Kind, Columns, Key, Types), RelPlans),
+    relplan_shape(RelPlans, Ref, Kind, Columns, Key, Types),
     relation_plane(Model, Ref, Plane),
     relation_clock(Model, Ref, Clock).
 
@@ -105,7 +110,8 @@ shape_hash(Model, Ref, Hash) :-
     hash_term(Shape, Hash).
 
 host_role(model(_, RelPlans, _, HostPlans), Ref, Role) :-
-    member(relplan(Ref, _, _, _, _), RelPlans),
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, Ref, _, _, _, _),
     Ref = Name/_,
     ( member(host_plan(_, _, _, _, demand_ref(Name), _, _), HostPlans)
     -> Role = host_demand
@@ -509,7 +515,8 @@ host_program(HostName, Template, Program) :-
         []).
 
 host_response_ref(model(_, RelPlans, _, _), Ref) :-
-    member(relplan(Ref, _, _, _, _), RelPlans),
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, Ref, _, _, _, _),
     Ref = Name/_,
     sub_atom(Name, 0, _, _, '__host_response_').
 
@@ -567,13 +574,11 @@ recursive_scc_receipt :-
     format("PASS recursive SCC hash survives rename and sees edge/body change~n").
 
 recursive_model(A, B, Program,
-                model(Program,
-                      [ relplan(seed/1, set, [value], none, [int]),
-                        relplan(A/1, set, [value], none, [int]),
-                        relplan(B/1, set, [value], none, [int])
-                      ],
-                      [seed/1],
-                      [])).
+                model(Program, RelPlans, [seed/1], [])) :-
+    inferred_cols([value], [int], Cols),
+    RelPlans = [ rel(seed/1, set, Cols, none),
+                 rel(A/1, set, Cols, none),
+                 rel(B/1, set, Cols, none) ].
 
 identity_layer_receipt :-
     typed_edge_program(input_a, state_a, identity, ProgramA),
