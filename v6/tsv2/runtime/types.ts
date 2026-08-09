@@ -374,13 +374,35 @@ export interface IStructPlane {
 }
 
 /** A `column` row is a child of its rel (parent_id = the rel's rel_id, ordinal =
- *  1-based argument position); a `rel` row carries both as 0. */
+ *  1-based argument position); a `rel` row carries both as 0. The plane kinds
+ *  (delta, frontier, view, ...) land in the emitted const too (F1=A). */
 export interface IRelCatalogRow {
   readonly rel_id: number;
   readonly parent_id: number;
   readonly ordinal: number;
   readonly local_name: string;
-  readonly kind: "primitive" | "list" | "module" | "rel" | "column";
+  readonly kind:
+    | "primitive"
+    | "list"
+    | "module"
+    | "rel"
+    | "column"
+    | "delta"
+    | "frontier"
+    | "next_frontier"
+    | "departure"
+    | "pre"
+    | "view"
+    | "dictionary"
+    | "refcount"
+    | "refcount_staging"
+    | "expand"
+    | "dred"
+    | "scope"
+    | "avg_accumulator"
+    | "port"
+    | "port_response"
+    | "storage";
   readonly type_id: number;
   readonly arity: number;
   readonly module_id: number;
