@@ -146,6 +146,8 @@
             % The same rows the catalog INSERT renders, read by emit_ts.pl.
             catalog_rows/4,
             catalog_all_rows/10,
+            % The decl half alone, with the id layout the nesting rail reads.
+            catalog_decl_rows/6,
             % Reproduce the RuleLevelStatements input the producer needs, used
             % by the catalog rail to plan rows outside lower_program/2.
             plan_rule_level_statements/2 ]).
@@ -841,7 +843,7 @@ plan_rule_level_statements(
 %   derivations so a plane row exists exactly where its DDL mint site emitted.
 catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
                  Types, RuleLevelStatements, Decls, AllRows) :-
-    catalog_decl_rows(ModuleName, Rules, RelPlans, DeclRows, Context),
+    catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, DeclRows, Context),
     catalog_plane_rows(Mode, ModuleName, RelPlans, DepartureRefs, PreRefs,
                        Types, RuleLevelStatements, Decls, Context, PlaneRows),
     append(DeclRows, PlaneRows, AllRows).
@@ -1240,13 +1242,14 @@ catalog_one_rel_storage(Mode, [ColumnName | RestColumns], ColumnTypes,
 %   The relplan carries each column's full type, ref(_) and list(_) included.
 %   The decl half only; the plane half is appended by catalog_all_rows/10.
 catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
-    catalog_decl_rows(ModuleName, Rules, RelPlans, AllRows, _).
+    catalog_decl_rows(ModuleName, Rules, RelPlans, [], AllRows, _).
 
-%! catalog_decl_rows(+ModuleName, +Rules, +RelPlans, -Rows, -Context) is det.
+%! catalog_decl_rows(+ModuleName, +Rules, +RelPlans, +Decls, -Rows, -Context)
+%!                   is det.
 %   Rows are the byte-stable decl blocks; Context carries the id layout the
 %   plane half needs (module id/hash, the rel and list id maps, and FinalId,
 %   the id one past the last decl row).
-catalog_decl_rows(ModuleName, Rules, RelPlans, AllRows, Context) :-
+catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     module_hash(ModuleName, ModuleHash),
     rule_bodies_map(Rules, BodiesMap),
     catalog_primitive_rows(1, PrimitiveRows),
@@ -1259,9 +1262,13 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, AllRows, Context) :-
     ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash, '', ''),
     FirstRelId is ModuleId + 1,
     catalog_rel_id_map(RelPlans, FirstRelId, [], RelIdMap),
+    catalog_rel_block_end(RelPlans, FirstRelId, RelBlockEnd),
+    catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, RelBlockEnd,
+                      NestMap, RoomRows, FinalId),
     catalog_rel_rows(RelPlans, BodiesMap, ModuleId, ModuleHash, RelIdMap,
-                     ListIdMap, FirstRelId, FinalId, RelRows),
-    append([PrimitiveRows, ListRowRows, [ModuleRow], RelRows], AllRows),
+                     ListIdMap, NestMap, FirstRelId, _, RelRows),
+    append([PrimitiveRows, ListRowRows, [ModuleRow], RelRows, RoomRows],
+           AllRows),
     Context = ctx(ModuleHash, ModuleId, RelIdMap, ListIdMap, FinalId).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
@@ -1328,25 +1335,124 @@ catalog_rel_id_map([RelPlan | Rest], Id0, Acc0, Acc) :-
     IdAfterRel is Id0 + 1 + RelArity,
     catalog_rel_id_map(Rest, IdAfterRel, [Name-Id0 | Acc0], Acc).
 
-rel_row_id(RelIdMap, Name, Id) :- member(Name-Id, RelIdMap).
+% Every caller binds Name and takes the first solution; member/2 left the
+% catalog build carrying a choicepoint per ref column.
+rel_row_id(RelIdMap, Name, Id) :- memberchk(Name-Id, RelIdMap).
+
+% The rel block's width, so the room rows the nesting needs can take ids past
+% it without moving a single existing rel or column row.
+catalog_rel_block_end([], Id, Id).
+catalog_rel_block_end([RelPlan | Rest], Id0, Id) :-
+    relplan_parts(RelPlan, _/RelArity, _, _, _, _),
+    Id1 is Id0 + 1 + RelArity,
+    catalog_rel_block_end(Rest, Id1, Id).
 
 catalog_rel_rows([], _BodiesMap, _ModuleId, _ModuleHash, _RelIdMap, _ListIdMap,
-                 Id, Id, []).
+                 _NestMap, Id, Id, []).
 catalog_rel_rows([RelPlan | Rest], BodiesMap, ModuleId, ModuleHash, RelIdMap,
-                 ListIdMap, Id0, FinalId, Rows) :-
+                 ListIdMap, NestMap, Id0, FinalId, Rows) :-
     relplan_parts(RelPlan, Name/RelArity, _Kind, Columns, KeyOrNone, ColumnTypes),
     rel_h_id(ModuleHash, Name, RelArity, RelHId),
     schema_hash(Columns, ColumnTypes, KeyOrNone, HSchema),
     rule_hash(BodiesMap, Name/RelArity, HRule),
-    RelRow = row(Id0, ModuleId, 0, Name, rel, 0, RelArity, ModuleId, RelHId,
-                 HSchema, HRule),
+    catalog_rel_scope(NestMap, ModuleId, Name, ParentId, LocalName),
+    RelRow = row(Id0, ParentId, 0, LocalName, rel, 0, RelArity, ModuleId,
+                 RelHId, HSchema, HRule),
     IdAfterRel is Id0 + 1,
     catalog_column_rows(Columns, ColumnTypes,
                         RelIdMap, ListIdMap, ModuleId, RelHId, Id0, 1,
                         IdAfterRel, IdAfterColumns, ColumnRows),
     catalog_rel_rows(Rest, BodiesMap, ModuleId, ModuleHash, RelIdMap, ListIdMap,
-                     IdAfterColumns, FinalId, RestRows),
+                     NestMap, IdAfterColumns, FinalId, RestRows),
     append([RelRow | ColumnRows], RestRows, Rows).
+
+% A nested rel's local_name is its own SEGMENT, which is what makes the
+% (__rel_parent) index on (parent_id, local_name) a per-parent child lookup.
+catalog_rel_scope(NestMap, ModuleId, Name, ParentId, LocalName) :-
+    (   memberchk(Name-nest(NestedParentId, Segment), NestMap)
+    ->  ParentId = NestedParentId,
+        LocalName = Segment
+    ;   ParentId = ModuleId,
+        LocalName = Name
+    ).
+
+% ── the containment tree ──────────────────────────────────────────────────
+
+% rel_path_decl/2 is the authority; the `__` join is a NAME, never a structure
+% to re-derive by splitting.
+catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, StartId,
+                  NestMap, RoomRows, EndId) :-
+    findall(Segments-Name,
+            member(rel_path_decl(Name/_, Segments), Decls),
+            Paths0),
+    sort(Paths0, Paths),
+    (   Paths == []
+    ->  NestMap = [], RoomRows = [], EndId = StartId
+    ;   path_room_prefixes(Paths, RelIdMap, Rooms),
+        room_rows(Rooms, Paths, RelIdMap, ModuleId, ModuleHash, StartId,
+                  [], RoomIdMap, RoomRows, EndId),
+        path_nest_map(Paths, Paths, RelIdMap, RoomIdMap, ModuleId, NestMap)
+    ).
+
+% Shallow first, so a room's own parent room already carries an id.
+path_room_prefixes(Paths, RelIdMap, Rooms) :-
+    findall(Length-Prefix,
+            ( member(Segments-_, Paths),
+              proper_path_prefix(Segments, Prefix),
+              \+ path_prefix_rel_id(Prefix, Paths, RelIdMap, _),
+              length(Prefix, Length) ),
+            Keyed0),
+    sort(Keyed0, Keyed),
+    findall(Prefix, member(_-Prefix, Keyed), Rooms).
+
+proper_path_prefix(Segments, Prefix) :-
+    append(Prefix, Tail, Segments),
+    Prefix \== [],
+    Tail \== [].
+
+% append/3 splitting a bound list leaves a choicepoint the whole catalog build
+% would then carry; the split is unique, so it is cut here.
+path_split(Segments, ParentPrefix, LocalName) :-
+    append(ParentPrefix, [LocalName], Segments),
+    !.
+
+path_prefix_rel_id(Prefix, Paths, RelIdMap, Id) :-
+    (   memberchk(Prefix-Name, Paths)
+    ->  true
+    ;   Prefix = [Name]
+    ),
+    once(rel_row_id(RelIdMap, Name, Id)).
+
+% An interior segment no decl of its own names still needs a row, else a
+% child's parent chain stops at nothing.
+room_rows([], _, _, _, _, Id, RoomIdMap, RoomIdMap, [], Id).
+room_rows([Prefix | Rest], Paths, RelIdMap, ModuleId, ModuleHash, Id0,
+          RoomIdMap0, RoomIdMap, [Row | More], EndId) :-
+    path_split(Prefix, ParentPrefix, LocalName),
+    path_scope_id(ParentPrefix, Paths, RelIdMap, RoomIdMap0, ModuleId,
+                  ParentId),
+    atomic_list_concat(Prefix, '.', PathAtom),
+    rel_h_id(ModuleHash, PathAtom, 0, RoomHId),
+    Row = row(Id0, ParentId, 0, LocalName, rel, 0, 0, ModuleId, RoomHId,
+              '', ''),
+    Id1 is Id0 + 1,
+    room_rows(Rest, Paths, RelIdMap, ModuleId, ModuleHash, Id1,
+              [Prefix-Id0 | RoomIdMap0], RoomIdMap, More, EndId).
+
+path_scope_id([], _, _, _, ModuleId, ModuleId) :- !.
+path_scope_id(Prefix, Paths, RelIdMap, RoomIdMap, _, Id) :-
+    (   path_prefix_rel_id(Prefix, Paths, RelIdMap, DeclaredId)
+    ->  Id = DeclaredId
+    ;   memberchk(Prefix-Id, RoomIdMap)
+    ).
+
+path_nest_map([], _, _, _, _, []).
+path_nest_map([Segments-Name | Rest], Paths, RelIdMap, RoomIdMap, ModuleId,
+              [Name-nest(ParentId, LocalName) | More]) :-
+    path_split(Segments, ParentPrefix, LocalName),
+    path_scope_id(ParentPrefix, Paths, RelIdMap, RoomIdMap, ModuleId,
+                  ParentId),
+    path_nest_map(Rest, Paths, RelIdMap, RoomIdMap, ModuleId, More).
 
 catalog_column_rows([], _ColumnTypes, _RelIdMap, _ListIdMap,
                     _ModuleId, _ParentHId, _RelId, _Ordinal, Id, Id, []).

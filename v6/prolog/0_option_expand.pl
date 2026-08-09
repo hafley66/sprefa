@@ -99,6 +99,10 @@ shrink_parent_ref(OldRef, NewRef, _, kind(OldRef, Kind),
                   kind(NewRef, Kind)) :- !.
 shrink_parent_ref(OldRef, NewRef, _, keep(OldRef, Policy),
                   keep(NewRef, Policy)) :- !.
+% The path carrier is keyed on the ref, so a shrink that skips it leaves the
+% dot phase reading an arity no other decl carries.
+shrink_parent_ref(OldRef, NewRef, _, rel_path_decl(OldRef, Segments),
+                  rel_path_decl(NewRef, Segments)) :- !.
 shrink_parent_ref(_, _, _, Decl, Decl).
 
 % DroppedPosition itself cannot appear: the key-column ban threw first.
