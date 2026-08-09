@@ -132,7 +132,11 @@ impl ControlClient {
     /// number tmux assigns (which is server-global and not predictable), and
     /// the first pair on a fresh connection is tmux's own attach block.
     pub fn command(&mut self, argv: &[&str]) -> Result<Vec<String>> {
-        let line = argv.iter().map(|arg| quote_arg(arg)).collect::<Vec<_>>().join(" ");
+        let line = argv
+            .iter()
+            .map(|arg| quote_arg(arg))
+            .collect::<Vec<_>>()
+            .join(" ");
         writeln!(self.stdin, "{line}").context("write tmux control command")?;
         self.stdin.flush().context("flush tmux control stdin")?;
 
@@ -365,7 +369,10 @@ fn send_keys(socket: Option<&str>, argv: &[&str]) -> Result<()> {
     builder.args(argv);
     let output = builder.output().context("tmux send-keys")?;
     if !output.status.success() {
-        anyhow::bail!("tmux send-keys failed: {}", String::from_utf8_lossy(&output.stderr).trim());
+        anyhow::bail!(
+            "tmux send-keys failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
     }
     Ok(())
 }
@@ -400,7 +407,7 @@ mod tests {
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::{parse_event, ControlClient, ControlEvent, Notification, live_sessions};
+    use super::{live_sessions, parse_event, ControlClient, ControlEvent, Notification};
 
     static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -468,7 +475,10 @@ mod tests {
         server.create_session(&name);
         let mut client = ControlClient::spawn(Some(&server.socket)).unwrap();
         let result = client.command(&["list-sessions", "-t", "boop-no-such-session"]);
-        assert!(result.is_err(), "expected an Err from %error, got {result:?}");
+        assert!(
+            result.is_err(),
+            "expected an Err from %error, got {result:?}"
+        );
     }
 
     #[test]
@@ -514,7 +524,9 @@ mod tests {
         // A fake future tmux notification must not be dropped or misparsed.
         assert_eq!(
             parse_event("%some-future-notification foo bar"),
-            ControlEvent::Notification(Notification::Unknown("%some-future-notification foo bar".into()))
+            ControlEvent::Notification(Notification::Unknown(
+                "%some-future-notification foo bar".into()
+            ))
         );
     }
 

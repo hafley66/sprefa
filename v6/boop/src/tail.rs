@@ -94,8 +94,12 @@ mod tests {
     }
 
     fn overwrite(path: &PathBuf, bytes: &[u8]) {
-        let mut file =
-            OpenOptions::new().create(true).truncate(true).write(true).open(path).unwrap();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+            .unwrap();
         file.write_all(bytes).unwrap();
     }
 

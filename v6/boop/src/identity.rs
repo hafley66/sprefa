@@ -78,7 +78,9 @@ pub fn resolve(routes: &BTreeMap<String, Route>) -> Result<Identity> {
 
 /// Rung 1. The stamp a boop spawn wrote into the child's own environment.
 fn from_env() -> Option<Identity> {
-    let session = std::env::var("BOOP_SESSION").ok().filter(|s| !s.is_empty())?;
+    let session = std::env::var("BOOP_SESSION")
+        .ok()
+        .filter(|s| !s.is_empty())?;
     Some(Identity {
         session: Some(session),
         lane: std::env::var("BOOP_LANE").ok().filter(|s| !s.is_empty()),
@@ -191,10 +193,7 @@ mod tests {
         /// closure and are marked serial by running inside a single mutex.
         static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-        pub fn with_vars<const N: usize>(
-            vars: [(&str, Option<&str>); N],
-            body: impl FnOnce(),
-        ) {
+        pub fn with_vars<const N: usize>(vars: [(&str, Option<&str>); N], body: impl FnOnce()) {
             let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
             let saved: Vec<(String, Option<String>)> = vars
                 .iter()

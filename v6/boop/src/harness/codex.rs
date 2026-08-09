@@ -63,7 +63,14 @@ impl Harness for Codex {
         let mut stat = SyncStat::default();
         let mut current_model = String::from("unknown");
         for line in &result.lines {
-            project_line(store, session, line, &mut turn, &mut stat, &mut current_model)?;
+            project_line(
+                store,
+                session,
+                line,
+                &mut turn,
+                &mut stat,
+                &mut current_model,
+            )?;
         }
         Ok(Ingested {
             stat,
@@ -100,7 +107,10 @@ fn first_session_meta(path: &Path) -> Option<SessionMeta> {
         .get("forked_from_id")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    let cwd = payload.get("cwd").and_then(Value::as_str).map(str::to_owned);
+    let cwd = payload
+        .get("cwd")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let nickname = payload
         .get("agent_nickname")
         .and_then(Value::as_str)
@@ -116,7 +126,10 @@ fn first_session_meta(path: &Path) -> Option<SessionMeta> {
 
 fn sessions_in(base: &Path) -> anyhow::Result<Vec<SessionRef>> {
     let mut sessions = Vec::new();
-    for entry in WalkDir::new(base).into_iter().filter_map(|entry| entry.ok()) {
+    for entry in WalkDir::new(base)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
         if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "jsonl")
         {
             continue;
@@ -161,7 +174,10 @@ fn parse_line(session: &SessionRef, line: &tail::CompleteLine) -> Option<AgentEv
         .and_then(Value::as_str)
         .and_then(crate::harness::claude::parse_iso_ms)
         .unwrap_or(0);
-    let outer_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
+    let outer_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let payload = value.get("payload").and_then(Value::as_object);
     let record_type = payload
         .and_then(|payload| payload.get("type"))
@@ -182,7 +198,10 @@ fn parse_line(session: &SessionRef, line: &tail::CompleteLine) -> Option<AgentEv
     if let Some(payload) = payload {
         match record_type.as_str() {
             "function_call" | "custom_tool_call" => {
-                tool_name = payload.get("name").and_then(Value::as_str).map(str::to_owned);
+                tool_name = payload
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
             }
             "patch_apply_end" => {
                 if let Some(changes) = payload.get("changes").and_then(Value::as_object) {
@@ -277,7 +296,10 @@ fn project_line(
 
     match record_type {
         "message" => {
-            let role = payload.get("role").and_then(Value::as_str).unwrap_or("user");
+            let role = payload
+                .get("role")
+                .and_then(Value::as_str)
+                .unwrap_or("user");
             let text = message_text(payload);
             if !text.is_empty() {
                 *turn += 1;
@@ -288,7 +310,10 @@ fn project_line(
         "function_call" | "custom_tool_call" => {
             // Argument shapes vary by tool/version; no agent_cmd/agent_touch
             // fact is derived here.
-            let name = payload.get("name").and_then(Value::as_str).unwrap_or("tool");
+            let name = payload
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tool");
             *turn += 1;
             let inserted = store.write_turn(&sid, *turn, ts, "tool", "")?;
             record(stat, inserted);
@@ -444,7 +469,9 @@ mod tests {
         );
         let metadata = path.metadata().unwrap();
         let codex = Codex;
-        let chunk = codex.read_from(&session_for(&path, metadata.len()), 0).unwrap();
+        let chunk = codex
+            .read_from(&session_for(&path, metadata.len()), 0)
+            .unwrap();
         assert_eq!(chunk.events.len(), 2);
         assert_eq!(chunk.skipped, 0);
         assert_eq!(chunk.events[0].record_type, "message");
@@ -463,7 +490,9 @@ mod tests {
         );
         let metadata = path.metadata().unwrap();
         let codex = Codex;
-        let chunk = codex.read_from(&session_for(&path, metadata.len()), 0).unwrap();
+        let chunk = codex
+            .read_from(&session_for(&path, metadata.len()), 0)
+            .unwrap();
         assert_eq!(chunk.events.len(), 1);
         assert_eq!(chunk.skipped, 1);
     }
@@ -475,14 +504,18 @@ mod tests {
         let path = temp_path("jn3");
         write_lines(
             &path,
-            &[r#"{"timestamp":"2026-08-09T17:20:05.152Z","type":"response_item","payload":{"type":"message","id":"msg_1","role":"user","content":[{"type":"input_text","text":"hi"}]}}"#],
+            &[
+                r#"{"timestamp":"2026-08-09T17:20:05.152Z","type":"response_item","payload":{"type":"message","id":"msg_1","role":"user","content":[{"type":"input_text","text":"hi"}]}}"#,
+            ],
         );
         let mut file = OpenOptions::new().append(true).open(&path).unwrap();
         write!(file, "{{\"partial").unwrap();
         drop(file);
         let metadata = path.metadata().unwrap();
         let codex = Codex;
-        let chunk = codex.read_from(&session_for(&path, metadata.len()), 0).unwrap();
+        let chunk = codex
+            .read_from(&session_for(&path, metadata.len()), 0)
+            .unwrap();
         assert_eq!(chunk.events.len(), 1);
         assert!(chunk.next_offset < metadata.len());
     }
@@ -494,7 +527,9 @@ mod tests {
         write_lines(&path, &[record]);
         let metadata = path.metadata().unwrap();
         let codex = Codex;
-        let chunk = codex.read_from(&session_for(&path, metadata.len()), 0).unwrap();
+        let chunk = codex
+            .read_from(&session_for(&path, metadata.len()), 0)
+            .unwrap();
         assert_eq!(chunk.events.len(), 1);
         assert_eq!(chunk.events[0].paths.len(), 2);
     }
@@ -503,7 +538,10 @@ mod tests {
     fn discovers_a_forked_subagent_session_from_the_fixture() {
         let base = std::path::PathBuf::from("tests/fixtures/codex");
         let sessions = sessions_in(&base).unwrap();
-        assert!(sessions.len() >= 2, "root and forked session both discovered");
+        assert!(
+            sessions.len() >= 2,
+            "root and forked session both discovered"
+        );
         let root = sessions
             .iter()
             .find(|session| session.parent.is_none())

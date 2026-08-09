@@ -18,7 +18,12 @@ pub enum FactKind {
 
 impl FactKind {
     /// Table, plus the dict columns to join and the field each answers to.
-    fn plan(self) -> (&'static str, &'static [(&'static str, &'static str, &'static str)]) {
+    fn plan(
+        self,
+    ) -> (
+        &'static str,
+        &'static [(&'static str, &'static str, &'static str)],
+    ) {
         match self {
             FactKind::Touch => (
                 "agent_touch",
@@ -184,7 +189,6 @@ impl Store {
         self.rows(sql, vec![floor.into()])
     }
 }
-
 
 #[cfg(test)]
 mod tests {

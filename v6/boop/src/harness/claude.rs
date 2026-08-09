@@ -58,7 +58,10 @@ impl Harness for Claude {
 
     fn spawn(&self, spec: &SpawnSpec) -> anyhow::Result<SessionRef> {
         let session_id = format!("agent-{}", random_hex());
-        let tmux_name = spec.tmux.clone().unwrap_or_else(|| format!("boop-{session_id}"));
+        let tmux_name = spec
+            .tmux
+            .clone()
+            .unwrap_or_else(|| format!("boop-{session_id}"));
         let cwd = crate::worktree::prepare_spawn_dir(spec)?;
         let command = launch_command(spec);
         crate::tmux::new_detached_session(
@@ -668,7 +671,12 @@ mod tests {
         let sessions = sessions_in(&base).unwrap();
         let sharing: Vec<&SessionRef> = sessions
             .iter()
-            .filter(|session| session.path.to_string_lossy().contains("agent-dupstem00000000"))
+            .filter(|session| {
+                session
+                    .path
+                    .to_string_lossy()
+                    .contains("agent-dupstem00000000")
+            })
             .collect();
         assert_eq!(sharing.len(), 2, "the fixture pair must both be discovered");
         assert_ne!(
@@ -677,7 +685,9 @@ mod tests {
         );
         for session in &sharing {
             assert!(
-                session.session_id.contains(session.parent.as_deref().unwrap()),
+                session
+                    .session_id
+                    .contains(session.parent.as_deref().unwrap()),
                 "a subagent id carries its parent: {}",
                 session.session_id
             );

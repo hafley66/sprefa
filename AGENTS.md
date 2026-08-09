@@ -1,5 +1,11 @@
 # Agent Instructions
 
+## Agent lanes (boop)
+
+Run `boop --help` before spawning or messaging any agent lane. The help text
+is the doctrine: lane create flow, completion hail, the two liveness checks,
+and ack semantics. Discover boop by using boop.
+
 ## V6 Status
 
 V6 planning is underway — start at `v6/README.md`, plans in `v6/plans/`. V5

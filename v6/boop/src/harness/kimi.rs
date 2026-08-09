@@ -60,7 +60,14 @@ impl Harness for Kimi {
         let mut stat = SyncStat::default();
         let mut pending_message_id: Option<String> = None;
         for line in &result.lines {
-            project_line(store, session, line, &mut turn, &mut stat, &mut pending_message_id)?;
+            project_line(
+                store,
+                session,
+                line,
+                &mut turn,
+                &mut stat,
+                &mut pending_message_id,
+            )?;
         }
         Ok(Ingested {
             stat,
@@ -81,7 +88,10 @@ struct KimiState {
 fn read_state(path: &Path) -> Option<KimiState> {
     let text = std::fs::read_to_string(path).ok()?;
     let value: Value = serde_json::from_str(&text).ok()?;
-    let cwd = value.get("workDir").and_then(Value::as_str).map(str::to_owned);
+    let cwd = value
+        .get("workDir")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     Some(KimiState { cwd })
 }
 
@@ -93,14 +103,22 @@ fn sessions_in(base: &Path) -> anyhow::Result<Vec<SessionRef>> {
         return Ok(sessions);
     };
     for project_entry in project_dirs.filter_map(|entry| entry.ok()) {
-        if !project_entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+        if !project_entry
+            .file_type()
+            .map(|kind| kind.is_dir())
+            .unwrap_or(false)
+        {
             continue;
         }
         let Ok(session_dirs) = std::fs::read_dir(project_entry.path()) else {
             continue;
         };
         for session_entry in session_dirs.filter_map(|entry| entry.ok()) {
-            if !session_entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            if !session_entry
+                .file_type()
+                .map(|kind| kind.is_dir())
+                .unwrap_or(false)
+            {
                 continue;
             }
             let session_path = session_entry.path();
@@ -111,12 +129,17 @@ fn sessions_in(base: &Path) -> anyhow::Result<Vec<SessionRef>> {
             else {
                 continue;
             };
-            let state = read_state(&session_path.join("state.json")).unwrap_or(KimiState { cwd: None });
+            let state =
+                read_state(&session_path.join("state.json")).unwrap_or(KimiState { cwd: None });
             let Ok(agent_dirs) = std::fs::read_dir(session_path.join("agents")) else {
                 continue;
             };
             for agent_entry in agent_dirs.filter_map(|entry| entry.ok()) {
-                if !agent_entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+                if !agent_entry
+                    .file_type()
+                    .map(|kind| kind.is_dir())
+                    .unwrap_or(false)
+                {
                     continue;
                 }
                 let agent_id = agent_entry.file_name().to_string_lossy().into_owned();
@@ -127,7 +150,10 @@ fn sessions_in(base: &Path) -> anyhow::Result<Vec<SessionRef>> {
                 let (session_id, parent) = if agent_id == "main" {
                     (session_uuid.to_owned(), None)
                 } else {
-                    (format!("{session_uuid}/{agent_id}"), Some(session_uuid.to_owned()))
+                    (
+                        format!("{session_uuid}/{agent_id}"),
+                        Some(session_uuid.to_owned()),
+                    )
                 };
                 let metadata = wire_path.metadata().ok();
                 let modified_ms = metadata
@@ -177,15 +203,24 @@ fn parse_line(session: &SessionRef, line: &tail::CompleteLine) -> Option<AgentEv
         if record_type == "tool.call" {
             tool_name = event.get("name").and_then(Value::as_str).map(str::to_owned);
             let args = event.get("args");
-            if let Some(path) = args.and_then(|args| args.get("path")).and_then(Value::as_str) {
+            if let Some(path) = args
+                .and_then(|args| args.get("path"))
+                .and_then(Value::as_str)
+            {
                 let access = if tool_name.as_deref() == Some("Read") {
                     crate::event::Access::Read
                 } else {
                     crate::event::Access::Write
                 };
-                paths.push(crate::event::ToolPath { path: path.to_owned(), access });
+                paths.push(crate::event::ToolPath {
+                    path: path.to_owned(),
+                    access,
+                });
             }
-            if let Some(url) = args.and_then(|args| args.get("url")).and_then(Value::as_str) {
+            if let Some(url) = args
+                .and_then(|args| args.get("url"))
+                .and_then(Value::as_str)
+            {
                 urls.push(url.to_owned());
             }
         }
@@ -261,7 +296,10 @@ fn project_line(
         let Some(message) = value.get("message") else {
             return Ok(());
         };
-        let role = message.get("role").and_then(Value::as_str).unwrap_or("user");
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .unwrap_or("user");
         let text = append_message_text(message.get("content"));
         if !text.is_empty() {
             *turn += 1;
@@ -276,8 +314,14 @@ fn project_line(
             return Ok(());
         };
         let count = |key: &str| -> i64 { usage.get(key).and_then(Value::as_i64).unwrap_or(0) };
-        let model = value.get("model").and_then(Value::as_str).unwrap_or("unknown").to_owned();
-        let message_id = pending_message_id.take().unwrap_or_else(|| line.start.to_string());
+        let model = value
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        let message_id = pending_message_id
+            .take()
+            .unwrap_or_else(|| line.start.to_string());
         let usage_row = UsageRow {
             ts,
             message_id: &message_id,
@@ -321,8 +365,15 @@ fn project_line(
     match event_type {
         "content.part" => {
             let part = event.get("part");
-            if part.and_then(|part| part.get("type")).and_then(Value::as_str) == Some("text") {
-                let text = part.and_then(|part| part.get("text")).and_then(Value::as_str).unwrap_or("");
+            if part
+                .and_then(|part| part.get("type"))
+                .and_then(Value::as_str)
+                == Some("text")
+            {
+                let text = part
+                    .and_then(|part| part.get("text"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
                 if !text.is_empty() {
                     *turn += 1;
                     let inserted = store.write_turn(&sid, *turn, ts, "assistant", text)?;
@@ -335,10 +386,19 @@ fn project_line(
             *turn += 1;
             let inserted = store.write_turn(&sid, *turn, ts, "tool", "")?;
             record(stat, inserted);
-            store.write_tool_fact(&sid, *turn, ts, normalize_tool_name(name), event.get("args"))?;
+            store.write_tool_fact(
+                &sid,
+                *turn,
+                ts,
+                normalize_tool_name(name),
+                event.get("args"),
+            )?;
         }
         "step.end" => {
-            *pending_message_id = event.get("messageId").and_then(Value::as_str).map(str::to_owned);
+            *pending_message_id = event
+                .get("messageId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
         }
         _ => {}
     }
@@ -360,7 +420,12 @@ mod tests {
     }
 
     fn write_lines(path: &PathBuf, lines: &[&str]) {
-        let mut file = OpenOptions::new().create(true).truncate(true).write(true).open(path).unwrap();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(path)
+            .unwrap();
         for line in lines {
             writeln!(file, "{line}").unwrap();
         }
@@ -404,8 +469,14 @@ mod tests {
         );
         let metadata = path.metadata().unwrap();
         let kimi = Kimi;
-        let chunk = kimi.read_from(&session_for(&path, metadata.len()), 0).unwrap();
-        assert_eq!(chunk.events.len(), 3, "every line decodes to an event, even metadata");
+        let chunk = kimi
+            .read_from(&session_for(&path, metadata.len()), 0)
+            .unwrap();
+        assert_eq!(
+            chunk.events.len(),
+            3,
+            "every line decodes to an event, even metadata"
+        );
         assert_eq!(chunk.skipped, 0);
         assert_eq!(chunk.events[2].tool_name.as_deref(), Some("Read"));
         assert_eq!(chunk.events[2].paths[0].path, "CLAUDE.md");
@@ -423,7 +494,9 @@ mod tests {
         );
         let metadata = path.metadata().unwrap();
         let kimi = Kimi;
-        let chunk = kimi.read_from(&session_for(&path, metadata.len()), 0).unwrap();
+        let chunk = kimi
+            .read_from(&session_for(&path, metadata.len()), 0)
+            .unwrap();
         assert_eq!(chunk.events.len(), 1);
         assert_eq!(chunk.skipped, 1);
     }
@@ -433,14 +506,18 @@ mod tests {
         let path = temp_path("jn3");
         write_lines(
             &path,
-            &[r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"time":1}"#],
+            &[
+                r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"hi"}]},"time":1}"#,
+            ],
         );
         let mut file = OpenOptions::new().append(true).open(&path).unwrap();
         write!(file, "{{\"partial").unwrap();
         drop(file);
         let metadata = path.metadata().unwrap();
         let kimi = Kimi;
-        let chunk = kimi.read_from(&session_for(&path, metadata.len()), 0).unwrap();
+        let chunk = kimi
+            .read_from(&session_for(&path, metadata.len()), 0)
+            .unwrap();
         assert_eq!(chunk.events.len(), 1);
         assert!(chunk.next_offset < metadata.len());
     }

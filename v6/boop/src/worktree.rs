@@ -135,12 +135,7 @@ mod tests {
             .unwrap();
         assert!(out.status.success());
         let out = Command::new("git")
-            .args([
-                "-C",
-                path.to_string_lossy().as_ref(),
-                "rev-parse",
-                "HEAD",
-            ])
+            .args(["-C", path.to_string_lossy().as_ref(), "rev-parse", "HEAD"])
             .output()
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_owned()

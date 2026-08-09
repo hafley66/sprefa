@@ -47,7 +47,10 @@ fn load_manifest(id: &str) -> Option<Vec<FixtureSession>> {
     let manifest_path = fixture_dir(id).join("sessions.json");
     let text = fs::read_to_string(&manifest_path).ok()?;
     Some(serde_json::from_str(&text).unwrap_or_else(|error| {
-        panic!("malformed fixture manifest {}: {error}", manifest_path.display())
+        panic!(
+            "malformed fixture manifest {}: {error}",
+            manifest_path.display()
+        )
     }))
 }
 
@@ -86,7 +89,11 @@ fn measure(harness: &dyn Harness) -> Option<CorpusResult> {
     let mut events = 0u64;
     for session in &sessions {
         let chunk = harness.read_from(session, 0).unwrap_or_else(|error| {
-            panic!("{}: read_from {} failed: {error}", harness.id(), session.session_id)
+            panic!(
+                "{}: read_from {} failed: {error}",
+                harness.id(),
+                session.session_id
+            )
         });
         events += chunk.events.len() as u64;
     }
@@ -99,7 +106,11 @@ fn measure(harness: &dyn Harness) -> Option<CorpusResult> {
     let start = Instant::now();
     for session in &sessions {
         sync_session(&store, harness, session).unwrap_or_else(|error| {
-            panic!("{}: sync_session {} failed: {error}", harness.id(), session.session_id)
+            panic!(
+                "{}: sync_session {} failed: {error}",
+                harness.id(),
+                session.session_id
+            )
         });
     }
     let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
@@ -174,7 +185,10 @@ fn bench_grid() {
     );
     for (id, result) in &rows {
         if let Some(result) = result {
-            assert!(result.events > 0, "{id}: measured harness ingested zero events");
+            assert!(
+                result.events > 0,
+                "{id}: measured harness ingested zero events"
+            );
         }
     }
 }
