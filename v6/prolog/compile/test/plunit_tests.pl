@@ -67,7 +67,7 @@
                 % plan compiles to, asserted by the incremental_mode unit.
                 incremental_program_safe/4, reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
-:- use_module('../../lower', [ boot_statements/6 ]).
+:- use_module('../../lower', [ boot_statements/7 ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
 % the oracle/compiler split, because the review's central claim is that
@@ -171,14 +171,14 @@ catalog_lowered(Mode, _Name, Ddl) :-
 % reproduce that grouping exactly.
 
 test(switch_as_keyed_replace_one_group) :-
-    load_plan(switch_as_keyed_replace, plan(_, prog(_, Rules), _, _, _, _, _, _)),
+    load_plan(switch_as_keyed_replace, plan(_, prog(_, Rules), _, _, _, _, _, _, _)),
     stratum_groups(Rules, Groups),
     length(Groups, 1),
     Groups = [Group],
     length(Group, 2).
 
 test(demand_laziness_one_group) :-
-    load_plan(demand_laziness_effect_rows, plan(_, prog(_, Rules), _, _, _, _, _, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, prog(_, Rules), _, _, _, _, _, _, _)),
     stratum_groups(Rules, Groups),
     length(Groups, 1),
     Groups = [Group],
@@ -189,13 +189,13 @@ test(demand_laziness_one_group) :-
 % demanded); demanded must precede effect_call likewise.
 
 test(switch_as_keyed_replace_rule_order) :-
-    load_plan(switch_as_keyed_replace, plan(_, _, _, _, RuleOrder, _, _, _)),
+    load_plan(switch_as_keyed_replace, plan(_, _, _, _, _, RuleOrder, _, _, _)),
     RuleOrder = [(DemandedHead <- _), (RouteViewHead <- _)],
     functor(DemandedHead, demanded, 2),
     functor(RouteViewHead, route_view, 2).
 
 test(demand_laziness_rule_order) :-
-    load_plan(demand_laziness_effect_rows, plan(_, _, _, _, RuleOrder, _, _, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, _, _, _, _, RuleOrder, _, _, _)),
     RuleOrder = [(DemandedHead <- _), (EffectCallHead <- _)],
     functor(DemandedHead, demanded, 2),
     functor(EffectCallHead, effect_call, 1).
@@ -219,7 +219,7 @@ test(self_recursive_level_rule_remains_in_p2_order) :-
 % witness at all and stays text per the ruling's flat-punt).
 
 test(switch_as_keyed_replace_columns) :-
-    load_plan(switch_as_keyed_replace, plan(_, _, RelPlans, _, _, _, _, _)),
+    load_plan(switch_as_keyed_replace, plan(_, _, _, RelPlans, _, _, _, _, _)),
     memberchk(relplan(open_scope/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
     memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
     memberchk(relplan(route_view/2, set, [route_id, body], none, [text, text]), RelPlans),
@@ -227,7 +227,7 @@ test(switch_as_keyed_replace_columns) :-
     memberchk(relplan(route_row/2, set, [route_id, body], none, [text, text]), RelPlans).
 
 test(demand_laziness_columns) :-
-    load_plan(demand_laziness_effect_rows, plan(_, _, RelPlans, _, _, _, _, _)),
+    load_plan(demand_laziness_effect_rows, plan(_, _, _, RelPlans, _, _, _, _, _)),
     memberchk(relplan(open_feed/2, set, [session_id, target], key([1]), [text, text]), RelPlans),
     memberchk(relplan(demanded/2, set, [target, session_id], none, [text, text]), RelPlans),
     memberchk(relplan(effect_call/1, set, [target], none, [text]), RelPlans).
@@ -342,9 +342,9 @@ test(ordered_pre_snapshots_once_then_mirrors_each_write) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, Boot),
     emit_program(batched_increments_both_count, Plan, Lowered, Boot, Text),
     findall(At,
             sub_atom(Text, At, _, _, 'DELETE FROM "__pre_counter"'),
@@ -630,7 +630,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     HeadDelete == 'DELETE FROM "path" WHERE ("node") IN (SELECT "node" FROM "__cone_path")',
     once(sub_atom(StageRetract, _, _, _, 'SELECT -1, row_number() OVER () - 1, "node" FROM "__cone_path"')),
     HeadCount == 'SELECT count(*) AS "n" FROM "path"',
-    Plan = plan(test, prog([], Rules), RelPlans, [], Rules, [], [], direct),
+    Plan = plan(test, prog([], Rules), [], RelPlans, [], Rules, [], [], direct),
     retraction_guard(Plan, 'recursive-cte-reseed').
 
 % A NEGATED body atom retracts a head row on an ARRIVAL, which stages no -1
@@ -724,9 +724,9 @@ test(fixpoint_ir_emits_beside_the_sql_fields) :-
            program_plan(Term-Bindings, [intern(direct)], Plan),
            lower_program(Plan, Lowered) )),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, Boot),
     emit_program(flagship_flow_reach_over_resolved_edges, Plan, Lowered, Boot,
                  Text),
     once(sub_atom(Text, _, _, _,
@@ -893,7 +893,7 @@ catalog_first_seed_row(Ddl, FirstRow) :-
 % into it; a leftover arrival target is that door standing open.
 test(catalog_is_never_an_arrival_target) :-
     catalog_program(Term),
-    once(program_plan(Term-[], plan(_, _, _, ArrivalTargets, _, _, _, _))),
+    once(program_plan(Term-[], plan(_, _, _, _, ArrivalTargets, _, _, _, _))),
     \+ memberchk('__rel'/_, ArrivalTargets).
 
 % The gate keys on the contract's arity: a rel spelled the same at another
@@ -936,7 +936,7 @@ test(catalog_all_rows_equals_decl_rows) :-
 test(catalog_seed_ddl_byte_identical_after_split) :-
     catalog_program(Term),
     once(program_plan(Term-[], [intern(direct)], Plan)),
-    Plan = plan(Name, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+    Plan = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode),
     findall(PreRef,
             ( member((_ <+ EdgeBody), Rules),
               level_body_pre_ref(EdgeBody, PreRef) ),
@@ -1189,7 +1189,7 @@ plane_name(Name) :-
 % Reproduce the exact inputs lower_program/2 passes to the producer, so the
 % planned rows match what the DDL minted, family by family.
 catalog_plane_local_names(Plan, LocalNames) :-
-    Plan = plan(Name, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+    Plan = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode),
     findall(PreRef,
             ( member((_ <+ EdgeBody), Rules),
               level_body_pre_ref(EdgeBody, PreRef) ),
@@ -1232,7 +1232,7 @@ test(level_plane_family_corpus_counts) :-
 corpus_plane_kind_counts(Counts) :-
     findall(Kind,
             ( corpus_plan_lowered(_Name, Plan, _Lowered),
-              Plan = plan(ModName, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+              Plan = plan(ModName, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode),
               findall(Ref, (member((_ <+ EB), Rules), level_body_pre_ref(EB, Ref)), R0),
               sort(R0, PreRefs),
               listened_departure_refs(Rules, Deps),
@@ -1321,7 +1321,7 @@ catalog_audit_corpus_rows(AllRows) :-
 
 % Reproduce the producer's exact inputs so the audited rows match the DDL mint.
 catalog_audit_all_rows(Plan, AllRows) :-
-    Plan = plan(Name, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+    Plan = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode),
     findall(PreRef,
             ( member((_ <+ EdgeBody), Rules),
               level_body_pre_ref(EdgeBody, PreRef) ),
@@ -1387,7 +1387,7 @@ hosts_ports_are(Name, Ports, Responses) :-
     hosts_wiring_fixture_file(File),
     read_fixture_term(File, Name, Term, Bindings),
     program_plan(Term-Bindings, [intern(dict)], Plan),
-    Plan = plan(ModName, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+    Plan = plan(ModName, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode),
     findall(Ref, (member((_ <+ EB), Rules), level_body_pre_ref(EB, Ref)), R0),
     sort(R0, PreRefs),
     listened_departure_refs(Rules, Deps),
@@ -1434,7 +1434,7 @@ test(step5_bind_port_never_has_a_response_child) :-
 storage_local_name_for(Mode, ColumnName, LocalName) :-
     catalog_program(Term),
     once(( program_plan(Term-[], [intern(Mode)], Plan),
-           Plan = plan(ModName, prog(Decls, Rules), RelPlans, _, _, _, _, M),
+           Plan = plan(ModName, prog(Decls, Rules), _, RelPlans, _, _, _, _, M),
            findall(Ref, (member((_ <+ EB), Rules), level_body_pre_ref(EB, Ref)), R0),
            sort(R0, PreRefs),
            listened_departure_refs(Rules, Deps),
@@ -1791,9 +1791,9 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
                   (seen(Path, At) <+ diagnostic(Path, _), tick_rel(At)) ]),
     program_plan(fixture(freeze, Prog, [], [], [])-[], Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, Types, RelPlans, [], LevelStatements, Boot),
     emit_program(freeze, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.apply_levels_before_edges')),
     once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recompute_levels_before_edges')),
@@ -1947,7 +1947,7 @@ test(accepts_edge_derived_edge_trigger) :-
 %                       AND `Union > 0` compares a TEXT-affinity column
 %                       against an integer literal.
 %   GREEN             : the level-head expression type reaches the column
-%                       (analyze.pl program_column_types/7), union_size col3
+%                       (analyze.pl program_column_types/8), union_size col3
 %                       is INTEGER, and 12 crosses the boundary as 12.
 %
 % The type list, not the DDL text, is the assertion: lower.pl:column_def/3 is
@@ -1957,7 +1957,7 @@ test(accepts_edge_derived_edge_trigger) :-
 test(head_arithmetic_column_is_int_not_text_collapse) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, head_expression_evaluates_derived_column, Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, _, RelPlans, _, _, _, _, _)) )),
     memberchk(relplan(union_size/3, _, _, _, UnionTypes), RelPlans),
     assertion(UnionTypes == [text, text, int]),
     memberchk(relplan(callee_set_size/2, _, _, _, CalleeTypes), RelPlans),
@@ -1970,7 +1970,7 @@ test(bind_result_column_is_int_not_text_collapse) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, bind_computes_derived_value_then_comparison_filters,
                              Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, _, RelPlans, _, _, _, _, _)) )),
     memberchk(relplan(over_budget/2, _, _, _, Types), RelPlans),
     assertion(Types == [text, int]).
 
@@ -1983,7 +1983,7 @@ test(bind_result_column_is_int_not_text_collapse) :-
 test(concat_result_column_stays_text) :-
     expressions_fixture_file(File),
     once(( read_fixture_term(File, interpolation_desugars_to_concat, Term, Bindings),
-           program_plan(Term-Bindings, plan(_, _, RelPlans, _, _, _, _, _)) )),
+           program_plan(Term-Bindings, plan(_, _, _, RelPlans, _, _, _, _, _)) )),
     memberchk(relplan(message/3, _, _, _, Types), RelPlans),
     assertion(Types == [text, int, text]).
 
@@ -2563,16 +2563,16 @@ test(host_declared_struct_output_parses_and_lowers_as_ref) :-
       fixture(host_declared_struct_output_parses_and_lowers_as_ref,
               Program, [], [], [])-Bindings,
       Plan),
-    Plan = plan(_, _, RelPlans, _, _, _, _, _),
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
     memberchk(
       relplan('__host_response_scan_span'/4, set,
               [witness_digest, ordinal, path, at],
               key([1, 2]), [text, int, text, ref(span)]),
       RelPlans),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), _, _, _, _, _, Mode),
+    Plan = plan(_, prog(Decls, _), Types, _, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, Types, RelPlans, [], LevelStatements, Boot),
     emit_program(
       host_declared_struct_output_parses_and_lowers_as_ref,
       Plan, Lowered, Boot, Text),
@@ -2685,9 +2685,9 @@ test(emitter_carries_world_plans_and_demand_sql) :-
     program_plan(Term-Bindings, Plan),
     lower_program(Plan, Lowered),
     Term = fixture(_, _, Initial, _, _),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
+    boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, Boot),
     emit_program(native_ts_query_term, Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _, 'export const host_plans')),
     % PHASE 2 (runtime bridge arc): the two named unsupported constructs are gone; both world
@@ -2731,9 +2731,9 @@ test(query_plan_carries_columns_and_bound_positions) :-
               Program, [], [], [])-Bindings,
       Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, Types, RelPlans, [], LevelStatements, Boot),
     emit_program(query_plan_carries_columns_and_bound_positions,
                  Plan, Lowered, Boot, Text),
     once(sub_atom(Text, _, _, _,
@@ -4267,7 +4267,7 @@ test(arithmetic_operator_constraint_keeps_unwitnessed_scan_state_numeric) :-
             pre(counter(Name, Total)),
             Next := Total + 1) ]),
     program_plan(fixture(scan_numeric_constraint, Prog, [], [], [])-[], Plan),
-    Plan = plan(_, _, RelPlans, _, _, _, _, _),
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
     memberchk(relplan(counter/2, _, _, _, [text, int]), RelPlans).
 
 :- end_tests(phase5_value_plane).
@@ -4400,7 +4400,7 @@ test(non_aggregate_compound_head_argument_stays_plain) :-
 
 :- begin_tests(relation_depth_lowering).
 
-depth_program(Rules, plan(depth, prog(Decls, Rules), RelPlans, [raw/4],
+depth_program(Rules, plan(depth, prog(Decls, Rules), Types, RelPlans, [raw/4],
                           LevelRules, EdgeRules, [], direct)) :-
     Decls = [ type_decl(repo,  [col(name, text)]),
               col_type(repo/1, name, text),
@@ -4421,6 +4421,7 @@ depth_program(Rules, plan(depth, prog(Decls, Rules), RelPlans, [raw/4],
                  relplan(raw/4,   set, [repo_name, path_name, start, end], none,
                          [text, text, int, int]),
                  relplan(seen/1,  set, [start], none, [int]) ],
+    type_definitions(Decls, Types),
     include(rule_is_level, Rules, LevelRules),
     include(rule_is_edge, Rules, EdgeRules).
 
@@ -5503,7 +5504,7 @@ interning_boot_relplans([ relplan(tagged/2, set, [node, tag], none,
 
 interning_boot(Mode, Boot) :-
     interning_boot_relplans(RelPlans),
-    boot_statements(Mode, [], RelPlans, [tagged(1, rust)], [], Boot).
+    boot_statements(Mode, [], [], RelPlans, [tagged(1, rust)], [], Boot).
 
 % RED before this landed: the only boot statement was
 % `INSERT OR IGNORE INTO "tagged" ("node", "tag") VALUES (?, ?)` with params
@@ -5723,9 +5724,9 @@ interning_emitted(Mode, Base, Name, Text) :-
            program_plan(Term-Bindings, [intern(Mode)], Plan),
            lower_program(Plan, Lowered),
            Term = fixture(_, _, Initial, _, _),
-           Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
+           Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
            Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-           boot_statements(Mode, Decls, RelPlans, Initial, LevelStatements, Boot),
+           boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, Boot),
            emit_program(Name, Plan, Lowered, Boot, Text) )).
 
 % A `__ref_<type>` target table carries text columns inside its own UNIQUE key,
@@ -5831,9 +5832,9 @@ test(mode_travels_in_the_plan) :-
            program_plan(Term-Bindings, [intern(direct)], DirectPlan),
            program_plan(Term-Bindings, DefaultPlan),
            default_intern_mode(DefaultMode) )),
-    DictPlan = plan(_, _, _, _, _, _, _, dict),
-    DirectPlan = plan(_, _, _, _, _, _, _, direct),
-    DefaultPlan = plan(_, _, _, _, _, _, _, DefaultMode).
+    DictPlan = plan(_, _, _, _, _, _, _, _, dict),
+    DirectPlan = plan(_, _, _, _, _, _, _, _, direct),
+    DefaultPlan = plan(_, _, _, _, _, _, _, _, DefaultMode).
 
 % ── the departure frontier reads characters (trigger_read_mode/3) ───────────
 %

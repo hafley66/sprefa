@@ -9,7 +9,7 @@
 :- use_module(library(lists)).
 :- use_module('../../2_subscribe', [ subscribed_rels/4 ]).
 :- use_module('../../compile', [ program_plan/2 ]).
-:- use_module('../../lower', [ lower_program/2, boot_statements/6 ]).
+:- use_module('../../lower', [ lower_program/2, boot_statements/7 ]).
 :- use_module('../../emit_ts', [ emit_program/5 ]).
 :- use_module('../parse_dl', [ parse_dl/4, parse_dl_file/4 ]).
 :- use_module('../../analyze', [ declared_refs/2 ]).
@@ -165,7 +165,7 @@ test(golden_flex_cone_invariants) :-
     parse_dl_file(File, Program, Bindings, []),
     program_plan(fixture(golden_flex_cone_invariants, Program, [], [], [])
                  -Bindings, Plan),
-    Plan = plan(_, prog(_, Rules), RelPlans, _, _, _, Cone, _),
+    Plan = plan(_, prog(_, Rules), _, RelPlans, _, _, _, Cone, _),
     Cone \== [],
     findall(Ref, member(relplan(Ref, _, _, _, _), RelPlans), AllRefs0),
     sort(AllRefs0, AllRefs),
@@ -266,9 +266,9 @@ test(zero_query_module_subscribes_nothing) :-
 emitted_text(Name, Program, Bindings, Text) :-
     program_plan(fixture(Name, Program, [], [], [])-Bindings, Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _, Mode),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, Types, RelPlans, [], LevelStatements, Boot),
     emit_program(Name, Plan, Lowered, Boot, Text).
 
 :- end_tests(subscribe_cone).

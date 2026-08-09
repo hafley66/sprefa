@@ -12,7 +12,7 @@
 :- use_module(library(apply)).
 % relplan_kind/3 supplies trigger kind to the per-arm resolver.
 :- use_module(lower, [ relplan_kind/3, departure_frontier_table_name/2,
-                       departure_read_sql/3, struct_type_plans/2,
+                       departure_read_sql/3, struct_type_plans/3,
                        program_text_intern_plan/3,
                        statement_rule_ids/3 ]).
 :- use_module(analyze,
@@ -21,7 +21,6 @@
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
-:- use_module('0_type_plane', [type_definitions/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -390,7 +389,7 @@ local_types_lines(
       'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };'
     ]).
 
-world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, SubscribedRels, _), Lines) :-
+world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, _, SubscribedRels, _), Lines) :-
     findall(HostPlan,
             ( member(Decl, Decls),
               Decl = sh_decl(_, _, _, _),
@@ -1702,7 +1701,7 @@ ordered_program(EdgeStatements) :-
     ordered_edge_statement(Statement),
     !.
 
-plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _, _, _), Refs) :-
+plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Refs) :-
     findall(Ref,
             ( member((_ <+ Body), Rules),
               level_body_pre_ref(Body, Ref) ),
@@ -2604,7 +2603,7 @@ dispatch_signature(_,
     'function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {').
 
 derived_edge_carry_required(
-        plan(_, prog(_, Rules), _, _, _, _, _, _), EdgeStatements, Required) :-
+        plan(_, prog(_, Rules), _, _, _, _, _, _, _), EdgeStatements, Required) :-
     derived_refs(Rules, DerivedRefs),
     ( member(edgestmt(_, TriggerRef, _, _, _, _, _, _, _), EdgeStatements),
       memberchk(TriggerRef, DerivedRefs)
@@ -2612,7 +2611,7 @@ derived_edge_carry_required(
     ;  Required = false
     ).
 
-incremental_program_safe(plan(_, prog(_, Rules), _, _, _, _, _, _),
+incremental_program_safe(plan(_, prog(_, Rules), _, _, _, _, _, _, _),
                          _EdgeStatements, _LevelStatements, Safe) :-
     rules_have_supported_level_bodies(Rules),
     Safe = true.
@@ -2621,7 +2620,7 @@ rules_have_supported_level_bodies([]).
 rules_have_supported_level_bodies([_ | Rest]) :-
     rules_have_supported_level_bodies(Rest).
 
-reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _), Reconcile) :-
+reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Reconcile) :-
     ( member(Rule, Rules),
       Rule = (_ <- Body),
       body_ref_uses(Body, Uses),
@@ -2630,7 +2629,7 @@ reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _), Reconcile) :-
     ;  Reconcile = false
     ).
 
-retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _, _), Guard) :-
+retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Guard) :-
     ( member(Rule, Rules),
       Rule = (_ <- Body),
       rule_head_ref(Rule, HeadRef),
@@ -2682,7 +2681,7 @@ program_export_lines(Name, InternMode,
 
 % A database built by one mode is unreadable by the other, so the artifact
 % names the mode that built it (interning contract §15.5).
-plan_intern_mode(plan(_, _, _, _, _, _, _, InternMode), InternMode).
+plan_intern_mode(plan(_, _, _, _, _, _, _, _, InternMode), InternMode).
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
@@ -2693,8 +2692,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     include(is_level_statement, LevelStatements, RuleLevelStatements),
     include(is_retention_statement, LevelStatements, RetentionStatements),
     ( RetentionStatements == [] -> HasRetention = false ; HasRetention = true ),
-    Plan = plan(_, prog(PlanDecls, _), _, _, _, _, _, _),
-    struct_type_plans(PlanDecls, StructPlans),
+    Plan = plan(_, prog(PlanDecls, _), LoweringTypes, _, _, _, _, _, _),
+    struct_type_plans(PlanDecls, LoweringTypes, StructPlans),
     struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
     plan_intern_mode(Plan, InternMode),
     program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
@@ -2702,7 +2701,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ( ordered_program(EdgeStatements) -> HasOrderedProgram = true
     ; HasOrderedProgram = false
     ),
-    Plan = plan(_, prog(_, SelfRefScanRules), _, _, _, _, _, _),
+    Plan = plan(_, prog(_, SelfRefScanRules), _, _, _, _, _, _, _),
     self_referential_level_refs(SelfRefScanRules, SelfReferentialLevelRefs),
     edge_statements_intern(EdgeStatements, HasInternWrite),
     imports_lines(HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
@@ -2713,7 +2712,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     bind_args_helper_lines(BindArgsHelperLines),
     arrival_value_guard_lines(ArrivalValueGuardLines),
     ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
-    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _, _),
+    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _, _, _),
     listened_departure_refs(PlanRules, DepartureRefs),
     plan_pre_refs(Plan, PreRefs),
     findall(LevelRef,
@@ -2726,7 +2725,6 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     rel_column_types_lines(RelPlans, RelColumnTypesLines),
-    type_definitions(PlanDecls, LoweringTypes),
     program_catalog_rows(InternMode, Name, PlanDecls, PlanRules, RelPlans,
                          DepartureRefs, PreRefs, LoweringTypes,
                          RuleLevelStatements, CatalogRows),
@@ -2762,7 +2760,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
     build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
                           DepartureRefs, BuildDeltasFnLines),
-    Plan = plan(_, TickProg, _, _, _, _, _, _),
+    Plan = plan(_, TickProg, _, _, _, _, _, _, _),
     program_uses_tick(TickProg, UsesTick),
     advance_tick_fn_lines(UsesTick, AdvanceTickFnLines),
     run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,

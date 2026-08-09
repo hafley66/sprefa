@@ -9,9 +9,9 @@ main :-
     parse_dl(Codes, Program, Bindings, []),
     program_plan(fixture(x, Program, [], [], [])-Bindings, Plan),
     lower_program(Plan, Lowered),
-    Plan = plan(_, prog(Decls, _), RelPlans, _, _, _, _),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, _),
     Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
-    boot_statements(Mode, Decls, RelPlans, [], LevelStatements, Boot),
+    boot_statements(Mode, Decls, Types, RelPlans, [], LevelStatements, Boot),
     emit_program(x, Plan, Lowered, Boot, Text),
     ( sub_atom(Text, _, _, _, 'subscribed_rels')
     -> writeln('HAS subscribed_rels')

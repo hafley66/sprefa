@@ -190,7 +190,7 @@ grade_text_door(Name, Term, Bindings, OutDir, Status) :-
         ( Term = fixture(Name, Prog, Initial, Schedule, _Expectations),
           raw_program_parts(Prog, RawDecls, RawRules, Queries),
           program_plan(fixture(Name, Prog, Initial, Schedule, [])-Bindings, Plan),
-          Plan = plan(_, ExpandedProg, RelPlans, ArrivalTargets, _, _, _, _),
+          Plan = plan(_, ExpandedProg, _, RelPlans, ArrivalTargets, _, _, _, _),
           ExpandedProg = prog(ExpandedDecls, _),
           witnessed_refs(Initial, Schedule, WitnessedRefs),
           augmented_decls(RawDecls, ExpandedDecls, RelPlans, ArrivalTargets, WitnessedRefs,
