@@ -26,7 +26,7 @@
                 column_def/4, ir_column_class/4, uniform_text_encoding/1,
                 intern_write_sql/4,
                 catalog_ddl_contract/2,
-                catalog_rows/5,
+                catalog_rows/4,
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
 :- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
@@ -1030,30 +1030,25 @@ test(refuses_two_arities_of_one_rel_name,
 % A ref column carries its target rel's rel_id; no lists present, so node/1
 % lands on 7 and holder's `item` column (id 10) points at it.
 test(catalog_ref_column_carries_target_rel_id) :-
-    Decls = [ type_decl(node, [col(id, int)]),
-              col_type(node/1, id, int),
-              col_type(holder/1, item, node) ],
     RelPlans = [ relplan(node/1, set, [id], none, [int]),
                  relplan(holder/1, set, [item], none, [ref(node)]) ],
-    lower:catalog_rows(catalog_ref, Decls, [], RelPlans, Rows),
+    lower:catalog_rows(catalog_ref, [], RelPlans, Rows),
     memberchk(row(7, 6, 0, node, rel, 0, 1, 6, _, _, _), Rows),
     memberchk(row(10, 9, 1, item, column, 7, 0, 6, _, '', ''), Rows).
 
 % A list(text) column carries the synthetic list row's id (6); that row's own
 % type_id is the element id 1 (text). The new row shifts every id after it.
 test(catalog_list_column_carries_element_typed_row) :-
-    Decls = [ col_type(items/1, list_col, list(text)) ],
-    RelPlans = [ relplan(items/1, set, [list_col], none, [json]) ],
-    lower:catalog_rows(catalog_list, Decls, [], RelPlans, Rows),
+    RelPlans = [ relplan(items/1, set, [list_col], none, [list(text)]) ],
+    lower:catalog_rows(catalog_list, [], RelPlans, Rows),
     memberchk(row(6, 0, 0, 'list(text)', list, 1, 0, 0, '', '', ''), Rows),
     memberchk(row(9, 8, 1, list_col, column, 6, 0, 7, _, '', ''), Rows).
 
 % Nested list(list(text)) mints two synthetic rows, the inner list(text) row
 % before the outer one, and the column points at the outer row's id (7).
 test(catalog_nested_list_emits_inner_before_outer) :-
-    Decls = [ col_type(items/1, list_col, list(list(text))) ],
-    RelPlans = [ relplan(items/1, set, [list_col], none, [json]) ],
-    lower:catalog_rows(catalog_nested, Decls, [], RelPlans, Rows),
+    RelPlans = [ relplan(items/1, set, [list_col], none, [list(list(text))]) ],
+    lower:catalog_rows(catalog_nested, [], RelPlans, Rows),
     nth0(5, Rows, row(6, 0, 0, 'list(text)', list, 1, 0, 0, _, _, _)),
     nth0(6, Rows, row(7, 0, 0, 'list(list(text))', list, 6, 0, 0, _, _, _)),
     memberchk(row(10, 9, 1, list_col, column, 7, 0, 8, _, '', ''), Rows).
@@ -1061,15 +1056,24 @@ test(catalog_nested_list_emits_inner_before_outer) :-
 % Byte-stability receipt: a no-ref no-list two-rel program emits today's ids,
 % so pass A did not reorder. Module 6, first rel 7, second rel 9.
 test(catalog_no_ref_no_list_ids_unchanged) :-
-    Decls = [],
     RelPlans = [ relplan(a_rel/1, set, [c1], none, [text]),
                  relplan(b_rel/1, set, [c2], none, [int]) ],
-    lower:catalog_rows(catalog_plain, Decls, [], RelPlans, Rows),
+    lower:catalog_rows(catalog_plain, [], RelPlans, Rows),
     memberchk(row(6, 0, 0, catalog_plain, module, 0, 0, 6, _, _, _), Rows),
     memberchk(row(7, 6, 0, a_rel, rel, 0, 1, 6, _, _, _), Rows),
     memberchk(row(8, 7, 1, c1, column, 1, 0, 6, _, '', ''), Rows),
     memberchk(row(9, 6, 0, b_rel, rel, 0, 1, 6, _, _, _), Rows),
     memberchk(row(10, 9, 1, c2, column, 2, 0, 6, _, '', ''), Rows).
+
+% An inferred rel has no declaration, so the catalog once typed its list column
+% as unknown while the emitted DDL enforced array-ness on the same column.
+test(catalog_inferred_list_column_resolves_to_the_list_row) :-
+    RelPlans = [ relplan(declared/1, set, [payloads], none, [list(json)]),
+                 relplan(inferred/1, set, [payloads], none, [list(json)]) ],
+    lower:catalog_rows(catalog_inferred, [], RelPlans, Rows),
+    memberchk(row(ListId, 0, 0, 'list(json)', list, _, _, _, _, _, _), Rows),
+    forall(member(row(_, _, _, payloads, column, TypeId, _, _, _, _, _), Rows),
+           TypeId == ListId).
 
 :- end_tests(catalog_type_ids).
 
