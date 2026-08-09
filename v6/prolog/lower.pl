@@ -733,7 +733,7 @@ canonical_hash_key(Term, KeyAtom) :-
 
 % Ids are positional for a byte-stable recompile: primitives, list rows,
 % module, then each rel and its columns.
-catalog_row_ddl(Mode, ModuleName, _Decls, Rules, RelPlans, [Statement]) :-
+catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, [Statement]) :-
     catalog_rows(ModuleName, Rules, RelPlans, AllRows),
     foldl(catalog_row_part(Mode), AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
@@ -4953,7 +4953,7 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     program_uses_catalog(prog(Decls, Rules), UsesCatalog),
     ( UsesCatalog == true
     -> catalog_table_ddl(CatalogTableDdl),
-       catalog_row_ddl(Mode, Name, Decls, Rules, RelPlans, CatalogRowDdl)
+       catalog_row_ddl(Mode, Name, Rules, RelPlans, CatalogRowDdl)
     ;  CatalogTableDdl = [], CatalogRowDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
