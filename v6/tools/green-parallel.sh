@@ -44,6 +44,7 @@ PHASE_B=(
   "leak-soak:TSV2_LEAK_PORT=17803"
   "rtkq-golden:TSV2_PARITY_PORT=17813"
   "watch-scale"
+  "catalog-audit:CATALOG_AUDIT_PORT=17815"
   "ghcacher-golden:TSV2_PARITY_PORT=17811"
   "one-subscribe"
 )
