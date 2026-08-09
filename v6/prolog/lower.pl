@@ -764,12 +764,15 @@ schema_hash(Columns, ColumnTypes, KeyOrNone, HashText) :-
     module_hash(Key, HashText).
 
 %! rule_bodies_map(+Rules, -Map) is det.
-%   msort, not sort: a duplicate body counts toward the hash.
+%   msort, not sort: a duplicate body counts toward the hash. Head-Body keeps
+%   head sharing visible; canonicalize first so msort sorts ground atoms.
 rule_bodies_map(Rules, Map) :-
-    findall(Ref-Body,
+    findall(Ref-Canonical,
             ( member(Rule, Rules),
               rule_head_ref(Rule, Ref),
-              rule_body_of(Rule, Body) ),
+              rule_head_of(Rule, Head),
+              rule_body_of(Rule, Body),
+              canonical_hash_key(Head-Body, Canonical) ),
             Pairs0),
     msort(Pairs0, Pairs),
     group_pairs_by_key(Pairs, Map).
@@ -785,6 +788,9 @@ rule_hash(BodiesMap, Ref, HashText) :-
 
 rule_body_of((_Head <- Body), Body).
 rule_body_of((_Head <+ Body), Body).
+
+rule_head_of((Head <- _Body), Head).
+rule_head_of((Head <+ _Body), Head).
 
 %! canonical_hash_key(+Term, -KeyAtom) is det.
 %   numbervars on a COPY: variable identity becomes positional, so the same

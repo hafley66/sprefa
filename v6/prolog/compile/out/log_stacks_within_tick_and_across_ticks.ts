@@ -205,7 +205,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "log_stacks_within_tick_and_across_ticks", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "105ebe44e984989c", h_schema: "", h_rule: "" },
   { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "heard", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "a1778462fe0751b0", h_schema: "4f9957ccb96234b6", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c15ba99569a11f57", h_schema: "", h_rule: "" },
-  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "heard_count", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "d736c85a00139aa3", h_schema: "4f9957ccb96234b6", h_rule: "4417adcc6734cb07" },
+  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "heard_count", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "d736c85a00139aa3", h_schema: "4f9957ccb96234b6", h_rule: "94b5e9735c2966c4" },
   { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f0ce19324cd2326e", h_schema: "", h_rule: "" },
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "__delta_heard", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "9ee391f4513ab507", h_schema: "15e84563064d7c4c", h_rule: "" },
   { rel_id: 12, parent_id: 7, ordinal: 0, local_name: "__frontier_heard", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "a7ada90843a25260", h_schema: "c35a652f9e4a4d00", h_rule: "" },

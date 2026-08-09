@@ -191,7 +191,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c85c15db9500606c", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "whole", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "b1b4cbd2987031b7", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "fraction", kind: "column", type_id: 3, arity: 0, module_id: 6, h_id: "47db7227196b9a2d", h_schema: "", h_rule: "" },
-  { rel_id: 11, parent_id: 6, ordinal: 0, local_name: "total", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "3187b65d3baac841", h_schema: "0afc9e4df0350232", h_rule: "fb4b41aea98741a0" },
+  { rel_id: 11, parent_id: 6, ordinal: 0, local_name: "total", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "3187b65d3baac841", h_schema: "0afc9e4df0350232", h_rule: "376f7a1b63f8894e" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "d1010a337e86a5e7", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "value", kind: "column", type_id: 3, arity: 0, module_id: 6, h_id: "87376b5353ac2fb6", h_schema: "", h_rule: "" },
   { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "__delta_measure", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "2902d21e104c4ab2", h_schema: "29132cc1e0eff47f", h_rule: "" },

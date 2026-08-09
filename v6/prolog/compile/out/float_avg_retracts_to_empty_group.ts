@@ -186,7 +186,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "float_avg_retracts_to_empty_group", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "2e343ca030386491", h_schema: "", h_rule: "" },
-  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "mean", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "95b4eb39f553f035", h_schema: "fcc24f068f144351", h_rule: "7f1b91d83fb87155" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "mean", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "95b4eb39f553f035", h_schema: "fcc24f068f144351", h_rule: "11ee7f5e4baf9bc8" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "group", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "235bc4041d113ed4", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "value", kind: "column", type_id: 3, arity: 0, module_id: 6, h_id: "0c73adf1b38568d1", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "score", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "699add32e0a174d9", h_schema: "fcc24f068f144351", h_rule: "" },

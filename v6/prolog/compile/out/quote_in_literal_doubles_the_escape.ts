@@ -190,7 +190,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "quote_in_literal_doubles_the_escape", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "54bfba85f1a5f107", h_schema: "", h_rule: "" },
   { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "person", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "423465f775903b4e", h_schema: "a30b139c04a632dd", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "045f56c098110488", h_schema: "", h_rule: "" },
-  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "selected", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "3a395bcca2c9faf4", h_schema: "a30b139c04a632dd", h_rule: "f6a147f1ace69b2e" },
+  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "selected", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "3a395bcca2c9faf4", h_schema: "a30b139c04a632dd", h_rule: "c5f9a9c514d20cf5" },
   { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "64a1ba0c5897c26d", h_schema: "", h_rule: "" },
   { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "__delta_person", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "e78962c279542336", h_schema: "178788c545e561e2", h_rule: "" },
   { rel_id: 12, parent_id: 7, ordinal: 0, local_name: "__frontier_person", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "46ecc38efa387ff2", h_schema: "de5b51999f205894", h_rule: "" },

@@ -213,7 +213,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "person", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "95cec75285815ecb", h_schema: "12402b46a85530e2", h_rule: "" },
   { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ddcf14f02e318867", h_schema: "", h_rule: "" },
   { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "4a15bd98f1ab9ca5", h_schema: "", h_rule: "" },
-  { rel_id: 15, parent_id: 6, ordinal: 0, local_name: "reviewed", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "2d9c1b525f2504ca", h_schema: "7b24f100e0aeb882", h_rule: "50eca4257d0ef301" },
+  { rel_id: 15, parent_id: 6, ordinal: 0, local_name: "reviewed", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "2d9c1b525f2504ca", h_schema: "7b24f100e0aeb882", h_rule: "a2e230f9c7ec4ae7" },
   { rel_id: 16, parent_id: 15, ordinal: 1, local_name: "commit_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "0adf2cd9d70fcf28", h_schema: "", h_rule: "" },
   { rel_id: 17, parent_id: 15, ordinal: 2, local_name: "reviewer_name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "466f292eef046e2a", h_schema: "", h_rule: "" },
   { rel_id: 18, parent_id: 7, ordinal: 0, local_name: "__delta_commit", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "c03846f440aa93db", h_schema: "d63e416beccf4892", h_rule: "" },
