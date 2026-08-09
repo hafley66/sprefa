@@ -150,7 +150,7 @@
             catalog_ddl_contract/2,
             % The same rows the catalog INSERT renders, read by emit_ts.pl.
             catalog_rows/4,
-            catalog_all_rows/5 ]).
+            catalog_all_rows/8 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -775,8 +775,10 @@ canonical_hash_key(Term, KeyAtom) :-
 
 % Ids are positional for a byte-stable recompile: primitives, list rows,
 % module, then each rel and its columns.
-catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, [Statement]) :-
-    catalog_all_rows(Mode, ModuleName, Rules, RelPlans, AllRows),
+catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
+                Types, [Statement]) :-
+    catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs,
+                     PreRefs, Types, AllRows),
     foldl(catalog_row_part(Mode), AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
@@ -784,21 +786,200 @@ catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, [Statement]) :-
            'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule") VALUES ~w',
            [ValuesText]).
 
-%! catalog_all_rows(+Mode, +ModuleName, +Rules, +RelPlans, -Rows) is det.
+%! catalog_all_rows(+Mode, +ModuleName, +Rules, +RelPlans, +DepartureRefs,
+%!                  +PreRefs, +Types, -Rows) is det.
 %   The block the seed renders: the decl rows (catalog_rows/4, byte-stable)
-%   then the plane rows (catalog_plane_rows/5, an empty scaffold this step).
-catalog_all_rows(Mode, ModuleName, Rules, RelPlans, AllRows) :-
-    catalog_rows(ModuleName, Rules, RelPlans, DeclRows),
-    catalog_plane_rows(Mode, ModuleName, Rules, RelPlans, PlaneRows),
+%   then the plane rows (catalog_plane_rows/8, the Rules-derivable families).
+%   DepartureRefs and PreRefs mirror the `lower_program/2` call-site derivations
+%   so a plane row exists exactly where its DDL mint site emitted.
+catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
+                 Types, AllRows) :-
+    catalog_decl_rows(ModuleName, Rules, RelPlans, DeclRows, Context),
+    catalog_plane_rows(Mode, ModuleName, RelPlans, DepartureRefs, PreRefs,
+                       Types, Context, PlaneRows),
     append(DeclRows, PlaneRows, AllRows).
 
-% The plane half is appended after the rels+columns block (plan 4), so no
-% existing id moves; content arrives in steps 3-6.
-catalog_plane_rows(_Mode, _ModuleName, _Rules, _RelPlans, []).
+% The plane half is appended after the rels+columns block (plan 4) so no
+% existing id moves. Plane ids start at the decl block's FinalId.
+%
+% Every family below re-derives its existence condition from the SAME
+% predicates the DDL mint sites use (any_interned_column, DepartureRefs,
+% PreRefs, declared_type_name), so a plane row cannot describe a table the
+% lowering did not create. That is the whole point of this step.
+catalog_plane_rows(Mode, _ModuleName, RelPlans, DepartureRefs, PreRefs,
+                   Types,
+                   ctx(ModuleHash, ModuleId, RelIdMap, _ListIdMap, StartId),
+                   PlaneRows) :-
+    catalog_rel_plane_rows(Mode, RelPlans, DepartureRefs, PreRefs, RelIdMap,
+                           ModuleHash, ModuleId, StartId, RelPlaneRows,
+                           IdAfterRel),
+    dict_plane_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash, ModuleId,
+                    IdAfterRel, DictRows, _IdAfterDict),
+    append(RelPlaneRows, DictRows, PlaneRows).
+
+% ── per-rel planes ─────────────────────────────────────────────────────────
+catalog_rel_plane_rows(_Mode, [], _DepartureRefs, _PreRefs, _RelIdMap,
+                       _ModuleHash, _ModuleId, Id, [], Id).
+catalog_rel_plane_rows(Mode, [RelPlan | Rest], DepartureRefs, PreRefs,
+                       RelIdMap, ModuleHash, ModuleId, Id0, Rows, IdFinal) :-
+    RelPlan = relplan(Ref, _Kind, Columns, _KeyOrNone, ColumnTypes),
+    Ref = Name/RelArity,
+    rel_row_id(RelIdMap, Name, RelId),
+    rel_h_id(ModuleHash, Name, RelArity, RelHId),
+    catalog_one_rel_planes(Mode, Ref, Columns, ColumnTypes, RelId, RelHId,
+                           ModuleId, DepartureRefs, PreRefs, Id0,
+                           ThisRows, Id1),
+    catalog_rel_plane_rows(Mode, Rest, DepartureRefs, PreRefs, RelIdMap,
+                           ModuleHash, ModuleId, Id1, RestRows, IdFinal),
+    append(ThisRows, RestRows, Rows).
+
+% The always-on frontier family, the departure frontier where listened, the
+% pre table where referenced, and the decode views where the rel is interned.
+catalog_one_rel_planes(Mode, Ref, Columns, ColumnTypes, RelId, RelHId,
+                       ModuleId, DepartureRefs, PreRefs, Id0, Rows, IdFinal) :-
+    Ref = Name/_,
+    length(Columns, ColumnCount),
+    TagPlus is ColumnCount + 2,
+    format(atom(DeltaTable), '__delta_~w', [Name]),
+    format(atom(FrontierTable), '__frontier_~w', [Name]),
+    format(atom(NextTable), '__next_frontier_~w', [Name]),
+    rel_h_id(RelHId, DeltaTable, TagPlus, DeltaHId),
+    rel_h_id(RelHId, FrontierTable, TagPlus, FrontierHId),
+    rel_h_id(RelHId, NextTable, TagPlus, NextHId),
+    schema_hash(['_sign', '_sequence' | Columns], [int, int | ColumnTypes],
+                none, DeltaSchema),
+    schema_hash(['_phase', '_sequence' | Columns], [int, int | ColumnTypes],
+                none, FrontierSchema),
+    DeltaRow = row(Id0, RelId, 0, DeltaTable, delta, 0, TagPlus, ModuleId,
+                   DeltaHId, DeltaSchema, ''),
+    FrontierRow = row(Id1, RelId, 0, FrontierTable, frontier, 0, TagPlus,
+                      ModuleId, FrontierHId, FrontierSchema, ''),
+    NextRow    = row(Id2, RelId, 0, NextTable, next_frontier, 0, TagPlus,
+                     ModuleId, NextHId, FrontierSchema, ''),
+    Id1 is Id0 + 1,
+    Id2 is Id1 + 1,
+    IdAfterNext is Id2 + 1,
+    catalog_departure_plane_row(Ref, Name, RelId, RelHId, ModuleId,
+                                DepartureRefs, IdAfterNext, Departures,
+                                IdAfterDeparture, FrontierSchema, TagPlus),
+    catalog_pre_plane_row(Ref, Name, Columns, ColumnTypes, RelId, RelHId,
+                          ModuleId, PreRefs, IdAfterDeparture, PreRows,
+                          IdAfterPre),
+    catalog_view_plane_rows(Mode, Name, Columns, ColumnTypes, RelId, RelHId,
+                            Id0, ModuleId, IdAfterPre, ViewRows, IdAfterViews),
+    append([DeltaRow, FrontierRow, NextRow | Departures], PreRows, Base0),
+    append(Base0, ViewRows, Rows),
+    IdFinal = IdAfterViews.
+
+% departure: existence mirrors the delta_ddl/3 mint site, which emits the
+% frontier only for rels listened_departure_refs/2 named.
+catalog_departure_plane_row(Ref, Name, RelId, RelHId, ModuleId,
+                            DepartureRefs, Id0, Rows, IdFinal, Schema,
+                            TagPlus) :-
+    (   memberchk(Ref, DepartureRefs)
+    ->  format(atom(DepartureTable), '__departure_frontier_~w', [Name]),
+        rel_h_id(RelHId, DepartureTable, TagPlus, DepartureHId),
+        DepartureRow = row(Id0, RelId, 0, DepartureTable, departure, 0, TagPlus,
+                           ModuleId, DepartureHId, Schema, ''),
+        IdFinal is Id0 + 1,
+        Rows = [DepartureRow]
+    ;   Rows = [], IdFinal = Id0
+    ).
+
+% pre: existence mirrors pre_ddl/3, called once per level_body_pre_ref/2 ref.
+catalog_pre_plane_row(Ref, Name, Columns, ColumnTypes, RelId, RelHId,
+                      ModuleId, PreRefs, Id0, Rows, IdFinal) :-
+    (   memberchk(Ref, PreRefs)
+    ->  length(Columns, ColumnCount),
+        format(atom(PreTable), '__pre_~w', [Name]),
+        rel_h_id(RelHId, PreTable, ColumnCount, PreHId),
+        schema_hash(Columns, ColumnTypes, none, PreSchema),
+        PreRow = row(Id0, RelId, 0, PreTable, pre, 0, ColumnCount, ModuleId,
+                     PreHId, PreSchema, ''),
+        IdFinal is Id0 + 1,
+        Rows = [PreRow]
+    ;   Rows = [], IdFinal = Id0
+    ).
+
+% view: existence mirrors text_view_ddls/6, which emits only when the rel has
+% an interned column. The delta-table view parents on the delta row (DeltaId),
+% giving the two-level plane tree plan 6 describes.
+catalog_view_plane_rows(Mode, Name, Columns, ColumnTypes, RelId, RelHId,
+                        DeltaId, ModuleId, Id0, Rows, IdFinal) :-
+    (   any_interned_column(Mode, ColumnTypes)
+    ->  length(Columns, ColumnCount),
+        format(atom(RelViewTable), '__txt_~w', [Name]),
+        rel_h_id(RelHId, RelViewTable, ColumnCount, RelViewHId),
+        schema_hash(Columns, ColumnTypes, none, ViewSchema),
+        RelView = row(Id0, RelId, 0, RelViewTable, view, 0, ColumnCount,
+                      ModuleId, RelViewHId, ViewSchema, ''),
+        Id1 is Id0 + 1,
+        format(atom(DeltaViewTable), '__txt___delta_~w', [Name]),
+        DeltaViewCount is ColumnCount + 2,
+        rel_h_id(RelHId, DeltaViewTable, DeltaViewCount, DeltaViewHId),
+        DeltaView = row(Id1, DeltaId, 0, DeltaViewTable, view, 0,
+                        DeltaViewCount, ModuleId, DeltaViewHId, ViewSchema, ''),
+        IdFinal is Id1 + 1,
+        Rows = [RelView, DeltaView]
+    ;   Rows = [], IdFinal = Id0
+    ).
+
+% ── dictionary planes (per module) ─────────────────────────────────────────
+dict_plane_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash, ModuleId, Id0,
+                Rows, IdFinal) :-
+    (   catalog_has_interned_column(Mode, RelPlans)
+    ->  rel_h_id(ModuleHash, '__str', 2, StrHId),
+        StrRow = row(Id0, ModuleId, 0, '__str', dictionary, 0, 2, ModuleId,
+                     StrHId, '', ''),
+        IdAfterStr is Id0 + 1,
+        StrRows = [StrRow]
+    ;   StrRows = [], IdAfterStr = Id0
+    ),
+    catalog_ref_dict_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash,
+                          ModuleId, IdAfterStr, RefRows, IdFinal),
+    append(StrRows, RefRows, Rows).
+
+catalog_has_interned_column(Mode, RelPlans) :-
+    member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+    any_interned_column(Mode, ColumnTypes).
+
+% __ref_<Type> exists once per declared struct type, mirroring the rel_ddl/6
+% set-arm that creates the reference view.
+catalog_ref_dict_rows(_Mode, [], _Types, _RelIdMap, _ModuleHash, _ModuleId,
+                      Id, [], Id).
+catalog_ref_dict_rows(Mode, [relplan(Name/_, _, Columns, _, ColumnTypes)
+                             | Rest],
+                      Types, RelIdMap, ModuleHash, ModuleId, Id0, Rows,
+                      IdFinal) :-
+    (   declared_type_name(Types, Name)
+    ->  rel_row_id(RelIdMap, Name, RelId),
+        length(Columns, ColumnCount),
+        RefCount is ColumnCount + 2,
+        format(atom(RefTable), '__ref_~w', [Name]),
+        rel_h_id(ModuleHash, RefTable, RefCount, RefHId),
+        schema_hash(Columns, ColumnTypes, none, RefSchema),
+        RefRow = row(Id0, ModuleId, 0, RefTable, dictionary, RelId, RefCount,
+                     ModuleId, RefHId, RefSchema, ''),
+        Id1 is Id0 + 1,
+        RefRows = [RefRow]
+    ;   RefRows = [], Id1 = Id0
+    ),
+    catalog_ref_dict_rows(Mode, Rest, Types, RelIdMap, ModuleHash, ModuleId,
+                          Id1, RestRows, IdFinal),
+    append(RefRows, RestRows, Rows).
+
 
 %! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
 %   The relplan carries each column's full type, ref(_) and list(_) included.
+%   The decl half only; the plane half is appended by catalog_all_rows/8.
 catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
+    catalog_decl_rows(ModuleName, Rules, RelPlans, AllRows, _).
+
+%! catalog_decl_rows(+ModuleName, +Rules, +RelPlans, -Rows, -Context) is det.
+%   Rows are the byte-stable decl blocks; Context carries the id layout the
+%   plane half needs (module id/hash, the rel and list id maps, and FinalId,
+%   the id one past the last decl row).
+catalog_decl_rows(ModuleName, Rules, RelPlans, AllRows, Context) :-
     module_hash(ModuleName, ModuleHash),
     rule_bodies_map(Rules, BodiesMap),
     catalog_primitive_rows(1, PrimitiveRows),
@@ -812,8 +993,9 @@ catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
     FirstRelId is ModuleId + 1,
     catalog_rel_id_map(RelPlans, FirstRelId, [], RelIdMap),
     catalog_rel_rows(RelPlans, BodiesMap, ModuleId, ModuleHash, RelIdMap,
-                     ListIdMap, FirstRelId, _FinalId, RelRows),
-    append([PrimitiveRows, ListRowRows, [ModuleRow], RelRows], AllRows).
+                     ListIdMap, FirstRelId, FinalId, RelRows),
+    append([PrimitiveRows, ListRowRows, [ModuleRow], RelRows], AllRows),
+    Context = ctx(ModuleHash, ModuleId, RelIdMap, ListIdMap, FinalId).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
     catalog_primitive_rows(StartId, [text, int, float, bool, json], [], PrimitiveRows).
@@ -5002,7 +5184,8 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     program_uses_catalog(prog(Decls, Rules), UsesCatalog),
     ( UsesCatalog == true
     -> catalog_table_ddl(CatalogTableDdl),
-       catalog_row_ddl(Mode, Name, Rules, RelPlans, CatalogRowDdl)
+       catalog_row_ddl(Mode, Name, Rules, RelPlans, DepartureRefs, PreRefs,
+                       LoweringTypes, CatalogRowDdl)
     ;  CatalogTableDdl = [], CatalogRowDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table
