@@ -72,13 +72,19 @@ fn project_line(session: &SessionRef, line: &tail::CompleteLine) -> anyhow::Resu
         Some(object) => object,
         None => return Ok(Vec::new()),
     };
-    let record_type = object.get("type").and_then(serde_json::Value::as_str).unwrap_or("");
+    let record_type = object
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
     let ts_ms = object
         .get("timestamp")
         .and_then(serde_json::Value::as_str)
         .and_then(crate::harness::claude::parse_iso_ms)
         .unwrap_or(0);
-    let branch = object.get("gitBranch").and_then(serde_json::Value::as_str).map(str::to_owned);
+    let branch = object
+        .get("gitBranch")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
     let mut turns = Vec::new();
     match record_type {
         "user" => {
@@ -137,7 +143,10 @@ fn project_line(session: &SessionRef, line: &tail::CompleteLine) -> anyhow::Resu
 
 enum ContentBlock {
     Text(String),
-    ToolUse { name: String, input: serde_json::Value },
+    ToolUse {
+        name: String,
+        input: serde_json::Value,
+    },
     ToolResult,
 }
 
@@ -157,18 +166,30 @@ fn content_blocks(record: &serde_json::Value) -> Vec<ContentBlock> {
         return blocks;
     };
     for block in array {
-        let Some(object) = block.as_object() else { continue };
+        let Some(object) = block.as_object() else {
+            continue;
+        };
         let Some(kind) = object.get("type").and_then(serde_json::Value::as_str) else {
             continue;
         };
         match kind {
             "text" => {
-                let text = object.get("text").and_then(serde_json::Value::as_str).unwrap_or("");
+                let text = object
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
                 blocks.push(ContentBlock::Text(text.to_owned()));
             }
             "tool_use" => {
-                let name = object.get("name").and_then(serde_json::Value::as_str).unwrap_or("").to_owned();
-                let input = object.get("input").cloned().unwrap_or(serde_json::Value::Null);
+                let name = object
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                let input = object
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
                 blocks.push(ContentBlock::ToolUse { name, input });
             }
             "tool_result" => {
@@ -205,7 +226,11 @@ fn primary_arg(input: &serde_json::Value) -> String {
 }
 
 fn bound(value: &str) -> String {
-    value.chars().take(200).collect::<String>().replace('\n', " ")
+    value
+        .chars()
+        .take(200)
+        .collect::<String>()
+        .replace('\n', " ")
 }
 
 #[cfg(test)]
@@ -225,6 +250,9 @@ mod tests {
             git_branch: Some("main".to_owned()),
             modified_ms: 0,
             size: 0,
+            tmux: None,
+            tmux_socket: None,
+            parent: None,
         }
     }
 
@@ -238,8 +266,14 @@ mod tests {
         assert_eq!(turns[0].text, "hello world this is human text");
         assert_eq!(turns[1].role, "assistant");
         assert_eq!(turns[2].role, "tool");
-        assert_eq!(turns[2].tool.as_ref().map(|tool| tool.name.as_str()), Some("Read"));
-        assert_eq!(turns[2].tool.as_ref().map(|tool| tool.arg.as_str()), Some("/tmp/secret-notes.md"));
+        assert_eq!(
+            turns[2].tool.as_ref().map(|tool| tool.name.as_str()),
+            Some("Read")
+        );
+        assert_eq!(
+            turns[2].tool.as_ref().map(|tool| tool.arg.as_str()),
+            Some("/tmp/secret-notes.md")
+        );
         // The tool result's file body must not appear in any text field.
         for turn in &turns {
             assert!(

@@ -23,6 +23,7 @@ use crate::proc::ProcReader;
 mod registry;
 mod tail;
 mod tmux;
+mod worktree;
 
 #[derive(Parser)]
 #[command(
@@ -104,6 +105,11 @@ enum SubCmd {
         mail_dir: Option<PathBuf>,
         #[arg(long, default_value_t = 3)]
         resolve_wait: u64,
+        /// Spawn in the main tree instead of creating a worktree.
+        #[arg(long)]
+        main_tree: bool,
+        #[arg(long)]
+        base_sha: Option<String>,
     },
     /// Resolve a lane's harness session id into its registry route.
     Resolve {
@@ -251,16 +257,25 @@ fn main() -> Result<()> {
     match cli.command {
         SubCmd::Harnesses => run_harnesses(&registry),
         SubCmd::Sessions { harness } => run_sessions(&registry, harness.as_deref()),
-        SubCmd::Tail { session_id, from, format } => {
-            run_tail(&registry, &session_id, from.unwrap_or(0), format)
-        }
+        SubCmd::Tail {
+            session_id,
+            from,
+            format,
+        } => run_tail(&registry, &session_id, from.unwrap_or(0), format),
         SubCmd::Events { query } => run_query(&query),
         SubCmd::Sync {} => run_sync_all(&registry),
-        SubCmd::Follow { } => run_follow(&registry),
-        SubCmd::Chat { query, all, follow, json } => {
-            run_chat_query(&query, all, follow, json)
-        }
-        SubCmd::List { agent, all, mail_dir } => run_list(mail_dir.as_deref(), agent.as_deref(), all),
+        SubCmd::Follow {} => run_follow(&registry),
+        SubCmd::Chat {
+            query,
+            all,
+            follow,
+            json,
+        } => run_chat_query(&query, all, follow, json),
+        SubCmd::List {
+            agent,
+            all,
+            mail_dir,
+        } => run_list(mail_dir.as_deref(), agent.as_deref(), all),
         SubCmd::Measure { mail_dir } => run_measure(mail_dir.as_deref()),
         SubCmd::Dispatch {
             to,
@@ -277,22 +292,29 @@ fn main() -> Result<()> {
             r#ref,
             mail_dir,
             resolve_wait,
-        } => run_dispatch(DispatchArgs {
-            to,
-            cwd,
-            cmd,
-            from,
-            harness,
-            session_id,
-            model,
-            mode,
-            tmux,
-            socket,
-            body,
-            r#ref,
-            mail_dir,
-            resolve_wait,
-        }),
+            main_tree,
+            base_sha,
+        } => run_dispatch(
+            &registry,
+            DispatchArgs {
+                to,
+                cwd,
+                cmd,
+                from,
+                harness,
+                session_id,
+                model,
+                mode,
+                tmux,
+                socket,
+                body,
+                r#ref,
+                mail_dir,
+                resolve_wait,
+                main_tree,
+                base_sha,
+            },
+        ),
         SubCmd::Resolve { to, mail_dir } => run_resolve(&to, mail_dir.as_deref()),
         SubCmd::Hail {
             to,
@@ -302,14 +324,29 @@ fn main() -> Result<()> {
             box_,
             socket,
             mail_dir,
-        } => run_hail(&to, &body, from.as_deref(), kind.as_deref(), box_.as_deref(), socket.as_deref(), mail_dir.as_deref()),
+        } => run_hail(
+            &registry,
+            &to,
+            &body,
+            from.as_deref(),
+            kind.as_deref(),
+            box_.as_deref(),
+            socket.as_deref(),
+            mail_dir.as_deref(),
+        ),
         SubCmd::Sweep {
             agent,
             box_,
             close_routeless,
             max_age_days,
             mail_dir,
-        } => run_sweep(mail_dir.as_deref(), box_.as_deref(), agent.as_deref(), close_routeless, max_age_days),
+        } => run_sweep(
+            mail_dir.as_deref(),
+            box_.as_deref(),
+            agent.as_deref(),
+            close_routeless,
+            max_age_days,
+        ),
         SubCmd::Lane {
             name,
             cwd,
@@ -320,17 +357,20 @@ fn main() -> Result<()> {
             parent,
             mail_dir,
             dry_run,
-        } => run_lane(LaneArgs {
-            name,
-            cwd,
-            harness,
-            brief,
-            model,
-            tmux,
-            parent,
-            mail_dir,
-            dry_run,
-        }),
+        } => run_lane(
+            &registry,
+            LaneArgs {
+                name,
+                cwd,
+                harness,
+                brief,
+                model,
+                tmux,
+                parent,
+                mail_dir,
+                dry_run,
+            },
+        ),
         SubCmd::Adopt {
             name,
             tmux,
@@ -386,7 +426,12 @@ fn run_sessions(registry: &Registry, harness_id: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-fn run_tail(registry: &Registry, session_id: &str, offset: u64, format: OutputFormat) -> Result<()> {
+fn run_tail(
+    registry: &Registry,
+    session_id: &str,
+    offset: u64,
+    format: OutputFormat,
+) -> Result<()> {
     for adapter in registry.all() {
         for session in adapter.sessions()? {
             if session.session_id == session_id {
@@ -422,10 +467,12 @@ fn query_from(q: &QueryArgs, session: Option<String>) -> ident::TurnQuery {
 }
 
 /// Query the db with the shared filter set; emit raw rows, no interpretation.
+/// Turns first, then any spawn edges touching the filtered session.
 fn run_query(query: &QueryArgs) -> Result<()> {
     let store = ident::Store::open(ident::Store::default_path()?)?;
     let rows = store.query_turns(&query_from(query, query.session.clone()))?;
     emit_rows(&rows, query.format);
+    emit_edges(&store, query.session.as_deref(), query.limit)?;
     Ok(())
 }
 
@@ -444,6 +491,14 @@ fn run_chat_query(query: &QueryArgs, all: bool, follow: bool, _json: bool) -> Re
     }
     let rows = store.query_turns(&query_from(query, session.clone()))?;
     emit_rows(&rows, query.format);
+    Ok(())
+}
+
+fn emit_edges(store: &ident::Store, session: Option<&str>, limit: Option<u64>) -> Result<()> {
+    let edges = store.query_edges(session)?;
+    for edge in edges.into_iter().take(limit.unwrap_or(u64::MAX) as usize) {
+        println!("{}", serde_json::to_string(&edge)?);
+    }
     Ok(())
 }
 
@@ -542,13 +597,18 @@ fn file_mtime_ms(path: &std::path::Path) -> Result<u64> {
     use std::time::UNIX_EPOCH;
     let metadata = std::fs::metadata(path)?;
     match metadata.modified() {
-        Ok(time) => Ok(time.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)),
+        Ok(time) => Ok(time
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)),
         Err(_) => Ok(0),
     }
 }
 
-
-fn resolve_harness<'a>(registry: &'a Registry, id: &str) -> Result<&'a dyn crate::harness::Harness> {
+fn resolve_harness<'a>(
+    registry: &'a Registry,
+    id: &str,
+) -> Result<&'a dyn crate::harness::Harness> {
     registry
         .by_id(id)
         .with_context(|| format!("no harness registered with id `{id}`"))
@@ -663,14 +723,21 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
                 println!("{}", bus::message_line(&message));
             }
             if !all {
-                println!("{} open (closed history: --all)", bus::unacked(&all_messages(&dir)?).len());
+                println!(
+                    "{} open (closed history: --all)",
+                    bus::unacked(&all_messages(&dir)?).len()
+                );
             }
         }
         Some(agent_id) => {
             let messages = all_messages(&dir)?;
             let rows = bus::fold(&messages);
             let inbox: Vec<_> = rows.iter().filter(|m| m.to == agent_id).cloned().collect();
-            let outbox: Vec<_> = rows.iter().filter(|m| m.from == agent_id).cloned().collect();
+            let outbox: Vec<_> = rows
+                .iter()
+                .filter(|m| m.from == agent_id)
+                .cloned()
+                .collect();
             for message in &inbox {
                 println!("in  {}", bus::message_line(message));
             }
@@ -763,11 +830,18 @@ struct DispatchArgs {
     r#ref: Option<String>,
     mail_dir: Option<PathBuf>,
     resolve_wait: u64,
+    main_tree: bool,
+    base_sha: Option<String>,
 }
 
-fn run_dispatch(args: DispatchArgs) -> Result<()> {
-    let harness = args.harness.unwrap_or_else(|| "opencode".into());
-    let tmux_name = args.tmux.unwrap_or_else(|| args.to.clone());
+fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
+    let adapter = resolve_dispatch_harness(registry, args.harness.as_deref())?;
+    let harness_id = adapter.id().to_owned();
+    let branch = args.tmux.clone().unwrap_or_else(|| args.to.clone());
+    let base_sha = match &args.base_sha {
+        Some(sha) => sha.clone(),
+        None => git_head(&args.cwd)?.unwrap_or_else(|| "HEAD".into()),
+    };
     let body = args.body.clone().unwrap_or_else(|| args.cmd.clone());
 
     let message = bus::Message {
@@ -782,20 +856,31 @@ fn run_dispatch(args: DispatchArgs) -> Result<()> {
         r#ref: args.r#ref.clone(),
     };
 
-    let stamped = format!("INSTANT_HARNESS={harness} {}", args.cmd);
-    tmux::new_detached_session(args.socket.as_deref(), &tmux_name, &args.cwd, &stamped)
-        .map_err(|error| {
-            let _ = error;
-            anyhow::anyhow!("tmux new-session failed; is tmux installed and reachable?")
-        })?;
+    let spec = crate::harness::SpawnSpec {
+        harness: harness_id.clone(),
+        branch,
+        base_sha,
+        main_tree: args.main_tree,
+        setup: Vec::new(),
+        prompt: args.cmd.clone(),
+        resume_session: args.session_id.clone(),
+        socket: args.socket.clone(),
+        worktree_dir: None,
+        repo: std::path::PathBuf::from(&args.cwd),
+    };
+    let session = adapter.spawn(&spec)?;
 
-    let stamp = format!("[bus {}] dispatched: {}", message.id, args.cmd);
-    tmux::send_keys_literal(args.socket.as_deref(), &tmux_name, &stamp)?;
+    let stamp = format!(
+        "[bus {}] dispatched: {}",
+        message.id,
+        args.cmd.split('\n').next().unwrap_or("")
+    );
+    adapter.send(&session, &stamp)?;
 
     let dir = mail_dir(args.mail_dir.as_deref())?;
     let route = Route {
-        harness: Some(harness),
-        tmux: Some(tmux_name.clone()),
+        harness: Some(harness_id),
+        tmux: session.tmux.clone(),
         cwd: Some(args.cwd.clone()),
         model: args.model.clone(),
         mode: args.mode.clone(),
@@ -804,10 +889,64 @@ fn run_dispatch(args: DispatchArgs) -> Result<()> {
     };
     write_route(&dir, &args.to, route)?;
     append_message(&dir, &message)?;
-    println!("dispatched {} -> {} (tmux {})", message.id, args.to, tmux_name);
+    println!(
+        "dispatched {} -> {} (tmux {})",
+        message.id,
+        args.to,
+        session.tmux.as_deref().unwrap_or("-")
+    );
     std::thread::sleep(std::time::Duration::from_secs(args.resolve_wait));
-    let _ = message;
     Ok(())
+}
+
+/// The registered harness adapter for a dispatched `--harness`. A named
+/// harness must resolve exactly; an unnamed one takes the first registered
+/// adapter. A named harness resolving to a different harness is a capability
+/// lie, so an unregistered name is a hard error that lists the registered set.
+fn resolve_dispatch_harness<'a>(
+    registry: &'a Registry,
+    id: Option<&str>,
+) -> Result<&'a dyn crate::harness::Harness> {
+    let Some(id) = id else {
+        return registry
+            .all()
+            .first()
+            .map(|boxed| boxed.as_ref())
+            .ok_or_else(|| anyhow::anyhow!("no harness registered"));
+    };
+    match registry.by_id(id) {
+        Some(adapter) => Ok(adapter),
+        None => {
+            let registered = registry
+                .all()
+                .iter()
+                .map(|harness| harness.id())
+                .collect::<Vec<_>>()
+                .join(", ");
+            anyhow::bail!("unregistered harness `{id}`; registered harnesses: {registered}")
+        }
+    }
+}
+
+/// The registered harness adapter for a `--harness` filter, or the first
+/// registered one when the id is absent.
+fn harness_by_id<'a>(registry: &'a Registry, id: &str) -> Result<&'a dyn crate::harness::Harness> {
+    registry
+        .by_id(id)
+        .or_else(|| registry.all().first().map(|b| b.as_ref()))
+        .ok_or_else(|| anyhow::anyhow!("no harness registered"))
+}
+
+fn git_head(repo: &str) -> Result<Option<String>> {
+    let output = std::process::Command::new("git")
+        .args(["-C", repo, "rev-parse", "HEAD"])
+        .output()?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -825,7 +964,10 @@ fn run_resolve(to: &str, mail_dir_arg: Option<&Path>) -> Result<()> {
         }
     };
     if route.session_id.is_some() {
-        println!("resolved {to} -> {} (self-reported)", route.session_id.as_deref().unwrap());
+        println!(
+            "resolved {to} -> {} (self-reported)",
+            route.session_id.as_deref().unwrap()
+        );
         return Ok(());
     }
     let harness = route.harness.as_deref().unwrap_or("-");
@@ -883,7 +1025,9 @@ fn parse_session_id(text: &str) -> Option<String> {
 // hail
 // ---------------------------------------------------------------------------
 
+#[allow(clippy::too_many_arguments)]
 fn run_hail(
+    registry: &Registry,
     to: &str,
     body: &str,
     from: Option<&str>,
@@ -917,8 +1061,32 @@ fn run_hail(
         return Ok(());
     };
     let line = bus::injected_line(&message);
-    tmux::send_keys_literal(socket, pane, &line)?;
-    println!("injected into tmux {pane}");
+    // Route the send through the harness control facet; tmux is a transport
+    // detail inside the impl. The session carries the pane handle spawn gave it.
+    let harness_id = route.harness.as_deref().unwrap_or("claude");
+    let adapter = harness_by_id(registry, harness_id)?;
+    let session = crate::harness::SessionRef {
+        harness: adapter.id(),
+        session_id: to.to_owned(),
+        path: std::path::PathBuf::from("/tmp/hail.jsonl"),
+        cwd: route.cwd.clone(),
+        git_branch: None,
+        modified_ms: 0,
+        size: 0,
+        tmux: Some(pane.to_owned()),
+        tmux_socket: socket.map(str::to_owned),
+        parent: None,
+    };
+    let outcome = adapter.send(&session, &line)?;
+    match outcome {
+        crate::harness::SendOutcome::Injected => println!("injected into tmux {pane}"),
+        crate::harness::SendOutcome::QueuedForNextSpawn => {
+            println!("queued for next spawn -> {to}");
+        }
+        crate::harness::SendOutcome::Unsupported => {
+            println!("{to} harness has no send support: message stays queued");
+        }
+    }
     Ok(())
 }
 
@@ -964,7 +1132,10 @@ fn run_sweep(
             if close_routeless {
                 append_ack(&dir, box_name, message)?;
                 expired += 1;
-                println!("expired {} -> {}: no registry route", message.id, message.to);
+                println!(
+                    "expired {} -> {}: no registry route",
+                    message.id, message.to
+                );
             } else {
                 println!(
                     "{} -> {}: no registry route, cannot scope the cass query (--close-routeless expires these)",
@@ -979,10 +1150,16 @@ fn run_sweep(
             acked += 1;
             println!("{} -> {}: acked", message.id, message.to);
         } else {
-            println!("{} -> {}: no transcript hit, still unacked", message.id, message.to);
+            println!(
+                "{} -> {}: no transcript hit, still unacked",
+                message.id, message.to
+            );
         }
     }
-    println!("swept {} unacked, acked {acked}, expired {expired}", pending.len());
+    println!(
+        "swept {} unacked, acked {acked}, expired {expired}",
+        pending.len()
+    );
     Ok(())
 }
 
@@ -1000,9 +1177,16 @@ fn cass_hit(route: &Route, message_id: &str) -> Result<bool> {
         Ok(value) => value,
         Err(_) => return Ok(false),
     };
-    let hits = value.get("hits").and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
+    let hits = value
+        .get("hits")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     Ok(hits.iter().any(|hit| {
-        let source = hit.get("source_path").and_then(serde_json::Value::as_str).unwrap_or("");
+        let source = hit
+            .get("source_path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
         scoped_to_agent(route, source)
     }))
 }
@@ -1045,7 +1229,7 @@ struct LaneArgs {
     dry_run: bool,
 }
 
-fn run_lane(args: LaneArgs) -> Result<()> {
+fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
     let harness = args.harness.unwrap_or_else(|| "opencode".into());
     let brief = args
         .brief
@@ -1059,22 +1243,30 @@ fn run_lane(args: LaneArgs) -> Result<()> {
         println!("tmux: {}", args.tmux.as_deref().unwrap_or(&args.name));
         return Ok(());
     }
-    run_dispatch(DispatchArgs {
-        to: args.name,
-        cwd: args.cwd,
-        cmd: build_lane_command(&command, args.parent.as_deref()),
-        from: None,
-        harness: Some(harness),
-        session_id: None,
-        model: args.model,
-        mode: Some("auto".into()),
-        tmux: args.tmux,
-        socket: None,
-        body: Some(format!("Read and execute the lane brief at {}", brief.display())),
-        r#ref: Some(brief.display().to_string()),
-        mail_dir: args.mail_dir,
-        resolve_wait: 3,
-    })
+    run_dispatch(
+        registry,
+        DispatchArgs {
+            to: args.name,
+            cwd: args.cwd,
+            cmd: build_lane_command(&command, args.parent.as_deref()),
+            from: None,
+            harness: Some(harness),
+            session_id: None,
+            model: args.model,
+            mode: Some("auto".into()),
+            tmux: args.tmux,
+            socket: None,
+            body: Some(format!(
+                "Read and execute the lane brief at {}",
+                brief.display()
+            )),
+            r#ref: Some(brief.display().to_string()),
+            mail_dir: args.mail_dir,
+            resolve_wait: 3,
+            main_tree: false,
+            base_sha: None,
+        },
+    )
 }
 
 /// When a parent lane is given, append a completion hail so the original cmd
@@ -1092,9 +1284,9 @@ fn lane_command(harness: &str, brief: &std::path::Path, model: Option<&str>) -> 
     let brief = shell_quote_double(&brief.display().to_string());
     match harness {
         "opencode" => {
-            let model = model
-                .map(shell_quote_double)
-                .unwrap_or_else(|| shell_quote_double("openrouter/deepseek/deepseek-v4-flash-0731"));
+            let model = model.map(shell_quote_double).unwrap_or_else(|| {
+                shell_quote_double("openrouter/deepseek/deepseek-v4-flash-0731")
+            });
             format!("opencode run -m {model} --auto \"$(cat {brief})\"")
         }
         _ => format!("claude --auto \"$(cat {brief})\""),
@@ -1212,8 +1404,30 @@ fn append_message_to(dir: &std::path::Path, filename: &str, message: &bus::Messa
     Ok(())
 }
 
-fn append_ack(dir: &std::path::Path, _box_name: Option<&str>, message: &bus::Message) -> Result<()> {
+fn append_ack(
+    dir: &std::path::Path,
+    _box_name: Option<&str>,
+    message: &bus::Message,
+) -> Result<()> {
     let mut ack = message.clone();
     ack.to_timestamp = Some(bus::now_iso());
     append_message(dir, &ack)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_dispatch_harness;
+    use crate::registry::Registry;
+
+    #[test]
+    fn dispatch_refuses_an_unregistered_harness() {
+        let registry = Registry::discover();
+        let error = match resolve_dispatch_harness(&registry, Some("opencode")) {
+            Ok(_) => panic!("unregistered harness must be refused"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(message.contains("opencode"), "message: {message}");
+        assert!(message.contains("claude"), "registered set: {message}");
+    }
 }
