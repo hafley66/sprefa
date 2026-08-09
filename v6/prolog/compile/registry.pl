@@ -170,9 +170,9 @@ surface(json_group_array/1, aggregate, no_refs,                   head(lower),  
 surface(json_group_array/2, aggregate, no_refs,                   head(lower),                           live).
 surface(group_concat/2,     aggregate, no_refs,                   head(lower),                           live).
 surface(group_concat/3,     aggregate, no_refs,                   head(lower),                           live).
-% This old one-argument spelling remains a named unsupported construct. The four writable
-% forms above are the complete ordered aggregate surface.
-surface(group_concat/1,     aggregate, no_refs,                   head(refuse(not_implemented)),         refused).
+% The one-argument spelling defaults its separator to SQLite's own `,`
+% (group_concat/1 and group_concat/2 with `,` are byte-identical).
+surface(group_concat/1,     aggregate, no_refs,                   head(lower),                           live).
 
 surface(enum_decl/2,     decl,      no_refs,                      decl(enum_variants),                    live).
 surface(';' /2,          decl,      no_refs,                      decl(enum_variant_separator),           live).

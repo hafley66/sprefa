@@ -39,6 +39,20 @@ fixture(ordered_group_concat_ordinal,
   [ final(ordinal_joined/2,
           [ ordinal_joined(north, 'pear > orange > apple') ]) ]).
 
+fixture(ordered_group_concat_one_argument_defaults_to_comma,
+  prog([], [ (simple_joined(Group, group_concat(Value)) <- item(Group, Value)) ]),
+  [ item(north, pear), item(north, orange), item(north, apple) ],
+  [],
+  [ final(simple_joined/2, [ simple_joined(north, 'apple,orange,pear') ]) ]).
+
+% group_concat(X) and group_concat(X, ',') are byte-identical: the one-argument
+% spelling defaults its separator to SQLite's own comma.
+fixture(ordered_group_concat_explicit_comma_matches_one_argument,
+  prog([], [ (explicit_joined(Group, group_concat(Value, ",")) <- item(Group, Value)) ]),
+  [ item(north, pear), item(north, orange), item(north, apple) ],
+  [],
+  [ final(explicit_joined/2, [ explicit_joined(north, 'apple,orange,pear') ]) ]).
+
 fixture(ordered_aggregate_retraction_rebuild,
   prog([], [ (ordered_values(Group, json_group_array(Value, Ordinal)) <-
               item(Group, Ordinal, Value)) ]),

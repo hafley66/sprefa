@@ -637,6 +637,20 @@
     "final_detail": ""
   },
   {
+    "name": "ordered_group_concat_one_argument_defaults_to_comma",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "ordered_group_concat_explicit_comma_matches_one_argument",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "ordered_aggregate_retraction_rebuild",
     "bucket": "identical",
     "detail": "",
@@ -799,6 +813,13 @@
   },
   {
     "name": "created_at_pinned_updated_at_advances",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "group_concat_one_argument_joins_members",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",

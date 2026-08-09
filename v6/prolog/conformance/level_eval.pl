@@ -43,6 +43,10 @@ classify_head_arg(Arg, agg(json_group_array_ordered, ValueExpr-OrdinalExpr)) :-
     nonvar(Arg),
     surface_for_term(Arg, json_group_array/2, aggregate, no_refs, head(_), live),
     arg(1, Arg, ValueExpr), arg(2, Arg, OrdinalExpr), !.
+classify_head_arg(Arg, agg(group_concat(','), ValueExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, group_concat/1, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), !.
 classify_head_arg(Arg, agg(group_concat(Sep), ValueExpr)) :-
     nonvar(Arg),
     surface_for_term(Arg, group_concat/2, aggregate, no_refs, head(_), live),
