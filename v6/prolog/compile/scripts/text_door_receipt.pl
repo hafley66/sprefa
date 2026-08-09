@@ -96,7 +96,12 @@ run :-
     findall(Status,
             ( member(File, Files), read_all_fixtures(File, Entries),
               member(entry(Name, Term, Bindings), Entries),
-              grade_one(File, Name, Term, Bindings, OutDir, Status)
+              % A failing grade_one must surface as a failure row, never
+              % vanish from the findall (the plan/7->/8 drift hid ALL 196).
+              ( grade_one(File, Name, Term, Bindings, OutDir, Status)
+              -> true
+              ;  Status = failure(Name, grade_pipeline_failed)
+              )
             ),
             Statuses),
     include(reached_text_door, Statuses, ReachedTextDoor),
@@ -185,7 +190,7 @@ grade_text_door(Name, Term, Bindings, OutDir, Status) :-
         ( Term = fixture(Name, Prog, Initial, Schedule, _Expectations),
           raw_program_parts(Prog, RawDecls, RawRules, Queries),
           program_plan(fixture(Name, Prog, Initial, Schedule, [])-Bindings, Plan),
-          Plan = plan(_, ExpandedProg, RelPlans, ArrivalTargets, _, _, _),
+          Plan = plan(_, ExpandedProg, RelPlans, ArrivalTargets, _, _, _, _),
           ExpandedProg = prog(ExpandedDecls, _),
           witnessed_refs(Initial, Schedule, WitnessedRefs),
           augmented_decls(RawDecls, ExpandedDecls, RelPlans, ArrivalTargets, WitnessedRefs,

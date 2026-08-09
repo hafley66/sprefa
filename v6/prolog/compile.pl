@@ -76,11 +76,12 @@ find_fixture(Stream, Name, Term, Bindings) :-
     ; find_fixture(Stream, Name, Term, Bindings)
     ).
 
+% @comment-ok: plan/8 field contract, the record's single documentation site
 % ═══ the compile plan : everything lower.pl and emit_ts.pl need, computed
 % once so both stay pure functions of it rather than re-deriving it ═════════
 %
 % plan(Name, Prog, RelPlans, ArrivalTargets, RuleOrder, EdgeRules,
-%      SubscribedRels)
+%      SubscribedRels, InternMode)
 %   RelPlans: list of relplan(Ref, Kind, Columns, KeyPositionsOrNone,
 %             ColumnTypes) covering every ref program_refs/2 or typed
 %             declaration finds (arrival
