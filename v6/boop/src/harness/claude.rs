@@ -94,10 +94,7 @@ impl Harness for Claude {
     fn spawn(&self, spec: &SpawnSpec) -> anyhow::Result<SessionRef> {
         let session_id = format!("agent-{}", random_hex());
         let tmux_name = format!("boop-{session_id}");
-        let cwd = spec
-            .worktree_dir
-            .clone()
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+        let cwd = crate::worktree::prepare_spawn_dir(spec)?;
         let command = launch_command(spec);
         crate::tmux::new_detached_session(
             spec.socket.as_deref(),
@@ -408,12 +405,54 @@ mod tests {
             harness: "claude",
             branch: "lane-test".to_owned(),
             base_sha: "0000000000000000000000000000000000000000".to_owned(),
-            main_tree: false,
+            main_tree: true,
             setup: Vec::new(),
             prompt: "do the lane".to_owned(),
             resume_session: None,
             socket: Some(guard.socket.clone()),
-            worktree_dir: Some(std::env::temp_dir()),
+            worktree_dir: None,
+            repo: std::env::temp_dir(),
+        }
+    }
+
+    /// A throwaway git repo (one seed commit) plus a worktree path; tests
+    /// spawn against it and tear it down.
+    mod temp_repo {
+        use std::process::Command;
+
+        pub struct TempRepo {
+            pub dir: std::path::PathBuf,
+            pub sha: String,
+            pub worktree: std::path::PathBuf,
+        }
+
+        impl TempRepo {
+            pub fn new() -> TempRepo {
+                let dir = std::env::temp_dir().join(format!("boop-cl-repo-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&dir);
+                let worktree = std::env::temp_dir().join(format!("boop-cl-wt-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&worktree);
+                Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap();
+                let d = dir.display().to_string();
+                Command::new("git").args(["-C", &d, "config", "user.email", "t@t"]).status().unwrap();
+                Command::new("git").args(["-C", &d, "config", "user.name", "t"]).status().unwrap();
+                std::fs::write(dir.join("seed.txt"), "s").unwrap();
+                Command::new("git").args(["-C", &d, "add", "-A"]).status().unwrap();
+                Command::new("git").args(["-C", &d, "commit", "-qm", "seed"]).status().unwrap();
+                let sha = String::from_utf8_lossy(
+                    &Command::new("git").args(["-C", &d, "rev-parse", "HEAD"]).output().unwrap().stdout,
+                )
+                .trim()
+                .to_owned();
+                TempRepo { dir, sha, worktree }
+            }
+        }
+
+        impl Drop for TempRepo {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.dir);
+                let _ = std::fs::remove_dir_all(&self.worktree);
+            }
         }
     }
 
@@ -429,13 +468,21 @@ mod tests {
     #[test]
     fn claude_spawn_returns_handle_and_stop_tears_down() {
         let guard = TmuxGuard::new();
+        let repo = temp_repo::TempRepo::new();
+        let worktree = repo.worktree.clone();
+        let mut s = spec(&guard);
+        s.main_tree = false;
+        s.base_sha = repo.sha.clone();
+        s.repo = repo.dir.clone();
+        s.worktree_dir = Some(worktree.clone());
         let claude = Claude;
-        let session = claude.spawn(&spec(&guard)).unwrap();
+        let session = claude.spawn(&s).unwrap();
         assert_eq!(session.tmux.as_deref().map(|t| t.starts_with("boop-agent-")), Some(true));
         assert_eq!(session.tmux_socket.as_deref(), Some(guard.socket.as_str()));
+        assert!(worktree.join("seed.txt").exists(), "worktree must be created by spawn");
         claude.stop(&session).unwrap();
-        // Whatever claude did after launch, the plain shell the test keeps
-        // alive must be gone when stop reports success.
+        // The spawned session (a shell claude runs under) must be gone after
+        // stop; the guard also kills the whole server regardless.
         assert!(!has_session_on(&guard, session.tmux.as_deref().unwrap()));
     }
 

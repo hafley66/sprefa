@@ -111,4 +111,7 @@ pub struct SpawnSpec {
     pub socket: Option<String>,
     /// The directory to run the harness in (the worktree, once created).
     pub worktree_dir: Option<std::path::PathBuf>,
+    /// The git checkout a worktree branches from (or the main-tree working
+    /// dir when `main_tree` is true).
+    pub repo: std::path::PathBuf,
 }

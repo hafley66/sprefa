@@ -23,6 +23,7 @@ use crate::proc::ProcReader;
 mod registry;
 mod tail;
 mod tmux;
+mod worktree;
 
 #[derive(Parser)]
 #[command(
