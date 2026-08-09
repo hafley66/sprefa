@@ -191,7 +191,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "label", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "af39029b45307ad9", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "numerator", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "88f81af735fd2a4b", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "denominator", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "8b545e0d6168e6b2", h_schema: "", h_rule: "" },
-  { rel_id: 11, parent_id: 6, ordinal: 0, local_name: "probe", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "c720f98debfde195", h_schema: "7c6d8e3901682821", h_rule: "95db475f583b6a3c" },
+  { rel_id: 11, parent_id: 6, ordinal: 0, local_name: "probe", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "c720f98debfde195", h_schema: "7c6d8e3901682821", h_rule: "4c944b0dcd87eb6a" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "label", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "8fcccc8ea7b27e86", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 11, ordinal: 2, local_name: "quotient", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "2c9b01c84c3cee14", h_schema: "", h_rule: "" },
   { rel_id: 14, parent_id: 11, ordinal: 3, local_name: "remainder", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "e13b346f041de322", h_schema: "", h_rule: "" },

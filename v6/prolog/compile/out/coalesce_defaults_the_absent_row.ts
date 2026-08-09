@@ -205,7 +205,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "commit", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "6676d8bcfb330f05", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "repo", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "fb5bf5637a400c6d", h_schema: "a30b139c04a632dd", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "59120e6a2953bf7c", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "repo_latest", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "7bbdefbd11ede7d6", h_schema: "d4f3566ce68ea8d7", h_rule: "652d04bf16c0b121" },
+  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "repo_latest", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "7bbdefbd11ede7d6", h_schema: "d4f3566ce68ea8d7", h_rule: "c3efb226f7ab1144" },
   { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c53bf22b20321ba1", h_schema: "", h_rule: "" },
   { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "commit", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f3e7cf27cef9963c", h_schema: "", h_rule: "" },
   { rel_id: 15, parent_id: 7, ordinal: 0, local_name: "__delta_latest_commit", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "960f02108b1b3acd", h_schema: "9c8263b123d6a75d", h_rule: "" },

@@ -1098,7 +1098,7 @@ test(catalog_ids_are_positional) :-
         "(16,7,9,'h_id','column',1,0,6,'e1dced9b3224ccea','','')",
         "(17,7,10,'h_schema','column',1,0,6,'0967c02f99ba48cf','','')",
         "(18,7,11,'h_rule','column',1,0,6,'df4d6ca44aae0adf','','')",
-        "(19,6,0,'rel_named','rel',0,1,6,'839df246b6d13056','32b13250133857cf','180433c603fbd8c6')",
+        "(19,6,0,'rel_named','rel',0,1,6,'839df246b6d13056','32b13250133857cf','f7b925c3a6691b60')",
         "(20,19,1,'col1','column',1,0,6,'b9055ded7691bfca','','')"]),
         sub_atom(CatalogSeed, _, _, _, Expected)).
 

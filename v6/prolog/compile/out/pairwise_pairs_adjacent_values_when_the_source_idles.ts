@@ -213,7 +213,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "reading", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "361a473cb682967b", h_schema: "db3da63b54fb4739", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "sensor", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "0344e89b4ecc5e4c", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "previous", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "9c6f236550be6e8d", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "step", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "c1150591fbb5d685", h_schema: "0d02e01dbc975dc1", h_rule: "ca48e0fc6eed0884" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "step", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "c1150591fbb5d685", h_schema: "0d02e01dbc975dc1", h_rule: "682e4fbcf4e69a1d" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "sensor", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f63cfaff03c57637", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "previous", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "2510b614847309b3", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 10, ordinal: 3, local_name: "current", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "e93876604701a1db", h_schema: "", h_rule: "" },
