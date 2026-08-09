@@ -1,4 +1,7 @@
-:- module(refs, [foo/1, bar/1, baz/1, nested/1]).
+:- module(refs, [foo/1, bar/1, baz/1, nested/1, ops/2]).
+
+:- dynamic(cache_row/2).
+:- initialization(seed(config(dev))).
 
 foo(relplan(1, 2, 3, 4, 5)).
 bar(relplan(6, 7, 8, 9, 0)).
@@ -11,3 +14,8 @@ baz(X) :-
 
 nested(X) :-
     wrap(outer(inner(w))).
+
+ops(Left, Right) :-
+    Left is Right + 1,
+    Left = Right,
+    !.

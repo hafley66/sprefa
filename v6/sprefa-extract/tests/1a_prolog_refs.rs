@@ -7,6 +7,9 @@
 //!   0x goal      (never executed as a body conjunct)
 //! and the nested compound case `wrap(outer(inner(w)))` emits BOTH outer/1 and
 //! inner/1 references (term_arg), proving every-functor-at-every-depth.
+//! Directive bodies are walked (module/2, dynamic/1, initialization/1 as goal;
+//! their compound arguments as term_arg), and operator goals (is/2, =/2, !/0)
+//! are DELIBERATELY emitted beyond compounds-only; both are pinned below.
 
 use std::process::{Command, Output};
 
@@ -87,6 +90,39 @@ fn zero_arity_goals_emit_reference_records() {
     assert_eq!(refs_for("process/1").len(), 1);
     assert_eq!(refs_for("list/1").len(), 1);
     assert_eq!(refs_for("wrap/1").len(), 1);
+}
+
+#[test]
+fn directive_bodies_are_walked_for_references() {
+    let module = refs_for("module/2");
+    assert_eq!(count(&module, "goal"), 1, "module/2 directive is executed");
+    let dynamic = refs_for("dynamic/1");
+    assert_eq!(count(&dynamic, "goal"), 1);
+    let init = refs_for("initialization/1");
+    assert_eq!(count(&init, "goal"), 1);
+    let seed = refs_for("seed/1");
+    assert_eq!(
+        count(&seed, "term_arg"),
+        1,
+        "compound arg inside a directive"
+    );
+    let config = refs_for("config/1");
+    assert_eq!(
+        count(&config, "term_arg"),
+        1,
+        "nested compound in a directive"
+    );
+}
+
+#[test]
+fn operator_goals_are_deliberately_emitted() {
+    let is_op = refs_for("is/2");
+    assert_eq!(count(&is_op, "goal"), 1, "is/2 executes as a goal");
+    let unify = refs_for("=/2");
+    assert_eq!(count(&unify, "goal"), 1, "=/2 executes as a goal");
+    let cut = refs_for("!/0");
+    assert_eq!(count(&cut, "goal"), 1, "cut executes as a goal");
+    assert_eq!(refs_for("+/2").len(), 0, "arithmetic data is not a goal");
 }
 
 #[test]

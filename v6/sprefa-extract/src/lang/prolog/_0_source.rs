@@ -171,6 +171,7 @@ fn project_calls(
     for clause in clauses(root) {
         let Some((head, body, dcg)) = head_body(clause, src) else {
             project_directive(clause, src, strings, sink);
+            walk_directive_refs(clause, src, strings, sink);
             continue;
         };
         let Some((name, arity)) = callable_name_arity(head, src) else {
@@ -270,12 +271,17 @@ fn walk_goals_refs(
             }
         }
         "unary_operation" => {
-            if operator(node, src) == "\\+" {
+            let op = operator(node, src);
+            if op == "\\+" {
                 if let Some(operand) = field(node, "operand") {
                     walk_goals_refs(operand, src, strings, sink);
                 }
             } else {
-                walk_data_refs(node, RefPosition::TermArg, src, strings, sink);
+                // A prefix-operator goal (dynamic/1, initialization/1, ...).
+                push_ref(node, &format!("{op}/1"), RefPosition::Goal, strings, sink);
+                if let Some(operand) = field(node, "operand") {
+                    walk_data_refs(operand, RefPosition::TermArg, src, strings, sink);
+                }
             }
         }
         "binary_operation" => {
@@ -329,6 +335,25 @@ fn walk_goals_refs(
         }
         "cut" => push_ref(node, "!/0", RefPosition::Goal, strings, sink),
         _ => walk_data_refs(node, RefPosition::TermArg, src, strings, sink),
+    }
+}
+
+/// A directive body (`:- Goal`) is executed at load time: same reference walk
+/// as a clause body (goals `goal`, argument data `term_arg`).
+fn walk_directive_refs(
+    clause: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let Some(term) = clause_term(clause) else {
+        return;
+    };
+    if term.kind() != "unary_operation" || operator(term, src) != ":-" {
+        return;
+    }
+    if let Some(operand) = field(term, "operand") {
+        walk_goals_refs(operand, src, strings, sink);
     }
 }
 
