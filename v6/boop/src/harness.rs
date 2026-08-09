@@ -154,6 +154,8 @@ pub struct SpawnSpec {
     /// Shell appended after the harness command exits; it may read `$__rc`
     /// (the harness exit code), which the lane re-raises afterwards.
     pub on_exit: Option<String>,
+    /// The tmux session name to spawn under; `None` mints `boop-agent-<hex>`.
+    pub tmux: Option<String>,
 }
 
 impl SpawnSpec {

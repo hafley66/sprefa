@@ -986,6 +986,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         )),
         model: args.model.clone(),
         on_exit: args.on_exit.clone(),
+        tmux: args.tmux.clone(),
     };
     let session = adapter.spawn(&spec)?;
 
@@ -997,10 +998,12 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
     adapter.send(&session, &stamp)?;
 
     let dir = mail_dir(args.mail_dir.as_deref())?;
+    // The route's cwd is where the harness actually runs (the worktree when
+    // one was made): session-id resolution joins opencode.db on directory.
     let route = Route {
         harness: Some(harness_id),
         tmux: session.tmux.clone(),
-        cwd: Some(args.cwd.clone()),
+        cwd: session.cwd.clone().or_else(|| Some(args.cwd.clone())),
         model: args.model.clone(),
         mode: args.mode.clone(),
         session_id: args.session_id.clone(),
@@ -1374,13 +1377,19 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
         .unwrap_or_else(|| args.tmux.clone().unwrap_or_else(|| args.name.clone()));
     let worktree_dir = worktree_mode
         .then(|| PathBuf::from(&args.cwd).join(".boop-worktrees").join(&branch));
+    // The epilogue runs in the lane's pane: the sender is the lane, and the
+    // mailbox must be the one this dispatch registered in, never the default.
+    let hail_mail_dir = mail_dir(args.mail_dir.as_deref())?;
     let on_exit = args.parent.as_ref().map(|parent| {
         format!(
-            "boop hail --to {} --kind result --body \"lane {} done rc=$__rc\"",
+            "boop hail --to {} --from {} --mail-dir {} --kind result --body \"lane {} done rc=$__rc\"",
             shell_quote(parent),
+            shell_quote(&args.name),
+            shell_quote(&hail_mail_dir.display().to_string()),
             args.name
         )
     });
+    let tmux_name = args.tmux.clone().unwrap_or_else(|| args.name.clone());
 
     if args.dry_run {
         let spec = boop::harness::SpawnSpec {
@@ -1397,6 +1406,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             env_stamp: None,
             model: Some(model.clone()),
             on_exit: on_exit.clone(),
+            tmux: Some(tmux_name.clone()),
         };
         let command = adapter
             .preview_command(&spec)
@@ -1426,7 +1436,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             session_id: None,
             model: Some(model),
             mode: Some("auto".into()),
-            tmux: args.tmux,
+            tmux: Some(tmux_name),
             socket: args.socket,
             body: Some(format!(
                 "Read and execute the lane brief at {}",

@@ -103,7 +103,7 @@ impl Harness for Opencode {
 
     fn spawn(&self, spec: &SpawnSpec) -> Result<SessionRef> {
         let session_id = format!("agent-{}", random_hex());
-        let tmux_name = format!("boop-{session_id}");
+        let tmux_name = spec.tmux.clone().unwrap_or_else(|| format!("boop-{session_id}"));
         let cwd = crate::worktree::prepare_spawn_dir(spec)?;
         let command = launch_command(spec)?;
         crate::tmux::new_detached_session(
@@ -326,20 +326,15 @@ fn shell_quote_double(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+// The old per-byte time sample repeated one byte 8 times (measured live:
+// "62626262626a6a6a"), so two close spawns could collide.
 fn random_hex() -> String {
-    use std::fmt::Write;
-    let mut out = String::with_capacity(8);
-    for _ in 0..8 {
-        let _ = write!(out, "{:02x}", randish());
-    }
-    out
-}
-
-fn randish() -> u8 {
-    std::time::SystemTime::now()
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| (d.as_nanos() >> 8) as u8)
-        .unwrap_or(0)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mixed = (nanos as u64) ^ ((std::process::id() as u64) << 48) ^ (nanos >> 64) as u64;
+    format!("{mixed:016x}")
 }
 
 fn now_ms() -> u64 {
@@ -526,6 +521,7 @@ mod tests {
             env_stamp: None,
             model: Some("m".to_owned()),
             on_exit: None,
+            tmux: None,
         }
     }
 
