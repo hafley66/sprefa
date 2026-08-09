@@ -130,7 +130,8 @@ parse_dl_source(_Source, Codes, Prog, Bindings, Findings) :-
     -> true
     ;  mark_furthest(Left), parse_failure(trailing_input)
     ),
-    normalize_relation_value_decls(ParsedDecls, Decls),
+    resolve_module_path_collisions(ParsedDecls, PathResolvedDecls),
+    normalize_relation_value_decls(PathResolvedDecls, Decls),
     normalize_host_calls(Decls, ParsedRules, Rules),
     maplist(swap_pair, VarsFinal, BindingsRev),
     reverse(BindingsRev, Bindings),
@@ -597,22 +598,32 @@ decl_a_stmt([enum_decl(Name, VariantTerms)], S0, S) :-
 decl_a_stmt(DeclList, S0, S) :-
     word(`rel`, S0, S1),
     ws0(S1, S2),
-    ident(Name, S2, S3),
+    dotted_path(Segments, S2, S3),
     ws0(S3, S4),
     lit_dcg(`(`, S4, S5),
     decl_a_columns(Specs, S5, S6),
     ws0(S6, S7),
     lit_dcg(`)`, S7, S8),
     length(Specs, Arity),
+    module_path_name(Segments, Name),
     Ref = Name/Arity,
     column_spec_names(Specs, Cols),
     record_column_order(Name, Cols),
     ws0(S8, S9),
     typed_decl_entries(Ref, Specs, TypedDecls),
     decl_a_modifiers(Ref, Modifiers, S9, S10),
-    append(TypedDecls, Modifiers, DeclList),
+    module_path_decls(Segments, Ref, PathDecls),
+    append([TypedDecls, Modifiers, PathDecls], DeclList),
     ws0(S10, S11),
     lit_dcg(`.`, S11, S).
+
+% One segment joins to the same atom it always was, so a flat decl is
+% unchanged; rel_path_decl/2 is what the dot phase resolves a path through.
+module_path_name(Segments, Name) :-
+    atomic_list_concat(Segments, '__', Name).
+
+module_path_decls([_Single], _, []) :- !.
+module_path_decls(Segments, Ref, [rel_path_decl(Ref, Segments)]).
 
 decl_a_modifiers(Ref, [Decl | Rest], S0, S) :-
     ( word(`log`, S0, S1) -> Decl = kind(Ref, log)
@@ -851,6 +862,79 @@ coltype(Wrapper, S0, S) :-
     ), !,
     ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4), ident(_, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S).
 coltype(none, S0, S) :- ident(_, S0, S).
+
+% ═══ dotted-decl name collisions ════════════════════════════════════════════
+
+% A `__` join landing on a name another decl owns or a later phase mints
+% (0_option_expand.pl:78,111-114, 0_enum_expand.pl:196,199) merges two rels.
+resolve_module_path_collisions(Decls0, Decls) :-
+    findall(Ref-Segments, member(rel_path_decl(Ref, Segments), Decls0),
+            PathEntries),
+    (   PathEntries == []
+    ->  Decls = Decls0
+    ;   reserved_rel_names(Decls0, PathEntries, Reserved),
+        foldl(disambiguate_module_path(Reserved), PathEntries, Decls0, Decls)
+    ).
+
+disambiguate_module_path(Reserved, Name/Arity-Segments, Decls0, Decls) :-
+    (   memberchk(Name, Reserved)
+    ->  variant_sha1(Segments, Sha),
+        sub_atom(Sha, 0, 16, _, Digest),
+        atomic_list_concat([Name, '__', Digest], Digested),
+        (   lookup_column_order(Name, Cols)
+        ->  record_column_order(Digested, Cols)
+        ;   true
+        ),
+        maplist(rename_decl_ref(Name/Arity, Digested/Arity), Decls0, Decls)
+    ;   Decls = Decls0
+    ).
+
+rename_decl_ref(Old, New, col_type(Old, Column, Type),
+                col_type(New, Column, Type)) :- !.
+rename_decl_ref(Old, New, kind(Old, Kind), kind(New, Kind)) :- !.
+rename_decl_ref(Old, New, keep(Old, Policy), keep(New, Policy)) :- !.
+rename_decl_ref(Old, New, keyed(Old, Positions), keyed(New, Positions)) :- !.
+rename_decl_ref(Old, New, rel_path_decl(Old, Segments),
+                rel_path_decl(New, Segments)) :- !.
+rename_decl_ref(_, _, Decl, Decl).
+
+% A path rel does not reserve against ITSELF, so the exclusion is by ref and
+% never by name: another arity under the same name is a real collision.
+reserved_rel_names(Decls, PathEntries, Reserved) :-
+    findall(Ref, member(Ref-_, PathEntries), PathRefs),
+    findall(Name,
+            ( declared_rel_name(Decls, Ref, Name),
+              \+ memberchk(Ref, PathRefs)
+            ; minted_rel_name(Decls, Name)
+            ),
+            Names),
+    sort(Names, Reserved).
+
+declared_rel_name(Decls, Name/Arity, Name) :-
+    member(col_type(Name/Arity, _, _), Decls).
+declared_rel_name(Decls, Name/Arity, Name) :- member(kind(Name/Arity, _), Decls).
+declared_rel_name(Decls, Name/Arity, Name) :- member(keyed(Name/Arity, _), Decls).
+declared_rel_name(Decls, Name/Arity, Name) :- member(keep(Name/Arity, _), Decls).
+declared_rel_name(Decls, enum_decl(Name), Name) :-
+    member(enum_decl(Name, _), Decls).
+
+% Which of companion / enum an option column mints is a later phase's read,
+% so both spellings are reserved here.
+minted_rel_name(Decls, Companion) :-
+    member(col_type(Parent/_, Column, option(_)), Decls),
+    atomic_list_concat([Parent, '__', Column], Companion).
+minted_rel_name(Decls, EnumName) :-
+    member(col_type(_, _, option(Element)), Decls),
+    atom(Element),
+    atomic_list_concat(['__opt_', Element], EnumName).
+minted_rel_name(Decls, VariantRelName) :-
+    member(enum_decl(RelName, VariantTerms), Decls),
+    enum_decl_variant_term(VariantTerms, Variant),
+    Variant =.. [VariantName | _],
+    atomic_list_concat([RelName, VariantName], '_', VariantRelName).
+minted_rel_name(Decls, TagName) :-
+    member(enum_decl(RelName, _), Decls),
+    tag_rel_name(RelName, TagName).
 
 % ═══ selected world declarations ════════════════════════════════════════════
 

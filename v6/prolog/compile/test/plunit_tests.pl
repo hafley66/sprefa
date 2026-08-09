@@ -1298,7 +1298,7 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % the count is the rail's twin, not a fresh check over different rows.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-40, refcount-286, refcount_staging-286,
+    Counts = [scope-40, refcount-293, refcount_staging-293,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
@@ -5165,6 +5165,60 @@ test(term_door_dot_chain_as_a_goal_refuses_by_name) :-
     Refusal == member_not_a_goal(at).
 
 :- end_tests(dot_member_access).
+
+:- begin_tests(module_path_decls).
+
+parsed_module_path_program(Source, Decls, Rules) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(Decls, Rules), _, [])).
+
+test(dotted_decl_names_the_flat_rel_and_keeps_its_path) :-
+    parsed_module_path_program('rel orchard.tree(tree_id: int).', Decls, _),
+    memberchk(col_type(orchard__tree/1, tree_id, int), Decls),
+    memberchk(rel_path_decl(orchard__tree/1, [orchard, tree]), Decls).
+
+test(one_segment_decl_mints_no_path_entry) :-
+    parsed_module_path_program('rel tree(tree_id: int).', Decls, _),
+    memberchk(col_type(tree/1, tree_id, int), Decls),
+    \+ memberchk(rel_path_decl(_, _), Decls).
+
+test(dotted_head_and_body_atoms_resolve_to_the_flat_rel) :-
+    parsed_module_path_program(
+        'rel orchard.tree(tree_id: int).\nrel harvest(tree_id: int).\nrel ripe(tree_id: int).\norchard.tree(TreeId) <- harvest(TreeId).\nripe(TreeId) <- orchard.tree(TreeId).',
+        Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(_, Expanded), _),
+    Expanded =@= [(orchard__tree(TreeId) <- harvest(TreeId)),
+                  (ripe(TreeId) <- orchard__tree(TreeId))].
+
+test(a_path_off_the_decl_tree_refuses_by_name) :-
+    parsed_module_path_program(
+        'rel ripe(tree_id: int).\nripe(TreeId) <- orchard.tree(TreeId).',
+        Decls, Rules),
+    catch(( expand_program(prog(Decls, Rules), _, _), Refusal = none ),
+          unsupported_construct(Caught),
+          Refusal = Caught),
+    Refusal == unresolvable_path([orchard, tree]).
+
+test(a_mangle_colliding_with_a_flat_decl_takes_the_path_digest) :-
+    parsed_module_path_program(
+        'rel orchard__tree(tree_id: int).\nrel orchard.tree(tree_id: int, picked: int).',
+        Decls, _),
+    memberchk(rel_path_decl(Digested/2, [orchard, tree]), Decls),
+    atom_concat('orchard__tree__', _, Digested),
+    memberchk(col_type(Digested/2, tree_id, int), Decls),
+    memberchk(col_type(orchard__tree/1, tree_id, int), Decls).
+
+test(a_dotted_decl_prints_back_at_its_path) :-
+    atom_codes('rel orchard.tree(tree_id: int).\nrel harvest(tree_id: int).\norchard.tree(TreeId) <- harvest(TreeId).',
+               Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    once(print_dl_program(Program, Bindings, Text)),
+    once(sub_atom(Text, _, _, _, 'rel orchard.tree(tree_id: int).')),
+    atom_codes(Text, PrintedCodes),
+    once(parse_dl(PrintedCodes, RoundTripped, _, [])),
+    Program =@= RoundTripped.
+
+:- end_tests(module_path_decls).
 
 fact_probe_text("rel max_run(limit_lines: int).
 rel doubled_limit(limit_doubled: int).

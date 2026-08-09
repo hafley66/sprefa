@@ -1,0 +1,7 @@
+rel tree(tree_id: int).
+rel orchard.tree(tree_id: int).
+rel local_pick(tree_id: int).
+rel path_pick(tree_id: int).
+
+local_pick(TreeId) <- tree(TreeId).
+path_pick(TreeId) <- orchard.tree(TreeId).

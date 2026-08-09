@@ -272,7 +272,7 @@ decl_line(_, _, _, bind_decl(Name, Columns), Line) :-
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
     format(atom(Line), "bind ~w(~w).~n", [Name, ColumnsText]).
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
-    Ref = Name/_Arity,
+    decl_ref_spelling(Decls, Ref, Name),
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
     maplist(print_decl_column(Decls, Ref), Columns, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColsText),
@@ -283,6 +283,14 @@ decl_line(Decls, Rules, Bindings, Ref, Line) :-
     ; atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
     ),
     format(atom(Line), "rel ~w(~w)~w~w.~n", [Name, ColsText, Sep, ModifiersText]).
+
+% The flat name is the mangle the dot phase resolves TO; printing it would
+% strand every dotted atom in the rules on a reparse.
+decl_ref_spelling(Decls, Ref, Name) :-
+    (   memberchk(rel_path_decl(Ref, Segments), Decls)
+    ->  atomic_list_concat(Segments, '.', Name)
+    ;   Ref = Name/_Arity
+    ).
 
 print_host_column(col(Name, Type), Text) :-
     print_column_type(Type, TypeText),
