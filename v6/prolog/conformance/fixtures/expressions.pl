@@ -287,3 +287,22 @@ fixture(typed_int_contradicts_text_witness,
   [],
   [ throws(type_arrival_shape_mismatch(typed_conflict/1, value, int,
                                        field_not_int(text_value))) ]).
+
+% ═══ the numeric equality pair: =:= and =\= ══════════════════════════════════
+% Until the registry gained these two expression rows, an operator with no
+% expression/5 row refused by name as unknown_comparison_operator. =:= and
+% =\= evaluate both operands numerically (both_number) like the ordered
+% comparisons, unlike ==/\\== which are term identity, and SQLite renders them
+% as `=`/`<>` respectively.
+
+fixture(numeric_equality_operator_filters,
+  prog([], [ (matched(Value) <- row(Value), Value =:= 2) ]),
+  [ row(1), row(2), row(3) ],
+  [],
+  [ final(matched/1, [ matched(2) ]) ]).
+
+fixture(numeric_inequality_operator_filters,
+  prog([], [ (kept(Value) <- row(Value), Value =\= 2) ]),
+  [ row(1), row(2), row(3) ],
+  [],
+  [ final(kept/1, [ kept(1), kept(3) ]) ]).

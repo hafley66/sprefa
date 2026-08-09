@@ -154,6 +154,8 @@ surface('>'/2,          guard,     no_refs,                      infix(lower),  
 surface('>='/2,         guard,     no_refs,                      infix(lower),                          live).
 surface('=='/2,         guard,     no_refs,                      infix(lower),                          live).
 surface('\\=='/2,       guard,     no_refs,                      infix(lower),                          live).
+surface('=:='/2,         guard,     no_refs,                      infix(lower),                          live).
+surface('=\\='/2,         guard,     no_refs,                      infix(lower),                          live).
 surface(regexp/2,        guard,     no_refs,                      wrapper(expr_pair, lower),             live).
 
 surface(count/1,        aggregate, no_refs,                      head(lower),                           live).
@@ -244,6 +246,11 @@ expression('>='/2,   ordered_comparison,  0, infix('>='),            both_number
 
 expression('=='/2,   identity_comparison, 0, infix('='),             same_type).
 expression('\\=='/2, identity_comparison, 0, infix('<>'),            same_type).
+
+% Numeric (arithmetically-evaluated) equality pair; an operator with no
+% expression/5 row refused by name (unknown_comparison_operator).
+expression('=:='/2,   ordered_comparison, 0, infix('='),             both_number).
+expression('=\\='/2,   ordered_comparison, 0, infix('<>'),            both_number).
 
 % V5 `sprf_norm`: retain ASCII letters/digits and lowercase letters. This is
 % an existing expression-call shape; lowering stays inside SQLite.

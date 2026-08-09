@@ -109,6 +109,8 @@ solve_comparison(Left > Right)   :- eval_number2(Left, Right, LeftV, RightV), Le
 solve_comparison(Left >= Right)  :- eval_number2(Left, Right, LeftV, RightV), LeftV >= RightV.
 solve_comparison(Left == Right)  :- eval_expr(Left, LeftV), eval_expr(Right, RightV), LeftV == RightV.
 solve_comparison(Left \== Right) :- eval_expr(Left, LeftV), eval_expr(Right, RightV), LeftV \== RightV.
+solve_comparison(Left =:= Right) :- eval_number2(Left, Right, LeftV, RightV), LeftV =:= RightV.
+solve_comparison(Left =\= Right) :- eval_number2(Left, Right, LeftV, RightV), LeftV =\= RightV.
 
 % ═══ json ═══════════════════════════════════════════════════════════════════
 

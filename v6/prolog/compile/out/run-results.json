@@ -966,6 +966,20 @@
     "final_detail": ""
   },
   {
+    "name": "numeric_equality_operator_filters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "numeric_inequality_operator_filters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_array_spread_fans_out_correlated_siblings",
     "bucket": "identical",
     "detail": "",
