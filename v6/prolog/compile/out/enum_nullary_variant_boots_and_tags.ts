@@ -150,6 +150,7 @@ const ddl: readonly string[] = [
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('none'), ('some')`,
   `CREATE TABLE "maybe_text_none" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
   `CREATE TABLE "maybe_text_some" ("id" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE UNIQUE INDEX "maybe_text_some_id" ON "maybe_text_some" ("id")`,
   `CREATE TEMP VIEW "__txt_maybe_text_some" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "maybe_text_some" t`,
   `CREATE TABLE "maybe_text_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
   `CREATE TEMP VIEW "__txt_maybe_text_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "maybe_text_tag" t`,
