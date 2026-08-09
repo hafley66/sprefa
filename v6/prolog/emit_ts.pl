@@ -760,8 +760,8 @@ rel_column_types_entry_line(relplan(Ref, _Kind, _Columns, _Key, ColumnTypes), Li
 
 % ═══ the catalog rows, the same list the INSERT renders ════════════════════
 % Emitted even for a program that never queries `__rel`, so a reload compares.
-program_catalog_rows(Name, plan(_, prog(Decls, Rules), _, _, _, _, _, _), RelPlans, Rows) :-
-    lower:catalog_rows(Name, Decls, Rules, RelPlans, Rows).
+program_catalog_rows(Name, plan(_, prog(_, Rules), _, _, _, _, _, _), RelPlans, Rows) :-
+    lower:catalog_rows(Name, Rules, RelPlans, Rows).
 
 rel_catalog_lines([], []) :- !.
 rel_catalog_lines(Rows, Lines) :-

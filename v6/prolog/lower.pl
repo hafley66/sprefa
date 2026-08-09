@@ -149,7 +149,7 @@
             % rel path builds the table from real decls instead of caller spellings.
             catalog_ddl_contract/2,
             % The same rows the catalog INSERT renders, read by emit_ts.pl.
-            catalog_rows/5 ]).
+            catalog_rows/4 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -732,9 +732,9 @@ canonical_hash_key(Term, KeyAtom) :-
     term_to_atom(Copy, KeyAtom).
 
 % Ids are positional for a byte-stable recompile: primitives, list rows,
-% module, then each rel and its columns. Decls carries what a relplan collapsed.
+% module, then each rel and its columns.
 catalog_row_ddl(Mode, ModuleName, Decls, Rules, RelPlans, [Statement]) :-
-    catalog_rows(ModuleName, Decls, Rules, RelPlans, AllRows),
+    catalog_rows(ModuleName, Rules, RelPlans, AllRows),
     foldl(catalog_row_part(Mode), AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
@@ -742,16 +742,15 @@ catalog_row_ddl(Mode, ModuleName, Decls, Rules, RelPlans, [Statement]) :-
            'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule") VALUES ~w',
            [ValuesText]).
 
-%! catalog_rows(+ModuleName, +Decls, +Rules, +RelPlans, -Rows) is det.
-%   Decls supplies the list element type; a relplan reports a list column as json.
-catalog_rows(ModuleName, Decls, Rules, RelPlans, AllRows) :-
+%! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
+%   The relplan carries each column's full type, ref(_) and list(_) included.
+catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
     module_hash(ModuleName, ModuleHash),
     rule_bodies_map(Rules, BodiesMap),
-    type_definitions(Decls, Types),
     catalog_primitive_rows(1, PrimitiveRows),
     length(PrimitiveRows, PrimitiveCount),
     ListStartId is PrimitiveCount + 1,
-    catalog_list_types(Decls, Types, RelPlans, ListTypes),
+    catalog_list_types(RelPlans, ListTypes),
     catalog_list_rows(ListTypes, [], ListStartId, ListRowRows, ListIdMap),
     length(ListRowRows, ListCount),
     ModuleId is ListStartId + ListCount,
@@ -759,7 +758,7 @@ catalog_rows(ModuleName, Decls, Rules, RelPlans, AllRows) :-
     FirstRelId is ModuleId + 1,
     catalog_rel_id_map(RelPlans, FirstRelId, [], RelIdMap),
     catalog_rel_rows(RelPlans, BodiesMap, ModuleId, ModuleHash, RelIdMap,
-                     ListIdMap, Decls, Types, FirstRelId, _FinalId, RelRows),
+                     ListIdMap, FirstRelId, _FinalId, RelRows),
     append([PrimitiveRows, ListRowRows, [ModuleRow], RelRows], AllRows).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
@@ -772,12 +771,11 @@ catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
 
 % Distinct list(Element) column types, in first-appearance order, inner before
 % outer so a nested list's own row id exists before the outer row references it.
-catalog_list_types(Decls, Types, RelPlans, OrderedTypes) :-
+catalog_list_types(RelPlans, OrderedTypes) :-
     findall(ListType,
-            ( member(relplan(Ref, _, _, _, _), RelPlans),
-              relation_columns_and_types(Decls, Types, Ref, _, DeclaredColumnTypes),
-              member(DeclaredColumnType, DeclaredColumnTypes),
-              list_subtypes(DeclaredColumnType, SubTypes),
+            ( member(relplan(_, _, _, _, ColumnTypes), RelPlans),
+              member(ColumnType, ColumnTypes),
+              list_subtypes(ColumnType, SubTypes),
               member(ListType, SubTypes) ),
             Wide),
     distinct_order(Wide, [], Distinct),
@@ -828,9 +826,9 @@ catalog_rel_id_map([relplan(Name/RelArity, _, _, _, _) | Rest], Id0, Acc0, Acc) 
 rel_row_id(RelIdMap, Name, Id) :- member(Name-Id, RelIdMap).
 
 catalog_rel_rows([], _BodiesMap, _ModuleId, _ModuleHash, _RelIdMap, _ListIdMap,
-                 _Decls, _Types, Id, Id, []).
+                 Id, Id, []).
 catalog_rel_rows([RelPlan | Rest], BodiesMap, ModuleId, ModuleHash, RelIdMap,
-                 ListIdMap, Decls, Types, Id0, FinalId, Rows) :-
+                 ListIdMap, Id0, FinalId, Rows) :-
     RelPlan = relplan(Name/RelArity, _Kind, Columns, KeyOrNone, ColumnTypes),
     rel_h_id(ModuleHash, Name, RelArity, RelHId),
     schema_hash(Columns, ColumnTypes, KeyOrNone, HSchema),
@@ -838,61 +836,37 @@ catalog_rel_rows([RelPlan | Rest], BodiesMap, ModuleId, ModuleHash, RelIdMap,
     RelRow = row(Id0, ModuleId, 0, Name, rel, 0, RelArity, ModuleId, RelHId,
                  HSchema, HRule),
     IdAfterRel is Id0 + 1,
-    catalog_column_rows(Columns, ColumnTypes, Decls, Types, Name/RelArity,
+    catalog_column_rows(Columns, ColumnTypes, Name/RelArity,
                         RelIdMap, ListIdMap, ModuleId, RelHId, Id0, 1,
                         IdAfterRel, IdAfterColumns, ColumnRows),
     catalog_rel_rows(Rest, BodiesMap, ModuleId, ModuleHash, RelIdMap, ListIdMap,
-                     Decls, Types, IdAfterColumns, FinalId, RestRows),
+                     IdAfterColumns, FinalId, RestRows),
     append([RelRow | ColumnRows], RestRows, Rows).
 
-catalog_column_rows([], _ColumnTypes, _Decls, _Types, _Ref, _RelIdMap, _ListIdMap,
+catalog_column_rows([], _ColumnTypes, _Ref, _RelIdMap, _ListIdMap,
                     _ModuleId, _ParentHId, _RelId, _Ordinal, Id, Id, []).
-catalog_column_rows([ColumnName | RestColumns], ColumnTypes, Decls, Types, Ref,
+catalog_column_rows([ColumnName | RestColumns], ColumnTypes, Ref,
                     RelIdMap, ListIdMap, ModuleId, ParentHId, RelId, Ordinal,
                     Id0, IdFinal, [ColumnRow | MoreRows]) :-
     nth1(Ordinal, ColumnTypes, ColumnType),
-    catalog_column_type_id(Decls, Types, Ref, ColumnName, ColumnType,
-                           RelIdMap, ListIdMap, TypeId),
+    catalog_column_type_id(ColumnType, RelIdMap, ListIdMap, TypeId),
     rel_h_id(ParentHId, ColumnName, 0, ColumnHId),
     NextId is Id0 + 1,
     NextOrdinal is Ordinal + 1,
-    catalog_column_rows(RestColumns, ColumnTypes, Decls, Types, Ref,
+    catalog_column_rows(RestColumns, ColumnTypes, Ref,
                         RelIdMap, ListIdMap, ModuleId, ParentHId, RelId,
                         NextOrdinal, NextId, IdFinal, MoreRows),
     ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId, 0, ModuleId,
                     ColumnHId, '', '').
 
-% The declared type is the authority for ref and list resolution, since a list
-% column's resolved type has already collapsed to json.
-catalog_column_type_id(Decls, Types, Ref, ColumnName, ColumnType,
-                       RelIdMap, ListIdMap, TypeId) :-
-    (   declared_column_type(Decls, Types, Ref, ColumnName, DeclaredType)
-    ->  resolve_declared_column_type(Decls, Types, DeclaredType, ColumnType,
-                                     RelIdMap, ListIdMap, TypeId)
-    ;   catalog_type_id(ColumnType, TypeId)
-    ).
-
-resolve_declared_column_type(_, _, list(Element), _, _RelIdMap, ListIdMap, TypeId) :- !,
+% ref(_) and list(_) reach here already resolved by column_storage/3, so the
+% relplan column type is the authority; nothing needs the declaration again.
+catalog_column_type_id(list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
     list_row_id(ListIdMap, list(Element), TypeId).
-resolve_declared_column_type(_, _, DeclaredType, _, _RelIdMap, _ListIdMap, TypeId) :-
-    primitive_type(DeclaredType), !,
-    catalog_type_id(DeclaredType, TypeId).
-resolve_declared_column_type(_, Types, DeclaredType, _, RelIdMap, _ListIdMap, TypeId) :-
-    column_storage(Types, DeclaredType, ref(Name)), !,
+catalog_column_type_id(ref(Name), RelIdMap, _ListIdMap, TypeId) :- !,
     rel_row_id(RelIdMap, Name, TypeId).
-resolve_declared_column_type(_, _, DeclaredType, _, _RelIdMap, _ListIdMap, TypeId) :-
-    catalog_type_id(DeclaredType, TypeId).
-
-primitive_type(text).
-primitive_type(int).
-primitive_type(float).
-primitive_type(bool).
-primitive_type(json).
-
-declared_column_type(Decls, Types, Ref, ColumnName, DeclaredType) :-
-    relation_columns_and_types(Decls, Types, Ref, DeclaredColumns, DeclaredColumnTypes),
-    nth1(Position, DeclaredColumns, ColumnName),
-    nth1(Position, DeclaredColumnTypes, DeclaredType).
+catalog_column_type_id(ColumnType, _RelIdMap, _ListIdMap, TypeId) :-
+    catalog_type_id(ColumnType, TypeId).
 
 % ref(_) and list(_) are resolved upstream, to a target rel id and a synthetic
 % row id; any other boundary resolves to 0.
