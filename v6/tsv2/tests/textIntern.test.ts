@@ -159,7 +159,7 @@ test("one value shared by two rels takes one id", async () => {
   assert.equal(interned[0]!.row[0], interned[1]!.row[0]);
 });
 
-test("a null in an interned position is a named refusal, never a dictionary row", async () => {
+test("a null in an interned position is a named unsupported construct, never a dictionary row", async () => {
   const seam = await dictionarySeam();
   const arrivals = [
     { rel: "edge_one", sign: "add", row: [null, 1] },

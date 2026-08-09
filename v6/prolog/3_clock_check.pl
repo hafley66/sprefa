@@ -12,7 +12,7 @@
             clock_scc/3,
             clock_violation/2,
             clock_boundary/2,
-            clock_refusal_reason/1,
+            clock_unsupported_reason/1,
             check_clock_program/1
           ]).
 
@@ -392,8 +392,8 @@ clock_boundary(Program,
            Dependencies),
     memberchk(Ref, EdgeHeaded).
 
-clock_refusal_reason(clock_path_conflict(_, _, _, _)).
-clock_refusal_reason(unconstructive_clock_cycle(_, _)).
+clock_unsupported_reason(clock_path_conflict(_, _, _, _)).
+clock_unsupported_reason(unconstructive_clock_cycle(_, _)).
 
 % The union of every productive_delayed component's members. classify_component
 % is called with the class UNBOUND and compared afterwards, matching what

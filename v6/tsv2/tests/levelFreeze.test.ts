@@ -11,7 +11,7 @@
  * at the same point.
  *
  * FAIL-FIRST RECEIPT, taken before the runtime change with the compiler's
- * `edge_body_joins_arrival_fed_level` refusal switched off, on
+ * `edge_body_joins_arrival_fed_level` unsupported construct switched off, on
  * check_eventing.pl:clock_rel_join_storms, BOTH emitter modes, tick 3:
  *   actual  "diag_seen":{"add":[["a_rs",3,..],["a_rs",5,..],["a_rs",7,..]]}
  *   oracle  "diag_seen":{"add":[["a_rs",5,..]]}

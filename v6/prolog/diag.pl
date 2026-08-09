@@ -1,13 +1,13 @@
 % diag.pl : the machine-readable diagnostic channel for dl6.
 %
 % One structured record per line, LSP-shaped, in JSON. The human renderer
-% (0_refusal_messages.pl, the single prolog:message//1 umbrella over the
-% refusal inventory) stays the ONE source of the message text. This module
+% (0_unsupported_messages.pl, the single prolog:message//1 umbrella over the
+% unsupported construct inventory) stays the ONE source of the message text. This module
 % reads that same text back through message_to_string/2, so the JSON `message`
 % field and the human line can never diverge. No second message table and no
-% refusal signature is duplicated here.
+% unsupported construct signature is duplicated here.
 %
-% Positions: a refusal term carries its own source through the text door's
+% Positions: a unsupported construct term carries its own source through the text door's
 % at(File, Line, Reason) wrapper or, on a successful parse, through the
 % statement positions parse_dl.pl retains. The side table dl6_span/6 is
 % materialized lazily from that retention, keyed by a relation reference, only
@@ -34,7 +34,7 @@
 
 :- use_module(library(http/json)).
 :- use_module(library(uri), [uri_encoded/3]).
-:- use_module('0_refusal_messages', []).
+:- use_module('0_unsupported_messages', []).
 :- use_module('compile/parse_dl',
               [ statement_location_for_reason/3 ]).
 
@@ -71,7 +71,7 @@ diag_reason(Term, Term).
 diag_message(Term, Message) :-
     message_to_string(Term, Message).
 
-% The LSP `code`, a refusal's signature functor, from the wrapped reason so the
+% The LSP `code`, a unsupported construct's signature functor, from the wrapped reason so the
 % at/3 wrapper never leaks into it.
 diag_signature_code(Term, Code) :-
     diag_reason(Term, Reason),
@@ -141,7 +141,7 @@ diag_file_uri(File, Uri) :-
     string_concat("file://", EncodedPath, Uri).
 
 % The channel's current blame file, held for diagnostics (parse errors, bare
-% refusals) whose term carries no at/3 wrapper.
+% unsupported constructs) whose term carries no at/3 wrapper.
 set_diag_file(File) :-
     nb_setval(diag_blame, File).
 
@@ -159,14 +159,14 @@ emit_diag(Stream, Term) :-
     nl(Stream).
 
 % Emit to the active (per-process) stream. This is the seam the compiler calls
-% at a refusal, and the entry the diag.test.pl receipts drive.
+% at a unsupported construct, and the entry the diag.test.pl receipts drive.
 emit_diag_term(Term) :-
     diag_stream_open,
     nb_getval(diag_stream, Stream),
     emit_diag(Stream, Term).
 
 % Emit with the compiler's current source file fixed first, so a diagnostic
-% whose term carries no at/3 wrapper (a parse error, a bare refusal) still
+% whose term carries no at/3 wrapper (a parse error, a bare unsupported construct) still
 % names the file being compiled.
 emit_diag_file(File, Term) :-
     set_diag_file(File),
@@ -176,7 +176,7 @@ emit_diag_file(File, Term) :-
 %
 % dl6_span(SpanId, File, StartLine, StartCol, EndLine, EndCol): one row per
 % retained statement, keyed by a relation reference, a point span (start ==
-% end) because the statement's position is where the refusal names it. The
+% end) because the statement's position is where the unsupported construct names it. The
 % predicate is a Datalog read over parse_dl's retention: nothing is stored at
 % parse time and no successful-compile cost is paid. The File flank is not
 % recoverable from a bare relation reference (parse_dl's table is per-last-

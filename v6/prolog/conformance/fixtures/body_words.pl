@@ -30,7 +30,7 @@
 %   lowering of `a(X), b(Y)`, and for `next(a(X))` byte-identical to the bare
 %   atom, on the level plane and the edge plane both. The oracle was the only
 %   reader that could not execute them, so it gained the clause rather than a
-%   refusal, and these fixtures are the byte-diffed proof the two doors now
+%   unsupported construct, and these fixtures are the byte-diffed proof the two doors now
 %   answer the same thing.
 %
 %   RESERVED rows (zip/2 and the four lifecycle wrappers) are words the
@@ -116,34 +116,34 @@ fixture(next_edge_is_the_bare_atom_spelling,
 %
 % One fixture per reserved body word, because each was independently silent
 % and a single representative would let the other four regress unnoticed. The
-% refusal names the word and its arity, which is the only thing the author
+% unsupported construct names the word and its arity, which is the only thing the author
 % needs to know: the language has taken this spelling and has not defined it.
 
-fixture(zip_is_a_named_refusal,
+fixture(zip_is_a_named_unsupported,
   prog([], [ (pair(Left, Right) <- zip(source_a(Left), source_b(Right))) ]),
   [],
   [ [ +source_a(1), +source_b(2) ] ],
   [ throws(reserved_body_word(zip/2)) ]).
 
-fixture(subscribe_is_a_named_refusal,
+fixture(subscribe_is_a_named_unsupported,
   prog([], [ (seen(Value) <- subscribe(source(Value))) ]),
   [],
   [ [ +source(1) ] ],
   [ throws(reserved_body_word(subscribe/1)) ]).
 
-fixture(unsubscribe_is_a_named_refusal,
+fixture(unsubscribe_is_a_named_unsupported,
   prog([], [ (seen(Value) <- unsubscribe(source(Value))) ]),
   [],
   [ [ +source(1) ] ],
   [ throws(reserved_body_word(unsubscribe/1)) ]).
 
-fixture(complete_is_a_named_refusal,
+fixture(complete_is_a_named_unsupported,
   prog([], [ (seen(Value) <- complete(source(Value))) ]),
   [],
   [ [ +source(1) ] ],
   [ throws(reserved_body_word(complete/1)) ]).
 
-fixture(error_is_a_named_refusal,
+fixture(error_is_a_named_unsupported,
   prog([], [ (seen(Value) <- error(source(Value))) ]),
   [],
   [ [ +source(1) ] ],
@@ -159,14 +159,14 @@ fixture(error_is_a_named_refusal,
 %   oracle    src(Path, Rev) <- scan('WORK', 'src/**/*.rs', Path, Rev)  ->  rows=[]
 %   compiler  same program                                              ->  compiled clean
 % The word is banned at every arity v5 spells it, so the row is variadic and
-% the refusal reports the arity the author actually wrote.
-fixture(scan_is_a_named_refusal,
+% the unsupported construct reports the arity the author actually wrote.
+fixture(scan_is_a_named_unsupported,
   prog([], [ (src(Path, Rev) <- scan('WORK', 'src/**/*.rs', Path, Rev)) ]),
   [],
   [ [ +source(1) ] ],
   [ throws(reserved_body_word(scan/4)) ]).
 
-fixture(scan_is_a_named_refusal_at_five_arguments,
+fixture(scan_is_a_named_unsupported_at_five_arguments,
   prog([], [ (src(Path, Rev) <- scan(repo, 'HEAD', '**/*.go', Path, Rev)) ]),
   [],
   [ [ +source(1) ] ],

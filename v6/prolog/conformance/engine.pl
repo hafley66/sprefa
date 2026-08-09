@@ -176,71 +176,71 @@ engine_check_order([ key_position_out_of_range,
 check_program(Program) :-
     engine_check_order(Order),
     (   first_violation(Program, Order, violation(Name, Payload))
-    ->  engine_refusal(Name, Payload, Term),
+    ->  engine_unsupported(Name, Payload, Term),
         throw(Term)
     ;   clock_violation(Program, ClockViolation)
     ->  throw(ClockViolation)
     ;   true
     ).
 
-engine_refusal(type_cycle,              Names, type_cycle(Names)).
-engine_refusal(relation_pattern_not_a_relation_value,
+engine_unsupported(type_cycle,              Names, type_cycle(Names)).
+engine_unsupported(relation_pattern_not_a_relation_value,
                pattern(Ref, Column, TypeName, Value),
                relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
-engine_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
-% The oracle uses one refusal term for all reserved body words.
-engine_refusal(reserved_body_word, reserved(Ref, _), reserved_body_word(Ref)).
-engine_refusal(relation_value_under_negation,
+engine_unsupported(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
+% The oracle uses one unsupported construct term for all reserved body words.
+engine_unsupported(reserved_body_word, reserved(Ref, _), reserved_body_word(Ref)).
+engine_unsupported(relation_value_under_negation,
                pattern(Ref, Column, TypeName, Value),
                relation_value_under_negation(Ref, Column, TypeName, Value)).
-engine_refusal(relation_value_in_edge_rule,
+engine_unsupported(relation_value_in_edge_rule,
                pattern(Ref, Column, TypeName, Value),
                relation_value_in_edge_rule(Ref, Column, TypeName, Value)).
-engine_refusal(relation_column_type_conflict,
+engine_unsupported(relation_column_type_conflict,
                conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
                relation_column_type_conflict(Ref, Column, TypeName,
                                              OtherRef, OtherColumn, OtherType)).
 % Same term at both doors. The payload reads head-first, because the head is
 % the column the author has to change.
-engine_refusal(head_column_type_conflict,
+engine_unsupported(head_column_type_conflict,
                conflict(HeadRef, HeadColumn, HeadType,
                         BodyRef, BodyColumn, BodyType),
                head_column_type_conflict(HeadRef, HeadColumn, HeadType,
                                          BodyRef, BodyColumn, BodyType)).
-engine_refusal(cst_capture_unused, Name, cst_capture_unused(Name)).
-engine_refusal(cst_variable_uncaptured, Name,
+engine_unsupported(cst_capture_unused, Name, cst_capture_unused(Name)).
+engine_unsupported(cst_variable_uncaptured, Name,
                cst_variable_uncaptured(Name)).
-engine_refusal(regexp_pattern_not_literal, Payload, Payload).
-engine_refusal(regexp_pattern_outside_subset, Payload, Payload).
-engine_refusal(regexp_pattern_invalid, Payload, Payload).
-engine_refusal(regexp_operand_not_text, Payload, Payload).
-engine_refusal(column_type_unknown,     Name,  column_type_unknown(Name)).
-engine_refusal(key_position_out_of_range, Payload, Payload).
-engine_refusal(key_position_duplicate,    Payload, Payload).
-engine_refusal(keyed_level_head,        Ref,   keyed_level_head(Ref)).
-engine_refusal(keyed_log_rel,           Ref-_, keyed_log_rel(Ref)).
-engine_refusal(log_on_level_headed_rel, Ref,   log_on_level_headed_rel(Ref)).
-engine_refusal(missing_retention,       Ref,   missing_retention(Ref)).
-engine_refusal(keep_on_non_log_rel,     Ref,   keep_on_non_log_rel(Ref)).
-engine_refusal(retention_head_conflict_risk, Ref-count(N),
+engine_unsupported(regexp_pattern_not_literal, Payload, Payload).
+engine_unsupported(regexp_pattern_outside_subset, Payload, Payload).
+engine_unsupported(regexp_pattern_invalid, Payload, Payload).
+engine_unsupported(regexp_operand_not_text, Payload, Payload).
+engine_unsupported(column_type_unknown,     Name,  column_type_unknown(Name)).
+engine_unsupported(key_position_out_of_range, Payload, Payload).
+engine_unsupported(key_position_duplicate,    Payload, Payload).
+engine_unsupported(keyed_level_head,        Ref,   keyed_level_head(Ref)).
+engine_unsupported(keyed_log_rel,           Ref-_, keyed_log_rel(Ref)).
+engine_unsupported(log_on_level_headed_rel, Ref,   log_on_level_headed_rel(Ref)).
+engine_unsupported(missing_retention,       Ref,   missing_retention(Ref)).
+engine_unsupported(keep_on_non_log_rel,     Ref,   keep_on_non_log_rel(Ref)).
+engine_unsupported(retention_head_conflict_risk, Ref-count(N),
                retention_head_conflict_risk(Ref, count(N))).
 % The oracle names this one without a reference, and always has.
-engine_refusal(aggregate_in_edge_head,  _,     aggregate_in_edge_head).
-engine_refusal(aggregate_head_shape,     Shape, aggregate_head_shape(Shape)).
-engine_refusal(aggregate_not_implemented,
+engine_unsupported(aggregate_in_edge_head,  _,     aggregate_in_edge_head).
+engine_unsupported(aggregate_head_shape,     Shape, aggregate_head_shape(Shape)).
+engine_unsupported(aggregate_not_implemented,
                unimplemented(Ref, Signature, Implemented),
                aggregate_not_implemented(Ref, Signature, Implemented)).
-% Same NAME as lower.pl's own refusal, different payload, the way keyed_log_rel
+% Same NAME as lower.pl's own unsupported construct, different payload, the way keyed_log_rel
 % already differs by door. The compiler's middle argument is the compiled
 % operand EXPRESSION, which for a plain column variable is an unbound variable
 % and names nothing; this door has the declared column in hand and says which
 % one it is.
-engine_refusal(aggregate_operand_not_number,
+engine_unsupported(aggregate_operand_not_number,
                operand(Kind, Ref, Column, Type),
                aggregate_operand_not_number(Kind, Ref, Column, Type)).
-engine_refusal(finalize_in_level_rule,  Ref,   finalize_in_level_rule(Ref)).
-engine_refusal(latest_in_level_rule,    Ref,   latest_in_level_rule(Ref)).
-engine_refusal(pre_in_level_rule,       Ref,   pre_in_level_rule(Ref)).
+engine_unsupported(finalize_in_level_rule,  Ref,   finalize_in_level_rule(Ref)).
+engine_unsupported(latest_in_level_rule,    Ref,   latest_in_level_rule(Ref)).
+engine_unsupported(pre_in_level_rule,       Ref,   pre_in_level_rule(Ref)).
 
 % ═══ the store ══════════════════════════════════════════════════════════════
 % srow(Row) for Set rels; lrow(st(Tick, Seq), Row) for Log rels. Level views
@@ -549,7 +549,7 @@ run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
     check_program(ExpandedProg),
     % A relation-shaped TERM in a rule is the surface spelling of a relation
     % value; obj(SortedPairs) is the value. Rewriting here, after the shape
-    % refusal and before anything stores or unifies, is what makes a
+    % unsupported construct and before anything stores or unifies, is what makes a
     % rule-BUILT value and a world-ARRIVED value the same term at every depth
     % (0_relation_pattern.pl).
     expand_relation_values(ExpandedProg, Prog),
@@ -578,7 +578,7 @@ run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
     run_ticks(Prog, state(1, Store0, Level0, PrevAll), [], Schedule, 0, FinalAll, DeltaTicks).
 
 % SLOT-ARRIVAL-MALFORMED (ruling compound_storage = struct_as_rows): a world
-% row whose value does not match the declared struct shape is a NAMED refusal
+% row whose value does not match the declared struct shape is a NAMED unsupported construct
 % at the boundary. The check is decl-driven -- a row that passes runs exactly
 % as it did before the type existed -- and it runs here, where both the seed
 % rows and the whole schedule are in hand, rather than inside absorb_arrivals,

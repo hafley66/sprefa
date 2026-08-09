@@ -54,10 +54,10 @@
             parse_dl_line_for_reason/2,
             % Exported for test/plunit_tests.pl:parse_error_positions, which
             % checks the line table against a prefix walk at every index of a
-            % text; parse_dl/4 alone only reaches positions a refusal lands on.
+            % text; parse_dl/4 alone only reaches positions a unsupported construct lands on.
             remaining_line_column/3,
             % Exported for the diag channel (diag.pl): a
-            % refusal's underlying reason resolves through its relation
+            % unsupported construct's underlying reason resolves through its relation
             % references to the offending statement's start line and column.
             % The line/column pair is read lazily, only when a diagnostic asks,
             % so a successful compile never pays for it.
@@ -223,13 +223,13 @@ reason_relation_reference(Reason, Name/Arity) :-
     integer(Arity).
 
 % Statements are recorded whole, at their suffix length, and turned into
-% references and line numbers only when a refusal asks: expanding each one into
+% references and line numbers only when a unsupported construct asks: expanding each one into
 % its reference set costs one assert per relation the statement mentions, and
 % resolving its line costs a line-table lookup, on every successful parse.
 %
-% A refusal names the OFFENDING RULE, which is the rule that DEFINES the
+% A unsupported construct names the OFFENDING RULE, which is the rule that DEFINES the
 % reference (its head), so resolution tries the defining statement first. The
-% sub-term scan below it is only a fallback for a reference the refusal names
+% sub-term scan below it is only a fallback for a reference the unsupported construct names
 % that no rule heads (a body relation), and it can therefore still pick an
 % earlier statement that merely mentions the relation.
 statement_location_for_reference(rule, Reference, Line, Column) :-
@@ -647,7 +647,7 @@ typed_column_type(bool, S0, S) :- word(`bool`, S0, S), !.
 % ruling list_spelling = list_of_type. The ONE parametric type, and its
 % argument is a bare type word, never a nested list: 0_type_plane.pl's
 % column_storage/3 refuses list(list(_)) and list(<struct>) by name, so the
-% grammar stays permissive and the refusal stays where the reason lives.
+% grammar stays permissive and the unsupported construct stays where the reason lives.
 typed_column_type(list(Element), S0, S) :-
     word(`list`, S0, S1), !,
     ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
@@ -658,7 +658,7 @@ typed_column_type(float, S0, S) :- word(`float`, S0, S), !.
 % position names a referenced relation value, and the column stores a ref to
 % that relation's dictionary. A name with no matching `rel` declaration is
 % not silently a text column: 0_type_plane.pl:column_storage/3 throws
-% column_type_unknown, so a typo remains a named refusal.
+% column_type_unknown, so a typo remains a named unsupported construct.
 typed_column_type(Name, S0, S) :- ident(Name, S0, S).
 
 enum_decl_variants((First ; Rest), S0, S) :-
@@ -811,7 +811,7 @@ decl_b_columns(RelName, [column(ColName, Type) | Rest], S0, S) :-
 % ORDER IS THE SEMANTICS. The wrapper forms go first: typed_column_type/3's
 % last clause takes any bare identifier as a struct type name, and `Key` in
 % `Key(text)` is a bare identifier, so reading types first would leave the
-% `(text)` unconsumed and turn a named refusal into a parse error.
+% `(text)` unconsumed and turn a named unsupported construct into a parse error.
 decl_b_column_type(RelName, ColName, none, S0, S) :-
     coltype(Wrapper, S0, S),
     Wrapper \== none,
@@ -833,7 +833,7 @@ coltype(none, S0, S) :- ident(_, S0, S).
 % A relation named in column type position supplies that relation's value
 % domain. The parser keeps one surface declaration (`rel`) and normalizes the
 % referenced relation to the existing type_decl IR so every downstream shape,
-% interning, rendering, and refusal path remains shared.
+% interning, rendering, and unsupported construct path remains shared.
 normalize_relation_value_decls(Decls0, Decls) :-
     findall(Name,
             ( declared_column_type_name(Decls0, Name),
@@ -1657,7 +1657,7 @@ factor(E, Vars0, Vars, S0, S) :-
 % would never see them and the two doors could not agree without switching the
 % `dicts` flag off language-wide. Bare `{...}` is the one spelling both doors
 % already read the same way, so bare braces are the json literal and the tagged
-% forms are RESERVED with this named refusal, which is also the future home the
+% forms are RESERVED with this named unsupported construct, which is also the future home the
 % directive asked to keep open ("the `{` opening will later be abused beyond
 % json").
 %
@@ -1795,7 +1795,7 @@ brace_pair(Key:Typed, Vars0, Vars, S0, S) :-
 % Unambiguous by position rather than by lookahead: inside a braces literal a
 % value is always followed by `,` or `}`, so a colon after one can only be
 % this. The type WORD is not checked here -- an unrecognised name is a named
-% refusal at both doors (body.pl json_capture_type/2,
+% unsupported construct at both doors (body.pl json_capture_type/2,
 % lower.pl json_capture_json_type/2), which is where the message can say what
 % the live types are.
 brace_value_type(Value, Value : Type, S0, S) :-

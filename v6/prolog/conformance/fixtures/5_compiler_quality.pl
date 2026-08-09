@@ -98,13 +98,13 @@ fixture(probe_output_comparison_guard,
     final(accepted/2,
       [ accepted(a, 12) ]) ]).
 
-% ═══ D4: a higher-order goal is a named refusal, not a phantom input rel ════
+% ═══ D4: a higher-order goal is a named unsupported construct, not a phantom input rel ════
 %
 % `call/N` has no registry row, so nothing recognized it as a construct, and
 % the edb_definition ruling (a rel no rule heads is pure input) claimed it
 % first: `call/3` became a real EDB relation with synthesized columns, a real
 % table, and no rows the world ever pushes. Every higher-order spelling
-% therefore answered ZERO ROWS with no refusal on either door, which is the
+% therefore answered ZERO ROWS with no unsupported construct on either door, which is the
 % one shape this repo treats as worse than an error.
 %
 % RED RECEIPTS, taken at a4629623.
@@ -124,7 +124,7 @@ fixture(probe_output_comparison_guard,
 %
 %   {"tick":1,"deltas":{"src":{"add":[["a",1]],"del":[]}}}
 %
-% The refusal name is the one labs/generic_scan_instantiation already chose
+% The unsupported construct name is the one labs/generic_scan_instantiation already chose
 % for this exact question: a relation name is a ground functor the program
 % writes down, never an argument (dynamic_relation_name).
 %
@@ -132,13 +132,13 @@ fixture(probe_output_comparison_guard,
 % own flagship has one -- callgraph_derivation_over_extraction in
 % fixtures/3_flagship_callgraph.pl declares `call/2`, copied from v5's
 % examples/callgraph-ast.dl -- so the trigger is an UNDECLARED, UNHEADED
-% `call/N` goal, and that flagship fixture is this refusal's negative leg. The
+% `call/N` goal, and that flagship fixture is this unsupported construct's negative leg. The
 % first cut of the check refused the name outright and turned both flagship
 % fixtures red, which is how the narrowing came to be written down here.
 
 % The apply spelling. Identical in shape whether the first argument is a rel
 % NAME (`src`) or a variable bound elsewhere: same functor, same arity, same
-% refusal, so one fixture covers both.
+% unsupported construct, so one fixture covers both.
 fixture(higher_order_call_goal_rejected,
   prog([ col_type(src/2, name, text), col_type(src/2, value, int),
          col_type(out/2, name, text), col_type(out/2, value, int) ],

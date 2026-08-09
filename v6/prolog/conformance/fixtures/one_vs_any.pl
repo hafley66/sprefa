@@ -52,7 +52,7 @@ fixture(any_two_tagged_arms_land_on_one_tick,
 % The two arms have DIFFERENT triggers, so edge_head_conflict_risk (which needs
 % a shared trigger ref) does not fire and this compiles. The key then folds the
 % two writes to one row. The row that loses is not in the add list, not in the
-% del list, and not in any refusal: the fold is silent.
+% del list, and not in any unsupported construct: the fold is silent.
 fixture(one_attempt_keyed_head_loses_the_first_arm_silently,
   prog([ keyed(dispatch_winner/2, [1]) ],
        [ (dispatch_winner(DispatchId, acked) <+ dispatch_ack(DispatchId)),

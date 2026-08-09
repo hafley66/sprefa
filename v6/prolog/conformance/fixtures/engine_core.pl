@@ -49,13 +49,13 @@ fixture(retention_prune_is_a_visible_minus,
                       [ -event(one), +event(three) ] ]) ]).
 
 % finalize over a Log rel fires on the retention prune. THE NATURAL SPELLING
-% WORKS, which SUPERSEDES the refusal three prior arcs proposed for it:
+% WORKS, which SUPERSEDES the unsupported construct three prior arcs proposed for it:
 % plans/2026-07-30-rel-as-stream-lab.md card 4,
 % plans/2026-07-29-update-arm-verdict.md SLOT-LOG-FINALIZE-REFUSAL, and
 % plans/2026-07-28-consumption-arms-verdict.md assertion 17 all recommended
 % refusing `finalize(logrel(...))` because it was statically dead -- retention
 % pruned with no delta, so the arm had nothing to bind and failed silently.
-% The time-plane verdict priced both directions and the fix won: a refusal
+% The time-plane verdict priced both directions and the fix won: a unsupported construct
 % needs two implementations plus a fail-first fixture, while making the
 % spelling work needed the retention minus that was wanted anyway.
 %
@@ -157,11 +157,11 @@ fixture(aggregate_in_edge_head_rejected,
 %             json_object('fn','group_concat','args',json_array(b0."col1"))
 %
 % Two rows of call text where the author asked for one joined row, and no
-% error at either door. The refusal carries the aggregates that DO lower,
-% read off the registry, because a refusal for a word the author reasonably
+% error at either door. The unsupported construct carries the aggregates that DO lower,
+% read off the registry, because a unsupported construct for a word the author reasonably
 % expected has to say what to write instead. Both doors report the identical
 % term; the compiler wraps it in unsupported_construct/1 as it wraps every
-% refusal.
+% unsupported construct.
 fixture(unimplemented_aggregate_head_rejected,
   prog([], [ (roster(group_concat(Name)) <- member_of(Name)) ]),
   [],

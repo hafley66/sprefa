@@ -106,7 +106,7 @@ test("q: a running server with no program loaded exits 1 (404 'no program loaded
   }
 });
 
-test("load: a program that hits a named compiler refusal over http exits 2, not 1", async () => {
+test("load: a program that hits a named compiler unsupported construct over http exits 2, not 1", async () => {
   const served = await start_served();
   try {
     const ghcacher_dl6 = fileURLToPath(new URL("../../dl/fixtures/ghcacher.dl6", import.meta.url));

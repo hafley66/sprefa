@@ -277,7 +277,7 @@ fixture(typed_int_without_literal_witness,
 % MOVED 2026-07-31 by ruling type_gate_widening: the arrival gate now covers
 % `text` and `int` and not just the numeric trio, so the engine refuses the
 % same program at the same boundary. The two doors keep their own vocabulary
-% (the compiler's refusal is about the DECLARATION contradicting a witness,
+% (the compiler's unsupported construct is about the DECLARATION contradicting a witness,
 % this one is about the VALUE contradicting the declaration), and this fixture
 % pins the engine's half.
 fixture(typed_int_contradicts_text_witness,

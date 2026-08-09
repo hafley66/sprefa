@@ -19,7 +19,7 @@
 %     Surface   surface(Signature, Axis, AnalyzeRole, LowerRole, Status) when
 %               registry.pl knows the functor, or the atom plain_atom when it
 %               does not. plain_atom is what makes a bare relation atom a
-%               relation atom: refusal by absence stays the registry's job.
+%               relation atom: unsupported construct by absence stays the registry's job.
 %     Term      the term at that node, unchanged.
 %
 %   WalkPolicy is walk_policy(DescendNot, SpliceBare):
@@ -168,7 +168,7 @@ event_relation_atom(event(_, _, Surface, Term), Atom) :-
 % Every relation atom a body reaches, with the POLARITY the walk gave it, in
 % source order. Polarity is an argument rather than a filter so a caller can
 % ask for the negated ones specifically (a relation value under not/1 is a
-% named refusal) without a second traversal.
+% named unsupported construct) without a second traversal.
 body_relation_atoms(Body, Policy, Polarity, Atom) :-
     walk_body(Body, Policy, Events),
     member(Event, Events),
@@ -176,13 +176,13 @@ body_relation_atoms(Body, Policy, Polarity, Atom) :-
     event_relation_atom(Event, Atom).
 
 % Every RESERVED registry word one body reaches, in source order, with the
-% lowering role that says which refusal family it belongs to. `reserved` is
+% lowering role that says which unsupported construct family it belongs to. `reserved` is
 % the status for a word the language has CLAIMED and given no meaning; both
 % doors refuse on it, and neither may execute it.
 %
 % Shared because it had exactly the drift shape rank R1 exists to stop: the
 % compiler walked for these words and the reference engine did not walk at
-% all, so five claimed words compiled to a named refusal and ran as silently
+% all, so five claimed words compiled to a named unsupported construct and ran as silently
 % empty relations. 0_program_check.pl's reserved_body_word trigger and
 % analyze.pl's reserved_construct_in_body/2 are both this predicate now; the
 % latter is what the body_walk_characterization golden pins, so the two

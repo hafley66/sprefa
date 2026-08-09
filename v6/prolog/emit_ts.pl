@@ -403,7 +403,7 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, SubscribedRels, _), Lin
             BindPlans),
     % compile_query/2 is the ONE definition of the plan term; every query decl
     % reaching here already went through it in prepare_program/5, so calling it
-    % again cannot introduce a refusal this door did not already raise.
+    % again cannot introduce a unsupported construct this door did not already raise.
     findall(QueryPlan,
             ( member(Query, Decls),
               Query = query(_),
@@ -415,7 +415,7 @@ world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, SubscribedRels, _), Lin
     maplist(query_plan_json, QueryPlans, QueryRows),
     maplist(subscribed_rel_json, SubscribedRels, SubscribedRows),
     % PHASE 2 (plans/2026-07-29-runtime-bridge-header.md): sh hosts and the
-    % interval bind EXECUTE in the served runtime, so neither emits a refusal
+    % interval bind EXECUTE in the served runtime, so neither emits a unsupported construct
     % row any more. The const and its slot stay: a future world term with no
     % executor names itself here rather than executing silently.
     Refusals = [],
@@ -595,7 +595,7 @@ bind_args_helper_lines(
 % ═══ the arrival type gate ══════════════════════════════════════════════════
 % The TS mirror of 0_type_plane.pl:world_row_shape_violation/3. Ruling
 % type_gate_widening = arrival_gate_all_types_all_positions: EVERY declared
-% column type is checked, not just the three numeric-ish ones, and the refusal
+% column type is checked, not just the three numeric-ish ones, and the unsupported construct
 % NAME is the oracle's own `type_arrival_shape_mismatch` so the two doors
 % answer the same program with the same word. The one place types are allowed
 % to mix is SQLite affinity's numeric widening: an integer at a REAL column

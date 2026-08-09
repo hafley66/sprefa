@@ -22,28 +22,28 @@ one(Id) :-
               Error, true)
     ->  ( var(Error)
         -> Status = ok, Detail = ''
-        ;  refusal_detail(Error, Status, Detail) )
+        ;  unsupported_detail(Error, Status, Detail) )
     ;   Status = error, Detail = "compile_dl6 failed without throwing"
     ),
     print_result(Status, Detail).
 
 % WHAT COUNTS AS A NAMED REFUSAL, and why the rule is this one. The obvious
 % rule -- `unsupported_construct/1` or `unsupported_surface/1`, the
-% 0_refusal_messages.pl vocabulary -- was MEASURED WRONG on this corpus: the
+% 0_unsupported_messages.pl vocabulary -- was MEASURED WRONG on this corpus: the
 % reference engine throws `type_arrival_shape_mismatch/4` and
 % `json_capture_type_unknown/1` BARE, and the parser throws
 % `dl_parse_error/2`, so a vocabulary test called 158 named answers "unnamed
 % crash". The rule that survives contact: an ISO `error/2` term is a crash,
 % and any other thrown compound is a named answer whose functor is its name.
-% That the two doors' refusals do not share one wrapper is a finding, not a
+% That the two doors' unsupported constructs do not share one wrapper is a finding, not a
 % harness detail (those bare terms have no prolog:message//1 clause, so a cold
 % author sees swipl's "Unknown message").
-refusal_detail(error(Formal, Context), error, Detail) :- !,
+unsupported_detail(error(Formal, Context), error, Detail) :- !,
     term_string(error(Formal, Context), Detail).
-refusal_detail(Term, refused, Detail) :-
+unsupported_detail(Term, refused, Detail) :-
     compound(Term), !,
     term_string(Term, Detail).
-refusal_detail(Term, error, Detail) :-
+unsupported_detail(Term, error, Detail) :-
     term_string(Term, Detail).
 
 % The library writes the escaping; a hand-rolled escaper here would be the

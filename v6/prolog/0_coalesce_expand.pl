@@ -44,9 +44,9 @@
 %                                  no lowering would be read as an ordinary
 %                                  join and drop the default in SILENCE.
 %
-% Every refusal is thrown HERE, in the one expansion both doors consult
+% Every unsupported construct is thrown HERE, in the one expansion both doors consult
 % (1_expansion.pl phase 45), so the oracle and the compiler cannot disagree
-% about which programs are legal. The single-door refusal is this repo's
+% about which programs are legal. The single-door unsupported construct is this repo's
 % recurring defect class and a shared expander is the shape that closes it.
 
 :- module(coalesce_expand,
@@ -223,7 +223,7 @@ language_form((\==)/2).
 
 % A VARIABLE default reports the atom `variable` rather than the variable
 % itself. Two reasons, and the second is the operational one: `_586` in a
-% refusal message names nothing, and a refusal term carrying a free variable
+% unsupported construct message names nothing, and a unsupported construct term carrying a free variable
 % cannot be written down in a fixture at all (engine.pl grades throws/1 by
 % ==/2, so an unbound hole never matches).
 validate_default(Source, Default) :-

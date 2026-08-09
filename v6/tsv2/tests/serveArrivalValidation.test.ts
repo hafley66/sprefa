@@ -36,8 +36,8 @@
  *   4. The emitter is prolog and `v6/prolog/compile/*` belongs to another lane
  *      at this sha.
  * The emitted `validateArrivals` stays what it is: a per-value COERCION pass
- * (bool to 0/1, -0 to 0) with the bool/float refusals it already had. This file
- * mirrors those two refusals at the boundary so they answer 400 instead of 500,
+ * (bool to 0/1, -0 to 0) with the bool/float unsupported constructs it already had. This file
+ * mirrors those two unsupported constructs at the boundary so they answer 400 instead of 500,
  * and adds the structural and int checks it never had. Recorded for the emitter
  * lane: text/int/ref columns still fall through `validateArrivals` with a bare
  * `return value`, which is fine now that nothing untrusted reaches it.

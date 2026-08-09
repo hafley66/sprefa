@@ -135,7 +135,7 @@ fixture(float_avg_retracts_to_empty_group,
   [ final(score/2, [ score(a, 3.0), score(b, 2.0) ]),
     final(mean/2, [ mean(a, 3.0), mean(b, 2.0) ]) ]).
 
-fixture(int_out_of_range_is_named_refusal,
+fixture(int_out_of_range_is_named_unsupported,
   prog([ col_type(measure/1, value, int) ], []),
   [ measure(9007199254740993) ],
   [],
@@ -209,7 +209,7 @@ fixture(float_widens_integer_ingress,
   [ deltas(score/1, [ [ +score(4.0) ] ]),
     final(score/1, [ score(4.0) ]) ]).
 
-% Class 4: a wide integer at a column with NO declared type. The refusal is
+% Class 4: a wide integer at a column with NO declared type. The unsupported construct is
 % decl-independent (ruling wide_int_fate) precisely so this reaches it: an
 % undeclared column is stored as TEXT and the emitted program answered three
 % different things for this value depending on emitter mode.

@@ -139,7 +139,7 @@ scan_fixtures(Stream, Entries) :-
 
 % Stage 1 (TERM door): compile_fixture/3 either succeeds (this fixture is
 % inside the term-door-supported subset, proceed to stage 2) or throws
-% unsupported_construct(_), which is the term door's own ordinary refusal
+% unsupported_construct(_), which is the term door's own ordinary unsupported construct
 % for a construct check_supported_subset/1 (analyze.pl) does not cover --
 % out of scope for a TEXT-door parity receipt, so excluded entirely
 % (`skipped`, matching the sweep's own supported/unsupported split).
@@ -148,7 +148,7 @@ scan_fixtures(Stream, Entries) :-
 % a successful term-door compile is now a real failure(Name, Detail), NEVER
 % silently reclassified as `skipped` -- that reclassification (the old
 % single-catch classify/3 covering BOTH stages at once) is exactly what let
-% the 20 lifted expression/aggregate fixtures' text-door refusals hide as
+% the 20 lifted expression/aggregate fixtures' text-door unsupported constructs hide as
 % "skipped" while the receipt printed failures=0.
 grade_one(File, Name, Term, Bindings, OutDir, Status) :-
     format(atom(SweepTermOut), '~w/~w.sweep.ts', [OutDir, Name]),
@@ -242,7 +242,7 @@ quiet(Goal) :-
 % "Reached the text door" = passed the term door and made it into
 % grade_text_door/6, whatever that stage's own outcome was -- the
 % CompiledCount the receipt prints. Deliberately does NOT include
-% `skipped` (term-door refusals, out of this receipt's scope).
+% `skipped` (term-door unsupported constructs, out of this receipt's scope).
 reached_text_door(identical(_)).
 reached_text_door(failure(_, _)).
 

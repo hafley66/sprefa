@@ -1,4 +1,4 @@
-% 0_refusal_messages.pl: one-line presentation for compiler refusals.
+% 0_unsupported_messages.pl: one-line presentation for compiler unsupported constructs.
 %
 % FAIL-FIRST RECEIPT:
 %   ERROR: Unknown message:
@@ -9,35 +9,35 @@
 % of manufacturing a FILE:LINE. The at(File, Line, Reason) arm is ready for a
 % future text-door position wrapper without changing the message shape.
 
-:- module(refusal_messages,
-          [ refusal_inventory/1,
-            refusal_inventory_forget/0,
-            refusal_message_clause_count/1,
-            refusal_renderer_counts/2
+:- module(unsupported_messages,
+          [ unsupported_inventory/1,
+            unsupported_inventory_forget/0,
+            unsupported_message_clause_count/1,
+            unsupported_renderer_counts/2
           ]).
 
 :- use_module('compile/registry', [surface/5]).
-:- use_module('3_clock_check', [clock_refusal_reason/1]).
+:- use_module('3_clock_check', [clock_unsupported_reason/1]).
 
 :- multifile prolog:message//1.
 
 prolog:message(unsupported_construct(WrappedReason)) -->
-    { refusal_context(WrappedReason, Reason, Location),
-      refusal_reason_text(Reason, ReasonText)
+    { unsupported_context(WrappedReason, Reason, Location),
+      unsupported_reason_text(Reason, ReasonText)
     },
     [ '~w: unsupported_construct: ~w'-
       [Location, ReasonText]
     ].
 
 % The text is deliberately assembled from names and typed payload categories.
-% Payload terms never pass through ~q, so a refusal remains one readable line.
+% Payload terms never pass through ~q, so a unsupported construct remains one readable line.
 % Inventory members use the specific renderer; a reason outside the inventory
 % keeps the generic fallback and still preserves its functor in parentheses.
-refusal_reason_text(Reason, Text) :-
+unsupported_reason_text(Reason, Text) :-
     reason_name(Reason, ReasonName),
-    ( ( refusal_inventory_name(ReasonName)
+    ( ( unsupported_inventory_name(ReasonName)
       ; Reason = registered_surface(Signature),
-        refusal_inventory_signature(Signature)
+        unsupported_inventory_signature(Signature)
       )
     -> specific_reason_text(ReasonName, Reason, Text)
     ;  fallback_reason_text(ReasonName, Text)
@@ -78,13 +78,13 @@ fallback_reason_text(ReasonName, Text) :-
     format(atom(Text), "compiler refused rule '~w' (~w)",
            [ReasonName, ReasonName]).
 
-refusal_inventory_name(Name) :-
-    refusal_inventory(Inventory),
+unsupported_inventory_name(Name) :-
+    unsupported_inventory(Inventory),
     member(Name/_Arity-_, Inventory),
     !.
 
-refusal_inventory_signature(Signature) :-
-    refusal_inventory(Inventory),
+unsupported_inventory_signature(Signature) :-
+    unsupported_inventory(Inventory),
     member(Signature-_, Inventory),
     !.
 
@@ -108,10 +108,10 @@ reason_relation_reference(Reason, Name/Arity) :-
 reason_relation_text(Name/Arity, Text) :-
     format(atom(Text), "'~w/~w'", [Name, Arity]).
 
-refusal_context(at(File, Line, Reason), Reason, Location) :-
+unsupported_context(at(File, Line, Reason), Reason, Location) :-
     !,
     format(atom(Location), '~w:~w', [File, Line]).
-refusal_context(Reason, Reason, 'rule-index unavailable').
+unsupported_context(Reason, Reason, 'rule-index unavailable').
 
 reason_name(Reason, Name) :-
     ( compound(Reason)
@@ -119,49 +119,49 @@ reason_name(Reason, Name) :-
     ;  Name = Reason
     ).
 
-% The coverage inventory is derived from the two refusal sources:
+% The coverage inventory is derived from the two unsupported construct sources:
 %
 %   1. registry rows whose status or lowering role says refused;
 %   2. loaded compiler clauses that construct unsupported_construct/1 reasons,
 %      including the shared program-check mapping and edge-shape producers.
 %
-% No message-name list is duplicated here. A new registry refusal or named
+% No message-name list is duplicated here. A new registry unsupported construct or named
 % compiler reason enters this inventory from its defining clause.
-% MEMOIZED: the scan walks every clause of all thirteen refusal_source_module/1
-% modules, and refusal_inventory_name/1 sits under the umbrella renderer, so
-% unmemoized it runs once per rendered refusal. The answer is a function of
-% loaded clause source alone. A process that loads another refusal source after
-% a refusal has rendered must call refusal_inventory_forget/0.
-:- dynamic refusal_inventory_memo/1.
+% MEMOIZED: the scan walks every clause of all thirteen unsupported_source_module/1
+% modules, and unsupported_inventory_name/1 sits under the umbrella renderer, so
+% unmemoized it runs once per rendered unsupported construct. The answer is a function of
+% loaded clause source alone. A process that loads another unsupported construct source after
+% a unsupported construct has rendered must call unsupported_inventory_forget/0.
+:- dynamic unsupported_inventory_memo/1.
 
-refusal_inventory(Inventory) :-
-    (   refusal_inventory_memo(Memo)
+unsupported_inventory(Inventory) :-
+    (   unsupported_inventory_memo(Memo)
     ->  Inventory = Memo
-    ;   refusal_inventory_scan(Scanned),
-        assertz(refusal_inventory_memo(Scanned)),
+    ;   unsupported_inventory_scan(Scanned),
+        assertz(unsupported_inventory_memo(Scanned)),
         Inventory = Scanned
     ).
 
-refusal_inventory_forget :-
-    retractall(refusal_inventory_memo(_)).
+unsupported_inventory_forget :-
+    retractall(unsupported_inventory_memo(_)).
 
-refusal_inventory_scan(Inventory) :-
+unsupported_inventory_scan(Inventory) :-
     findall(Signature,
-            refusal_inventory_entry(Signature, _),
+            unsupported_inventory_entry(Signature, _),
             Signatures0),
     sort(Signatures0, Signatures),
-    maplist(refusal_inventory_example, Signatures, Inventory).
+    maplist(unsupported_inventory_example, Signatures, Inventory).
 
-refusal_inventory_example(Signature, Signature-Example) :-
-    once(refusal_inventory_entry(Signature, Example)).
+unsupported_inventory_example(Signature, Signature-Example) :-
+    once(unsupported_inventory_entry(Signature, Example)).
 
-refusal_inventory_entry(Signature, registered_surface(Signature)) :-
+unsupported_inventory_entry(Signature, registered_surface(Signature)) :-
     surface(Signature, _, _, LowerRole, Status),
     ( Status == refused
     ; sub_term(refuse(_), LowerRole)
     ).
-refusal_inventory_entry(Signature, Example) :-
-    refusal_source_module(Module),
+unsupported_inventory_entry(Signature, Example) :-
+    unsupported_source_module(Module),
     current_predicate(Module:Name/Arity),
     functor(Head, Name, Arity),
     catch(clause(Module:Head, Body), _, fail),
@@ -170,43 +170,43 @@ refusal_inventory_entry(Signature, Example) :-
     reason_signature(Reason, Signature),
     Signature \== at/3,
     copy_term(Reason, Example).
-refusal_inventory_entry(Signature, Example) :-
-    refusal_reason_producer(Example),
+unsupported_inventory_entry(Signature, Example) :-
+    unsupported_reason_producer(Example),
     nonvar(Example),
     reason_signature(Example, Signature).
 
-% parse_dl is a refusal source as of the json wiring arc: `tagged_brace_
+% parse_dl is a unsupported construct source as of the json wiring arc: `tagged_brace_
 % reserved` is thrown at the LEXER, before any analyzer stage sees a term, and
-% a refusal the inventory cannot see is a refusal nothing checks renders.
-refusal_source_module(parse_dl).
-refusal_source_module(enum_expand).
-refusal_source_module(match_expand).
-refusal_source_module(coalesce_expand).
-refusal_source_module(ast_expand).
-refusal_source_module(dot_expand).
-refusal_source_module(type_plane).
-refusal_source_module(expansion).
-refusal_source_module(host_expand).
-refusal_source_module(program_check).
-refusal_source_module(compile).
-refusal_source_module(analyze).
-refusal_source_module(strat).
-refusal_source_module(lower).
+% a unsupported construct the inventory cannot see is a unsupported construct nothing checks renders.
+unsupported_source_module(parse_dl).
+unsupported_source_module(enum_expand).
+unsupported_source_module(match_expand).
+unsupported_source_module(coalesce_expand).
+unsupported_source_module(ast_expand).
+unsupported_source_module(dot_expand).
+unsupported_source_module(type_plane).
+unsupported_source_module(expansion).
+unsupported_source_module(host_expand).
+unsupported_source_module(program_check).
+unsupported_source_module(compile).
+unsupported_source_module(analyze).
+unsupported_source_module(strat).
+unsupported_source_module(lower).
 
-refusal_reason_producer(Reason) :-
-    clause(analyze:compiler_refusal(_, _, Reason), _).
-% The reserved-word arm of compiler_refusal/3 hands its reason term back
+unsupported_reason_producer(Reason) :-
+    clause(analyze:compiler_unsupported(_, _, Reason), _).
+% The reserved-word arm of compiler_unsupported/3 hands its reason term back
 % through this predicate, so its own head carries an unbound variable and the
 % clause above sees nothing. Reading the naming clauses directly is what puts
 % lifecycle_arm/1 and removed_word/1 in the inventory.
-refusal_reason_producer(Reason) :-
+unsupported_reason_producer(Reason) :-
     clause(analyze:reserved_construct_name(_, _, Reason), _).
-refusal_reason_producer(Reason) :-
-    clause(analyze:edge_goal_refusal(_, _, _, Reason), _).
-refusal_reason_producer(Reason) :-
+unsupported_reason_producer(Reason) :-
+    clause(analyze:edge_goal_unsupported(_, _, _, Reason), _).
+unsupported_reason_producer(Reason) :-
     clause(analyze:edge_trigger_shape(_, unsupported(Reason)), _).
-refusal_reason_producer(Reason) :-
-    clock_refusal_reason(Reason).
+unsupported_reason_producer(Reason) :-
+    clock_unsupported_reason(Reason).
 
 reason_signature(Reason, Name/Arity) :-
     ( compound(Reason)
@@ -214,20 +214,20 @@ reason_signature(Reason, Name/Arity) :-
     ;  Name = Reason, Arity = 0
     ).
 
-refusal_message_clause_count(Count) :-
+unsupported_message_clause_count(Count) :-
     findall(Clause,
             ( clause(prolog:message(unsupported_construct(_), _, _), Clause),
               strip_module(Clause, Module, _),
-              Module == refusal_messages
+              Module == unsupported_messages
             ),
             Clauses),
     length(Clauses, Count).
 
-refusal_renderer_counts(Specific, Fallback) :-
-    refusal_inventory(Inventory),
+unsupported_renderer_counts(Specific, Fallback) :-
+    unsupported_inventory(Inventory),
     findall(Name/Arity,
             ( member(Name/Arity-_, Inventory),
-              refusal_inventory_name(Name) ),
+              unsupported_inventory_name(Name) ),
             SpecificSignatures0),
     sort(SpecificSignatures0, SpecificSignatures),
     length(SpecificSignatures, Specific),

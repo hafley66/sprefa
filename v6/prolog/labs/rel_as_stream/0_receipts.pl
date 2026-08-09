@@ -190,7 +190,7 @@ n_readers_hold_independent_positions :-
     format("PASS one log serves N readers at independent cursors with min(ordinal)~n").
 
 % R6. And the per-reader projection cannot itself be a stream: a level rule
-% heading a log rel is a named refusal (TICK-MODEL.md theorem four). So a
+% heading a log rel is a named unsupported construct (TICK-MODEL.md theorem four). So a
 % consumer's view of a stream is a TABLE, always. This is the sharpest evidence
 % that stream and table are not two kinds of thing.
 a_readers_view_of_a_stream_is_a_table :-
@@ -199,7 +199,7 @@ a_readers_view_of_a_stream_is_a_table :-
     Refusal == log_on_level_headed_rel(pending/3),
     format("PASS a derived view of a log rel must be a level rel: ~q~n", [Refusal]).
 
-% R7. Occurrences cannot un-happen. The refusal is correct and it is the reason
+% R7. Occurrences cannot un-happen. The unsupported construct is correct and it is the reason
 % the N plane carries no minus.
 occurrences_cannot_un_happen :-
     retract_log(Program),

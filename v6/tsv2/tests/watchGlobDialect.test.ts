@@ -33,9 +33,9 @@
  *                       `git ls-files -- '*.{rs,ts}'` returns ZERO rows for the
  *                       whole glob. MEASURED on node v24.15.0 before choosing
  *                       the assertion: `path.matchesGlob('a.rs', '*.{rs,ts}')`
- *                       is true, so braces need no named refusal here — they
+ *                       is true, so braces need no named unsupported construct here — they
  *                       simply work once the matcher is the matcher. The test
- *                       asserts ROWS, never a refusal.
+ *                       asserts ROWS, never a unsupported construct.
  *
  * The fourth test is the standing property the ruling actually buys: for one
  * fixed tree and the five glob shapes the census bucketed the corpus into, the

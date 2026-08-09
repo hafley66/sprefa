@@ -109,7 +109,7 @@ http_request_body(postArrivals, 'application/json', schema('ArrivalBatch'), true
 http_response(loadProgram, 200, 'application/json', schema('ProgramLoaded'),
               'program compiled, booted, and running.').
 http_response(loadProgram, 400, 'application/json', schema('Error'),
-              'compile failure or named refusal; the previously loaded program keeps running.').
+              'compile failure or named unsupported construct; the previously loaded program keeps running.').
 
 http_response(postArrivals, 200, 'application/json', schema('TickBatch'),
               'the settle tick plus any drain ticks the batch caused.').

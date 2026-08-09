@@ -182,7 +182,7 @@ emit_task_facts :-
 %   world    headed by no rule: an arrival target (a host answer, a bind, or a
 %            posted EDB row)
 % A rel headed by both kinds is reported `edge`, which matches the lowering's
-% own precedence and is a shape the keyed_level_head refusal already narrows.
+% own precedence and is a shape the keyed_level_head unsupported construct already narrows.
 
 emit_program_facts(Path) :-
     source_path('../compile/parse_dl.pl', ParsePath),

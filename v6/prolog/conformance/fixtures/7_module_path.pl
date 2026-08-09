@@ -24,7 +24,7 @@ fixture(module_path_in_body_refuses_by_name,
         throws(unsupported_construct(module_path_unresolved([orchard, fruit])))
     ]).
 
-% A path deeper than two segments keeps every segment: the refusal payload is
+% A path deeper than two segments keeps every segment: the unsupported construct payload is
 % what h4's mangler will consume, so losing a level here would hide a defect.
 fixture(module_path_three_segments_keeps_every_segment,
     prog(

@@ -61,7 +61,7 @@ door_result(Door, Source, ScheduleFile, LogFile, Status, Detail) :-
     (   catch(cell_log(Door, Source, ScheduleFile, Text), Error, true)
     ->  ( var(Error)
         -> Status = ok, Detail = "", write_log(LogFile, Text)
-        ;  refusal_detail(Error, Status, Detail) )
+        ;  unsupported_detail(Error, Status, Detail) )
     ;   Status = error, Detail = "oracle run failed without throwing"
     ).
 
@@ -116,13 +116,13 @@ door_schedule(golden, Prog, Bindings, ScheduleFile, Schedule) :-
 % `error/2` term is a crash, any other thrown compound is a named answer whose
 % functor is its name. engine.pl's `type_arrival_shape_mismatch/4` and
 % body.pl's `json_capture_type_unknown/1` are named answers that carry no
-% refusal wrapper at all.
-refusal_detail(error(Formal, Context), error, Detail) :- !,
+% unsupported construct wrapper at all.
+unsupported_detail(error(Formal, Context), error, Detail) :- !,
     term_string(error(Formal, Context), Detail).
-refusal_detail(Term, refused, Detail) :-
+unsupported_detail(Term, refused, Detail) :-
     compound(Term), !,
     term_string(Term, Detail).
-refusal_detail(Term, error, Detail) :-
+unsupported_detail(Term, error, Detail) :-
     term_string(Term, Detail).
 
 write_log(LogFile, Text) :-

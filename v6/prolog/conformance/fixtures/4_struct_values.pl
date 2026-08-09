@@ -7,7 +7,7 @@
 % already holds real terms, so a struct-typed column holds the same canonical
 % obj(...) it always did and ticklog.pl renders it as canonical JSON exactly as
 % it always did. What the type decl adds here is the shape contract, the cycle
-% refusal, and the unknown-type refusal. What it adds on the EMITTED side is
+% unsupported construct, and the unknown-type unsupported construct. What it adds on the EMITTED side is
 % the whole storage plane -- dictionary tables, intern-at-arrival, boundary
 % render joins -- and the grade that the two sides still print the same bytes.
 %
@@ -61,7 +61,7 @@
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
 
-% ═══ refusals (fail-first: each of these was ACCEPTED before this arc) ══════
+% ═══ unsupported constructs (fail-first: each of these was ACCEPTED before this arc) ══════
 
 % Content identity is computed FROM the children's content identity, so a
 % cyclic type graph has no identity at all (types-as-rels verdict:
@@ -76,7 +76,7 @@ fixture(struct_type_cycle_rejected,
   [ [ +holder(obj([next-nothing])) ] ],
   [ throws(type_cycle([node])) ]).
 
-% Two types that reference each other. The same refusal, one hop out: neither
+% Two types that reference each other. The same unsupported construct, one hop out: neither
 % name can ever be placed, so both are named.
 fixture(struct_type_mutual_cycle_rejected,
   prog([ type_decl(left, [col(other, right)]),
@@ -89,7 +89,7 @@ fixture(struct_type_mutual_cycle_rejected,
   [ throws(type_cycle([left, right])) ]).
 
 % A bare identifier in type position is a REF to a declared type. A name no
-% `type` decl introduces is a named refusal, never a column that quietly holds
+% `type` decl introduces is a named unsupported construct, never a column that quietly holds
 % whatever arrives -- the parser cannot tell a typo from a type.
 fixture(struct_column_type_unknown_rejected,
   prog([ col_type(finding/2, path, text),
@@ -99,7 +99,7 @@ fixture(struct_column_type_unknown_rejected,
   [],
   [ throws(column_type_unknown(spann)) ]).
 
-% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, compiler refusal direction:
+% HOST-OUTPUT-SEAM FAIL-FIRST RECEIPT, compiler unsupported construct direction:
 % before parse_dl.pl admitted a declared type name in a decl-B host column,
 % the text door reported
 %   unsupported_surface(column_type_wrapper(scan_span,at,none))
@@ -138,7 +138,7 @@ fixture(struct_arrival_missing_key_rejected,
   [ [ +finding('a.rs', obj([start-3])) ] ],
   [ throws(type_arrival_shape_mismatch(finding/2, at, span, missing_key(span, end))) ]).
 
-% The same refusal for a field whose declared type is int and whose arriving
+% The same unsupported construct for a field whose declared type is int and whose arriving
 % value is not. An int field silently storing text is exactly the TEXT-collapse
 % class the expression lift spent an arc removing.
 fixture(struct_arrival_field_type_rejected,
@@ -169,7 +169,7 @@ fixture(struct_arrival_unknown_key_rejected,
 % insignificant. The decl induces the canonical form; run_program rewrites
 % every world row to sorted-key obj/1 before any store sees it
 % (canonicalize_world_rows/3). FAIL-FIRST RECEIPT: this fixture's ancestor
-% (struct_arrival_key_order_rejected, git history) pinned the old refusal
+% (struct_arrival_key_order_rejected, git history) pinned the old unsupported construct
 % keys_not_sorted(span,[start,end]) on exactly this schedule; under the
 % ruling the same out-of-order arrival is ACCEPTED and lands as the ONE
 % canonical row -- byte-identical to the sorted-spelling twin above it.
@@ -277,7 +277,7 @@ fixture(struct_intern_order_b,
 % The twin is NOT kept as a fixture, deliberately: it would be a corpus entry
 % whose emitted log is knowingly wrong, and the sweep's wrong bucket is a gate
 % that must stay at zero. Making it live in the `unsupported` bucket instead
-% means turning the untyped-compound-arrival encoding into a NAMED refusal --
+% means turning the untyped-compound-arrival encoding into a NAMED unsupported construct --
 % real work, real blast radius across every fixture that arrives a compound
 % into a text column, and SLOT-TERM-STRUCT's question first. Named follow-up.
 
@@ -331,7 +331,7 @@ fixture(struct_ghcacher_stars_normalization,
     final(stars/2, [ stars(other, 4), stars(repo, 17) ]),
     ticks(2) ]).
 
-% A key the declared type does not have is a NAMED refusal, where the untyped
+% A key the declared type does not have is a NAMED unsupported construct, where the untyped
 % arm's own answer is "fails quietly" (json_arm.pl
 % decode_missing_key_fails_quietly). That difference is the point of declaring
 % a type: a typo in a field name stops being a rule that derives nothing.

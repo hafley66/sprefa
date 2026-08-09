@@ -117,7 +117,7 @@ sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason
         classify_error(Error, Bucket, Reason)
     ).
 
-% unsupported_construct(What) is the compiler's own clean-refusal ball
+% unsupported_construct(What) is the compiler's own clean-unsupported construct ball
 % (analyze.pl/lower.pl/strat.pl); anything else reaching here is an
 % UNANTICIPATED failure in this sweep's own harness or a genuine compiler
 % bug, reported as its own bucket rather than folded into "unsupported" so
@@ -210,7 +210,7 @@ result_json(result(Name, File, Bucket, Reason), Json) :-
     format(atom(Json), '{"name":~w,"file":~w,"bucket":~w,"reason":~w}', [NameJson, FileJson, BucketJson, ReasonJson]).
 
 reason_text(none, '') :- !.
-% A refusal reason holds the program's variables, and `_12345` is the process's
+% A unsupported construct reason holds the program's variables, and `_12345` is the process's
 % counter, so the tracked manifest churns on every run unless they are numbered.
 reason_text(Term, Text) :-
     copy_term(Term, Copy),

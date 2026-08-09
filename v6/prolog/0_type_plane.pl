@@ -103,7 +103,7 @@ column_storage(_, json, json) :- !.
 % unification and no instantiation -- that is what lets list(T) be the only
 % parametric type without dragging generics into the checker. The whole
 % measured delta is these four clauses: the storage row, the element guard, and
-% the two named refusals below.
+% the two named unsupported constructs below.
 %
 % NAMED, not silently absent: SQLite can enforce ARRAY-NESS as a column CHECK
 % (json_valid(c) AND json_type(c) = 'array', verified) and CANNOT enforce the
@@ -172,7 +172,7 @@ relation_columns_and_types(Decls, _, Ref, Columns, ColumnTypes) :-
 %
 % The shape test is exact -- right name, right arity. A name that matches no
 % declared type, or the right name at the wrong arity, is NOT a relation value
-% and is a named refusal at the door
+% and is a named unsupported construct at the door
 % (0_program_check.pl relation_pattern_not_a_relation_value), never a value
 % that quietly stores as something else.
 relation_value_shape(Types, TypeName, Value) :-
@@ -222,7 +222,7 @@ children_all_placed(Types, Placed, Name) :-
 
 % A type that never becomes ready is on a cycle. Content ids cannot express a
 % cyclic reference graph -- a parent's key is computed FROM its children's
-% keys (verdict: interned_graph_is_a_dag) -- so this is a refusal, not a
+% keys (verdict: interned_graph_is_a_dag) -- so this is a unsupported construct, not a
 % capability gap. The entity plane, which permits cycles, is out of this arc.
 type_cycle_witness(Types, Names) :-
     findall(Name, member(type_def(Name, _, _), Types), AllNames),
@@ -243,7 +243,7 @@ settled_prefix(Types, Pending, Acc, Settled) :-
 
 % ── arrival shape ────────────────────────────────────────────────────────────
 % SLOT-ARRIVAL-MALFORMED, decided: `type_arrival_shape_mismatch`. A world row
-% whose value does not match the declared struct shape is a NAMED refusal at
+% whose value does not match the declared struct shape is a NAMED unsupported construct at
 % the boundary, never a silently stored blob and never a NULL column. The
 % reasons are enumerated so the message says which key, not just "bad shape".
 %
@@ -263,7 +263,7 @@ settled_prefix(Types, Pending, Acc, Settled) :-
 % oracle canonicalizes a struct-typed arrival value to sorted-key obj/1 form
 % at the world boundary (canonicalize_world_rows/3, called from run_program
 % right after check_world_shapes) instead of refusing. The divergence the old
-% keys_not_sorted refusal guarded -- oracle term identity treating
+% keys_not_sorted unsupported construct guarded -- oracle term identity treating
 % obj([start-1,end-2]) and obj([end-2,start-1]) as two rows while the emitted
 % side interns both to one -- is unreachable the other way now: both
 % spellings become ONE canonical term before any store or Set sees them. The
@@ -448,7 +448,7 @@ canonical_field_value(Types, Columns, ColumnTypes, Key-Value0, Key-Value) :-
 % bare row terms; the sign wrapper is stripped here so both doors hand over
 % whatever they already have.
 %
-% This is a decl-driven refusal, not an execution change: a row that passes
+% This is a decl-driven unsupported construct, not an execution change: a row that passes
 % behaves exactly as it did before the type existed. It runs where the data
 % is static (fixture Initial + Schedule on both doors); the emitted runtime
 % repeats it at intern time, where the data is not.
@@ -498,7 +498,7 @@ row_column_violation(Decls, Types, Ref, Arity, Row, Column, TypeName, Reason) :-
     column_value_shape_error(Types, TypeName, Value, Reason).
 
 % The declared column name where the decl carries one, the bare position
-% otherwise. The wide-int pass runs on undeclared rels too, and a refusal that
+% otherwise. The wide-int pass runs on undeclared rels too, and a unsupported construct that
 % cannot say WHERE is worse than one that says "column 2".
 position_column_name(Decls, Ref, Position, Column) :-
     (   findall(Name, member(col_type(Ref, Name, _), Decls), Names),

@@ -6,7 +6,7 @@ export interface IHttpRouteInventory { readonly method: string; readonly path: s
 export const CLI_COMMANDS: readonly ICliCommandInventory[] = [
   { verb: "serve", args: "[--port <port>] [--db <url>]", summary: "boot the served tsv2 engine and keep it running (exactly serve/main.ts)." },
   { verb: "run", args: "<file.dl6> [--ticks <n>] [--port <port>]", summary: "compile + load a program on an in-process ephemeral server, stream ticks to stdout until quiescent or --ticks fires, then shut down cleanly." },
-  { verb: "check", args: "<file.dl6>", summary: "validate a program through the text door; no server boots. Exit 0 clean, 2 named-refusal findings, 1 broken (parse/compile error)." },
+  { verb: "check", args: "<file.dl6>", summary: "validate a program through the text door; no server boots. Exit 0 clean, 2 named-unsupported construct findings, 1 broken (parse/compile error)." },
   { verb: "load", args: "<file.dl6> [--port <port>]", summary: "POST a compiled program to an already-running bop serve; exit 1 if nothing is listening." },
   { verb: "q", args: "<rel> [--port <port>] [--json]", summary: "read one rel's current rows from a running bop serve." },
   { verb: "stats", args: "[--port <port>]", summary: "read process and SQLite storage statistics from a running bop serve." },

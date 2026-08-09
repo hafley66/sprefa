@@ -396,7 +396,7 @@ export interface IReloadPlan {
    *  keying on it reads a routine column addition as a drop plus a create. */
   readonly verdicts: ReadonlyMap<string, RelVerdict>;
   readonly statements: readonly string[];
-  readonly refusals: readonly string[];
+  readonly unsupported: readonly string[];
 }
 
 export interface IReloadPlanner {
@@ -413,7 +413,7 @@ export interface IReloadOutcome {
   readonly program: string;
   readonly verdicts: readonly (readonly [rel: string, verdict: RelVerdict])[];
   readonly statements: readonly string[];
-  readonly refusals: readonly string[];
+  readonly unsupported: readonly string[];
 }
 
 /** The entry file plus the directory `use "path".` resolves against. Serving

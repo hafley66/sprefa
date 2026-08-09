@@ -40,7 +40,7 @@ expansion_phase(44, dot,         dot_expand:expand_dot_in_context).
 %
 %   after match   a match arm is an ordinary rule body and may carry a
 %                 coalesce; running first would leave those unexpanded, and
-%                 the survival refusal (coalesce_not_top_level) would then
+%                 the survival unsupported construct (coalesce_not_top_level) would then
 %                 fire on a legal program.
 %   before        coalesce SPLITS one rule into two clauses. relation_edge
 %   relation_edge appends the head's relation-value membership atom per

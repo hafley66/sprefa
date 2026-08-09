@@ -225,7 +225,7 @@ catalog_mentions_atom(Atom) :-
 % only Rules, so a rel that is purely an arrival target with zero readers
 % was silently absent from RelPlans, dropping its DDL/arrival handling from
 % the emitted program entirely (a genuine compiler gap, not a
-% supported-subset refusal: the program "compiled" into something that could
+% supported-subset unsupported construct: the program "compiled" into something that could
 % never accept its own schedule). compile.pl:program_plan/2 unions this with
 % program_refs/2's rule-derived set.
 
@@ -382,7 +382,7 @@ rel_column_types(Decls, Rules, Initial, Schedule, Bindings, Ref, Types) :-
 % The witness cross-check compares against the STORAGE kind, and only for the
 % two scalar kinds. A ref column has no literal witness by construction (a
 % struct value is compound, never atomic/1), and a struct value in a column
-% declared int is already the type_arrival_shape_mismatch refusal.
+% declared int is already the type_arrival_shape_mismatch unsupported construct.
 column_type_at_decl(Decls, Rules, Initial, Schedule, Ref, Columns, Position, Type) :-
     nth1(Position, Columns, Column),
     ( memberchk(col_type(Ref, Column, DeclaredType), Decls)
@@ -520,7 +520,7 @@ seed_column_contribution(Decls, Rules, Initial, Schedule, Ref, Columns, Position
        % arrival"), so a head column fed only by now/1 -- which has no
        % literal anywhere in the program, by construction -- would otherwise
        % take C2's "zero witnesses -> text" default and store the tick as
-       % TEXT. Downstream that is either a named refusal
+       % TEXT. Downstream that is either a named unsupported construct
        % (comparison_operand_not_int on `EventTick > TurnTick`) or an
        % affinity comparison the oracle does not perform.
        ( now_bound_head_position(Rules, Ref, Position)
@@ -790,7 +790,7 @@ merge_contribution(Contribution, open(Existing), open(Merged)) :-
 % dictionary id and RENDER IT AS AN INTEGER at the boundary, which is exactly
 % the "tick log prints ids" failure Edge 1 exists to prevent, and it would be
 % silent. Two different declared types meeting in one column, or a ref meeting
-% a scalar, is a named refusal instead: there is no widening that keeps the
+% a scalar, is a named unsupported construct instead: there is no widening that keeps the
 % rendering honest.
 merge_type(ref(Type), none, ref(Type)) :- !.
 merge_type(none, ref(Type), ref(Type)) :- !.
@@ -831,7 +831,7 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 % Grounded in engine.pl's trigger_items/2: bare positive atoms are triggers,
 % latest/1 and the special body forms are sampled or non-trigger reads.
 % (:112-126, the exact goal classification engine.pl's unmarked fallback
-% walks). Three ACCEPTED shapes, everything else a NAMED refusal:
+% walks). Three ACCEPTED shapes, everything else a NAMED unsupported construct:
 %   marked_single(Atom)      -- Body = Atom, the single trigger source.
 %   unmarked_conjunction(Atoms) -- Body is a plain
 %     comma-conjunction of one or more ordinary positive rel atoms (arity
@@ -872,7 +872,7 @@ column_source_args(_Rules, _Initial, Schedule, Ref, Args) :-
 %     shape: one departure arm, `r(K,New)` joined.
 edge_trigger_shape(Body, unsupported(Reason)) :-
     conjunction_goals(Body, Goals),
-    edge_registered_refusal(Body, Goals, Reason), !.
+    edge_registered_unsupported(Body, Goals, Reason), !.
 edge_trigger_shape(Body,
                    departure_trigger(FinalizeAtom, OtherAtoms, SampleAtoms,
                                      PreAtoms, NegAtoms, GuardGoals)) :-
@@ -953,15 +953,15 @@ edge_departure_goals([Goal | Rest], FinalizeAtoms, OtherAtoms, SampleAtoms,
     append(GoalNegs, RestNegs, NegAtoms),
     append(GoalGuards, RestGuards, GuardGoals).
 
-edge_registered_refusal(Body, Goals, Reason) :-
+edge_registered_unsupported(Body, Goals, Reason) :-
     findall(Priority-Candidate,
             ( member(Goal, Goals),
-              edge_goal_refusal(Goal, Body, Priority, Candidate)
+              edge_goal_unsupported(Goal, Body, Priority, Candidate)
             ),
             Candidates),
     keysort(Candidates, [_-Reason | _]).
 
-edge_goal_refusal(latest(Atom), Body, 1, edge_body_with_latest(Body)) :-
+edge_goal_unsupported(latest(Atom), Body, 1, edge_body_with_latest(Body)) :-
     \+ plain_positive_rel_atom(Atom).
 % finalize/1 IS a departure trigger now (TICK PHASE ALIGNMENT target 2): the
 % runtime carries the tick's net -delta rows of every LISTENED rel into a
@@ -970,7 +970,7 @@ edge_goal_refusal(latest(Atom), Body, 1, edge_body_with_latest(Body)) :-
 % anything but ONE plain rel atom -- a conjunction, an expression, a nested
 % wrapper -- because occurrence_trigger/4 unifies the departed ROW against the
 % finalize argument, and there is no row shape for those.
-edge_goal_refusal(finalize(Atom), Body, 2, edge_body_with_finalize(Body)) :-
+edge_goal_unsupported(finalize(Atom), Body, 2, edge_body_with_finalize(Body)) :-
     \+ plain_positive_rel_atom(Atom).
 % pre/1 is an ordered arm. engine.pl fires occurrences ONE AT A
 % TIME and pre(Atom) reads the store as the writes so far THIS TICK left it
@@ -985,7 +985,7 @@ edge_goal_refusal(finalize(Atom), Body, 2, edge_body_with_finalize(Body)) :-
 % now/1 is lowered around a plain variable; `now(7)` or `now(f(X))` would be a
 % MATCH against the tick, which engine.pl's solve(now(Tick), ctx(_,_,Tick))
 % permits by unification and this lowering has no shape for.
-edge_goal_refusal(now(Argument), Body, 4, edge_body_with_now(Body)) :-
+edge_goal_unsupported(now(Argument), Body, 4, edge_body_with_now(Body)) :-
     \+ var(Argument).
 % Negation is LIVE around ONE plain relation atom (lowered to NOT EXISTS
 % against that rel's current table, the same text compile_negative_uses/4
@@ -993,11 +993,11 @@ edge_goal_refusal(now(Argument), Body, 4, edge_body_with_now(Body)) :-
 % another wrapper stays refused: compile_negative_uses/4 walks rel atoms
 % only, and a nested guard would be silently dropped from the emitted
 % condition rather than refused.
-edge_goal_refusal(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
+edge_goal_unsupported(not(Atom), Body, 5, edge_body_with_negation(Body)) :-
     \+ plain_positive_rel_atom(Atom).
 % Edge bodies cannot destructure JSON values because their runtime encoding is
 % not available to the edge SQL shape.
-edge_goal_refusal(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
+edge_goal_unsupported(Goal, Body, 8, edge_body_needs_json_destructure(Body)) :-
     nonvar(Goal),
     ( Goal = decode(_, _) ; Goal = json_each(_, _) ).
 
@@ -1082,7 +1082,7 @@ check_edge_head_column_types_for_rule(RelPlans, (Head <+ Body)) :-
 % lower.pl has no SQL shape for them yet).
 %
 % FORMAL MODEL: TICK-MODEL.md (same directory) is the semiring/grading
-% semantics behind this gate. The cross-plane refusals below
+% semantics behind this gate. The cross-plane unsupported constructs below
 % (log_on_level_headed_rel, latest_in_level_rule, pre_in_level_rule, and
 % engine.pl's finalize_in_level_rule / keyed_level_head) are hand-proven
 % instances of its ring/grade discipline; the planned clock checker
@@ -1101,8 +1101,8 @@ check_supported_subset(SugaredProg) :-
 % The cross-plane trigger conditions come from 0_program_check.pl, shared with
 % the oracle's engine:check_program/1 (rank R2 of
 % plans/2026-07-29-prolog-org-review.md). This door keeps its own order, which
-% INTERLEAVES the shared classes with compiler-only capability refusals, and
-% its own exception vocabulary: every refusal here wraps in
+% INTERLEAVES the shared classes with compiler-only capability unsupported constructs, and
+% its own exception vocabulary: every unsupported construct here wraps in
 % unsupported_construct/1, and keyed_log_rel additionally carries the key
 % positions the emitter would have needed.
 %
@@ -1116,7 +1116,7 @@ check_supported_subset_expanded(Program) :-
     % anything else reads a column type -- every later check that asks a
     % column's storage kind would otherwise ask it of a type that does not
     % resolve.
-    shared_refusal(Program, [ key_position_out_of_range,
+    shared_unsupported(Program, [ key_position_out_of_range,
                               key_position_duplicate,
                               type_cycle,
                               column_type_unknown,
@@ -1153,19 +1153,19 @@ check_supported_subset_expanded(Program) :-
                               % Burrs B3/B4, in the same slot engine.pl gives
                               % them: shapes this compiler refused at LOWERING
                               % while the reference engine ran them. Shared now,
-                              % so the refusal is a fact of the language and not
+                              % so the unsupported construct is a fact of the language and not
                               % of one back end. lower.pl keeps its residue
                               % guards as the backstop for direct entry.
                               relation_value_under_negation,
                               relation_value_in_edge_rule ]),
     % Was a local scan (rule_reserved_construct/2 plus two helpers). It is a
     % shared trigger now because the ORACLE had no equivalent at all: the same
-    % five reserved words compiled to a named refusal here and derived zero
+    % five reserved words compiled to a named unsupported construct here and derived zero
     % rows there, without a word. 0_program_check.pl states the boundary; this
-    % door's terms are unchanged, which the reserved_word_refusal_payloads
+    % door's terms are unchanged, which the reserved_word_unsupported_payloads
     % unit pins.
-    shared_refusal(Program, [ reserved_body_word ]),
-    shared_refusal(Program, [ log_on_level_headed_rel,
+    shared_unsupported(Program, [ reserved_body_word ]),
+    shared_unsupported(Program, [ log_on_level_headed_rel,
                               % TICK PHASE ALIGNMENT target 2 closed a hole
                               % this list did not have to cover before: while
                               % finalize/1 was a REFUSED registry row, a
@@ -1199,7 +1199,7 @@ check_supported_subset_expanded(Program) :-
                               % Same slot engine.pl gives it, straight after
                               % the edge class it defers to. Ahead of
                               % check_level_rule_shape below, whose generic
-                              % head-expression refusals would otherwise
+                              % head-expression unsupported constructs would otherwise
                               % report a compound the author spelled
                               % correctly instead of naming the aggregate.
                               aggregate_head_shape,
@@ -1217,75 +1217,75 @@ check_supported_subset_expanded(Program) :-
     % argument must be a plain variable, so trigger_arg_not_var owns that
     % position, and it owns it more precisely.
     check_no_compound_pattern_on_arrival_rel(Decls, Rules),
-    shared_refusal(Program, [ keyed_level_head, keyed_log_rel ]).
+    shared_unsupported(Program, [ keyed_level_head, keyed_log_rel ]).
 
-shared_refusal(Program, Order) :-
+shared_unsupported(Program, Order) :-
     (   first_violation(Program, Order, violation(Name, Payload))
-    ->  compiler_refusal(Name, Payload, Construct),
+    ->  compiler_unsupported(Name, Payload, Construct),
         throw(unsupported_construct(Construct))
     ;   true
     ).
 
-compiler_refusal(type_cycle,            Names, type_cycle(Names)).
-compiler_refusal(relation_pattern_not_a_relation_value,
+compiler_unsupported(type_cycle,            Names, type_cycle(Names)).
+compiler_unsupported(relation_pattern_not_a_relation_value,
                  pattern(Ref, Column, TypeName, Value),
                  relation_pattern_not_a_relation_value(Ref, Column, TypeName, Value)).
-compiler_refusal(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
+compiler_unsupported(dynamic_relation_name, Ref, dynamic_relation_name(Ref)).
 % The four lifecycle wrappers keep their own name, exactly as the local scan
 % this replaced produced it; every other reserved word reports as the bare
 % functor. Both terms are byte-for-byte what the compiler threw before the
 % trigger moved into 0_program_check.pl.
-compiler_refusal(reserved_body_word, reserved(Functor/_, LowerRole), Construct) :-
+compiler_unsupported(reserved_body_word, reserved(Functor/_, LowerRole), Construct) :-
     reserved_construct_name(LowerRole, Functor, Construct).
-compiler_refusal(relation_value_under_negation,
+compiler_unsupported(relation_value_under_negation,
                  pattern(Ref, Column, TypeName, Value),
                  relation_value_under_negation(Ref, Column, TypeName, Value)).
-compiler_refusal(relation_value_in_edge_rule,
+compiler_unsupported(relation_value_in_edge_rule,
                  pattern(Ref, Column, TypeName, Value),
                  relation_value_in_edge_rule(Ref, Column, TypeName, Value)).
-compiler_refusal(relation_column_type_conflict,
+compiler_unsupported(relation_column_type_conflict,
                  conflict(Ref, Column, TypeName, OtherRef, OtherColumn, OtherType),
                  relation_column_type_conflict(Ref, Column, TypeName,
                                                OtherRef, OtherColumn, OtherType)).
 % Same term as engine.pl's. Nothing here for the two vocabularies to disagree
 % about: neither door defines the mix, and the payload is the pair of
 % declarations the author wrote.
-compiler_refusal(head_column_type_conflict,
+compiler_unsupported(head_column_type_conflict,
                  conflict(HeadRef, HeadColumn, HeadType,
                           BodyRef, BodyColumn, BodyType),
                  head_column_type_conflict(HeadRef, HeadColumn, HeadType,
                                            BodyRef, BodyColumn, BodyType)).
-compiler_refusal(cst_capture_unused, Name, cst_capture_unused(Name)).
-compiler_refusal(cst_variable_uncaptured, Name,
+compiler_unsupported(cst_capture_unused, Name, cst_capture_unused(Name)).
+compiler_unsupported(cst_variable_uncaptured, Name,
                  cst_variable_uncaptured(Name)).
-compiler_refusal(regexp_pattern_not_literal, Payload, Payload).
-compiler_refusal(regexp_pattern_outside_subset, Payload, Payload).
-compiler_refusal(regexp_pattern_invalid, Payload, Payload).
-compiler_refusal(regexp_operand_not_text, Payload, Payload).
-compiler_refusal(column_type_unknown,    Name, column_type_unknown(Name)).
-compiler_refusal(key_position_out_of_range, Payload, Payload).
-compiler_refusal(key_position_duplicate,    Payload, Payload).
-compiler_refusal(keyed_level_head,        Ref, keyed_level_head(Ref)).
+compiler_unsupported(regexp_pattern_not_literal, Payload, Payload).
+compiler_unsupported(regexp_pattern_outside_subset, Payload, Payload).
+compiler_unsupported(regexp_pattern_invalid, Payload, Payload).
+compiler_unsupported(regexp_operand_not_text, Payload, Payload).
+compiler_unsupported(column_type_unknown,    Name, column_type_unknown(Name)).
+compiler_unsupported(key_position_out_of_range, Payload, Payload).
+compiler_unsupported(key_position_duplicate,    Payload, Payload).
+compiler_unsupported(keyed_level_head,        Ref, keyed_level_head(Ref)).
 % The only payload that differs from the oracle's: lowering needs the
 % positions to explain which key decl is at fault.
-compiler_refusal(keyed_log_rel,   Ref-Positions, keyed_log_rel(Ref, Positions)).
-compiler_refusal(log_on_level_headed_rel, Ref, log_on_level_headed_rel(Ref)).
-compiler_refusal(keep_on_non_log_rel,     Ref, keep_on_non_log_rel(Ref)).
-compiler_refusal(finalize_in_level_rule,  Ref, finalize_in_level_rule(Ref)).
-compiler_refusal(latest_in_level_rule,    Ref, latest_in_level_rule(Ref)).
-compiler_refusal(pre_in_level_rule,       Ref, pre_in_level_rule(Ref)).
-compiler_refusal(missing_retention,       Ref, missing_retention(Ref)).
-compiler_refusal(retention_head_conflict_risk, Ref-count(N),
+compiler_unsupported(keyed_log_rel,   Ref-Positions, keyed_log_rel(Ref, Positions)).
+compiler_unsupported(log_on_level_headed_rel, Ref, log_on_level_headed_rel(Ref)).
+compiler_unsupported(keep_on_non_log_rel,     Ref, keep_on_non_log_rel(Ref)).
+compiler_unsupported(finalize_in_level_rule,  Ref, finalize_in_level_rule(Ref)).
+compiler_unsupported(latest_in_level_rule,    Ref, latest_in_level_rule(Ref)).
+compiler_unsupported(pre_in_level_rule,       Ref, pre_in_level_rule(Ref)).
+compiler_unsupported(missing_retention,       Ref, missing_retention(Ref)).
+compiler_unsupported(retention_head_conflict_risk, Ref-count(N),
                  retention_head_conflict_risk(Ref, count(N))).
 % Named WITH the offending head reference, where the oracle's bare
-% aggregate_in_edge_head names nothing. A compiler refusal has to say which
+% aggregate_in_edge_head names nothing. A compiler unsupported construct has to say which
 % rule to edit; the oracle's term is the one fixtures already pin.
-compiler_refusal(aggregate_in_edge_head,  Ref, aggregate_in_edge_head(Ref)).
-compiler_refusal(aggregate_head_shape,     Shape, aggregate_head_shape(Shape)).
+compiler_unsupported(aggregate_in_edge_head,  Ref, aggregate_in_edge_head(Ref)).
+compiler_unsupported(aggregate_head_shape,     Shape, aggregate_head_shape(Shape)).
 % Same term at both doors. There is nothing for the two vocabularies to
 % disagree about here: neither door implements the word, and the payload is
 % the registry's own answer about what does work.
-compiler_refusal(aggregate_not_implemented,
+compiler_unsupported(aggregate_not_implemented,
                  unimplemented(Ref, Signature, Implemented),
                  aggregate_not_implemented(Ref, Signature, Implemented)).
 
@@ -1293,7 +1293,7 @@ compiler_refusal(aggregate_not_implemented,
 % plans/2026-07-29-prolog-org-review.md). The oracle's engine:body_latest_ref/2
 % and engine:body_pre_ref/2 call the same implementation under the same policy,
 % and the body_walk_characterization unit asserts the two sides agree case by
-% case, which is what makes the cross-plane refusal parity real rather than
+% case, which is what makes the cross-plane unsupported construct parity real rather than
 % coincidental.
 level_body_latest_ref(Body, Ref) :-
     body_wrapper_refs(Body, latest,
@@ -1431,8 +1431,8 @@ check_edge_rule_shape((Head <+ Body)) :-
 % gate and this one cannot answer differently about which words are reserved.
 % What stays here is the NAMING, which is this door's own vocabulary; the
 % body_walk_characterization golden pins this predicate, and
-% compiler_refusal/3 reaches the same reserved_construct_name/3 below, so one
-% rule names the refusal wherever it is raised.
+% compiler_unsupported/3 reaches the same reserved_construct_name/3 below, so one
+% rule names the unsupported construct wherever it is raised.
 reserved_construct_in_body(Body, Construct) :-
     body_reserved_word(Body,
                        walk_policy(descend_not(false), splice_bare(false)),
@@ -1442,7 +1442,7 @@ reserved_construct_in_body(Body, Construct) :-
 reserved_construct_name(wrapper(_, refuse(lifecycle)), Functor,
                         lifecycle_arm(Functor)) :- !.
 % A word the language REMOVED rather than never had. Reported as
-% removed_word(Word) so 0_refusal_messages.pl can name the replacement
+% removed_word(Word) so 0_unsupported_messages.pl can name the replacement
 % construct instead of only the deleted spelling; `set` set the precedent and
 % `scan` (ruling files_naming) is the second.
 reserved_construct_name(LowerRole, Functor, removed_word(Functor)) :-
@@ -1507,7 +1507,7 @@ check_no_edge_head_conflict_risk(Decls, Rules) :-
 %
 % This is the crack SCOREBOARD.md has carried since phase C as "compound
 % arrival text vs json1 match", stated there for the EDGE arm
-% (edge_body_needs_json_destructure). The level arm had no refusal at all: it
+% (edge_body_needs_json_destructure). The level arm had no unsupported construct at all: it
 % compiled, and fork_join_error_arm_is_a_value sat in the sweep's run_error
 % bucket next to a genuine rejection fixture.
 %
@@ -1524,7 +1524,7 @@ check_no_edge_head_conflict_risk(Decls, Rules) :-
 %   SELECT status, typeof(status) FROM t;  ->  502|text
 % and the tick log would print "502" where the oracle prints 502. Typing a
 % destructured sub-argument IS the struct plane. So the honest shape today is
-% a name, and the arc that deletes this refusal is struct_as_rows.
+% a name, and the arc that deletes this unsupported construct is struct_as_rows.
 %
 % COMPILER-ONLY, in the same slot and for the same reason as
 % now_in_level_rule: the oracle keeps executing these programs (unifying
@@ -1584,7 +1584,7 @@ check_level_rule_shape((Head <- Body)) :-
     ( body_forbidden_goal(Body, Forbidden)
     -> throw(unsupported_construct(level_body_goal(Head, Forbidden)))
     ; true ),
-    % COMPILER-ONLY refusal, deliberately NOT mirrored into 0_program_check.pl
+    % COMPILER-ONLY unsupported construct, deliberately NOT mirrored into 0_program_check.pl
     % or engine.pl: the oracle DOES solve now/1 in a level body (solve/2 reads
     % the tick straight out of ctx/3, and level_closure/5 is handed the same
     % Tick), so this is a capability gap named precisely, not a semantics
@@ -1615,7 +1615,7 @@ negated_guard_goal(Body, Goal) :-
     body_guard_goals(Inner, InnerGuards),
     InnerGuards = [Goal | _].
 
-% Any now/1 goal a level body reaches, negation included -- the refusal is
+% Any now/1 goal a level body reaches, negation included -- the unsupported construct is
 % about the level plane having no tick source in its emitted SQL, and that is
 % true on either side of a not/1.
 rule_body_tick_ref(Body, Goal) :-
@@ -1699,7 +1699,7 @@ refused_aggregate_head_shape(Head, Arg) :-
 % here because both fixtures also have an empty Schedule (all grading is via
 % `final(...)`, which this compiler's sweep does not check -- see
 % SCOREBOARD.md findings). Refusing head arithmetic turns that silent wrong
-% output into a named refusal until real arithmetic lowering lands (widening
+% output into a named unsupported construct until real arithmetic lowering lands (widening
 % priority: "arithmetic + bind :=" in the phase C contract's own ordering).
 head_arithmetic_shape(Head, ArithExpr) :-
     Head =.. [_ | Args],
