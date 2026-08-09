@@ -142,14 +142,12 @@ test("a rel the incoming program does not declare loses its table", { timeout: 8
 
 /**
  * THE h_rule HOLE, GUARDED FROM THE OTHER SIDE. `reach_row`'s fingerprint does
- * not move when only its head-to-body wiring moves (test 4), so the planner
- * verdicts `keep` and contributes no statement at all. The rows still flip,
- * because every level rel's boot statements are `DELETE FROM` + a full
- * re-derive and the boot leg runs UNCONDITIONALLY. That is the whole reason the
- * wire above must never let a `keep` verdict skip the boot recompute; this test
- * is what goes red the day someone tries.
+ * moves when its head-to-body wiring moves (test 4), so the planner verdicts
+ * `refill` and the boot recompute re-derives the flipped rows. Went red on the
+ * rule_bodies_map fix exactly as written: the verdict here read `keep` while
+ * the fingerprint was blind to head rewiring.
  */
-test("a rule whose head wiring moved re-derives even though the planner says keep", { timeout: 8000 }, async () => {
+test("a rule whose head wiring moved refills and re-derives", { timeout: 8000 }, async () => {
   const db_url = scratch_db_url();
   const served = await start_served(0, undefined, db_url);
   try {
@@ -159,7 +157,7 @@ test("a rule whose head wiring moved re-derives even though the planner says kee
 
     const swap = await within(post_program(served.port, REWIRED), 5000, "reload of a rewired head");
     assert.equal(swap.statusCode, 200, swap.body);
-    assert.equal(verdict_of((JSON.parse(swap.body) as LoadReply).reload, "reach_row"), "keep");
+    assert.equal(verdict_of((JSON.parse(swap.body) as LoadReply).reload, "reach_row"), "refill");
 
     assert.deepEqual(rows_of((await request(served.port, "/idb/edge_row", "GET")).body), [["one", "two"]]);
     assert.deepEqual(rows_of((await request(served.port, "/idb/reach_row", "GET")).body), [["two", "one"]]);
@@ -169,13 +167,11 @@ test("a rule whose head wiring moved re-derives even though the planner says kee
 });
 
 /**
- * FAILING-FIRST, SKIPPED: the fix is `rule_bodies_map` in v6/prolog/lower.pl,
- * which a concurrent lane owns. `findall` collects bare bodies, severing
- * head-body variable sharing, so `numbervars` canonicalizes both wirings to
- * `edge_row('$VAR'(0),'$VAR'(1))`. Measured on these two programs: h_rule is
- * `64609212297cf158` for BOTH.
+ * Pins the rule_bodies_map fix: hashing Head-Body keeps head-to-body variable
+ * sharing visible, so the two wirings canonicalize differently. Pre-fix both
+ * hashed `64609212297cf158`.
  */
-test("h_rule moves when a rule's head-to-body wiring moves", { skip: "fix lives in v6/prolog/lower.pl rule_bodies_map/2, owned by the type-IR lane" }, async () => {
+test("h_rule moves when a rule's head-to-body wiring moves", async () => {
   const narrow = await firstValueFrom(ProgramCompiler.compile(NARROW));
   const rewired = await firstValueFrom(ProgramCompiler.compile(REWIRED));
   const rule_hash = (catalog: readonly IRelCatalogRow[]): string =>

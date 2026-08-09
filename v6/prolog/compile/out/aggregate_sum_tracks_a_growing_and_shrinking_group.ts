@@ -185,7 +185,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "aggregate_sum_tracks_a_growing_and_shrinking_group", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "9b008e9e31b7ae34", h_schema: "", h_rule: "" },
-  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "budget", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "4f2a27ae91e0bc1d", h_schema: "ed6fe1287e73349a", h_rule: "5cb8d99a488ce9da" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "budget", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "4f2a27ae91e0bc1d", h_schema: "ed6fe1287e73349a", h_rule: "71a2c2126d7b54dd" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "team", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f6bd9b7904898400", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "col2", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "56b189f537ca7009", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "spend", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "896c1a819de68164", h_schema: "1d919935858c123d", h_rule: "" },

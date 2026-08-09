@@ -181,7 +181,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "dispatch_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "d07577a9a38646e4", h_schema: "", h_rule: "" },
   { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "previous_leg", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "bf0eb3598fdbd403", h_schema: "", h_rule: "" },
   { rel_id: 11, parent_id: 7, ordinal: 4, local_name: "kilos", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "1506f9f619b1c508", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "leg_total", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "cb0e877aee84c43e", h_schema: "b29765c4a6c2c901", h_rule: "747130d40fec10f5" },
+  { rel_id: 12, parent_id: 6, ordinal: 0, local_name: "leg_total", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "cb0e877aee84c43e", h_schema: "b29765c4a6c2c901", h_rule: "93e5d39988fe2bba" },
   { rel_id: 13, parent_id: 12, ordinal: 1, local_name: "leg_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "d2f1686691c6e29e", h_schema: "", h_rule: "" },
   { rel_id: 14, parent_id: 12, ordinal: 2, local_name: "dispatch_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "4e8e84f9fbef22fa", h_schema: "", h_rule: "" },
   { rel_id: 15, parent_id: 12, ordinal: 3, local_name: "kilos", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "9816cdcb61d3c006", h_schema: "", h_rule: "" },
