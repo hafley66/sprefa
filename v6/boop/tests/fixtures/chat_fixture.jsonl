@@ -1,0 +1,3 @@
+{"type":"user","sessionId":"fixture-session","uuid":"u1","timestamp":"2026-08-01T00:00:00.100Z","cwd":"/w","gitBranch":"main","message":{"content":"hello world this is human text"}}
+{"type":"assistant","sessionId":"fixture-session","uuid":"u2","parentUuid":"u1","timestamp":"2026-08-01T00:00:01.000Z","cwd":"/w","gitBranch":"main","message":{"content":[{"type":"text","text":"the secret plan is clearly stated here"},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/tmp/secret-notes.md"}},{"type":"tool_result","tool_use_id":"toolu_1","content":"TOPSECRETFILEMARKER this is the entire file body please never surface"}]}}
+{"type":"system","sessionId":"fixture-session","content":"mode switched","timestamp":"2026-08-01T00:00:02.000Z"}

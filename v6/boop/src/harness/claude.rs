@@ -189,7 +189,7 @@ fn collect_tool_use(
 }
 
 /// Parse an ISO-8601 UTC timestamp into ms since the epoch.
-fn parse_iso_ms(text: &str) -> Option<u64> {
+pub(crate) fn parse_iso_ms(text: &str) -> Option<u64> {
     use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
     let parsed = OffsetDateTime::parse(text, &Rfc3339).ok()?;

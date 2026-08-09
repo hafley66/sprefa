@@ -11,9 +11,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::bus::Route;
 use crate::event::AgentEvent;
+use crate::harness::SessionRef;
 use crate::registry::Registry;
 
 mod bus;
+mod chat;
 mod event;
 mod harness;
 mod ident;
@@ -193,6 +195,23 @@ enum SubCmd {
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
+    /// Project sessions into NDJSON chat-repr turns (the zipf door).
+    Chat {
+        /// The session id to project.
+        #[arg(long)]
+        session: Option<String>,
+        /// Project every session the registry knows.
+        #[arg(long)]
+        all: bool,
+        /// Tail the session, one NDJSON line per new turn.
+        #[arg(long)]
+        follow: bool,
+        /// Only turns at or after this ts (ms since the epoch).
+        #[arg(long)]
+        since: Option<u64>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -304,6 +323,9 @@ fn main() -> Result<()> {
             mail_dir.as_deref(),
         ),
         SubCmd::Prune { mail_dir } => run_prune(mail_dir.as_deref()),
+        SubCmd::Chat { session, all, follow, since, json } => {
+            run_chat(&registry, session.as_deref(), all, follow, since, json)
+        }
     }
 }
 
@@ -380,6 +402,63 @@ fn run_events(
         }
     }
     Ok(())
+}
+
+/// Project one session (or every session) into NDJSON chat-repr turns.
+fn run_chat(
+    registry: &Registry,
+    session_id: Option<&str>,
+    all: bool,
+    follow: bool,
+    since: Option<u64>,
+    _json: bool,
+) -> Result<()> {
+    if all {
+        for adapter in registry.all() {
+            for session in adapter.sessions()? {
+                let (turns, _) = crate::chat::snapshot(&session)?;
+                for turn in turns.into_iter().filter(|turn| since.map(|s| turn.ts_ms >= s).unwrap_or(true)) {
+                    println!("{}", serde_json::to_string(&turn)?);
+                }
+            }
+        }
+        return Ok(());
+    }
+    let Some(session_id) = session_id else {
+        anyhow::bail!("chat needs --session <id> or --all");
+    };
+    let session = find_session(registry, session_id)?;
+    if follow {
+        let mut seq = 1u64;
+        let mut offset = 0u64;
+        loop {
+            let (turns, next) = crate::chat::read_turns(&session, offset, &mut seq)?;
+            for turn in turns {
+                if since.map(|s| turn.ts_ms >= s).unwrap_or(true) {
+                    println!("{}", serde_json::to_string(&turn)?);
+                }
+            }
+            std::io::Write::flush(&mut std::io::stdout())?;
+            offset = next;
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+    let (turns, _) = crate::chat::snapshot(&session)?;
+    for turn in turns.into_iter().filter(|turn| since.map(|s| turn.ts_ms >= s).unwrap_or(true)) {
+        println!("{}", serde_json::to_string(&turn)?);
+    }
+    Ok(())
+}
+
+fn find_session(registry: &Registry, session_id: &str) -> Result<SessionRef> {
+    for adapter in registry.all() {
+        for session in adapter.sessions()? {
+            if session.session_id == session_id {
+                return Ok(session);
+            }
+        }
+    }
+    anyhow::bail!("no session found with id `{session_id}`")
 }
 
 fn resolve_harness<'a>(registry: &'a Registry, id: &str) -> Result<&'a dyn crate::harness::Harness> {
