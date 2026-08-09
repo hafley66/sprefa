@@ -1,0 +1,45 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 24
+  }
+}
+direction: right
+
+classes: {
+  gone: { style.fill: "#F0F0F0" }
+  keep: { style.fill: "#E3F0E3" }
+}
+
+agent: 'agent: f2'
+
+decl_schema: 'canonical\ncol_type' { class: keep }
+type_decl:   'type_decl/2\nsource' 
+col_type:    'col_type/3\nrows'
+type_def:    'type_def/3\nproj' { class: gone }
+relplan:     'relplan/5\nKind+Key'
+type_decl -> decl_schema: collapse
+col_type -> decl_schema: collapse
+type_def -> decl_schema: delete
+relplan -> decl_schema: falsify
+
+relation_cols: 'and_types/5\n+ Columns' { class: keep }
+rel_col_types: 'col_types/4\ngone' { class: gone }
+rel_col_types -> relation_cols: merge
+
+phase_ddl: 'phase_stage_ddl' { class: keep }
+departure: 'departure_frontier'
+delta_ddl: 'delta_ddl'
+departure -> phase_ddl: reuse
+delta_ddl -> phase_ddl: reuse
+
+arrival_pro: 'arrival_prologue' { class: keep }
+arr_log: 'arrival log'
+arr_set: 'arrival set'
+arr_log -> arrival_pro: factor
+arr_set -> arrival_pro: factor
+
+decl_schema -> relation_cols
+relation_cols -> phase_ddl
+phase_ddl -> arrival_pro

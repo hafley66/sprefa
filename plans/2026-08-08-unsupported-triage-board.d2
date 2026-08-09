@@ -1,0 +1,54 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  fix: { style.fill: "#d3f2d3"; style.stroke: "#2e7d32"; style.font-color: "#1b3d1b" }
+  keep: { style.fill: "#fde3e3"; style.stroke: "#b71c1c"; style.font-color: "#4a1010" }
+  grey: { style.fill: "#eeeeee"; style.stroke: "#9e9e9e"; style.font-color: "#424242" }
+  you: { style.fill: "#fff3cd"; style.stroke: "#b06000"; style.font-color: "#5c3a00" }
+}
+
+pile: "1. the pile" {
+  all: "101 times the compiler\nsays NO to a program\n\nevery one traced to its\nexact throw line today"
+}
+
+buckets: "2. what each NO really is" {
+  acc: "accidents: 14\ncrossed wires,\nnever a decision" { class: fix }
+  unb: "unbuilt: 30\nreal feature,\nnobody made it yet" { class: fix }
+  wall: "real walls: 39\neach guards a promise:\nalways halts, ids never leak" { class: keep }
+  dead: "dead: 9\nalready fixed\nor never real" { class: grey }
+  yours: "your calls: 9\nin rulings.pl,\nonly you reopen" { class: you }
+}
+
+work: "3. the fix line, in order" {
+  rename: "a. word-swap lane lands\n(the old jargon word ->\nunsupported, code-wide)"
+  batch: "b. small-fix squads\n14 accidents +\n22 small unbuilt" { class: fix }
+  arcs: "c. two big builds\nmodule dots\njson inside edge rules" { class: fix }
+}
+
+ex: |md
+  ## 5 examples, each about one line
+  - group_concat(x): default the comma
+  - unknown compare op: add its table row
+  - not(X > 1): flip to X =< 1
+  - quote inside text: double it, SQL rule
+  - rtrim + replace: 2 rows, unlocks folder paths
+| { near: bottom-center }
+
+pile.all -> buckets.acc: 14
+pile.all -> buckets.unb: 30
+pile.all -> buckets.wall: 39
+pile.all -> buckets.dead: 9
+pile.all -> buckets.yours: 9
+
+buckets.acc -> work.batch
+buckets.unb -> work.batch: small ones
+buckets.unb -> work.arcs: big ones
+work.rename -> work.batch: "unlocks\n(same files)"
+work.batch -> work.arcs: then

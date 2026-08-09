@@ -1,0 +1,58 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  before:  { style.fill: "#fde8e8"; style.stroke: "#b91c1c"; style.font-color: "#1a1a1a" }
+  after:   { style.fill: "#e7f6ec"; style.stroke: "#15803d"; style.font-color: "#1a1a1a" }
+  verdict: { style.fill: "#eef2ff"; style.stroke: "#4338ca"; style.font-color: "#1a1a1a" }
+}
+
+agent: "agent: s3"
+
+f1: "1. lower.pl catalog type-id chain" {
+  b1: "catalog_column_type_id: re-derives type from Decls" { class: before }
+  b2: "declared_column_type: walks col_type again" { class: before }
+  b3: "resolve_declared_column_type: 4 clauses pick list, ref, or scalar" { class: before }
+  a1: "merged: dispatch on relplan ColumnType directly" { class: after }
+  b1 -> a1: collapses
+  b2 -> a1: collapses
+  b3 -> a1: collapses
+}
+
+f2: "2. analyze.pl merge_type triples" {
+  b1: "merge_type ref(Type) triple: 3 clauses" { class: before }
+  b2: "merge_type json triple: 3 clauses" { class: before }
+  b3: "merge_type list(X) triple: 3 clauses" { class: before }
+  a1: "merged: one closed-type triple, functor as data" { class: after }
+  b1 -> a1: collapses
+  b2 -> a1: collapses
+  b3 -> a1: collapses
+}
+
+f3: "3. col_type(Ref,_,_) walk family" {
+  b1: "relation_column_types/4 clause 2: types from Decls" { class: before }
+  b2: "rel_columns/4: columns from Decls" { class: before }
+  b3: "declared_column_types/3 in emit_ts.pl: same walk" { class: before }
+  b4: "missing_head_target_atoms/5: same walk inline" { class: before }
+  a1: "merged: one exported helper, four call sites" { class: after }
+  b1 -> a1: collapses
+  b2 -> a1: collapses
+  b3 -> a1: collapses
+  b4 -> a1: collapses
+}
+
+f4: "4. named target verdict" {
+  v1: "type_decl to type_def: pure derivation, recomputed 22 times" { class: verdict }
+  v2: "type_decl vs relplan: different domains, do not merge" { class: verdict }
+}
+
+agent -> f1
+f1 -> f2
+f2 -> f3
+f3 -> f4

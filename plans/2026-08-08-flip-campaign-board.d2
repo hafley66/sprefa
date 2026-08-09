@@ -1,0 +1,58 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  merged: { style.fill: "#dcffe4"; style.stroke: "#1a7f37"; style.font-color: "#1a7f37" }
+  open: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#9a6700" }
+  running: { style.fill: "#ddf4ff"; style.stroke: "#0969da"; style.font-color: "#0969da" }
+  red: { style.fill: "#ffebe9"; style.stroke: "#cf222e"; style.font-color: "#cf222e" }
+  note: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de" }
+}
+
+one: "1. The flip attempt (this morning)" {
+  attempt: "default_intern_mode flipped direct to dict\nthe executing 211-program sweep said NO\n17 modules wrong, reverted same hour" { class: red }
+}
+
+two: "2. Four repair lanes, one per failure family" {
+  lane a: "family A: departure frontier\nthe runtime fills it with DECODED text\nbut its table declared INTEGER ids\nfix: that plane reads direct\nwrong count 17 down to 12 -- PULL REQUEST 32 MERGED" { class: merged }
+  lane b: "family B: aggregate built strings\ngroup_concat makes a string the\ndictionary never saw; intern it on write\nwrong count 12 down to 8 -- PULL REQUEST 34 MERGED" { class: merged }
+  lane c: "family C: struct and json planes\ntwo runtime planes wrote characters\ninto id columns; intern + stored snapshot\nwrong count 8 down to 5 -- PULL REQUEST 36 OPEN" { class: open }
+  lane d: "family D: rel-term demand keys\njson_extract read the raw id;\none decode closes all five\nwrong count 5 down to ZERO -- PULL REQUEST 37 OPEN" { class: open }
+}
+
+three: "3. The flip gate, run again by the coordinator" {
+  sweep green: "executing sweep with dict as the default:\n211 programs, wrong = 0, first time ever" { class: merged }
+  plunit red: "but the unit tests fail 15 of 470:\n14 snapshots that pin direct-mode text,\nplus ONE REAL DEFECT" { class: red }
+}
+
+four: "4. The fifth bypass door (lane I-M, RUNNING NOW)" {
+  catalog door: "the catalog seed door:\ncatalog table columns say INTEGER,\nthe seed INSERT writes raw characters\nthat never crossed the dictionary --\nevery catalog read at dict answers NULL" { class: red }
+  im lane: "lane I-M fixes the seed, adds a rail that\nscans ALL emitted output for character\nliterals in id columns, and pins the 14\nsnapshots to direct explicitly" { class: running }
+}
+
+five: "5. What remains after lane I-M" {
+  flip pr: "the flip pull request:\ndefault becomes dict, full battery green,\nstacked behind pull requests 36 and 37" { class: open }
+  bench: "lane I-E: recursive heads switch from\nWITHOUT ROWID to rowid + UNIQUE,\nthen the benchmark rerun that collects\nthe 1.7 to 2.0 times speedup" { class: note }
+}
+
+ledger: |||md
+  | pull request | content | state |
+  |---|---|---|
+  | 32 | family A, departure frontier | merged |
+  | 34 | family B, aggregate strings | merged |
+  | 36 | family C, struct and json | open, yours to merge |
+  | 37 | family D, demand keys | open, merge after 36 |
+  | next | the flip itself + catalog door | waiting on lane I-M |
+||| { class: note }
+
+one -> two: "referee report\nbuckets the 17"
+two -> three: "board clear,\nretry the gate"
+three -> four: "unit tests catch\nwhat the sweep cannot"
+four -> five: "last door closed"
+ledger -> five: "merge order"

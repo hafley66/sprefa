@@ -1,0 +1,40 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+agent: "agent: f3"
+truth: "one truth:\nthe rel column list + types"
+
+flat:   "col_type/3\nflat rows inside Decls"
+grouped: "type_decl/2\nName to [col pairs]"
+depair: "type_def/3\ncols[] + types[]"
+plan:   "relplan/5\nadds kind + key, storage kind"
+
+merged:  "rel/5\ndeclared type, kind, key"
+storage: "column_storage/3\nderives storage on read"
+
+ddl3: "CREATE TEMP _phase/_sequence\nx: 3 identical sites"
+ddl1: "helper:\none create_temp_working"
+
+maps:  "rel_column_types +\ndeclared map: truth x2"
+maps1: "one emitted map,\ngate derived on read"
+
+agent -> truth: f3 scan
+truth -> flat
+truth -> grouped
+truth -> depair
+truth -> plan
+flat -> merged
+grouped -> merged
+depair -> merged
+plan -> merged
+merged -> storage: one path
+ddl3 -> ddl1: merge
+maps -> maps1: merge
+truth -> ddl3: same gen habit
+truth -> maps: same habit

@@ -1,0 +1,65 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de" }
+  fact: { style.fill: "#d0e7ff"; style.stroke: "#1565c0"; style.font-color: "#0d2c54" }
+  derive: { style.fill: "#d3f2d3"; style.stroke: "#2e7d32"; style.font-color: "#1b3d1b" }
+  world: { style.fill: "#fde3e3"; style.stroke: "#b71c1c"; style.font-color: "#4a1010" }
+}
+
+prog: "1. program text (never names a transport)" {
+  eff: "an EFFECT is a lazy rel;\nits oracle is THE WORLD.\nleft of -> = demand (you write),\nright of -> = response (world fills)" {
+    t: |`text
+rel fetch(endpoint: Url, prev: Tag)
+        -> FetchResult;
+`| { class: code }
+  }
+  b: "BIND = link time, separate file:\npick the transport for one effect.\nexactly one bind per effect" {
+    t: |`text
+bind fetch = shell {
+  `curl ...` -> (status, tag, body);
+  match status { 200 => Fresh{..},
+    304 => Unchanged, s => Error{s} }
+};
+`| { class: code }
+  }
+}
+
+hosts: "2. hosts = the executors the engine can call" {
+  sh: "sh: run a shell command\n(sh_decl, registry:191)" { class: world }
+  ast: "ast: tree-sitter query\n(rust/ts/go/kotlin...)" { class: world }
+  probe: "probe: host_probe wrapper\n(registry:192)" { class: world }
+}
+
+db: "3. the tick (one sqlite transaction)" {
+  edb: "EDB = extensional:\nfacts that ARRIVE from outside.\nscans, typed facts, effect responses" { class: fact }
+  idb: "IDB = intensional:\nrels your RULES derive.\nretract/append per <- vs <+" { class: derive }
+}
+
+read: "4. observers\nread sqlite directly:\n/idb/<rel>. the db IS the API" { class: derive }
+
+reg: "the registry is the PARTS LIST of all of it\n(compile/registry.pl)" {
+  style: { stroke: "#b06000"; stroke-width: 3 }
+  t: |`text
+surface constructs        57 rows
+host input contracts      25
+expressions (str.rtrim..) 12
+clock roles 7  cli 7  http 5
+host executors 3+3+2  trace 5
+`| { class: code }
+}
+
+prog.eff -> db.edb: "demand row =\na content-addressed request"
+prog.b -> hosts.sh: routes fetch to
+db.edb -> hosts: "unfilled demand\ngoes out"
+hosts -> db.edb: "response comes back\nAS A FACT (envelope enum)"
+db.edb -> db.idb: rules join
+db.idb -> read
+reg -> prog: "host/bind rows are 2 of\n~12 row kinds, so: no,\nthe registry is not just host/binds"

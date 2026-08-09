@@ -1,0 +1,46 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+title: "agent: s2"
+
+typeplane: "type plane: one struct, three shapes" {
+  col_type: "col_type/3 facts, the source"
+  type_decl: "type_decl/2, synthesized copy"
+  type_def: "type_def/3, unzipped copy"
+  relplan_ct: "relplan ColumnTypes, a 4th copy"
+  merged: "struct_type/4, one merged record"
+
+  col_type -> type_decl: "parse_dl 848"
+  type_decl -> type_def: "0_type_plane 62"
+  col_type -> relplan_ct: "analyze 388"
+  type_decl -> merged: "drop"
+  type_def -> merged: "keep shape"
+  relplan_ct -> merged: "keep storage kind"
+}
+
+columndef: "lower.pl: one idiom, ten call sites" {
+  rel_ddl: "rel_ddl/6, log and set clauses"
+  frontier: "departure_frontier_ddl/4"
+  pre: "pre_ddl/4"
+  delta: "delta_ddl/3, temp table arm"
+  dred: "dred_wave_ddl/4"
+  expand: "expand_wave_ddl/4"
+  refcount: "ref_count_head_ddl/4"
+  helper: "columns_def_sql/5, one helper"
+
+  rel_ddl -> helper
+  frontier -> helper
+  pre -> helper
+  delta -> helper
+  dred -> helper
+  expand -> helper
+  refcount -> helper
+}
+
+typeplane -> columndef: "two duplication classes"

@@ -1,0 +1,58 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  old: { style.fill: "#fdf2f2"; style.stroke: "#c0392b" }
+  merged: { style.fill: "#eafaf1"; style.stroke: "#1e8449"; style.font-color: "#1e8449" }
+  verdict: { style.fill: "#fef9e7"; style.stroke: "#b7950b"; style.font-color: "#7d6608" }
+}
+
+agent: agent: s1
+
+f1: 1. lower.pl DDL prologue, 8 sites {
+  a: "rel_ddl/6 log+set, L1294-1310" { class: old }
+  b: "pre_ddl/departure/delta_ddl, L4583-4619" { class: old }
+  c: "dred/expand/refcount_ddl, L4669-4716" { class: old }
+}
+f1_merged: "column_defs_sql/5 NEW, -13 lines" { class: merged }
+f1.a -> f1_merged
+f1.b -> f1_merged
+f1.c -> f1_merged
+
+f2: 2. emit_ts.pl wire-type drift {
+  a: "gate_column_type/2, L818-824" { class: old }
+  b: "boundary_column_type/2, L826-843" { class: old }
+}
+f2_merged: "wire_column_type/2 shared, -6 lines" { class: merged }
+f2.a -> f2_merged: "list(_)->json twice"
+f2.b -> f2_merged
+
+f3: 3. named target chain {
+  a: "type_decl/2, 102 sites: raw spec" { class: old }
+  b: "type_def/3, 10 sites: zero-info reshape"
+  c: "relplan/5, 113 sites: storage+Kind+Key, all rels"
+  a -> b: type_definitions/2
+  b -> c: dictionary_relplans/2
+}
+f3_verdict: "verdict: NOT one record, Decls stays separate" { class: verdict }
+f3.c -> f3_verdict
+
+f4: 4. the one real drift site {
+  a: "declared_column_types/3, emit_ts L802" { class: old }
+  b: "relation_columns_and_types/5, type_plane L158"
+  a -> b: "should call, does not"
+}
+
+f5: 5. lower.pl arrival_statement {
+  a: "arrival_statement/2 log, L2006-2012" { class: old }
+  b: "arrival_statement/2 set, L2013-2030" { class: old }
+}
+f5_merged: "arrival_columns_and_placeholders/7 NEW, -3 lines" { class: merged }
+f5.a -> f5_merged
+f5.b -> f5_merged

@@ -1,0 +1,56 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de" }
+  data: { style.fill: "#fff3cd"; style.stroke: "#b06000"; style.font-color: "#5c3a00" }
+  door: { style.fill: "#d3f2d3"; style.stroke: "#2e7d32"; style.font-color: "#1b3d1b" }
+}
+
+kinds: "the three kinds of thing in the language" {
+  relrow: "REL = facts that are true\n(rows in tables)" {
+    t: |`text
+file(12, "src/a/b.ts")
+`| { class: code }
+  }
+  rule: "RULE = how to derive\nmore facts" {
+    t: |`text
+clean(N) <- file(_, N0),
+  N := str.rtrim(N0, "/");
+`| { class: code }
+  }
+  regrow: "REGISTRY ROW = how to\ncompute ONE VALUE\n(a function, stored as DATA)" { class: data }
+}
+
+registry: "the registry: a table the COMPILER reads at build time\n(compile/registry.pl, already exists, ~170 rows)" {
+  style: { stroke: "#b06000"; stroke-width: 3 }
+  t: |`prolog
+% name        arity  sqlite spelling   oracle eval
+expression(concat,     2, "(~w || ~w)",  ev_concat).
+expression(json_group_array, 1, "...",   ev_jga).
+expression(str:rtrim,  2, "rtrim(~w,~w)", ev_rtrim). % NEW: one row
+expression(str:replace,3, "replace(...)", ev_replace). % NEW: one row
+`| { class: code }
+}
+
+doors: "everyone who READS the row (adding a target = a column, never a rewrite)" {
+  sql: "lower.pl\nprints the sqlite spelling\ninto the emitted SQL" { class: door }
+  oracle: "ticklog.pl oracle\nevals in prolog so conformance\ncan diff both engines" { class: door }
+  ts: "emit_ts / libsql UDF\nwhen sqlite has no\nnative spelling" { class: door }
+  miss: "row missing a column?\nnamed unsupported term\nAT PRINT TIME, never silent"
+}
+
+kinds.regrow -> registry: "str.rtrim is\njust a row"
+registry -> doors.sql
+registry -> doors.oracle
+registry -> doors.ts
+registry -> doors.miss: "declared ahead\nof impl = safe"
+
+note: "same trick as the type IR:\ntype row: list(text) -> each target spells storage its way\nfunction row: str.rtrim -> each target spells the CALL its way"
+registry -> note

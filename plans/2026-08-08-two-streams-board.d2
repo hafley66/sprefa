@@ -1,0 +1,54 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  live: { style.fill: "#d0e7ff"; style.stroke: "#1565c0"; style.font-color: "#0d2c54" }
+  done: { style.fill: "#d3f2d3"; style.stroke: "#2e7d32"; style.font-color: "#1b3d1b" }
+  next: { style.fill: "#fff3cd"; style.stroke: "#b06000"; style.font-color: "#5c3a00" }
+}
+
+now: "1. running right now" {
+  rename: "flash lane: word swap\nold jargon word -> unsupported\nacross all compiler code" { class: live }
+  boop: "flash lane: boop\nour agent-watcher CLI in Rust\npass 1 done: reads claude logs live\npass 2: talks to the bus\npass 3: chat as json, for word stats" { class: live }
+  triage: "opus: traced all 101 NOs\nDONE -> see triage board" { class: done }
+}
+
+cleanup: "2. compiler cleanup\n(what the 6 reviewers found)" {
+  landed: "LANDED: two dead-code cuts\nPR 51 + PR 52" { class: done }
+  quad: "NEXT: the slow loop\ncompiler re-walks EVERY rule\nonce per column. index it once" { class: next }
+  hoist: "NEXT: build the type table once\n24 places each rebuild it today" { class: next }
+}
+
+typeir: "3. type IR, two layers" {
+  cir: "compiler layer (squad's find):\ntoday 4 overlapping stores\nper rel. goal: ONE record" { class: next }
+  sir: "store layer (kimi's plan):\nschema facts written once ->\nTS + Rust + catalog generated" { class: next }
+  meet: "they only touch\nat the catalog (__rel)"
+}
+
+orderby: "4. order by (the cut analysis)" {
+  law: |md
+    ## write it anywhere, like SQL
+    - SQL secret: inner ORDER BY is a no-op there too
+    - so: allow the words everywhere, they only
+      BIND where data is finite
+    - binds at: /idb reads, aggregates (already live)
+    - never at: the tick log (it is a log)
+    - bonus: fixes the flaky rtkq golden test
+  |
+  law.shape: rectangle
+}
+
+revive: "revival squads\n36 cheap fixes queued" { class: next }
+
+now.triage -> revive: picked the targets
+now.rename -> revive: "must land first\n(same files)"
+cleanup.landed -> typeir.cir: cuts were step 1
+cleanup.quad -> typeir.cir
+cleanup.hoist -> typeir.cir
+typeir.cir -> orderby.law: "rel_order rides\nthe new record"

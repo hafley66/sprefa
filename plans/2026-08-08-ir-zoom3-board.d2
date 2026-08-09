@@ -1,0 +1,97 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de" }
+  ir: { style.fill: "#fff3cd"; style.stroke: "#b06000"; style.font-color: "#5c3a00" }
+  planned: { style.fill: "#eeeeee"; style.stroke: "#9e9e9e"; style.font-color: "#424242" }
+  out: { style.fill: "#d3f2d3"; style.stroke: "#2e7d32"; style.font-color: "#1b3d1b" }
+}
+
+a1: "1. surface text\n(parse_dl.pl, the text door)" {
+  t: |`text
+rel repo(id: int,
+         tags: list(text)) key(id)
+`| { class: code }
+}
+
+a2: "2. today: the same facts\nsmeared over 4 stores\ntype_decl col_type\ntype_def relplan"
+
+a3: "3. THE RECORD = the relational IR\nWHAT EXISTS. no storage type stored here" {
+  style: { stroke: "#b06000"; stroke-width: 3 }
+  t: |`prolog
+rel(repo/2, set,
+    [col(id,  int),
+     col(tags, list(text))],
+    key([1]))
+`| { class: code }
+}
+
+a4: "4. planning = the flow IR\nWHAT COMPUTES (analyze.pl, lower.pl)" {
+  style: { stroke: "#b06000"; stroke-width: 3 }
+  t: |`prolog
+[ create(__str), create(repo),
+  intern(tags -> dict ids),
+  level_insert(repo, InternSqls),
+  boundary(idb/repo) ]
+`| { class: code }
+}
+
+dialect: "the type IR = closed vocabulary\n+ ONE dialect map per target" {
+  style: { stroke: "#b06000"; stroke-width: 3 }
+  t: |`prolog
+% vocab: int text bool float
+%   json list(T) enum struct ref
+column_storage(list(_), json_text).
+gate_column_type(list(_), json).
+rust_type(list(T), vec(T)).
+`| { class: code }
+}
+
+doors: "5. print doors. each asks the type IR at print time" {
+  ddl: "sqlite DDL (lower.pl)" {
+    t: |`sql
+CREATE TABLE repo(
+  id INTEGER,
+  tags TEXT CHECK(json_valid(tags)),
+  PRIMARY KEY(id));
+`| { class: code }
+  }
+  runtime: "runtime module (emit_ts.pl)\nthe ONE door needing flow too" {
+    t: |`ts
+rel_column_types:
+  { repo: ["int","json"] }
+// + tick pipe, rx operators
+`| { class: code }
+  }
+  rows_ts: "TS row interfaces\n(kimi step a, unbuilt)" {
+    t: |`ts
+interface RepoRow {
+  id: number;
+  tags: string[]; }
+`| { class: planned }
+  }
+  rows_rs: "Rust structs\n(kimi step d, unbuilt)\n+ jsonschema (steps e+h)" {
+    t: |`rust
+struct RepoRow {
+  id: i64,
+  tags: Vec<String>, }
+`| { class: planned }
+  }
+}
+
+a1 -> a2: parse
+a2 -> a3: "refactor folds\n4 into 1"
+a3 -> a4: plan
+a3 -> dialect: "every column's type\nresolved here, per target"
+dialect -> doors
+a3 -> doors.ddl
+a3 -> doors.rows_ts
+a3 -> doors.rows_rs
+a4 -> doors.runtime

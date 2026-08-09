@@ -1,0 +1,34 @@
+direction: right
+
+rows_world: "ROWS: things with identity" {
+  source: "orchard_tag_source(tree_id, tag)\neach row has an __id"
+  out: "orchard_tag_roundtrip(tree_id, tag)\nrows again, fanned back out"
+}
+
+crossing: "THE TWO CROSSINGS" {
+  agg: "json_group_array(Tag)\nmany rows -> one value"
+  spread: "decode(Tags, spread(Tag))\none value -> many rows"
+}
+
+value_world: "VALUES: one cell, no identity" {
+  decl: "rel orchard_tag_list(tags: list(text))\nthe declared type"
+  cell: "[\"go\",\"rust\"]\none TEXT cell, canonical json"
+  ddl: "CHECK (json_valid(c)\nAND json_type(c) = 'array')"
+  guard: "arrival: field_not_array\nlist_element_shape(Index, Reason)"
+}
+
+elements: "WHAT T MAY BE" {
+  ok: "int  text  bool  float  json\nlist(...) nested, any depth"
+  no: "a rel name\nlist_of_relation_refs, still refused"
+}
+
+alt: "a collection of OBJECTS\nis a rel with an index column"
+
+rows_world.source -> crossing.agg: "aggregate head"
+crossing.agg -> value_world.cell: "writes"
+value_world.decl -> value_world.ddl: "emits"
+value_world.decl -> value_world.guard: "checks each arrival"
+value_world.cell -> crossing.spread: "reads"
+crossing.spread -> rows_world.out: "fans out"
+value_world.decl -> elements.ok: "T ranges over"
+elements.no -> alt: "use this instead"

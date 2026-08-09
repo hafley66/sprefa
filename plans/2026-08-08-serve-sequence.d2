@@ -1,0 +1,114 @@
+...@_house
+
+# One served process, time flowing down. Three episodes: first load, a watch
+# tick that calls a host, and a reload that reshapes a table.
+shape: sequence_diagram
+
+cli: bop / curl { class: you }
+http: serve/4_http.ts { class: shipped }
+swipl: swipl child { class: muted }
+watch: 2_binds.ts watcher { class: stream }
+host: 1_hosts.ts + extract { class: world }
+run: IncrementalRuntime { class: shipped }
+db: SQLite { class: db }
+
+load: EPISODE 1 — first load, cold {
+  http."the goal, quoted as prolog atoms (0_compile.ts:108)": |`ts
+    run_swipl(
+      ["-q", "-l", COMPILE_PL, "-g",
+       `compile_dl6('${source_path}', '${module_path}')`,
+       "-g", "halt"],
+      compile_budget_ms(),
+    ).pipe(
+      concatMap(() => from(import(module_path))),
+      map((loaded) => loaded.program),
+    );
+  `|
+  cli -> http.compile: 'POST /program, source text'
+  http.compile -> swipl.c1: "compile_dl6('gen_served/<digest>.dl6', ...)"
+  swipl.c1 -> swipl.c1: 'parse, plan, lower, emit'
+  swipl.c1 -> http.compile: 'emitted .ts on disk'
+  http.compile -> http.compile: 'dynamic import(), IGenProgram' {
+    style.stroke: "#2f9e44"
+  }
+  http.compile -> db: 'replay ddl, boot statements'
+  db -> http.compile: 'tables exist'
+  http.compile -> cli: '200 {loaded, rels, arrival_targets, hosts, binds}' {
+    style.stroke: "#2f9e44"
+    style.bold: true
+  }
+}
+
+tick: EPISODE 2 — one watch tick with a host round trip {
+  watch."the .dl6 that drives this episode (1_rtkq-extraction-golden.dl6:33)": |`prolog
+    bind watch(glob: text, path: text, digest: text).
+    rel file(path: text, digest: text).
+
+    file(path, digest) <- watch('**/*.ts', path, digest).
+
+    ast_capture(path, query, capture, text, start, end, ms, me) <-
+      file(path, digest),
+      extract(path, digest, 'capture', query, capture,
+              text, start, end, ms, me).
+  `|
+  run."one arrival = one signed row (runtime/types.ts:42)": |`ts
+    export interface IArrivalRow {
+      readonly rel: string;
+      readonly sign: "add" | "del";
+      readonly row: readonly IRowValue[];
+    }
+  `|
+  watch -> watch: 'fs event, coalesce 100ms window' {
+    style.stroke-dash: 3
+  }
+  watch -> run.t1: 'one arrival batch = one tick'
+  run.t1 -> db: 'stage frontiers, delta join, refCount, recompute'
+  db -> run.t1: 'boundary deltas'
+  run.t1 -> host.h1: '__host_demand_extract rows' {
+    style.stroke: "#e8590c"
+  }
+  host.h1 -> host.h1: 'one release extract process per digest'
+  host.h1 -> run.t2: '__host_response_extract rows, NEXT tick' {
+    style.stroke: "#e8590c"
+    style.bold: true
+  }
+  run.t2 -> db: 'derive findings from the response'
+  run.t2 -> http: 'tick event on diagnostics_channel'
+}
+
+swap: EPISODE 3 — reload, a column added {
+  http."the whole verdict, no SQL guessing (serve/reloadPlan.ts:31)": |`ts
+    if (prev_row === undefined) {
+      verdicts.set(key, "create");
+    } else if (prev_row.h_schema !== next_row.h_schema) {
+      verdicts.set(key, "recreate");
+      statements.push(`DROP TABLE IF EXISTS "${next_row.local_name}"`);
+    } else if (prev_row.h_rule !== next_row.h_rule) {
+      verdicts.set(key, "refill");
+      statements.push(`DELETE FROM "${next_row.local_name}"`);
+    } else {
+      verdicts.set(key, "keep");
+    }
+  `|
+  cli -> http.c2: 'POST /program, edited source'
+  http.c2 -> swipl.c3: 'compile FIRST, before any switch' {
+    style.stroke: "#2f9e44"
+  }
+  bad: 'if it refuses' {
+    swipl.c3 -> http.c2: 'unsupported_construct(...)'
+    http.c2 -> cli: '400, the RUNNING program keeps ticking' {
+      style.stroke: "#e03131"
+      style.bold: true
+    }
+  }
+  swipl.c3 -> http.c2: 'new IGenProgram, new __rel rows'
+  http.c2 -> http.c2: 'ReloadPlanner.plan(prev, next, allow_drop)'
+  http.c2 -> db: 'h_schema moved -> DROP TABLE "edge"' {
+    style.stroke: "#e03131"
+  }
+  http.c2 -> run: 'switchMap: unsubscribe tick loop, hosts, bind timers' {
+    style.stroke: "#e03131"
+    style.bold: true
+  }
+  http.c2 -> cli: '200, ddl replayed, rels reshaped'
+}

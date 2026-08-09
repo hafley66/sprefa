@@ -1,0 +1,59 @@
+vars: { d2-config: { layout-engine: dagre; theme-id: 0; pad: 24 } }
+direction: right
+
+classes: {
+  done: { style.fill: "#dafbe1"; style.stroke: "#1a7f37"; style.font-color: "#116329" }
+  broken: { style.fill: "#ffebe9"; style.stroke: "#cf222e"; style.font-color: "#82071e" }
+  gate: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#6f5500" }
+  next: { style.fill: "#ddf4ff"; style.stroke: "#0969da"; style.font-color: "#0a3069" }
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-color: "#1f2328" }
+}
+
+goal: "THE GOAL: one dictionary table" {
+  class: done
+  ex: |`sql
+    -- every distinct string stored ONCE:
+    __str:  __id | content
+              7  | 'warning'
+    -- every table stores the integer:
+    diag:  kind=7   (was kind='warning')
+    -- why: integer keys are 1.7-2.0x faster,
+    -- indexes stop copying whole strings
+  `| { class: code }
+}
+
+works: "WHAT ALREADY WORKS (merged, but switched OFF by default)" {
+  lit: "quoted literals in rules:\nWHERE kind = 'warning' becomes\na lookup of 'warning' in the dictionary" { class: done }
+  boot: "starting rows (Initial data):\neach text value is added to the\ndictionary BEFORE its row is written" { class: done }
+  built: "strings built at runtime\n(concat, json captures):\nadded to the dictionary at write time,\nrow then stores the id" { class: done }
+  read: "rule bodies that NEED characters\n(concat of a column, regexp):\nlook the id back up first" { class: done }
+}
+
+flip: "THE FLIP TEST (yesterday)" {
+  atom: "change one line:\ndefault mode direct -> dict\n(direct = store words,\ndict = store dictionary ids)" { class: gate }
+  referee: "the referee: RUN all 211 test\nprograms end to end, compare\nevery output row against the\nknown-good direct run" { class: gate }
+  verdict: "VERDICT: 17 programs\nproduced WRONG output.\nline reverted same hour.\ncompilers all said green -\nonly real execution caught it" { class: broken }
+  atom -> referee -> verdict
+}
+
+broken: "THE 4 READ PATHS THE TEST EXPOSED (writes were covered; these READS were not)" {
+  a: "A. reading OLD state at departure:\nwhen a row is retracted, rules that\nread the departing value got the raw\nid, not the string - one program even\ndid MATH on an id (read 9, truth was 14).\nWORST family, fix first" {
+    class: broken
+  }
+  b: "B. final-snapshot ordered joins:\ngroup_concat over a text column\nread ids, printed 'null,null,null'.\nthe tick-by-tick path decodes,\nthe end-of-run snapshot path does not" { class: broken }
+  c: "C. rendering nested structures:\na tree/json value containing text\nmembers rendered with null holes\nwhere strings should be" { class: broken }
+  d: "D. demand keys:\nthe 'which rows does this subscriber\nwant' keys are text on one side,\ndictionary ids on the other -\nthey no longer match" { class: broken }
+}
+
+next: "NEXT (in order)" {
+  lane: "one repair lane per family,\nA first: teach the departure /\nold-state read path to decode ids" { class: next }
+  rerun: "re-run the same 211-program\nreferee after each repair" { class: gate }
+  flipday: "when wrong=0: flip the default\nfor real, one line" { class: next }
+  prize: "then collect the payoff:\nre-run benchmarks, expect\n1.7-2.0x on keyed writes" { class: done }
+  lane -> rerun -> flipday -> prize
+}
+
+goal -> works
+works -> flip: "all four doors green,\nso we pulled the trigger"
+flip -> broken: "the test found the\ndoors nobody guarded"
+broken -> next

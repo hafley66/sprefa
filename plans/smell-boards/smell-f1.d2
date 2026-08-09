@@ -1,0 +1,45 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 18
+  }
+}
+direction: right
+
+agent_f1: "agent: f1" { shape: rectangle }
+
+# ── current (left column) ──────────────────────────────
+type_decl: "type_decl: declared sugar col(C,T)"
+col_type:  "col_type: flat per-column projection"
+type_def:  "type_def: parallel-list projection"
+relplan:   "relplan: plan holds Ref, Kind, Key, types"
+readers6:  "6 readers re-derive declared column types"
+catalog_decls: "catalog threads Decls+Types 5 deep"
+emit_seam: "emit seam: the one genuine list->json collapse"
+
+# ── merged targets (right column) ──────────────────────
+one_record:  "one rel record keeps the declared types"
+one_reader:  "one declared-type accessor"
+catalog_relplans: "catalog resolves from relplan, drops Decls"
+
+# ── arrow-dispatch family ──────────────────────────────
+rule_is_edge:   "rule_is_edge: <- clause"
+rule_is_level:  "rule_is_level: <+ clause"
+accessor_trio:  "head_ref, head, body: two <- / <+ clauses"
+heading_pair:   "edge_headed_refs : level_headed_refs"
+merged_arrow:   "arrow(Arrow): one dispatch"
+
+# collapse edges
+type_decl -> one_record: same columns+types
+col_type -> one_record: projection
+type_def -> one_record: projection
+relplan -> one_record: already carries types
+readers6 -> one_reader: six accessors, one query
+catalog_decls -> catalog_relplans: stale collapse rationale
+catalog_decls -> readers6: consumed query
+
+rule_is_edge -> merged_arrow: same body, other functor
+rule_is_level -> merged_arrow: same body, other functor
+accessor_trio -> merged_arrow
+heading_pair -> merged_arrow: mirror pair, one param
