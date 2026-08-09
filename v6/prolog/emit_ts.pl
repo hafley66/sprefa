@@ -2505,12 +2505,6 @@ pre_edge_level_reconcile_lines(EdgeStatements,
     ['  ).pipe(']) :-
     EdgeStatements \== [].
 
-run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
-                              HasRetention, UsesTick, DepartureRefs, Lines) :-
-    run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
-                                  HasRetention, UsesTick, DepartureRefs, false,
-                                  false, Lines).
-
 % The intern arm is a TENTH operator on an edge-free chain, which degrades the
 % whole pipe to Observable<unknown>; same split point, same operator sequence.
 tick_pipe_split_lines([], true, ['  ).pipe(']) :- !.

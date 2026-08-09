@@ -4,6 +4,7 @@
 
 use crate::harness::Harness;
 use crate::harness::claude::Claude;
+use crate::harness::opencode::Opencode;
 
 pub struct Registry {
     harnesses: Vec<Box<dyn Harness>>,
@@ -12,7 +13,7 @@ pub struct Registry {
 impl Registry {
     /// Every built-in harness, in id order.
     pub fn discover() -> Self {
-        let mut harnesses: Vec<Box<dyn Harness>> = vec![Box::new(Claude)];
+        let mut harnesses: Vec<Box<dyn Harness>> = vec![Box::new(Claude), Box::new(Opencode)];
         harnesses.sort_by_key(|harness| harness.id());
         Registry { harnesses }
     }

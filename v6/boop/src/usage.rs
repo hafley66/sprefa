@@ -125,7 +125,9 @@ impl Store {
         if let Some(limit) = filter.limit {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
-        self.rows(&sql, values)
+        let mut rows = self.rows(&sql, values)?;
+        suppress_partial_cost(&mut rows);
+        Ok(rows)
     }
 
     /// The WHERE that scopes a usage read: time range, one session, or the
@@ -301,6 +303,23 @@ impl Store {
             ],
         )?;
         Ok(())
+    }
+}
+
+/// A bucket holding unpriced calls has no total cost, only the cost of the
+/// calls that were priced. Reporting the partial sum as `cost_usd` reads as a
+/// total and undercounts silently.
+fn suppress_partial_cost(rows: &mut [Row]) {
+    for row in rows.iter_mut() {
+        let unpriced = row["unpriced_calls"].as_i64().unwrap_or(0);
+        if unpriced == 0 {
+            continue;
+        }
+        let priced = row["cost_usd"].clone();
+        if let Some(object) = row.as_object_mut() {
+            object.insert("cost_usd".into(), serde_json::Value::Null);
+            object.insert("cost_usd_priced_only".into(), priced);
+        }
     }
 }
 
@@ -516,7 +535,7 @@ mod cte_equality {
             tmux_socket: None,
             parent: None,
         };
-        sync_session(&store, &session).unwrap();
+        sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
         (store, db_path, log_path)
     }
 
