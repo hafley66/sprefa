@@ -148,4 +148,21 @@ pub struct SpawnSpec {
     /// Env assignments prefixed to the launch command. Every value describes
     /// the CHILD; the spawner appears only as BOOP_PARENT.
     pub env_stamp: Option<String>,
+    /// The model the lane runs, in the harness's own flag spelling. `None`
+    /// lets the harness default; a harness with no default refuses.
+    pub model: Option<String>,
+    /// Shell appended after the harness command exits; it may read `$__rc`
+    /// (the harness exit code), which the lane re-raises afterwards.
+    pub on_exit: Option<String>,
+}
+
+impl SpawnSpec {
+    /// Wrap a composed harness command with the on-exit epilogue, preserving
+    /// the harness's own exit code.
+    pub fn with_on_exit(&self, command: String) -> String {
+        match &self.on_exit {
+            Some(epilogue) => format!("{command}; __rc=$?; {epilogue}; exit $__rc"),
+            None => command,
+        }
+    }
 }

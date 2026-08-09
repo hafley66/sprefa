@@ -378,6 +378,7 @@ fn main() -> Result<()> {
                 base_sha,
                 branch: None,
                 worktree_dir: None,
+                on_exit: None,
             },
         ),
         SubCmd::Resolve { to, mail_dir } => run_resolve(&to, mail_dir.as_deref()),
@@ -934,6 +935,9 @@ struct DispatchArgs {
     /// The worktree to create; `None` spawns in `cwd` (`main_tree` decides
     /// whether that's a fast-forward check or a plain directory).
     worktree_dir: Option<PathBuf>,
+    /// Shell appended after the harness command; `lane create --parent`
+    /// composes the completion hail here.
+    on_exit: Option<String>,
 }
 
 fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
@@ -980,6 +984,8 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
             &harness_id,
             caller.session.as_deref(),
         )),
+        model: args.model.clone(),
+        on_exit: args.on_exit.clone(),
     };
     let session = adapter.spawn(&spec)?;
 
@@ -1368,10 +1374,13 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
         .unwrap_or_else(|| args.tmux.clone().unwrap_or_else(|| args.name.clone()));
     let worktree_dir = worktree_mode
         .then(|| PathBuf::from(&args.cwd).join(".boop-worktrees").join(&branch));
-
-    // preview_command reads BOOP_LANE_MODEL the same way a real spawn would,
-    // so a dry run shows exactly what would run.
-    std::env::set_var("BOOP_LANE_MODEL", &model);
+    let on_exit = args.parent.as_ref().map(|parent| {
+        format!(
+            "boop hail --to {} --kind result --body \"lane {} done rc=$__rc\"",
+            shell_quote(parent),
+            args.name
+        )
+    });
 
     if args.dry_run {
         let spec = boop::harness::SpawnSpec {
@@ -1386,6 +1395,8 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             worktree_dir: worktree_dir.clone(),
             repo: PathBuf::from(&args.cwd),
             env_stamp: None,
+            model: Some(model.clone()),
+            on_exit: on_exit.clone(),
         };
         let command = adapter
             .preview_command(&spec)
@@ -1400,7 +1411,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
         }
         println!("tmux: {}", args.tmux.as_deref().unwrap_or(&args.name));
         if let Some(parent) = &args.parent {
-            println!("parent: {parent} (accepted, not wired to a completion hail)");
+            println!("parent: {parent} (completion hail appended on exit)");
         }
         return Ok(());
     }
@@ -1428,6 +1439,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             base_sha: args.base_sha,
             branch: Some(branch),
             worktree_dir,
+            on_exit,
         },
     )
 }

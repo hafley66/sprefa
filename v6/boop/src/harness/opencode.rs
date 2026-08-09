@@ -297,22 +297,23 @@ fn opencode_db_path() -> Option<PathBuf> {
     )
 }
 
-/// The opencode command a spawn runs. Model comes from `BOOP_LANE_MODEL`,
-/// resolved by the caller (`run_lane` in main.rs); never a default here.
+/// The opencode command a spawn runs. Opencode has no default model; the
+/// caller resolves one into `spec.model` or the spawn refuses.
 fn launch_command(spec: &SpawnSpec) -> Result<String> {
-    let model = std::env::var("BOOP_LANE_MODEL")
-        .ok()
+    let model = spec
+        .model
+        .as_deref()
         .filter(|value| !value.is_empty())
-        .context("BOOP_LANE_MODEL unset; opencode spawn needs a resolved model")?;
-    let mut command = format!("opencode run -m {}", shell_quote(&model));
+        .context("spawn spec has no model; opencode needs one resolved by the caller")?;
+    let mut command = format!("opencode run -m {}", shell_quote(model));
     if let Some(session) = &spec.resume_session {
         command.push_str(&format!(" -s {}", shell_quote(session)));
     }
     command.push_str(&format!(" --auto \"$(cat {})\"", shell_quote_double(&spec.prompt)));
-    Ok(match &spec.env_stamp {
+    Ok(spec.with_on_exit(match &spec.env_stamp {
         Some(stamp) => format!("{stamp} {command}"),
         None => command,
-    })
+    }))
 }
 
 fn shell_quote(value: &str) -> String {
@@ -433,26 +434,6 @@ mod tests {
     use super::{launch_command, Opencode, Part};
     use crate::harness::{Harness, SpawnSpec};
 
-    /// Env is process-global; these tests serialize on one mutex and restore
-    /// the prior value, same convention as `identity::tests::temp_env`.
-    mod temp_env {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-        pub fn with_var(key: &str, value: Option<&str>, body: impl FnOnce()) {
-            let _guard = LOCK.lock().unwrap_or_else(|error| error.into_inner());
-            let saved = std::env::var(key).ok();
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-            body();
-            match saved {
-                Some(saved) => std::env::set_var(key, saved),
-                None => std::env::remove_var(key),
-            }
-        }
-    }
-
     /// Capabilities are claims; each true one needs a test.
     #[test]
     fn opencode_capabilities_match_the_binary() {
@@ -543,6 +524,8 @@ mod tests {
             worktree_dir: None,
             repo: std::env::temp_dir(),
             env_stamp: None,
+            model: Some("m".to_owned()),
+            on_exit: None,
         }
     }
 
@@ -598,59 +581,67 @@ mod tests {
 
     #[test]
     fn a_missing_model_refuses_to_build_a_command() {
-        temp_env::with_var("BOOP_LANE_MODEL", None, || {
-            let guard = TmuxGuard::new();
-            let error = launch_command(&spec(&guard)).unwrap_err();
-            assert!(error.to_string().contains("BOOP_LANE_MODEL"));
-        });
+        let guard = TmuxGuard::new();
+        let mut req = spec(&guard);
+        req.model = None;
+        let error = launch_command(&req).unwrap_err();
+        assert!(error.to_string().contains("no model"));
     }
 
     #[test]
     fn launch_command_cats_the_prompt_path_under_the_resolved_model() {
-        temp_env::with_var("BOOP_LANE_MODEL", Some("openrouter/deepseek/deepseek-v4-flash-0731"), || {
-            let guard = TmuxGuard::new();
-            let command = launch_command(&spec(&guard)).unwrap();
-            assert!(command.contains("opencode run -m 'openrouter/deepseek/deepseek-v4-flash-0731'"));
-            assert!(command.contains("--auto \"$(cat \"/tmp/brief.md\")\""));
-        });
+        let guard = TmuxGuard::new();
+        let mut req = spec(&guard);
+        req.model = Some("openrouter/deepseek/deepseek-v4-flash-0731".to_owned());
+        let command = launch_command(&req).unwrap();
+        assert!(command.contains("opencode run -m 'openrouter/deepseek/deepseek-v4-flash-0731'"));
+        assert!(command.contains("--auto \"$(cat \"/tmp/brief.md\")\""));
     }
 
     #[test]
     fn opencode_launch_resumes_with_session_id() {
-        temp_env::with_var("BOOP_LANE_MODEL", Some("m"), || {
-            let guard = TmuxGuard::new();
-            let mut req = spec(&guard);
-            req.resume_session = Some("ses_abc123".to_owned());
-            let command = launch_command(&req).unwrap();
-            assert!(command.contains("-s 'ses_abc123'"));
-        });
+        let guard = TmuxGuard::new();
+        let mut req = spec(&guard);
+        req.resume_session = Some("ses_abc123".to_owned());
+        let command = launch_command(&req).unwrap();
+        assert!(command.contains("-s 'ses_abc123'"));
+    }
+
+    /// The epilogue lands after the harness command and the lane re-raises
+    /// the harness exit code.
+    #[test]
+    fn on_exit_appends_and_reraises_the_exit_code() {
+        let guard = TmuxGuard::new();
+        let mut req = spec(&guard);
+        req.on_exit = Some("boop hail --to 'coord' --kind result --body \"lane done rc=$__rc\"".to_owned());
+        let command = launch_command(&req).unwrap();
+        assert!(command.contains("; __rc=$?; boop hail --to 'coord'"));
+        assert!(command.ends_with("; exit $__rc"));
     }
 
     #[test]
     fn opencode_spawn_returns_handle_and_stop_tears_down() {
-        temp_env::with_var("BOOP_LANE_MODEL", Some("m"), || {
-            let guard = TmuxGuard::new();
-            let repo = temp_repo::TempRepo::new();
-            let worktree = repo.worktree.clone();
-            let mut req = spec(&guard);
-            req.main_tree = false;
-            req.base_sha = repo.sha.clone();
-            req.repo = repo.dir.clone();
-            req.worktree_dir = Some(worktree.clone());
-            let opencode = Opencode;
-            let session = opencode.spawn(&req).unwrap();
-            assert_eq!(
-                session.tmux.as_deref().map(|t| t.starts_with("boop-agent-")),
-                Some(true)
-            );
-            assert_eq!(session.tmux_socket.as_deref(), Some(guard.socket.as_str()));
-            assert!(
-                worktree.join("seed.txt").exists(),
-                "worktree must be created by spawn"
-            );
-            opencode.stop(&session).unwrap();
-            assert!(!has_session_on(&guard, session.tmux.as_deref().unwrap()));
-        });
+        let guard = TmuxGuard::new();
+        let repo = temp_repo::TempRepo::new();
+        let worktree = repo.worktree.clone();
+        let mut req = spec(&guard);
+        req.main_tree = false;
+        req.base_sha = repo.sha.clone();
+        req.repo = repo.dir.clone();
+        req.worktree_dir = Some(worktree.clone());
+        let opencode = Opencode;
+        let session = opencode.spawn(&req).unwrap();
+        assert_eq!(
+            session.tmux.as_deref().map(|t| t.starts_with("boop-agent-")),
+            Some(true)
+        );
+        assert_eq!(session.tmux_socket.as_deref(), Some(guard.socket.as_str()));
+        assert!(
+            worktree.join("seed.txt").exists(),
+            "worktree must be created by spawn"
+        );
+        opencode.stop(&session).unwrap();
+        assert!(!has_session_on(&guard, session.tmux.as_deref().unwrap()));
     }
 
     #[test]
