@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use crate::event::AgentEvent;
 
 pub mod claude;
+pub mod opencode;
 
 /// One agent harness that writes transcripts to this machine.
 pub trait Harness {
@@ -19,6 +20,18 @@ pub trait Harness {
     /// new offset to resume from. A partial trailing line is NOT consumed and
     /// NOT counted in the returned offset.
     fn read_from(&self, session: &SessionRef, offset: u64) -> anyhow::Result<ReadChunk>;
+
+    /// Project this session's new records into the store, resuming from
+    /// `from`. The cursor is whatever the harness can resume on: a byte offset
+    /// for a transcript, a rowid for a SQL store.
+    fn ingest(
+        &self,
+        store: &crate::ident::Store,
+        session: &SessionRef,
+        from: u64,
+    ) -> anyhow::Result<Ingested> {
+        crate::ident::project_transcript(store, session, from)
+    }
 
     // facet 3: control. Defaults are the honest all-false / Unsupported shape,
     // so any adapter without control support is safe and explicit.
@@ -42,6 +55,12 @@ pub trait Harness {
     fn stop(&self, _session: &SessionRef) -> anyhow::Result<()> {
         anyhow::bail!("harness `{}` has no stop support", self.id())
     }
+}
+
+/// What one ingest pass wrote, plus where the next pass resumes.
+pub struct Ingested {
+    pub stat: crate::ident::SyncStat,
+    pub next_cursor: u64,
 }
 
 /// One transcript on disk that belongs to a harness.

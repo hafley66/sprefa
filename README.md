@@ -1257,3 +1257,44 @@ Scoped packages (`@scope/name`) need registry URL-encoding (`@scope%2Fname`) —
 the current template passes the slash through, so unscoped names work today.
 
 </details>
+
+## Store schema versions
+
+`~/.agent/boop.db` carries its schema version in `PRAGMA user_version`. A store
+written by an older build is refused by `sync` and `follow` rather than mixed
+with rows that mean something different.
+
+| version | what changed |
+|---|---|
+| 2 | dense per-session turn ordinals, per-transcript sync cursors |
+| 3 | `agent_usage` token rows |
+| 4 | `model_price` rate table |
+| 5 | `agent_fetch` covers searches, not only url fetches |
+
+Moving up a version is one command:
+
+```
+boop db sync create --rebuild
+```
+
+It drops every stored row, recreates the schema, vacuums, and re-projects every
+transcript from byte 0. Measured here: about 18 s over 1.5 GB of claude
+transcripts plus the opencode store. Incremental `boop db sync create` stays
+under a second.
+
+## Using boop as a library
+
+`boop` ships a lib target, so a Rust host links it and runs the queries in
+process instead of shelling out:
+
+```rust
+use boop::{FactKind, FactQuery};
+
+let store = boop::open_default()?;
+let touched = store.query_facts(FactKind::Touch, &FactQuery {
+    limit: Some(50),
+    ..Default::default()
+})?;
+```
+
+`cargo run --example instant_views` is a working consumer of that surface.
