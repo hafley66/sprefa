@@ -1296,11 +1296,11 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % Step 4's families, counted across the same corpus the name rail walks. The
 % six level-statement families must mint in step with their DDL mint sites, so
 % the count is the rail's twin, not a fresh check over different rows.
-% Measured on the nesting arc: the compiler changes alone leave every count at
-% 40/293/293/8/12/2, so the +1/+16/+16 is the 7 new module_path fixtures.
+% Re-measured each time against the OLD fixture file (40/293/293, then
+% 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-41, refcount-309, refcount_staging-309,
+    Counts = [scope-41, refcount-312, refcount_staging-312,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
@@ -1658,6 +1658,97 @@ test(catalog_flat_program_ids_unchanged_by_the_nesting_pass) :-
     FinalId =:= 11.
 
 :- end_tests(catalog_nested_rows).
+
+:- begin_tests(catalog_contract_read_write).
+
+% compile.pl:reserved_namespace_violation/3 splits the `__` namespace by
+% DIRECTION, and only the write half had a fixture (5_compiler_quality.pl
+% :249-252 says a read fixture is FINAL_WRONG there because the oracle holds
+% no `__rel`), so the allowed half was pinned nowhere until now.
+catalog_direction_result(Name, Prog, Result) :-
+    (   catch(program_plan(fixture(Name, Prog, [], [], [])-[],
+                           [intern(dict)], _),
+              unsupported_construct(Reason), true)
+    ->  ( var(Reason) -> Result = compiled ; Result = refused(Reason) )
+    ;   Result = failed
+    ).
+
+test(reading_the_catalog_rel_in_a_body_compiles) :-
+    catalog_direction_result(
+        catalog_body_read,
+        prog([col_type(rel_names/1, local_name, text)],
+             [(rel_names(LocalName) <-
+                  '__rel'(_, _, _, LocalName, rel, _, _, _, _, _, _))]),
+        Result),
+    Result == compiled.
+
+test(writing_the_catalog_rel_from_a_head_refuses_by_name) :-
+    catalog_direction_result(
+        catalog_head_write,
+        prog([], [('__rel'(1, 0, 0, mine, rel, 0, 0, 0, h, s, r) <- seed(1))]),
+        Result),
+    Result == refused(reserved_rel_namespace('__rel')).
+
+test(declaring_the_catalog_rel_refuses_by_name) :-
+    catalog_direction_result(
+        catalog_decl_write,
+        prog([col_type('__rel'/1, rel_id, int)],
+             [('__rel'(RelId) <- seed(RelId))]),
+        Result),
+    Result == refused(reserved_rel_namespace('__rel')).
+
+:- end_tests(catalog_contract_read_write).
+
+:- begin_tests(surface_spelling_in_the_rel_record).
+
+% GAP PINNED, NOT FIXED. 0_rel_record.pl's header promises the declared slot
+% holds the column's SURFACE spelling, and for option and enum columns it does
+% not: phase 5 rewrites option(text) to the `__opt_text` enum and phase 10
+% rewrites the enum column to int, both BEFORE the record snapshot, so
+% declared(int) is all that survives and an option column is indistinguishable
+% from a real int one. Flipping these two to declared(option(text)) and
+% declared(color) is the fix's target; it needs the record built before the
+% sugar phases, which is not a small change.
+record_columns_of(Name, Prog, Ref, Cols) :-
+    once(program_plan(fixture(Name, Prog, [], [], [])-[], [intern(dict)],
+                      Plan)),
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
+    memberchk(rel(Ref, _, Cols, _), RelPlans).
+
+test(an_option_column_loses_its_surface_spelling) :-
+    record_columns_of(
+        option_surface,
+        prog([col_type(tree/2, tree_id, int),
+              col_type(tree/2, label, option(text))],
+             [(tree(TreeId, Label) <- raw(TreeId, Label))]),
+        tree/2, Cols),
+    Cols == [col(tree_id, declared(int), int),
+             col(label, declared(int), int)].
+
+test(an_enum_column_loses_its_surface_spelling) :-
+    record_columns_of(
+        enum_surface,
+        prog([enum_decl(color, (red ; green)),
+              col_type(tree/2, tree_id, int),
+              col_type(tree/2, shade, color)],
+             [(tree(TreeId, Shade) <- raw(TreeId, Shade))]),
+        tree/2, Cols),
+    Cols == [col(tree_id, declared(int), int),
+             col(shade, declared(int), int)].
+
+% The promise HOLDS for a struct column, which is what makes the two above a
+% gap rather than the record's design.
+test(a_relation_valued_column_keeps_its_surface_spelling) :-
+    record_columns_of(
+        struct_surface,
+        prog([type_decl(repo, [col(name, text)]),
+              col_type(repo/1, name, text),
+              col_type(file/1, at, repo)],
+             [(file(repo(Name)) <- raw(Name))]),
+        file/1, Cols),
+    Cols == [col(at, declared(repo), ref(repo))].
+
+:- end_tests(surface_spelling_in_the_rel_record).
 
 :- begin_tests(supported_subset_gate).
 
@@ -5380,6 +5471,57 @@ test(a_reference_option_on_a_nested_rel_keeps_its_path) :-
     memberchk(col_type(orchard__tree__label/2, orchard__tree_id, int),
               Expanded).
 
+% RED RECEIPT, measured before head_atom/6 resolved through
+% module_path_name/2: column order records under the MANGLED name, so a
+% lookup by last segment read the flat `tree`'s order and returned [P, T] --
+% picked and tree_id silently swapped, with no finding and no refusal.
+test(named_args_on_a_dotted_head_bind_the_mangled_rels_columns) :-
+    parsed_module_path_program(
+        'rel tree(picked: int, tree_id: int).\nrel orchard.tree(tree_id: int, picked: int).\nrel harvest(tree_id: int, picked: int).\norchard.tree(picked: P, tree_id: T) <- harvest(T, P).',
+        _, Rules),
+    Rules =@= [(rel_path([orchard, tree], [T, P]) <- harvest(T, P))].
+
+test(named_args_on_a_dotted_body_atom_bind_the_mangled_rels_columns) :-
+    parsed_module_path_program(
+        'rel tree(picked: int, tree_id: int).\nrel orchard.tree(tree_id: int, picked: int).\nrel ripe(tree_id: int).\nripe(T) <- orchard.tree(picked: P, tree_id: T), P > 1.',
+        _, Rules),
+    Rules =@= [(ripe(T) <- (rel_path([orchard, tree], [T, P]), P > 1))].
+
+% ── the zero-column child ───────────────────────────────────────────────────
+
+% A child declaring no columns still captures: the parent ref IS its only
+% column, which makes a marker rel one row per parent row.
+test(a_zero_column_child_takes_the_parent_ref_as_its_only_column) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel orchard.flag().\nrel planted(orchard_id: int).\norchard.flag() <- orchard(OrchardId), planted(OrchardId).',
+        Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(ExpandedDecls, Expanded), _),
+    memberchk(col_type(orchard__flag/1, parent, orchard), ExpandedDecls),
+    memberchk(rel_path_decl(orchard__flag/1, [orchard, flag]), ExpandedDecls),
+    Expanded =@= [(orchard__flag(orchard(OrchardId)) <-
+                      (orchard(OrchardId), planted(OrchardId)))].
+
+test(a_zero_column_child_read_in_a_body_spans_every_partition) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel orchard.flag().\nrel planted(orchard_id: int).\nrel lit(seen: int).\norchard.flag() <- orchard(OrchardId), planted(OrchardId).\nlit(1) <- orchard.flag().',
+        Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(_, Expanded), _),
+    Expanded = [_, (lit(1) <- Read)],
+    Read =@= orchard__flag(_Partition).
+
+% The zero-column child is a bare ATOM, and an atom is a legal data value, so
+% the rewrite matches goal positions and never a head argument.
+test(a_zero_column_childs_name_used_as_a_value_is_not_rewritten) :-
+    Program = prog([ col_type(orchard/1, orchard_id, int),
+                     rel_path_decl(orchard__flag/0, [orchard, flag]),
+                     col_type(planted/1, orchard_id, int),
+                     col_type(note/1, word, text) ],
+                   [ (orchard__flag <- orchard(Oid), planted(Oid)),
+                     (note(orchard__flag) <- planted(_)) ]),
+    expand_program(Program, prog(_, Expanded), _),
+    Expanded = [_, (note(Value) <- _)],
+    Value == orchard__flag.
+
 % Probe b: the option companion `Parent__Column` and the path mangle
 % `A__B__C` share the `__` glue, so the path takes the digest.
 test(a_mangle_colliding_with_an_option_companion_takes_the_digest) :-
@@ -5391,6 +5533,90 @@ test(a_mangle_colliding_with_an_option_companion_takes_the_digest) :-
     memberchk(col_type(Digested/1, note, text), Decls).
 
 :- end_tests(module_path_decls).
+
+:- begin_tests(rel_zero_arity).
+
+parsed_zero_arity_program(Source, Decls, Rules) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(Decls, Rules), _, [])).
+
+% A module IS a rel/0, so the degenerate rel has to be declarable. Before
+% column_less_decls/4, `rel foo().` produced NO decl at all: every entry it
+% could carry is derived from a column it does not have.
+test(a_column_less_rel_declares_itself_through_its_kind) :-
+    parsed_zero_arity_program('rel foo().', Decls, _),
+    Decls == [kind(foo/0, set)].
+
+test(a_column_less_log_rel_does_not_double_its_kind) :-
+    parsed_zero_arity_program('rel foo() log.', Decls, _),
+    Decls == [kind(foo/0, log)].
+
+test(a_column_bearing_rel_keeps_carrying_only_its_columns) :-
+    parsed_zero_arity_program('rel foo(n: int).', Decls, _),
+    Decls == [col_type(foo/1, n, int)].
+
+% CANONICAL TEXT FORM, chosen here: `name()` in every rule position, which is
+% what head_atom/6 and relatom_item/6 already parse. A bare atom is NOT it --
+% print_dl emitted 'foo' and the reparse read a quoted value.
+zero_arity_round_trip(Source, Program, RoundTripped, Text) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    once(print_dl_program(Program, Bindings, Text)),
+    atom_codes(Text, PrintedCodes),
+    once(parse_dl(PrintedCodes, RoundTripped, _, [])).
+
+test(a_root_rel_zero_prints_and_reparses) :-
+    zero_arity_round_trip(
+        'rel foo().\nrel seed(n: int).\nfoo() <- seed(1).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel foo().')),
+    once(sub_atom(Text, _, _, _, 'foo() <- seed(1).')),
+    Program =@= RoundTripped.
+
+test(a_rel_zero_read_in_a_body_prints_at_goal_position) :-
+    zero_arity_round_trip(
+        'rel foo().\nrel seed(n: int).\nrel lit(n: int).\nfoo() <- seed(1).\nlit(1) <- foo().',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'lit(1) <- foo().')),
+    Program =@= RoundTripped.
+
+% The same atom as a DATA value keeps its value spelling: `name()` is a
+% goal-position spelling, never a term-shape one.
+test(a_rel_zero_name_used_as_a_value_keeps_its_value_spelling) :-
+    Program = prog([col_type(note/1, word, text)],
+                   [(note(foo) <- seed(1))]),
+    once(print_dl_program(Program, [], Text)),
+    once(sub_atom(Text, _, _, _, 'note(\'foo\')')).
+
+test(a_column_less_nested_rel_prints_at_its_path) :-
+    zero_arity_round_trip(
+        'rel orchard(orchard_id: int).\nrel orchard.flag().\nrel planted(orchard_id: int).\norchard.flag() <- orchard(OrchardId), planted(OrchardId).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel orchard.flag().')),
+    Program =@= RoundTripped.
+
+% GAP PINNED, NOT FIXED. A ROOT rel/0 parses, prints and round-trips, then has
+% no storage: analyze.pl:rel_columns/4 opens with numlist(1, Arity, _), which
+% FAILS at arity 0, so no relplan is built for the ref and lower_program/2
+% fails silently -- no DDL, no refusal, no output. The numlist guard alone is
+% not the fix: SQLite has no zero-column table, so a true rel/0 needs a
+% unit-row storage decision (one sentinel column holding 0 or 1 rows) threaded
+% through every level-statement family. A NESTED rel/0 is unaffected, since
+% the implicit parent ref makes it arity 1 with ordinary storage.
+% rx: a rel/0 is a proposition, so its stream carries the unit tuple and reads
+% as isEmpty()/defaultIfEmpty() rather than as a row set.
+test(a_root_rel_zero_still_has_no_storage) :-
+    parsed_zero_arity_program(
+        'rel foo().\nrel seed(n: int).\nfoo() <- seed(1).', Decls, Rules),
+    memberchk(kind(foo/0, set), Decls),
+    once(program_plan(fixture(root_rel_zero, prog(Decls, Rules), [], [], [])-[],
+                      [intern(dict)], Plan)),
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
+    \+ memberchk(rel(foo/0, _, _, _), RelPlans),
+    \+ analyze:rel_columns(Rules, [], foo/0, _),
+    \+ lower_program(Plan, _).
+
+:- end_tests(rel_zero_arity).
 
 fact_probe_text("rel max_run(limit_lines: int).
 rel doubled_limit(limit_doubled: int).

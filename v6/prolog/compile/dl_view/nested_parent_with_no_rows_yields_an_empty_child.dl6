@@ -1,0 +1,7 @@
+rel orchard(orchard_id: int).
+rel orchard.tree(tree_id: int).
+rel planted(orchard_id: int, tree_id: int).
+rel seeded(orchard_id: int, tree_id: int).
+
+orchard(OrchardId) <- planted(OrchardId, _).
+orchard__tree(TreeId) <- orchard(Oid), seeded(Oid, TreeId).

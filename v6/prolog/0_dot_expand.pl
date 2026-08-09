@@ -233,11 +233,10 @@ apply_nested_capture(capture(Child, ParentName),
 apply_nested_capture(_, Program, Program).
 
 % An interior segment with no decl of its own captures nothing, and neither
-% does a parent whose own columns are absent: reference needs a target shape.
+% does a parent whose own columns are absent. A COLUMN-LESS child still does.
 child_capture_shape(Decls, Child, ChildArity, ParentName, ParentSpecs) :-
     memberchk(rel_path_decl(Child/ChildArity, _), Decls),
     parent_specs(Decls, ParentName, ParentSpecs),
-    ChildArity >= 1,
     findall(Column, member(col_type(Child/ChildArity, Column, _), Decls),
             ChildColumns),
     length(ChildColumns, ChildArity),
@@ -269,14 +268,21 @@ rename_capture_ref(_, _, Decl, Decl).
 
 shift_key_position(Position, Shifted) :- Shifted is Position + 1.
 
-% Column ORDER is decl order (analyze.pl rel_columns/5), so the leading
-% position is the slot immediately before the child's first column decl.
-insert_parent_column(_, _, [], []).
-insert_parent_column(Ref, ParentName, [Decl | Rest], Decls) :-
-    (   Decl = col_type(Ref, _, _)
+% Column ORDER is decl order (analyze.pl rel_columns/5); a child with no
+% column decl has no such slot and lands at its path carrier instead.
+insert_parent_column(Ref, ParentName, Decls0, Decls) :-
+    (   insert_parent_column_before(col_type(Ref, _, _), Ref, ParentName,
+                                    Decls0, Inserted)
+    ->  Decls = Inserted
+    ;   insert_parent_column_before(rel_path_decl(Ref, _), Ref, ParentName,
+                                    Decls0, Decls)
+    ).
+
+insert_parent_column_before(Anchor, Ref, ParentName, [Decl | Rest], Decls) :-
+    (   subsumes_term(Anchor, Decl)
     ->  Decls = [col_type(Ref, parent, ParentName), Decl | Rest]
     ;   Decls = [Decl | More],
-        insert_parent_column(Ref, ParentName, Rest, More)
+        insert_parent_column_before(Anchor, Ref, ParentName, Rest, More)
     ).
 
 % column_storage/3 reads ref(Name) off the TYPE table, and the text door's own
@@ -308,14 +314,22 @@ capture_arrow(Child, ChildArity, ParentName, ParentArity, Head0, Body0,
 % THE CONTRIBUTION RULE. A head short by one resolves its parent ref by
 % natural join: the body's own parent atom becomes the leading head argument.
 capture_head(Child, ChildArity, ParentName, ParentArity, Body, Head0, Head) :-
-    (   nonvar(Head0),
-        compound(Head0),
-        functor(Head0, Child, ChildArity)
+    (   capture_target_atom(Child, ChildArity, Head0, Args)
     ->  body_parent_term(ParentName, ParentArity, Body, Child, ParentTerm),
-        Head0 =.. [_ | Args],
         Head =.. [Child, ParentTerm | Args]
     ;   Head = Head0
     ).
+
+% A zero-column child is the bare ATOM, so `=..` is the only spelling that
+% reaches both shapes.
+capture_target_atom(Child, 0, Head, []) :-
+    !,
+    Head == Child.
+capture_target_atom(Child, ChildArity, Head, Args) :-
+    nonvar(Head),
+    compound(Head),
+    functor(Head, Child, ChildArity),
+    Head =.. [_ | Args].
 
 % lower.pl:bind_reference_target_identity/6 binds a whole body atom to its
 % alias's `__id`, so a head argument that IS that atom projects the endpoint.
@@ -350,7 +364,14 @@ positive_parent_atom(ParentName, ParentArity, Goal, Atom) :-
     compound(Atom),
     functor(Atom, ParentName, ParentArity).
 
-% A BODY atom short by one reads across every parent partition, so each
+% A zero-column child is a bare ATOM, and an atom is a legal DATA value, so a
+% whole-term walk would rewrite `flag` used as a text or enum value.
+capture_body(Child, 0, Body0, Body) :-
+    !,
+    conjunction_goals(Body0, Goals0),
+    maplist(capture_atom_goal(Child), Goals0, Goals),
+    goals_conjunction(Goals, Body).
+% A body atom short by one reads across every parent partition, so each
 % occurrence takes its own fresh leading variable.
 capture_body(Child, ChildArity, Term0, Term) :-
     (   var(Term0)
@@ -366,6 +387,25 @@ capture_body(Child, ChildArity, Term0, Term) :-
         Term =.. [Functor | Args]
     ;   Term = Term0
     ).
+
+capture_atom_goal(Child, Goal0, Goal) :-
+    (   Goal0 == Child
+    ->  Goal =.. [Child, _Partition]
+    ;   nonvar(Goal0),
+        compound(Goal0),
+        Goal0 =.. [Wrapper, Inner],
+        goal_wrapper(Wrapper),
+        Inner == Child
+    ->  Partitioned =.. [Child, _Partition],
+        Goal =.. [Wrapper, Partitioned]
+    ;   Goal = Goal0
+    ).
+
+goal_wrapper(not).
+goal_wrapper(latest).
+goal_wrapper(pre).
+goal_wrapper(finalize).
+goal_wrapper(next).
 
 expand_dot_rule(Rule0, Rule) :-
     ( contains_dot_get(Rule0)

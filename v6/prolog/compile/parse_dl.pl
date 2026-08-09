@@ -613,12 +613,22 @@ decl_a_stmt(DeclList, S0, S) :-
     typed_decl_entries(Ref, Specs, TypedDecls),
     decl_a_modifiers(Ref, Modifiers, S9, S10),
     module_path_decls(Segments, Ref, PathDecls),
-    append([TypedDecls, Modifiers, PathDecls], DeclList),
+    column_less_decls(Ref, Specs, Modifiers, UnitDecls),
+    append([TypedDecls, Modifiers, PathDecls, UnitDecls], DeclList),
     ws0(S10, S11),
     lit_dcg(`.`, S11, S).
 
+% A module IS a rel/0, so the degenerate rel has to be declarable; with no
+% column, kind/2 is the only entry that can carry that it was declared.
+column_less_decls(_, Specs, _, []) :- Specs \== [], !.
+column_less_decls(Ref, _, Modifiers, Decls) :-
+    (   memberchk(kind(Ref, _), Modifiers)
+    ->  Decls = []
+    ;   Decls = [kind(Ref, set)]
+    ).
+
 % One segment joins to the same atom it always was, so a flat decl is
-% unchanged; rel_path_decl/2 is what the dot phase resolves a path through.
+% unchanged. Column order records under this name, so named args resolve here.
 module_path_name(Segments, Name) :-
     atomic_list_concat(Segments, '__', Name).
 
@@ -1195,7 +1205,8 @@ head_atom(Term, Vars0, Vars, S0, S) :-
     ws0(S4, S5),
     lit_dcg(`)`, S5, S),
     last(Segments, LocalName),
-    resolve_named_args(head, LocalName, Args, PositionalArgs),
+    module_path_name(Segments, ResolvedName),
+    resolve_named_args(head, ResolvedName, Args, PositionalArgs),
     path_atom_term(Segments, LocalName, PositionalArgs, Term).
 
 % One segment is an ordinary atom; more is a module path the dot phase refuses.
@@ -1669,16 +1680,18 @@ partition_host_input_values_([col(Name, _) | Columns], [Value | Values],
                                  IdentityRest, SaltRest).
 
 relatom_item(Item, Vars0, Vars, S0, S) :-
-    dotted_path(Segments, S0, S1), last(Segments, Name), ws0(S1, S2),
+    dotted_path(Segments, S0, S1), last(Segments, Name),
+    module_path_name(Segments, ResolvedName), ws0(S1, S2),
     ( peek(0'!, S2, S2)
     -> lit_dcg(`!`, S2, S2a), ws0(S2a, S3), lit_dcg(`(`, S3, S4),
        head_args(Args, Vars0, Vars, S4, S5), ws0(S5, S6), lit_dcg(`)`, S6, S),
        length(Args, Arity), record_finding(unsupported_surface(mutation(Name/Arity))),
-       resolve_named_args(body, Name, Args, Positional), Item =.. [Name | Positional]
+       resolve_named_args(body, ResolvedName, Args, Positional),
+       Item =.. [Name | Positional]
     ; lit_dcg(`(`, S2, S3),
       head_args(Args, Vars0, Vars1, S3, S4), ws0(S4, S5),
       lit_dcg(`)`, S5, S6),
-      resolve_named_args(body, Name, Args, Positional),
+      resolve_named_args(body, ResolvedName, Args, Positional),
       ( Segments = [_Single]
       -> host_or_relation_item(Name, Positional, Item, Vars1, Vars, S6, S)
       ;  Item = rel_path(Segments, Positional), Vars = Vars1, S = S6

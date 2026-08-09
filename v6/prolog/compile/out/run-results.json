@@ -539,21 +539,21 @@
     "final_detail": ""
   },
   {
-    "name": "module_path_in_head_refuses_by_name",
+    "name": "module_path_in_head_resolves_and_contributes",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",
     "final_detail": ""
   },
   {
-    "name": "module_path_in_body_refuses_by_name",
+    "name": "module_path_in_body_reads_the_flat_rel",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",
     "final_detail": ""
   },
   {
-    "name": "module_path_three_segments_keeps_every_segment",
+    "name": "module_path_three_segments_resolve_through_the_rooms",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",
@@ -610,6 +610,13 @@
   },
   {
     "name": "nested_child_and_an_option_column_coexist",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_zero_column_child_is_one_row_per_parent",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",

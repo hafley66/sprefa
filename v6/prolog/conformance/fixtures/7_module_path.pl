@@ -8,7 +8,7 @@
 
 % rx: the resolved head rel is one stream; the dotted spelling is a
 % compile-time name, zero runtime rows.
-fixture(module_path_in_head_refuses_by_name,
+fixture(module_path_in_head_resolves_and_contributes,
     prog(
         [ col_type(harvest/2, tree_id, int),
           col_type(harvest/2, picked, int),
@@ -27,7 +27,7 @@ fixture(module_path_in_head_refuses_by_name,
     ]).
 
 % rx: join against the resolved target's stream, identical to naming it flat.
-fixture(module_path_in_body_refuses_by_name,
+fixture(module_path_in_body_reads_the_flat_rel,
     prog(
         [ col_type(orchard__fruit/2, tree_id, int),
           col_type(orchard__fruit/2, picked, int),
@@ -46,7 +46,7 @@ fixture(module_path_in_body_refuses_by_name,
 
 % `north` is an interior room no decl of its own names, so the walk has to
 % mint it from the path and still find `tree` under it.
-fixture(module_path_three_segments_keeps_every_segment,
+fixture(module_path_three_segments_resolve_through_the_rooms,
     prog(
         [ col_type(orchard__north__tree/1, tree_id, int),
           rel_path_decl(orchard__north__tree/1, [orchard, north, tree]),
@@ -306,4 +306,30 @@ fixture(nested_child_and_an_option_column_coexist,
     [
         final(labelled/2, [labelled(7, some)]),
         ticks(2)
+    ]).
+
+% A child declaring NO columns still captures: the parent ref is its only
+% column, so the marker is one row per parent row and never one row total.
+% rx: distinct-by-parent, the degenerate groupBy where each group holds one.
+fixture(nested_zero_column_child_is_one_row_per_parent,
+    prog(
+        [ col_type(orchard/1, orchard_id, int),
+          rel_path_decl(orchard__flag/0, [orchard, flag]),
+          kind(orchard__flag/0, set),
+          col_type(planted/2, orchard_id, int),
+          col_type(planted/2, tree_id, int),
+          col_type(flagged/1, orchard_id, int)
+        ],
+        [ (orchard(OrchardId) <- planted(OrchardId, _)),
+          (orchard__flag <- orchard(Oid), planted(Oid, _)),
+          (flagged(1) <- orchard__flag) ]),
+    [],
+    [
+        [+planted(1, 7), +planted(1, 8), +planted(2, 9)]
+    ],
+    [
+        final(orchard__flag/1, [orchard__flag(obj([orchard_id-1])),
+                                orchard__flag(obj([orchard_id-2]))]),
+        final(flagged/1, [flagged(1)]),
+        ticks(1)
     ]).
