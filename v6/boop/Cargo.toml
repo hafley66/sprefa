@@ -36,6 +36,10 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # Transcript timestamps parse against Rfc3339; hand-rolled date math is gone.
 time = { version = "0.3", features = ["parsing", "formatting"] }
 
+[dev-dependencies]
+# Peak-bytes-allocated counter for tests/bench_grid.rs's own #[global_allocator].
+peak_alloc = "0.3"
+
 [lib]
 name = "boop"
 path = "src/lib.rs"
