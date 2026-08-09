@@ -1273,6 +1273,106 @@ corpus_path(Path) :-
 
 :- end_tests(catalog_plane_rail).
 
+% ── step 7: the audit, both doors (plan §8). ────────────────────────────────
+% The serve door is v6/dl/fixtures/catalog-audit-rail.dl6; this twin walks the
+% same rows the seed renders, corpus-wide, and demands the audit name nothing.
+:- begin_tests(catalog_audit_rail).
+
+test(no_audit_row_names_a_plane_or_table) :-
+    findall(Finding,
+            ( catalog_audit_corpus_rows(AllRows),
+              audit_finding(AllRows, Finding) ),
+            Findings),
+    sort(Findings, Unique),
+    Unique == [].
+
+% Walk the conformance corpus the same way the name rail does, but as a local
+% walker: the sibling block's predicates are invisible from this test module.
+catalog_audit_corpus_path(Path) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures'], Dir),
+    directory_files(Dir, Entries),
+    msort(Entries, Ordered),
+    member(Entry, Ordered),
+    sub_atom(Entry, _, 3, 0, '.pl'),
+    atomic_list_concat([Dir, '/', Entry], Path).
+
+audit_fixture_terms(Stream, Terms) :-
+    read_term(Stream, Candidate, [variable_names(Bindings)]),
+    (   Candidate == end_of_file
+    ->  Terms = []
+    ;   Candidate = (:- Directive)
+    ->  catch(call(Directive), _, true), audit_fixture_terms(Stream, Terms)
+    ;   Candidate = fixture(_, _, _, _, _)
+    ->  Terms = [Candidate-Bindings | Rest], audit_fixture_terms(Stream, Rest)
+    ;   audit_fixture_terms(Stream, Terms)
+    ).
+
+catalog_audit_corpus_rows(AllRows) :-
+    catalog_audit_corpus_path(Path),
+    open(Path, read, Stream),
+    call_cleanup(audit_fixture_terms(Stream, Terms), close(Stream)),
+    member(fixture(ModName, Prog, Initial, Schedule,
+                   Expectations)-Bindings, Terms),
+    catch(( program_plan(fixture(ModName, Prog, Initial, Schedule,
+                                 Expectations)-Bindings, [intern(dict)], Plan),
+            catalog_audit_all_rows(Plan, AllRows) ),
+          _, fail).
+
+% Reproduce the producer's exact inputs so the audited rows match the DDL mint.
+catalog_audit_all_rows(Plan, AllRows) :-
+    Plan = plan(Name, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+    findall(PreRef,
+            ( member((_ <+ EdgeBody), Rules),
+              level_body_pre_ref(EdgeBody, PreRef) ),
+            PreRefs0),
+    sort(PreRefs0, PreRefs),
+    listened_departure_refs(Rules, DepartureRefs),
+    type_definitions(Decls, Types),
+    lower:plan_rule_level_statements(Plan, RuleLevelStatements),
+    lower:catalog_all_rows(Mode, Name, Rules, RelPlans, DepartureRefs, PreRefs,
+                           Types, RuleLevelStatements, Decls, AllRows).
+
+audit_finding(Rows, undecoded(RelName, ColumnName)) :-
+    undecoded_interned_column(Rows, RelName, ColumnName).
+audit_finding(Rows, orphan(RelName)) :-
+    orphan_view(Rows, RelName).
+
+% The rail's serve-time .dl6 twin, over the same row list the seed renders.
+undecoded_interned_column(Rows, RelName, ColumnName) :-
+    member(row(ColumnId, OwningRelId, _, ColumnName, column, _, _, _, _, _, _),
+           Rows),
+    memberchk(row(_, ColumnId, _, interned_id, storage, _, _, _, _, _, _), Rows),
+    memberchk(row(OwningRelId, _, _, RelName, rel, _, _, _, _, _, _), Rows),
+    \+ memberchk(row(_, OwningRelId, _, _, view, _, _, _, _, _, _), Rows).
+
+orphan_view(Rows, RelName) :-
+    member(row(OwningRelId, _, _, RelName, rel, _, _, _, _, _, _), Rows),
+    memberchk(row(_, OwningRelId, _, _, view, _, _, _, _, _, _), Rows),
+    \+ (  member(row(ColumnId, OwningRelId, _, _, column, _, _, _, _, _, _),
+                Rows),
+          memberchk(row(_, ColumnId, _, interned_id, storage, _, _, _, _, _, _),
+                    Rows) ).
+
+% The audit reads real rows, not zero of them: some corpus rel must carry an
+% interned column and some a decode view, or the empty assertion is vacuous.
+test(the_audit_reads_the_corpus_it_scans) :-
+    findall(_,
+            ( catalog_audit_corpus_rows(AllRows),
+              memberchk(row(_, _, _, interned_id, storage, _, _, _, _, _, _),
+                        AllRows) ),
+            Interned),
+    length(Interned, InternedCount),
+    InternedCount > 0,
+    findall(_,
+            ( catalog_audit_corpus_rows(AllRows),
+              memberchk(row(_, _, _, _, view, _, _, _, _, _, _), AllRows) ),
+            Viewed),
+    length(Viewed, ViewedCount),
+    ViewedCount > 0.
+
+:- end_tests(catalog_audit_rail).
+
 % Step 5, over 2_hosts_wiring.pl's nine fixtures. A sh_decl mints a port row
 % (declared INPUT count as arity) plus a port_response child (declared OUTPUT
 % count); a bind_decl mints a port row with NO response child.

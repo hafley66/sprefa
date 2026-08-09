@@ -230,6 +230,13 @@ getting-started:
 one-subscribe:
 	bash {{v6}}/tools/one-subscribe.sh
 
+# the plane audit, both doors (plan §8): compile catalog-audit-rail, serve it,
+# post the probe arrival, and demand zero findings -- no interned column lacks
+# its decode view and no decode view lacks its interned column.
+# (expect: CATALOG AUDIT HOLDS, exit 0)
+catalog-audit:
+	bash {{v6}}/tsv2/scripts/catalog-audit-rail.sh
+
 # stopping-point program #1 on the keyed clock/etag feedback shape: one hermetic
 # five-tick schedule replayed through BOTH the oracle and the emitted runtime,
 # byte-diffed three ways (expected vs oracle, expected vs emitted, oracle vs

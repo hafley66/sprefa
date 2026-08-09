@@ -1,0 +1,34 @@
+# catalog-audit-rail.dl6 -- the plane audit as a query over __rel (plan §8).
+# The probe arrival is the clock; the DDL-seeded catalog is the sampled side.
+rel audit_probe(run_id: int).
+
+rel source_note(title: text).
+rel source_measure(name: text, value: int).
+
+rel catalog_column(column_id: int, owning_rel_id: int, column_name: text).
+catalog_column(column_id, owning_rel_id, column_name) <-
+  audit_probe(_),
+  __rel(column_id, owning_rel_id, _, column_name, "column", _, _, _, _, _, _).
+
+rel interned_column(column_id: int, owning_rel_id: int, column_name: text).
+interned_column(column_id, owning_rel_id, column_name) <-
+  catalog_column(column_id, owning_rel_id, column_name),
+  __rel(_, column_id, _, "interned_id", "storage", _, _, _, _, _, _).
+
+rel decoded_rel(owning_rel_id: int).
+decoded_rel(owning_rel_id) <-
+  __rel(_, owning_rel_id, _, _, "view", _, _, _, _, _, _).
+
+# a table with no decode plane row: its interned column is undecoded.
+rel undecoded_interned_column(rel_name: text, column_name: text).
+undecoded_interned_column(rel_name, column_name) <-
+  interned_column(_, owning_rel_id, column_name),
+  __rel(owning_rel_id, _, _, rel_name, "rel", _, _, _, _, _, _),
+  not(decoded_rel(owning_rel_id)).
+
+# a decode plane row whose table is missing: no interned column justifies it.
+rel orphan_view(rel_name: text).
+orphan_view(rel_name) <-
+  __rel(owning_rel_id, _, _, rel_name, "rel", _, _, _, _, _, _),
+  decoded_rel(owning_rel_id),
+  not(interned_column(_, owning_rel_id, _)).
