@@ -1,4 +1,4 @@
-rel source(items: list(text)).
+rel source(items: json_list(text)).
 rel copied(items: json).
 
 copied(Items) <- source(Items).
