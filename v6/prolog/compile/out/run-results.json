@@ -42,6 +42,27 @@
     "final_detail": ""
   },
   {
+    "name": "rtrim_strips_trailing_chars",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "replace_rewrites_all_occurrences",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "derive_directory_prefix_via_rtrim_replace",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "variant_field_float_stays_float",
     "bucket": "identical",
     "detail": "",

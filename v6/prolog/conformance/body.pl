@@ -52,9 +52,9 @@ eval_expr(Term, Out) :-
     nonvar(Term),
     expression_for_term(Term, text_scalar, _, Rendering, _),
     !,
-    arg(1, Term, Argument),
-    eval_expr(Argument, Value),
-    text_scalar_value(Rendering, Value, Out).
+    Term =.. [_ | Args],
+    maplist(eval_expr, Args, Values),
+    text_scalar_value(Rendering, Values, Out).
 % The empty object is the ATOM `{}` on both doors, so it canonicalizes here
 % beside its arity-1 sibling; without this clause a stored `{}` stays an atom
 % and every object pattern over it fails as if the value were a scalar.
@@ -69,12 +69,49 @@ eval_expr(Value, Value).
 % `unicode("c") BETWEEN 48 AND 57 / 65 AND 90 / 97 AND 122`, so the character
 % classes here are those three ranges written out, not a locale-aware
 % code_type/2 that would answer differently for a non-ASCII letter.
-text_scalar_value(ascii_alnum_lower, Value, Out) :-
+text_scalar_value(ascii_alnum_lower, [Value], Out) :-
     ( atomic(Value) -> true ; throw(non_display_in_concat(Value)) ),
     atom_codes(Value, Codes),
     include(ascii_alnum_code, Codes, Kept),
     maplist(ascii_lower_code, Kept, Lowered),
     atom_codes(Out, Lowered).
+
+% SQLite rtrim(X, Y): strip trailing characters that are members of the set Y.
+text_scalar_value(rtrim, [Text, Chars], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_codes(Text, TextCodes),
+    atom_codes(Chars, CharsCodes),
+    reverse(TextCodes, Rev),
+    drop_leading_in_set(Rev, CharsCodes, RevTrimmed),
+    reverse(RevTrimmed, Trimmed),
+    atom_codes(Out, Trimmed).
+
+drop_leading_in_set([], _, []).
+drop_leading_in_set([Code | Rest], Chars, Out) :-
+    ( memberchk(Code, Chars)
+    -> drop_leading_in_set(Rest, Chars, Out)
+    ;  Out = [Code | Rest]
+    ).
+
+% SQLite replace(X, Y, Z): replace every occurrence of Y in X with Z.
+text_scalar_value(replace, [Text, From, To], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_codes(Text, TextCodes),
+    atom_codes(From, FromCodes),
+    atom_codes(To, ToCodes),
+    replace_codes(TextCodes, FromCodes, ToCodes, OutCodes),
+    atom_codes(Out, OutCodes).
+
+replace_codes([], _, _, []).
+replace_codes(Codes, [], _, Codes) :- !.
+replace_codes(Codes, Needle, Repl, Out) :-
+    (   append(Needle, Rest, Codes)
+    ->  append(Repl, OutRest, Out),
+        replace_codes(Rest, Needle, Repl, OutRest)
+    ;   Codes = [Code | Rest],
+        replace_codes(Rest, Needle, Repl, RestOut),
+        Out = [Code | RestOut]
+    ).
 
 ascii_alnum_code(Code) :- between(0'0, 0'9, Code), !.
 ascii_alnum_code(Code) :- between(0'A, 0'Z, Code), !.

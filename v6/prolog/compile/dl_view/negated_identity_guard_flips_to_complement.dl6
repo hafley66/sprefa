@@ -1,0 +1,1 @@
+distinct(Left, Right) <- pair(Left, Right), not(Left == Right).

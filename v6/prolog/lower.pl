@@ -499,9 +499,9 @@ compile_expr(Mode, Demand, Expr, Bound, Sql, Type, Encoding) :-
        atomic_list_concat(PartSqls, ' || ', Joined),
        format(atom(Sql), '(~w)', [Joined]),
        Type = text, Encoding = direct
-    ; text_scalar_expr(Expr, Function, Argument)
-    -> compile_text_operand(Mode, Argument, Bound, Expr, ArgumentSql),
-       text_scalar_sql(Function, ArgumentSql, Sql),
+    ; text_scalar_expr(Expr, Function, Arguments)
+    -> compile_text_operands(Mode, Arguments, Bound, Expr, ArgumentSqls),
+       text_scalar_sql(Function, ArgumentSqls, Sql),
        Type = text, Encoding = direct
     ; arithmetic_expr(Expr, Operator, Left, Right)
     -> compile_numeric_operand(Mode, Operator, Left, Bound, Expr, LeftSql, LeftType),
@@ -536,9 +536,10 @@ arithmetic_expr(Expr, Operator, Left, Right) :-
     compound(Expr), Expr =.. [Operator, Left, Right],
     expression(Operator/2, arithmetic, _, _, _).
 
-text_scalar_expr(Expr, Function, Argument) :-
-    compound(Expr), Expr =.. [Function, Argument],
-    expression(Function/1, text_scalar, _, _, _).
+text_scalar_expr(Expr, Function, Arguments) :-
+    compound(Expr), Expr =.. [Function | Arguments],
+    length(Arguments, Arity),
+    expression(Function/Arity, text_scalar, _, _, _).
 
 compile_text_operand(Mode, Operand, Bound, Whole, Sql) :-
     compile_expr(Mode, value, Operand, Bound, Sql, Type, _Encoding),
@@ -547,16 +548,28 @@ compile_text_operand(Mode, Operand, Bound, Whole, Sql) :-
     ;  throw(unsupported_construct(text_operand_not_text(Whole, Operand, Type)))
     ).
 
-text_scalar_sql(Function, ArgumentSql, Sql) :-
-    expression(Function/1, text_scalar, _, Rendering, _),
-    text_scalar_rendering(Rendering, ArgumentSql, Sql).
+compile_text_operands(_, [], _, _, []).
+compile_text_operands(Mode, [Operand | Rest], Bound, Whole, [Sql | Sqls]) :-
+    compile_text_operand(Mode, Operand, Bound, Whole, Sql),
+    compile_text_operands(Mode, Rest, Bound, Whole, Sqls).
+
+text_scalar_sql(Function, ArgumentSqls, Sql) :-
+    length(ArgumentSqls, Arity),
+    expression(Function/Arity, text_scalar, _, Rendering, _),
+    text_scalar_rendering(Function, Rendering, ArgumentSqls, Sql).
 
 % SQLite's @libsql seam has lower()/unicode(), but no scalar-function
 % registration. The recursive scalar expression preserves V5 `normalize`.
-text_scalar_rendering(ascii_alnum_lower, ArgumentSql, Sql) :-
+text_scalar_rendering(_, ascii_alnum_lower, [ArgumentSql], Sql) :-
     format(atom(Sql),
            '(WITH RECURSIVE "__norm_chars"("i", "c") AS (SELECT 1, substr(~w, 1, 1) UNION ALL SELECT "i" + 1, substr(~w, "i" + 1, 1) FROM "__norm_chars" WHERE "i" < length(~w)) SELECT coalesce(group_concat(lower("c"), \'\'), \'\') FROM "__norm_chars" WHERE (unicode("c") BETWEEN 48 AND 57) OR (unicode("c") BETWEEN 65 AND 90) OR (unicode("c") BETWEEN 97 AND 122))',
            [ArgumentSql, ArgumentSql, ArgumentSql]).
+% Direct SQLite scalar: the rendering IS the function name, so rtrim/2 lowers
+% to rtrim(a, b) and replace/3 to replace(a, b, c), no UDF.
+text_scalar_rendering(Function, Rendering, ArgumentSqls, Sql) :-
+    Rendering == Function,
+    atomic_list_concat(ArgumentSqls, ', ', ArgsJoined),
+    format(atom(Sql), '~w(~w)', [Function, ArgsJoined]).
 
 % The json arm's own VALUE grammar: a braces literal ({}/1) and a list. Both
 % are ordinary compound terms structurally, and the generic compound branch

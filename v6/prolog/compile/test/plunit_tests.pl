@@ -3670,6 +3670,8 @@ expected_row('\\=='/2, identity_comparison, 0, infix('<>'),           same_type)
 expected_row('=:='/2,   ordered_comparison, 0, infix('='),            both_number).
 expected_row('=\\='/2,   ordered_comparison, 0, infix('<>'),           both_number).
 expected_row(norm/1,    text_scalar,         3, ascii_alnum_lower,    text_only).
+expected_row(rtrim/2,   text_scalar,         3, rtrim,                text_only).
+expected_row(replace/3, text_scalar,         3, replace,              text_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
     findall(Signature-Family-Precedence-Sql-Type,

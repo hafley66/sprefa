@@ -1,0 +1,1 @@
+selected(Name) <- person(Name), Name == 'O\'Brien'.

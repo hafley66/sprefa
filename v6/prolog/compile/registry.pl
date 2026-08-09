@@ -255,6 +255,12 @@ expression('=\\='/2,   ordered_comparison, 0, infix('<>'),            both_numbe
 % V5 `sprf_norm`: retain ASCII letters/digits and lowercase letters. This is
 % an existing expression-call shape; lowering stays inside SQLite.
 expression(norm/1,    text_scalar,         3, ascii_alnum_lower,     text_only).
+% The str-stratum minimum: rtrim/2 and replace/3 are SQLite scalar functions
+% with no registered UDF, so the rendering is the bare SQLite call. This is
+% the shape that lets a program derive a directory prefix with
+% rtrim(path, replace(path, '/', '')).
+expression(rtrim/2,   text_scalar,         3, rtrim,                text_only).
+expression(replace/3, text_scalar,         3, replace,              text_only).
 
 expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
     nonvar(Term),
