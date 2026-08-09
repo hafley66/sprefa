@@ -5,14 +5,24 @@ import type {
   RelVerdict,
 } from "../runtime/types.ts";
 
-function rel_key(row: IRelCatalogRow): string {
-  return `${row.module_id}:${row.local_name}`;
+// module_id is positional across emits (one id sequence with primitives and
+// synthetic rows), so keying on it reads any id-layout shift as drop-everything.
+function rel_key(row: IRelCatalogRow, by_id: ReadonlyMap<number, IRelCatalogRow>): string {
+  const parts: string[] = [row.local_name];
+  let parent = by_id.get(row.parent_id);
+  while (parent !== undefined && parent.kind === "rel") {
+    parts.push(parent.local_name);
+    parent = by_id.get(parent.parent_id);
+  }
+  return parts.reverse().join(":");
 }
 
 function rels_by_key(rows: readonly IRelCatalogRow[]): Map<string, IRelCatalogRow> {
+  const by_id = new Map<number, IRelCatalogRow>();
+  for (const row of rows) by_id.set(row.rel_id, row);
   const rels = new Map<string, IRelCatalogRow>();
   for (const row of rows) {
-    if (row.kind === "rel") rels.set(rel_key(row), row);
+    if (row.kind === "rel") rels.set(rel_key(row, by_id), row);
   }
   return rels;
 }
