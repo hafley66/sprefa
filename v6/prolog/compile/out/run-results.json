@@ -539,6 +539,41 @@
     "final_detail": ""
   },
   {
+    "name": "module_path_in_head_refuses_by_name",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "module_path_in_body_refuses_by_name",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "module_path_three_segments_keeps_every_segment",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "module_path_local_name_binds_before_the_dotted_one",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "module_path_and_option_column_coexist",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_string_control_escapes_are_valid_json",
     "bucket": "identical",
     "detail": "",

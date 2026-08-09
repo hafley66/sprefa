@@ -27,8 +27,8 @@
 %
 % Resolution is receiver-bound-first: the chain's ROOT must be a variable the
 % rule body binds, else the named unsupported construct unresolvable_member. There is no
-% module half in scope, so a chain whose root is not a bound body variable is
-% never silently repairable.
+% overlap with a FUNCTOR-position path: that one has an atom root by
+% construction and resolves against the decl tree instead.
 %
 % A rule that carries no dot_get is returned byte-identical, so no existing
 % fixture's body shape moves.
@@ -45,6 +45,8 @@
 %                         position to desugar into. Text-door programs cannot
 %                         reach it (a dot chain at goal position is a parse
 %                         error); a term-door fixture can write one.
+%   unresolvable_path     a functor-position path walks off the decl tree. The
+%                         payload keeps every segment.
 
 :- module(dot_expand,
           [ expand_dot_in_context/3 ]).
@@ -60,8 +62,13 @@
 
 expand_dot_in_context(EnumContext, prog(Decls, Rules0), prog(Decls, Rules)) :-
     maplist(resolve_enum_arm_term(EnumContext), Rules0, Rules1),
-    maplist(refuse_rel_path_rule, Rules1),
-    maplist(expand_dot_rule, Rules1, Rules).
+    (   member(Carrier, Rules1),
+        contains_rel_path(Carrier)
+    ->  decl_scope_tree(Decls, Root),
+        maplist(resolve_rel_path_rule([Root]), Rules1, Rules2)
+    ;   Rules2 = Rules1
+    ),
+    maplist(expand_dot_rule, Rules2, Rules).
 
 % `Enum.variant(...)` is the arm's own spelling. The generated ref comes from
 % enum_context, so this cannot drift from what expansion actually minted.
@@ -85,30 +92,102 @@ enum_arm_ref(EnumContext, [EnumName, VariantName], Args, Resolved) :-
 
 % Either door: the text door parses rel_path/2, and SWI reads `a.b(X)` as
 % '.'(a, b(X)), which would otherwise become a rel literally named '.'.
-refuse_rel_path_rule(Rule) :-
-    (   sub_term(Sub, Rule),
-        nonvar(Sub),
-        rel_path_segments(Sub, Segments)
-    ->  throw(unsupported_construct(module_path_unresolved(Segments)))
-    ;   true
+resolve_rel_path_rule(Scopes, Rule0, Rule) :-
+    (   contains_rel_path(Rule0)
+    ->  rewrite_rel_paths(Scopes, Rule0, Rule)
+    ;   Rule = Rule0
     ).
 
-rel_path_segments(rel_path(Segments, _Args), Segments) :- is_list(Segments).
+contains_rel_path(Term) :-
+    sub_term(Sub, Term),
+    nonvar(Sub),
+    rel_path_parts(Sub, _, _),
+    !.
+
+rewrite_rel_paths(Scopes, Term0, Term) :-
+    (   nonvar(Term0),
+        rel_path_parts(Term0, Segments, Args)
+    ->  (   resolve_path(Scopes, Segments, Name)
+        ->  maplist(rewrite_rel_paths(Scopes), Args, ResolvedArgs),
+            Term =.. [Name | ResolvedArgs]
+        ;   throw(unsupported_construct(unresolvable_path(Segments)))
+        )
+    ;   compound(Term0)
+    ->  Term0 =.. [Functor | Args0],
+        maplist(rewrite_rel_paths(Scopes), Args0, Args1),
+        Term =.. [Functor | Args1]
+    ;   Term = Term0
+    ).
+
+rel_path_parts(rel_path(Segments, Args), Segments, Args) :-
+    is_list(Segments),
+    is_list(Args).
 % A literal '.'(A, B) in a clause head would itself be dict-expanded by SWI,
 % which is the trap this predicate exists to catch, so the shape is inspected.
-rel_path_segments(Term, [Receiver | Rest]) :-
+rel_path_parts(Term, [Receiver | Rest], Args) :-
     compound(Term),
     functor(Term, '.', 2),
     arg(1, Term, Receiver),
     atom(Receiver),
     arg(2, Term, Applied),
     nonvar(Applied),
-    (   rel_path_segments(Applied, Rest)
+    (   rel_path_parts(Applied, Rest, Args)
     ->  true
     ;   compound(Applied),
-        functor(Applied, LocalName, Arity),
-        Arity > 0,
+        Applied =.. [LocalName | Args],
+        Args \== [],
         Rest = [LocalName]
+    ).
+
+% Scopes run innermost first, so a nearer room's name binds before an outer
+% same-name; one file with no block surface = the file room alone.
+decl_scope_tree(Decls, Root) :-
+    findall(Segments-Name, declared_path(Decls, Segments, Name), Paths0),
+    sort(Paths0, Paths),
+    foldl(insert_path, Paths, node(file, none, []), Root).
+
+declared_path(Decls, Segments, Name) :-
+    member(rel_path_decl(Name/_, Segments), Decls).
+declared_path(Decls, [Name], Name) :-
+    declared_flat_name(Decls, Name),
+    \+ member(rel_path_decl(Name/_, _), Decls).
+
+declared_flat_name(Decls, Name) :- member(col_type(Name/_, _, _), Decls).
+declared_flat_name(Decls, Name) :- member(kind(Name/_, _), Decls).
+declared_flat_name(Decls, Name) :- member(keyed(Name/_, _), Decls).
+declared_flat_name(Decls, Name) :- member(keep(Name/_, _), Decls).
+declared_flat_name(Decls, Name) :- member(type_decl(Name, _), Decls).
+declared_flat_name(Decls, Name) :- member(enum_decl(Name, _), Decls).
+
+insert_path(Segments-Name, node(Local, Resolved, Children0),
+            node(Local, Resolved, Children)) :-
+    insert_segments(Segments, Name, Children0, Children).
+
+insert_segments([Segment], Name, Children0, Children) :-
+    !,
+    (   selectchk(node(Segment, _, Grand), Children0, Others)
+    ->  Children = [node(Segment, some(Name), Grand) | Others]
+    ;   Children = [node(Segment, some(Name), []) | Children0]
+    ).
+insert_segments([Segment | Rest], Name, Children0, Children) :-
+    (   selectchk(node(Segment, Resolved, Grand0), Children0, Others)
+    ->  insert_segments(Rest, Name, Grand0, Grand),
+        Children = [node(Segment, Resolved, Grand) | Others]
+    ;   insert_segments(Rest, Name, [], Grand),
+        Children = [node(Segment, none, Grand) | Children0]
+    ).
+
+resolve_path([Scope | Outer], Segments, Name) :-
+    (   descend(Scope, Segments, Name)
+    ->  true
+    ;   resolve_path(Outer, Segments, Name)
+    ).
+
+descend(node(_, _, Children), [Segment | Rest], Name) :-
+    memberchk(node(Segment, Resolved, Grand), Children),
+    (   Rest == []
+    ->  Resolved = some(Name)
+    ;   descend(node(Segment, Resolved, Grand), Rest, Name)
     ).
 
 expand_dot_rule(Rule0, Rule) :-
