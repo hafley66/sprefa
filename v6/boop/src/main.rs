@@ -9,34 +9,29 @@ use std::process::Command;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::bus::Route;
-use crate::event::AgentEvent;
-use crate::registry::Registry;
+use boop::bus::Route;
+use boop::event::AgentEvent;
+use boop::proc::ProcReader;
+use boop::registry::Registry;
+use boop::{bus, ident, identity, proc, query, tmux, usage};
 
-mod bus;
-mod chat;
-mod event;
-mod harness;
-mod ident;
-mod identity;
-mod proc;
-use crate::proc::ProcReader;
-mod query;
-mod registry;
-mod tail;
-mod tmux;
-mod usage;
-mod worktree;
+
+
+
+
+
 
 #[derive(Parser)]
 #[command(
     name = "boop",
     version,
     about = "Cross-harness agent transcript reader: drive agents with `beep`, read what they did with `db`",
-    after_help = "The pre-split verbs (harnesses, sessions, events, chat, tail, list, measure, \
-dispatch, lane, resolve, adopt, sweep, prune, hail, sync, follow) still run as hidden \
-aliases for one release. Use `beep` and `db`; `boop db sync create --rebuild` replaces \
-`boop sync --rebuild`."
+    after_help = "STORE SCHEMA: this build writes version 5. A store written by an older \
+build is refused, and `boop db sync create --rebuild` drops every stored row and \
+re-projects every transcript from byte 0 (about 18 s over 1.5 GB here). Nothing is \
+wiped without that flag.\n\nThe pre-split verbs (harnesses, sessions, events, chat, \
+tail, list, measure, dispatch, lane, resolve, adopt, sweep, prune, hail, sync, follow) \
+still run as hidden aliases for one release. Use `beep` and `db`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -467,7 +462,7 @@ fn run_harnesses(registry: &Registry) -> Result<()> {
 }
 
 fn run_sessions(registry: &Registry, harness_id: Option<&str>) -> Result<()> {
-    let harnesses: Vec<&dyn crate::harness::Harness> = match harness_id {
+    let harnesses: Vec<&dyn boop::harness::Harness> = match harness_id {
         Some(id) => vec![resolve_harness(registry, id)?],
         None => registry.all().iter().map(|boxed| boxed.as_ref()).collect(),
     };
@@ -597,7 +592,7 @@ fn run_sync_all(registry: &Registry, rebuild: bool) -> Result<()> {
         let mut stat = ident::SyncStat::default();
         for adapter in registry.all() {
             for session in adapter.sessions()? {
-                stat.add(ident::sync_session(&store, &session)?);
+                stat.add(ident::sync_session(&store, adapter.as_ref(), &session)?);
             }
         }
         Ok::<ident::SyncStat, anyhow::Error>(stat)
@@ -652,11 +647,13 @@ fn run_follow(registry: &Registry) -> Result<()> {
     refuse_stale(&ident::Store::open(ident::Store::default_path()?)?)?;
     let mut sessions = Vec::new();
     for adapter in registry.all() {
-        sessions.extend(adapter.sessions()?);
+        for session in adapter.sessions()? {
+            sessions.push((adapter.id().to_owned(), session));
+        }
     }
     let mut last_mtime: std::collections::HashMap<String, u64> = sessions
         .iter()
-        .map(|session| {
+        .map(|(_, session)| {
             let mtime = file_mtime_ms(&session.path).unwrap_or(0);
             (session.session_id.clone(), mtime)
         })
@@ -664,12 +661,13 @@ fn run_follow(registry: &Registry) -> Result<()> {
     loop {
         let store = ident::Store::open(ident::Store::default_path()?)?;
         store.begin()?;
-        for session in &sessions {
+        for (harness_id, session) in &sessions {
             let mtime = file_mtime_ms(&session.path).unwrap_or(0);
             if last_mtime.get(&session.session_id).copied().unwrap_or(0) == mtime {
                 continue;
             }
-            let _ = ident::sync_session(&store, session)?;
+            let adapter = harness_by_id(registry, harness_id)?;
+            let _ = ident::sync_session(&store, adapter, session)?;
             last_mtime.insert(session.session_id.clone(), mtime);
         }
         store.commit()?;
@@ -692,7 +690,7 @@ fn file_mtime_ms(path: &std::path::Path) -> Result<u64> {
 fn resolve_harness<'a>(
     registry: &'a Registry,
     id: &str,
-) -> Result<&'a dyn crate::harness::Harness> {
+) -> Result<&'a dyn boop::harness::Harness> {
     registry
         .by_id(id)
         .with_context(|| format!("no harness registered with id `{id}`"))
@@ -938,7 +936,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         r#ref: args.r#ref.clone(),
     };
 
-    let spec = crate::harness::SpawnSpec {
+    let spec = boop::harness::SpawnSpec {
         harness: harness_id.clone(),
         branch,
         base_sha,
@@ -994,7 +992,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
 fn resolve_dispatch_harness<'a>(
     registry: &'a Registry,
     id: Option<&str>,
-) -> Result<&'a dyn crate::harness::Harness> {
+) -> Result<&'a dyn boop::harness::Harness> {
     let Some(id) = id else {
         return registry
             .all()
@@ -1018,7 +1016,7 @@ fn resolve_dispatch_harness<'a>(
 
 /// The registered harness adapter for a `--harness` filter, or the first
 /// registered one when the id is absent.
-fn harness_by_id<'a>(registry: &'a Registry, id: &str) -> Result<&'a dyn crate::harness::Harness> {
+fn harness_by_id<'a>(registry: &'a Registry, id: &str) -> Result<&'a dyn boop::harness::Harness> {
     registry
         .by_id(id)
         .or_else(|| registry.all().first().map(|b| b.as_ref()))
@@ -1153,7 +1151,7 @@ fn run_hail(
     // detail inside the impl. The session carries the pane handle spawn gave it.
     let harness_id = route.harness.as_deref().unwrap_or("claude");
     let adapter = harness_by_id(registry, harness_id)?;
-    let session = crate::harness::SessionRef {
+    let session = boop::harness::SessionRef {
         harness: adapter.id(),
         session_id: to.to_owned(),
         nickname: to.to_owned(),
@@ -1168,11 +1166,11 @@ fn run_hail(
     };
     let outcome = adapter.send(&session, &line)?;
     match outcome {
-        crate::harness::SendOutcome::Injected => println!("injected into tmux {pane}"),
-        crate::harness::SendOutcome::QueuedForNextSpawn => {
+        boop::harness::SendOutcome::Injected => println!("injected into tmux {pane}"),
+        boop::harness::SendOutcome::QueuedForNextSpawn => {
             println!("queued for next spawn -> {to}");
         }
-        crate::harness::SendOutcome::Unsupported => {
+        boop::harness::SendOutcome::Unsupported => {
             println!("{to} harness has no send support: message stays queued");
         }
     }
@@ -1506,18 +1504,22 @@ fn append_ack(
 #[cfg(test)]
 mod tests {
     use super::resolve_dispatch_harness;
-    use crate::registry::Registry;
+    use boop::registry::Registry;
+    
 
+    /// A named harness that is not registered must be refused, never quietly
+    /// swapped for the first adapter, which would be a capability lie.
     #[test]
     fn dispatch_refuses_an_unregistered_harness() {
         let registry = Registry::discover();
-        let error = match resolve_dispatch_harness(&registry, Some("opencode")) {
+        let error = match resolve_dispatch_harness(&registry, Some("kimi")) {
             Ok(_) => panic!("unregistered harness must be refused"),
             Err(error) => error,
         };
         let message = error.to_string();
-        assert!(message.contains("opencode"), "message: {message}");
+        assert!(message.contains("kimi"), "message: {message}");
         assert!(message.contains("claude"), "registered set: {message}");
+        assert!(message.contains("opencode"), "registered set: {message}");
     }
 }
 

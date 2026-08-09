@@ -21,7 +21,8 @@ pub struct Store {
 
 /// Bumped whenever stored rows mean something different. 2 = dense per-session
 /// turn ordinals and per-transcript cursors. 3 = token usage. 4 = rate table.
-pub const SCHEMA_VERSION: i64 = 4;
+/// 5 = agent_fetch covers searches, not only url fetches.
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// A row returned to the CLI, joined back from ids to the TEXT the query
 /// surface exposes.
@@ -414,12 +415,24 @@ impl Store {
 
     fn add_fetch(&self, session: &str, turn: u64, ts: u64, url: &str, domain: &str) -> Result<()> {
         let sid = self.session_id(session)?;
+        let kind_id = self.intern("dict_netkind", "fetch")?;
         let url_id = self.intern("dict_url", url)?;
         let domain_id = self.intern("dict_domain", domain)?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO agent_fetch (session_id, turn, ts, url_id, domain_id)
+            "INSERT OR IGNORE INTO agent_fetch (session_id, turn, ts, kind_id, url_id, domain_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![sid, turn as i64, ts as i64, kind_id, url_id, domain_id],
+        )?;
+        Ok(())
+    }
+
+    fn add_search(&self, session: &str, turn: u64, ts: u64, query: &str) -> Result<()> {
+        let sid = self.session_id(session)?;
+        let kind_id = self.intern("dict_netkind", "search")?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO agent_fetch (session_id, turn, ts, kind_id, query)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![sid, turn as i64, ts as i64, url_id, domain_id],
+            params![sid, turn as i64, ts as i64, kind_id, query],
         )?;
         Ok(())
     }
@@ -637,24 +650,45 @@ impl Store {
 /// Project one transcript file forward from its stored cursor, writing session,
 /// turn, touch, cmd, fetch, skill, pr facts. Returns the new offset. A second
 /// run with nothing appended after the cursor writes nothing.
-pub fn sync_session(store: &Store, session: &SessionRef) -> Result<SyncStat> {
-    let offset = store.get_cursor(&session.session_id, &session.path.display().to_string())?;
+pub fn sync_session(
+    store: &Store,
+    adapter: &dyn crate::harness::Harness,
+    session: &SessionRef,
+) -> Result<SyncStat> {
+    let key = session.path.display().to_string();
+    let from = store.get_cursor(&session.session_id, &key)?;
+    let ingested = adapter.ingest(store, session, from)?;
+    if ingested.stat.written > 0 || ingested.stat.usage_written > 0 {
+        store.upsert_session_row(
+            &session.session_id,
+            session.harness,
+            &session.nickname,
+            session.cwd.as_deref(),
+            session.git_branch.as_deref(),
+            session.modified_ms,
+        )?;
+        if let Some(parent) = &session.parent {
+            store.add_edge(parent, &session.session_id, "spawned")?;
+        }
+    }
+    store.set_cursor(&session.session_id, &key, ingested.next_cursor)?;
+    Ok(ingested.stat)
+}
+
+/// The byte-offset transcript projection, which is every file-backed harness.
+pub fn project_transcript(
+    store: &Store,
+    session: &SessionRef,
+    from: u64,
+) -> Result<crate::harness::Ingested> {
     let mut file = std::fs::File::open(&session.path)
         .map_err(|error| anyhow::anyhow!("open {}: {error}", session.path.display()))?;
-    let result = crate::tail::read_complete_lines(&mut file, offset)?;
+    let result = crate::tail::read_complete_lines(&mut file, from)?;
     if result.lines.is_empty() {
-        return Ok(SyncStat::default());
-    }
-    store.upsert_session_row(
-        &session.session_id,
-        session.harness,
-        &session.nickname,
-        session.cwd.as_deref(),
-        session.git_branch.as_deref(),
-        session.modified_ms,
-    )?;
-    if let Some(parent) = &session.parent {
-        store.add_edge(parent, &session.session_id, "spawned")?;
+        return Ok(crate::harness::Ingested {
+            stat: SyncStat::default(),
+            next_cursor: from,
+        });
     }
     let mut walk = Walk {
         turn: store.max_turn(&session.session_id)?,
@@ -663,12 +697,51 @@ pub fn sync_session(store: &Store, session: &SessionRef) -> Result<SyncStat> {
     for line in &result.lines {
         project_line(store, session, line, &mut walk)?;
     }
-    store.set_cursor(
-        &session.session_id,
-        &session.path.display().to_string(),
-        result.next_offset,
-    )?;
-    Ok(walk.stat)
+    Ok(crate::harness::Ingested {
+        stat: walk.stat,
+        next_cursor: result.next_offset,
+    })
+}
+
+/// The pieces an adapter needs to write turns and facts of its own.
+impl Store {
+    pub(crate) fn begin_walk(&self, session: &str) -> Result<u64> {
+        self.max_turn(session)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn write_turn(
+        &self,
+        session: &str,
+        turn: u64,
+        ts: u64,
+        role: &str,
+        said: &str,
+    ) -> Result<usize> {
+        self.add_turn(session, turn, ts, role, said)
+    }
+
+    pub(crate) fn write_tool_fact(
+        &self,
+        session: &str,
+        turn: u64,
+        ts: u64,
+        name: &str,
+        input: Option<&serde_json::Value>,
+    ) -> Result<()> {
+        emit_tool_fact(self, session, turn, ts, name, input)
+    }
+
+    pub(crate) fn write_usage(
+        &self,
+        session: &str,
+        turn: u64,
+        usage: &UsageRow,
+    ) -> Result<(bool, bool)> {
+        let (request_ref, is_new) = self.intern_request(usage.message_id, usage.request_id)?;
+        let changed = self.add_usage(session, turn, request_ref, is_new, usage)?;
+        Ok((is_new, changed))
+    }
 }
 
 /// Walk one complete line and emit its turns and typed facts.
@@ -866,16 +939,17 @@ fn emit_tool_fact(
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned)
     };
-    match name {
-        "Read" | "Write" | "Edit" | "List" | "Glob" | "MultiEdit" | "Grep" => {
+    match name.to_ascii_lowercase().as_str() {
+        "read" | "write" | "edit" | "list" | "glob" | "multiedit" | "grep" => {
             let path = field("file_path")
+                .or_else(|| field("filePath"))
                 .or_else(|| field("pattern"))
                 .or_else(|| field("path"));
             if let Some(path) = path {
                 store.add_touch(session, turn, ts, &path, name)?;
             }
         }
-        "Bash" => {
+        "bash" => {
             let command = field("command").unwrap_or_default();
             if !command.is_empty() {
                 let mut parts = command.splitn(2, char::is_whitespace);
@@ -884,13 +958,18 @@ fn emit_tool_fact(
                 store.add_cmd(session, turn, ts, &program, &argline)?;
             }
         }
-        "WebFetch" => {
+        "webfetch" => {
             if let Some(url) = field("url") {
                 let domain = domain_of(&url);
                 store.add_fetch(session, turn, ts, &url, &domain)?;
             }
         }
-        "Skill" => {
+        "websearch" => {
+            if let Some(query) = field("query").or_else(|| field("q")) {
+                store.add_search(session, turn, ts, &query)?;
+            }
+        }
+        "skill" => {
             let skill = field("skill").or_else(|| field("name")).unwrap_or_default();
             if !skill.is_empty() {
                 store.add_skill(session, turn, &skill)?;
@@ -924,6 +1003,7 @@ CREATE TABLE IF NOT EXISTS dict_verb (id INTEGER PRIMARY KEY, value TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS dict_program (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_url (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_domain (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS dict_netkind (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_skill (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_pr (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_edekind (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
@@ -980,14 +1060,19 @@ CREATE TABLE IF NOT EXISTS agent_cmd (
   PRIMARY KEY (session_id, turn)
 ) WITHOUT ROWID;
 
+-- One row per outbound network act. A search has no url or domain and a fetch
+-- has no query; `query` is payload text, never a key.
 CREATE TABLE IF NOT EXISTS agent_fetch (
   session_id INTEGER NOT NULL,
   turn INTEGER NOT NULL,
   ts INTEGER,
-  url_id INTEGER NOT NULL,
-  domain_id INTEGER NOT NULL,
+  kind_id INTEGER NOT NULL,
+  url_id INTEGER,
+  domain_id INTEGER,
+  query TEXT,
   PRIMARY KEY (session_id, turn)
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS idx_fetch_ts ON agent_fetch(ts);
 
 CREATE TABLE IF NOT EXISTS agent_skill (
   session_id INTEGER NOT NULL,
@@ -1117,7 +1202,7 @@ mod tests {
         drop(file);
 
         let session = session_for(&lines_path);
-        let first = sync_session(&store, &session).unwrap();
+        let first = sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
         assert_eq!(first.written, 3, "user text, tool Read, tool Bash");
         assert_eq!(first.dropped, 0);
 
@@ -1128,7 +1213,7 @@ mod tests {
         assert_eq!(counts["agent_session"], 1);
 
         // second sync with nothing new carries the cursor and writes nothing
-        let noop = sync_session(&store, &session).unwrap();
+        let noop = sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
         assert_eq!(noop.written, 0);
         let counts2 = store.counts().unwrap();
         assert_eq!(counts2["agent_turn"], 3);
@@ -1171,7 +1256,7 @@ mod tests {
         session.session_id = "child".to_owned();
         session.parent = Some("parent".to_owned());
         drop(file);
-        sync_session(&store, &session).unwrap();
+        sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
 
         let edges = store.query_edges(Some("child")).unwrap();
         assert_eq!(edges.len(), 1);
@@ -1205,14 +1290,14 @@ mod tests {
         drop(file);
 
         let session = session_for(&lines_path);
-        sync_session(&store, &session).unwrap();
+        sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
 
         let mut file = OpenOptions::new().append(true).open(&lines_path).unwrap();
         writeln!(file, r#"{{"type":"user","sessionId":"ses-1","timestamp":"2026-08-01T00:00:00.300Z","message":"three"}}"#).unwrap();
         writeln!(file, r#"{{"type":"user","sessionId":"ses-1","timestamp":"2026-08-01T00:00:00.400Z","message":"four"}}"#).unwrap();
         drop(file);
 
-        sync_session(&store, &session).unwrap();
+        sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
 
         let counts = store.counts().unwrap();
         assert_eq!(counts["agent_turn"], 4, "all four turns stored");
@@ -1240,7 +1325,7 @@ mod tests {
         drop(file);
 
         let session = session_for(&lines_path);
-        sync_session(&store, &session).unwrap();
+        sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
 
         let filter = super::TurnQuery {
             session: Some("ses-1".to_owned()),
@@ -1324,7 +1409,7 @@ mod tests {
             writeln!(file, "{line}").unwrap();
         }
         drop(file);
-        let stat = sync_session(store, &session_for(&lines_path)).unwrap();
+        let stat = sync_session(store, &crate::harness::claude::Claude, &session_for(&lines_path)).unwrap();
         let _ = std::fs::remove_file(&lines_path);
         stat
     }

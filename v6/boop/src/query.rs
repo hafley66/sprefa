@@ -33,6 +33,7 @@ impl FactKind {
                 &[
                     ("url_id", "dict_url", "url"),
                     ("domain_id", "dict_domain", "domain"),
+                    ("kind_id", "dict_netkind", "kind"),
                 ],
             ),
             FactKind::Skill => ("agent_skill", &[("skill_id", "dict_skill", "skill")]),
@@ -68,7 +69,7 @@ impl Store {
             let alias = format!("d{index}");
             columns.push(format!("{alias}.value AS {name}"));
             joins.push_str(&format!(
-                " JOIN {dict} AS {alias} ON {alias}.id = {table}.{column}"
+                " LEFT JOIN {dict} AS {alias} ON {alias}.id = {table}.{column}"
             ));
         }
         columns.push(format!("{table}.turn"));
@@ -77,6 +78,9 @@ impl Store {
         }
         if matches!(kind, FactKind::Command) {
             columns.push(format!("{table}.argline"));
+        }
+        if matches!(kind, FactKind::Fetch) {
+            columns.push(format!("{table}.query"));
         }
         if matches!(kind, FactKind::Span) {
             columns.push(format!("{table}.line_start"));

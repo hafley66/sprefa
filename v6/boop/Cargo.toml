@@ -16,7 +16,9 @@ publish = false
 clap = { version = "4", features = ["derive"] }
 # The transcripts are JSONL; this is the credible reader.
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# preserve_order: a row's column order is its SELECT order, so `--format text`
+# has one column order per kind defined where the query is, never a second list.
+serde_json = { version = "1", features = ["preserve_order"] }
 # Application-level errors; this is a binary, not a library API.
 anyhow = "1"
 # Resolve the claude home dir without XDG project-dir machinery.
@@ -33,6 +35,10 @@ tmux_interface = "0.4"
 rusqlite = { version = "0.40", features = ["bundled"] }
 # Transcript timestamps parse against Rfc3339; hand-rolled date math is gone.
 time = { version = "0.3", features = ["parsing", "formatting"] }
+
+[lib]
+name = "boop"
+path = "src/lib.rs"
 
 [[bin]]
 name = "boop"
