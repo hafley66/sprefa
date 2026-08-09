@@ -161,6 +161,10 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "float_widens_integer_ingress", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "bfdaafe79be1f4eb", h_schema: "", h_rule: "" },
   { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "score", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "ba53461011256fb3", h_schema: "bec07f8b9884a74a", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "value", kind: "column", type_id: 3, arity: 0, module_id: 6, h_id: "6453183299832892", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 7, ordinal: 0, local_name: "__delta_score", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "001291c3f0398a25", h_schema: "77c595d6e8d5f80c", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 0, local_name: "__frontier_score", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "8c70a150e077e7f3", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
+  { rel_id: 11, parent_id: 7, ordinal: 0, local_name: "__next_frontier_score", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "056a6d1e7594d4f9", h_schema: "5740fd0a8b9f1ddc", h_rule: "" },
+  { rel_id: 12, parent_id: 8, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "1b846862da142b79", h_schema: "", h_rule: "" },
 ];
 
 const rel_declared_column_types: Record<string, readonly string[]> = {

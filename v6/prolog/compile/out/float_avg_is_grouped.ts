@@ -192,6 +192,23 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "score", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "5bb513b9cf0d9eb5", h_schema: "fcc24f068f144351", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "group", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "c8ec3a9c6952f848", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "value", kind: "column", type_id: 3, arity: 0, module_id: 6, h_id: "9fdad96972661f2c", h_schema: "", h_rule: "" },
+  { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "__delta_mean", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "99ab9e4195e178db", h_schema: "550281520c371344", h_rule: "" },
+  { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "__frontier_mean", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "168bec39bb1b9c25", h_schema: "3b7391a3125789c8", h_rule: "" },
+  { rel_id: 15, parent_id: 7, ordinal: 0, local_name: "__next_frontier_mean", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "5ee24bd1ee72ce80", h_schema: "3b7391a3125789c8", h_rule: "" },
+  { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "__txt_mean", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "35801ec6fe75950d", h_schema: "fcc24f068f144351", h_rule: "" },
+  { rel_id: 17, parent_id: 13, ordinal: 0, local_name: "__txt___delta_mean", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "ea50b94bb05bba77", h_schema: "fcc24f068f144351", h_rule: "" },
+  { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__delta_score", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "ac452b854ec2fa81", h_schema: "550281520c371344", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__frontier_score", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "484866ea11a16a3d", h_schema: "3b7391a3125789c8", h_rule: "" },
+  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__next_frontier_score", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "5f76513d2dce2cb5", h_schema: "3b7391a3125789c8", h_rule: "" },
+  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__txt_score", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "8af3685fa3f4533b", h_schema: "fcc24f068f144351", h_rule: "" },
+  { rel_id: 22, parent_id: 18, ordinal: 0, local_name: "__txt___delta_score", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "12ee3c7c7a0a264f", h_schema: "fcc24f068f144351", h_rule: "" },
+  { rel_id: 23, parent_id: 6, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 6, h_id: "fe635a32d0e2936d", h_schema: "", h_rule: "" },
+  { rel_id: 24, parent_id: 7, ordinal: 0, local_name: "__agg_scope_mean", kind: "scope", type_id: 0, arity: 1, module_id: 6, h_id: "632ff6a09c8384f2", h_schema: "af8b07b10d8881d5", h_rule: "" },
+  { rel_id: 25, parent_id: 7, ordinal: 0, local_name: "__avg_acc_mean", kind: "avg_accumulator", type_id: 0, arity: 3, module_id: 6, h_id: "835b204b89037d2f", h_schema: "", h_rule: "" },
+  { rel_id: 26, parent_id: 8, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "28328c5fe5759665", h_schema: "", h_rule: "" },
+  { rel_id: 27, parent_id: 9, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "644e421139cc305b", h_schema: "", h_rule: "" },
+  { rel_id: 28, parent_id: 11, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "ff517e9576f0d1cf", h_schema: "", h_rule: "" },
+  { rel_id: 29, parent_id: 12, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "ae5700b5f92cccef", h_schema: "", h_rule: "" },
 ];
 
 const rel_declared_column_types: Record<string, readonly string[]> = {
