@@ -240,7 +240,7 @@ orchard_has_empty(TreeId) <-
   decode(JsonPayload, {empty: {}}).
 
 # An arriving list(T) carrier fans out through spread.
-rel orchard_list(tree_id: int, tags: list(text)).
+rel orchard_list(tree_id: int, tags: json_list(text)).
 rel orchard_list_tag(tree_id: int, tag: text).
 orchard_list_tag(TreeId, Tag) <-
   orchard_list(TreeId, Tags),
@@ -249,7 +249,7 @@ orchard_list_tag(TreeId, Tag) <-
 # Rows -> json_group_array -> decode(spread) -> rows, with list(T) as the
 # aggregate carrier type.
 rel orchard_tag_source(tree_id: int, tag: text).
-rel orchard_tag_list(tree_id: int, tags: list(text)).
+rel orchard_tag_list(tree_id: int, tags: json_list(text)).
 orchard_tag_list(TreeId, json_group_array(Tag)) <-
   orchard_tag_source(TreeId, Tag).
 
