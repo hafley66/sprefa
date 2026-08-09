@@ -1,0 +1,82 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  red: { style.fill: "#ffebe9"; style.stroke: "#cf222e"; style.font-color: "#57151b" }
+  cheap: { style.fill: "#dcffe4"; style.stroke: "#1a7f37"; style.font-color: "#11331b" }
+  big: { style.fill: "#ddf4ff"; style.stroke: "#0969da"; style.font-color: "#0a2540" }
+  law: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#3b2b00" }
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de" }
+  done: { style.fill: "#dcffe4"; style.stroke: "#1a7f37"; style.font-color: "#1a7f37"; style.stroke-dash: 3 }
+}
+
+zero: "0. Where we stand (2026-08-08 end of day)" {
+  landed: "INTERNING IS THE DEFAULT, merged.\nfive bypass doors found + fixed, six pull\nrequests, first all-green executing sweep\nat dict, conformance red (12 days old)\nalso found + fixed" { class: done }
+  paid: "collected: 1.94x / 1.94x / 1.69x time,\n9x database bytes, 3-6x process memory.\nhead flip measured and REFUSED (rowid+\nUNIQUE loses both axes). unclaimed find:\nrowid-range delta reads, 17-53%" { class: done }
+}
+
+one: "1. What the five doors shared" {
+  lesson: "whether a text column holds an interned\ninteger id or raw characters is real data,\nbut nowhere is it DATA -- it lives implicit\nat every site that builds SQL text or\nconstructs a row" { class: red }
+  doors: |||md
+    | door | the implicit wrong belief |
+    |---|---|
+    | departure frontier | this temp table holds what the rel holds |
+    | aggregate heads | head inserts intern (plain arm only) |
+    | struct plane | rows I synthesize are like arrivals |
+    | snapshot re-bind | a row read back can be written back |
+    | catalog seeds | my literals match the DDL I just emitted |
+  ||| { class: code }
+}
+
+two: "2. Why it is shotgun surgery today (measured)" {
+  counts: "lower.pl: 281 format(atom(...)) sites,\n121 of them building SQL strings\ntsv2 runtime: 33 write call sites\ncolclass storage-class type: consulted\n3 times total" { class: red }
+  pattern: "every fix that worked was the same move:\none small decision predicate\n(trigger_read_mode, aligned_pair, demanded_sql)\nand sites routed through it.\nthe refactor = that move made TOTAL" { class: cheap }
+}
+
+three: "3. Tier 1, cheap: text storage becomes a fact table + a total checker" {
+  facts: |`prolog
+    % emitted WITH the compiled program: one row per
+    % plane column, js-writable ports included
+    text_column_storage(open_scope, target, interned_id).
+    text_column_storage(frontier(open_scope), target,
+                        raw_characters).
+    site_writes_plane(stage_departures_port,
+                      frontier(open_scope)).
+    site_reads_plane(edge_statement(route_view),
+                     frontier(open_scope)).
+  `| { class: code }
+  checker: "the checker is one datalog join over the\ncompiler's own output: a site's projected\nstorage differs from the target column's\ndeclared storage -> named refusal AT\nCOMPILE TIME. all five doors become\nrefusals under it. the lane I-M scanner,\ntotal instead of heuristic" { class: cheap }
+  dogfood: "this is the engine's own shape of problem:\nsprefa checks sprefa's compiler.\nsee the two-worlds board in this folder" { class: cheap }
+}
+
+four: "4. Tier 2, the cure: stop lowering to strings" {
+  ir: |`prolog
+    % lowering emits typed SQL terms, not atoms;
+    % every column expression carries its storage
+    insert(open_scope,
+      [ col(session_id, plain_integer),
+        col(target, interned_id) ],
+      select([ param(1, plain_integer),
+               json_term(route_data,
+                 [param(2, raw_characters)]) ], ...))
+  `| { class: code }
+  render: "ONE render pass turns terms into SQL text\nand inserts decode / intern shims\nmechanically wherever storages meet.\nthe next representation change touches the\nrender pass + the fact table,\nZERO of the 121 statement builders" { class: big }
+  prior: "prior art with names:\nnanopass compilers (typed IR between passes),\ntrees-that-grow (per-phase annotations).\n281 sites = a real restructure,\nplan it, never sneak it" { class: big }
+}
+
+five: "5. The law that needs no code" {
+  norows: "the runtime never constructs rows.\nevery write goes through an emitted\nstatement or the one typed intern port.\nfamilies A and C existed because\nJavaScript built tuples the compiler\nnever saw" { class: law }
+  rail: "rail: count runtime row-constructor\nsites, ratchet to the known set" { class: law }
+}
+
+zero -> one: "the study\nthe arc paid for"
+one -> two: "same flaw,\nfive costumes"
+two -> three: "generalize the\nmove that worked"
+three -> four: "tier 1 funds tier 2:\nfacts become the IR's types"
+four -> five: "holds either way,\nstart today"

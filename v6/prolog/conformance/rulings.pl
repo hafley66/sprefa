@@ -612,3 +612,12 @@ ruling(block_lowering_first, flat_rels_catalog_edges_arg_distribution, user,
 % (opus verdict .agent/salvage-20260805/GWORD-OPUS-VERDICT.md, flash counter PR #4).
 ruling(catalog_universe, user_rel_decls_in_program_db, user,
        'user 2026-08-05: "i want to be able to read the rels as values/types/mods whatever as their own types with dots... A sounds bad all around, they should always query, we can also host things as well". Step g catalog rows describe USER-PROGRAM rel declarations, produced from the compiler decl table (relplan, emit_ts.pl:656-703), materialized into the COMPILED PROGRAM db via the same door as __tick tables (lower.pl:622-628). The store-spine alternative is rejected: the v6/dl fact plane and a compiled program are separate databases with no ATTACH anywhere (scratchStore.ts:1-11), so spine catalog rows are unreachable by the user rules the catalog exists to serve. Dot access over rels resolves against these rows. Hosts may feed catalog rows too where a producer outside the compiler is the natural source.').
+
+% 2026-08-08: effect/demand declaration surface, ruled. NO decl arrow family.
+% One relation, datalog convention: response is the rightmost column(s);
+% demand columns spelled by Key()/convention; effect-ness comes ONLY from a
+% bind existing at link time. LANG.md's `rel f(a) -> B` spec line is dead;
+% parse_dl never implemented it (parse_dl.pl:1030 "not acquire another arrow
+% family" now covers rel decls too).
+ruling(effect_decl_no_arrow, one_relation_rightmost_response, user,
+       'user 2026-08-08: "nah nvm on it, just do the datalog way and have return be the right most value and keep 1 relation". Supersedes the LANG.md arrow spelling; resolves open items "Key(Type) vs ->" and Q8 left-of-arrow residual.').

@@ -1,0 +1,82 @@
+...@_house
+
+# Where an edited .dl6 file goes today, and the three hops that do not exist.
+# Green = shipped and measured. Red = named gap. Every label carries file:line.
+direction: right
+
+title: |md
+  # module graph, the salsa shape
+  - green = shipped, cited
+  - red = the gap, named
+  - the engine already IS the
+    incremental algorithm; the
+    compiler does not use it
+| { class: note }
+
+inputs: 1. inputs { class: stage
+  file: 'rel file(path, digest)\nalready a relation, 5 fixtures' { class: shipped }
+  mhash: 'module_hash/2, lower.pl:656' { class: shipped }
+  digest: 'source_digest, 0_compile.ts:99\nkeys the WHOLE entry text' { class: [shipped; danger] }
+}
+
+resolve: 2. resolve { class: stage
+  item: 'use_item//1, parse_dl.pl:551' { class: shipped }
+  roots: 'include_roots/2 + resolve_use_path/3' { class: shipped }
+  expand: 'expand_uses/6, splice leaf-first' { class: shipped }
+  local: 'Loaded + ModuleTable\ncompile-local, then discarded' { class: muted }
+}
+
+decide: 3. fingerprint, then decide { class: stage
+  hashes: 'h_id, h_schema, h_rule\nlower.pl:637' { class: shipped }
+  planner: 'ReloadPlanner.plan\nreloadPlan.ts, landed 09c9d222' { class: shipped }
+  verdicts: |||md
+    | verdict | trigger | statement |
+    | --- | --- | --- |
+    | create | absent in prev | none |
+    | recreate | h_schema moved | DROP TABLE |
+    | refill | h_rule moved | DELETE FROM |
+    | keep | neither moved | none |
+    | drop | absent in next | DROP, needs allow_drop |
+
+    h_id hashes module + name + ARITY, so a column
+    addition moves it. Keying on it read a routine
+    edit as drop-plus-create; the planner keys on
+    (module_id, local_name) instead.
+  ||| { class: note }
+}
+
+swap: 4. swap { class: stage
+  switch: 'switchMap, 4_http.ts\nreplay ddl, boot statements' { class: db }
+}
+
+gap: THE GAP { class: stage
+  discard: 'ModuleTable dies at compile end' { class: danger }
+  reparse: 'every POST /program\nreparses every file' { class: danger }
+  noedge: 'no imports(from, to) stored anywhere' { class: danger }
+}
+
+fix: the shape that closes it { class: stage
+  rels: |`prolog
+    rel module(path: text, hash: text).
+    rel imports(from: text, to: text).
+
+    module_dirty(Path) <-
+      module(Path, Hash),
+      stored_hash(Path, Was),
+      Hash != Was.
+
+    module_dirty(Down) <-
+      imports(Down, Up),
+      module_dirty(Up).
+  `| { class: src }
+  claim: 'invalidation becomes a derived rel;\nthe existing IVM propagates it' { class: designed }
+}
+
+title -> inputs
+inputs -> resolve
+resolve -> decide
+decide -> swap
+resolve -> gap: 'local state dies here'
+inputs -> gap: 'digest keys the whole file'
+gap -> fix
+decide -> fix: 'h_schema stays the early cutoff'

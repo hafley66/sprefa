@@ -1,0 +1,94 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  red: { style.fill: "#ffebe9"; style.stroke: "#cf222e"; style.font-color: "#57151b" }
+  green: { style.fill: "#dcffe4"; style.stroke: "#1a7f37"; style.font-color: "#11331b" }
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de" }
+  idea: { style.fill: "#fff8c5"; style.stroke: "#9a6700"; style.font-color: "#3b2b00" }
+}
+
+dict: "0. The one metaphor everything else hangs on: THE COAT CHECK" {
+  counter: "__str IS a coat check counter.\nhand it the string 'text', get ticket #7.\nthe coat is stored ONCE, behind the counter.\nticket = interned_id. coat = raw_characters" { class: idea }
+  drawers: "every table column that used to hold strings\nnow holds TICKET NUMBERS. a 'plane' is any\nplace rows sit: a table, a temp table, a view,\na JS array about to be written. all drawers,\nall labeled tickets-only" { class: idea }
+  affinity: "SQLite drawers DO NOT CHECK what you put in.\nstuff an actual coat into the ticket drawer\nand it closes silently. that single fact is\nwhy all five doors were invisible" { class: red }
+}
+
+translate: |||md
+  | prolog thing | metaphor | in this repo |
+  |---|---|---|
+  | a fact / row | an index card | `text_column_storage('__rel', local_name, interned_id)` |
+  | `plane` | a room full of drawers | table / temp table / view / JS write buffer |
+  | `site` | the employee who stocks a room | one lowering clause in lower.pl, or one JS writer |
+  | lowering | the employee's shift | clause runs, SQL string comes out |
+  | emitting a fact | the employee files a carbon-copy slip AS they stock | one extra goal per clause, values already in hand |
+  | a datalog rule | an auditor's checklist, written once | the engine visits every matching combination itself |
+  | the join firing | a slip contradicts a drawer label | `storage_defect(...)` has a row in it |
+  | named refusal | the slip names the employee | compile stops, points at the writer site |
+  | executing sweep | open the store, watch every customer | run all 211 programs, diff every value |
+||| { class: code }
+
+mistake: "the mistake, in metaphor:\nthe catalog-seed employee STAPLED AN ACTUAL COAT\n(the characters 'text') into a tickets-only drawer\n(column local_name, declared interned_id).\nthe drawer closed without a sound" { class: red }
+
+worlda: "WORLD A -- today. nothing is written down, so only customers can find it" {
+  a1: "employee stocks the drawer\n= format(atom(SeedSql), '...VALUES(...''text''...)')\nthe coat is INSIDE the string; no card anywhere\nsays what the drawer expects" { class: code }
+  a2: "drawer accepts it silently\n= SQLite affinity stores characters\nin the INTEGER column, no error" { class: red }
+  a3: "a customer redeems the 'ticket'\n= a decode view asks the coat check\nfor ticket 'text'. no such ticket -> NULL.\nstill no error, just a wrong value" { class: red }
+  a4: "management opens the store and watches everyone\n= EXECUTE all 211 programs, diff values vs oracle,\nhumans bucket 17 complaints into 4 families,\none opus repair crew per family.\ntoday's bill: 5 doors, 6 pull requests, a day" { class: red }
+}
+
+worldb: "WORLD B -- proposed. every employee files slips; an auditor reads them before opening" {
+  b1: |`prolog
+    % the slip. same clause, it already holds both
+    % values in variables; filing is one extra goal
+    text_column_storage('__rel', local_name, interned_id).
+    site_projected_storage(catalog_seed_insert,
+                           local_name, raw_characters).
+  `| { class: code }
+  b2: |`text
+    storage_defect(WriterSite, Plane, Column) <-
+      site_writes_plane(WriterSite, Plane),
+      text_column_storage(Plane, Column, interned_id),
+      site_projected_storage(WriterSite, Column,
+                             raw_characters)
+  `| { class: code }
+  b3: |||md
+  the same rule, goal by goal, in employee language:
+
+  | goal | says |
+  |---|---|
+  | `site_writes_plane(W, P)` | employee W stocks room P |
+  | `text_column_storage(P, C, interned_id)` | drawer C in room P is labeled TICKETS ONLY |
+  | `site_projected_storage(W, C, raw_characters)` | W's own slip says they put a COAT in C |
+  | head: `storage_defect(W, P, C)` | write W up, name the room and drawer |
+  ||| { class: code }
+  b4: "the auditor is the datalog engine itself:\nyou never say 'loop over employees' --\nyou state the contradiction once and the\nengine finds every instance. nonempty answer\n= red compile naming catalog_seed_insert.\nseconds, zero customers involved" { class: green }
+}
+
+flow: |||md
+  what flows to what, both worlds:
+
+  | | world A | world B |
+  |---|---|---|
+  | clause runs | SQL string | SQL string + 2 slips |
+  | next | string into SQLite, silence | slips into the audit join |
+  | detection | wrong value at a customer, maybe | contradiction at compile, always |
+  | terminal | sweep -> humans -> lanes -> 6 PRs | one red compile, names the clause |
+||| { class: code }
+
+intuition: "internalize these three:\n1. A BUG CLASS IS A JOIN THAT MUST STAY EMPTY --\nstate the contradiction, the engine hunts it.\n2. you already do this: no-new-eprintln.dl audits\nyour CODE; this audits the compiler's OUTPUT.\n3. it is cheap HERE because the compiler is prolog:\nevery clause already holds Plane, Column, Storage\nin variables. the slip is one goal, not a pass.\nand the slips ship WITH the emitted program, so a\n.dl6 rail can re-run the audit at serve time" { class: idea }
+
+dict -> mistake: "the coat check\nsets the stage"
+translate -> worlda: "vocabulary\nfor both worlds"
+translate -> worldb
+mistake -> worlda: "nobody wrote\nanything down"
+mistake -> worldb: "what if the employee\nfiled a slip"
+worlda -> flow
+worldb -> flow: "side by side"
+flow -> intuition

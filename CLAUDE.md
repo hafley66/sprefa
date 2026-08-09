@@ -151,9 +151,8 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 (plans/2026-08-01-flash4-partition-research.md); flash-prolog worktree fate
 (redo in v6/sprefa-extract, keep, or drop); bop-run idle-exit vs rail receipts
 (serve or --forever); refusal re-eval kickoff (plans/2026-08-01-refusal-inventory.md,
-245 decisions / 65% weak-trail); push + tag (bop gate satisfied); Q8 residual
-(left-of-arrow = demand key); extraction ambiguities A4 fence-escape + A14
-comment_span; Key(Type) vs `->` (plans/2026-07-27-lab-consolidation.md); smaller:
+245 decisions / 65% weak-trail); push + tag (bop gate satisfied); extraction ambiguities A4 fence-escape + A14
+comment_span; smaller:
 operators.pl forkJoin fixture, scope_done magic-rel decl, repeat same-tick salt,
 until(F) formula presentation; **string split/substr primitive** (only concat +
 regexp exist, so path-prefix work has no in-language spelling — blocks deriving
