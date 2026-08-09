@@ -269,3 +269,6 @@ with that reason (stage 4 ADDED line is the receipt).
 
 Path C probe patches were transient and reverted in-tree; their full
 receipt is the cascade table above.
+
+## Lab cull
+OPTION-LAB.md (contract + result log) last copy: commit 386d53d6, merged in dafaaf46 (PR #69).
