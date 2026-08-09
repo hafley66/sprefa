@@ -22,42 +22,7 @@ impl Harness for Claude {
 
     fn sessions(&self) -> anyhow::Result<Vec<SessionRef>> {
         let base = claude_projects_dir()?;
-        let mut sessions = Vec::new();
-        for entry in WalkDir::new(&base).into_iter().filter_map(|entry| entry.ok()) {
-            if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "jsonl") {
-                continue;
-            }
-            let path = entry.path();
-            let session_id = path
-                .file_stem()
-                .and_then(|stem| stem.to_str())
-                .unwrap_or_default()
-                .to_string();
-            let metadata = path.metadata().ok();
-            let modified_ms = metadata
-                .as_ref()
-                .and_then(|meta| meta.modified().ok())
-                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|duration| duration.as_millis() as u64)
-                .unwrap_or(0);
-            let size = metadata.map(|meta| meta.len()).unwrap_or(0);
-
-            let (cwd, git_branch) = first_record_context(path);
-            sessions.push(SessionRef {
-                harness: "claude",
-                session_id,
-                path: path.to_path_buf(),
-                cwd,
-                git_branch,
-                modified_ms,
-                size,
-                tmux: None,
-                tmux_socket: None,
-                parent: None,
-            });
-        }
-        sessions.sort_by_key(|session| session.modified_ms);
-        Ok(sessions)
+        sessions_in(&base)
     }
 
     fn read_from(&self, session: &SessionRef, offset: u64) -> anyhow::Result<ReadChunk> {
@@ -171,6 +136,64 @@ fn randish() -> u8 {
 fn claude_projects_dir() -> anyhow::Result<PathBuf> {
     let home = dirs::home_dir().context("resolve home directory")?;
     Ok(home.join(".claude").join("projects"))
+}
+
+/// Discover sessions under `base` (typically `~/.claude/projects`). A
+/// transcript under a `subagents/` directory inherits its parent session id
+/// from the containing folder's name, which is how claude writes the spawn
+/// edge.
+fn sessions_in(base: &std::path::Path) -> anyhow::Result<Vec<SessionRef>> {
+    let mut sessions = Vec::new();
+    for entry in WalkDir::new(base).into_iter().filter_map(|entry| entry.ok()) {
+        if !entry.file_type().is_file() || entry.path().extension().is_none_or(|ext| ext != "jsonl") {
+            continue;
+        }
+        let path = entry.path();
+        let session_id = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let metadata = path.metadata().ok();
+        let modified_ms = metadata
+            .as_ref()
+            .and_then(|meta| meta.modified().ok())
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0);
+        let size = metadata.map(|meta| meta.len()).unwrap_or(0);
+
+        let (cwd, git_branch) = first_record_context(path);
+        sessions.push(SessionRef {
+            harness: "claude",
+            session_id,
+            path: path.to_path_buf(),
+            cwd,
+            git_branch,
+            modified_ms,
+            size,
+            tmux: None,
+            tmux_socket: None,
+            parent: parent_for(path),
+        });
+    }
+    sessions.sort_by_key(|session| session.modified_ms);
+    Ok(sessions)
+}
+
+/// The session id that spawned the transcript at `path`. A file whose parent
+/// directory is `subagents/` is a sidechain; its parent session is the folder
+/// that contains `subagents/`.
+fn parent_for(path: &std::path::Path) -> Option<String> {
+    let parent_dir = path.parent()?.file_name()?.to_str()?;
+    if parent_dir != "subagents" {
+        return None;
+    }
+    path.parent()?
+        .parent()?
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
 }
 
 /// Read the first complete line to recover the session cwd and git branch,
@@ -528,6 +551,21 @@ mod tests {
         let mut s = spec(&TmuxGuard::new());
         s.resume_session = Some("abc123".to_owned());
         assert!(launch_command(&s).contains("--resume abc123"));
+    }
+
+    #[test]
+    fn claude_reads_subagent_edge_from_real_fixture() {
+        use super::sessions_in;
+        let base = std::path::PathBuf::from("tests/fixtures/claude");
+        let sessions = sessions_in(&base).unwrap();
+        let sub = sessions
+            .iter()
+            .find(|s| s.session_id == "agent-a6cee372fea5c1c2f")
+            .expect("subagent transcript present in fixture");
+        assert_eq!(
+            sub.parent.as_deref(),
+            Some("2579238b-e154-40c0-b018-f6aa80f87a90")
+        );
     }
 
     fn has_session_on(guard: &TmuxGuard, name: &str) -> bool {

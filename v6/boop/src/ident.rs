@@ -195,6 +195,53 @@ impl Store {
         Ok(offset as u64)
     }
 
+    /// Record a spawn edge between two known sessions.
+    pub fn add_edge(&self, parent: &str, child: &str, kind: &str) -> Result<()> {
+        let parent_id = self.session_id(parent)?;
+        let child_id = self.session_id(child)?;
+        let kind_id = self.intern("dict_edekind", kind)?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO agent_edge (parent_session_id, child_session_id, edge_kind_id)
+             VALUES (?1, ?2, ?3)",
+            params![parent_id, child_id, kind_id],
+        )?;
+        Ok(())
+    }
+
+    /// Query spawn edges, joined back to the TEXT query surface. `session`
+    /// filters to edges touching that session id; none means all edges.
+    pub fn query_edges(&self, session: Option<&str>) -> Result<Vec<Row>> {
+        let mut sql = String::from(
+            "SELECT p.value AS parent, c.value AS child, e.value AS edge
+             FROM agent_edge a
+             JOIN dict_session p ON p.id = a.parent_session_id
+             JOIN dict_session c ON c.id = a.child_session_id
+             JOIN dict_edekind e ON e.id = a.edge_kind_id
+             WHERE 1=1",
+        );
+        if session.is_some() {
+            sql.push_str(" AND (c.value = ?1 OR p.value = ?1)");
+        }
+        sql.push_str(" ORDER BY p.value, c.value");
+        let mut statement = self.connection.prepare(&sql)?;
+        let params: Vec<rusqlite::types::Value> = session
+            .map(|value| vec![value.to_string().into()])
+            .unwrap_or_default();
+        let mut rows = Vec::new();
+        let iter = statement.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            Ok(serde_json::json!({
+                "kind": "agent_edge",
+                "parent": row.get::<_, String>(0)?,
+                "child": row.get::<_, String>(1)?,
+                "edge": row.get::<_, String>(2)?,
+            }))
+        })?;
+        for row in iter {
+            rows.push(row?);
+        }
+        Ok(rows)
+    }
+
     /// Table row counts, for receipts.
     pub fn counts(&self) -> Result<serde_json::Map<String, serde_json::Value>> {
         let mut out = serde_json::Map::new();
@@ -326,6 +373,9 @@ pub fn sync_session(store: &Store, session: &SessionRef) -> Result<u64> {
         session.git_branch.as_deref(),
         session.modified_ms,
     )?;
+    if let Some(parent) = &session.parent {
+        store.add_edge(parent, &session.session_id, "spawned")?;
+    }
     let mut turn = 0u64;
     for line in &result.lines {
         project_line(store, session, line, &mut turn)?;
@@ -651,6 +701,33 @@ mod tests {
         assert_eq!(rows[0]["said"], "hello");
         assert_eq!(rows[2]["role"], "tool");
 
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&lines_path);
+    }
+
+    #[test]
+    fn sync_writes_the_spawn_edge() {
+        let db_path = temp_path("db3");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+
+        let lines_path = temp_path("log3");
+        let mut file =
+            OpenOptions::new().create(true).truncate(true).write(true).open(&lines_path).unwrap();
+        writeln!(file, r#"{{"type":"user","sessionId":"child","message":"go"}}"#).unwrap();
+        let mut session = session_for(&lines_path);
+        session.session_id = "child".to_owned();
+        session.parent = Some("parent".to_owned());
+        drop(file);
+        sync_session(&store, &session).unwrap();
+
+        let edges = store.query_edges(Some("child")).unwrap();
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0]["kind"], "agent_edge");
+        assert_eq!(edges[0]["parent"], "parent");
+        assert_eq!(edges[0]["child"], "child");
+        assert_eq!(edges[0]["edge"], "spawned");
         drop(store);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(&lines_path);

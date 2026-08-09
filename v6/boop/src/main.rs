@@ -423,10 +423,12 @@ fn query_from(q: &QueryArgs, session: Option<String>) -> ident::TurnQuery {
 }
 
 /// Query the db with the shared filter set; emit raw rows, no interpretation.
+/// Turns first, then any spawn edges touching the filtered session.
 fn run_query(query: &QueryArgs) -> Result<()> {
     let store = ident::Store::open(ident::Store::default_path()?)?;
     let rows = store.query_turns(&query_from(query, query.session.clone()))?;
     emit_rows(&rows, query.format);
+    emit_edges(&store, query.session.as_deref(), query.limit)?;
     Ok(())
 }
 
@@ -445,6 +447,14 @@ fn run_chat_query(query: &QueryArgs, all: bool, follow: bool, _json: bool) -> Re
     }
     let rows = store.query_turns(&query_from(query, session.clone()))?;
     emit_rows(&rows, query.format);
+    Ok(())
+}
+
+fn emit_edges(store: &ident::Store, session: Option<&str>, limit: Option<u64>) -> Result<()> {
+    let edges = store.query_edges(session)?;
+    for edge in edges.into_iter().take(limit.unwrap_or(u64::MAX) as usize) {
+        println!("{}", serde_json::to_string(&edge)?);
+    }
     Ok(())
 }
 
