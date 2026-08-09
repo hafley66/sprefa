@@ -18,18 +18,25 @@ mod chat;
 mod event;
 mod harness;
 mod ident;
+mod identity;
 mod proc;
 use crate::proc::ProcReader;
+mod query;
 mod registry;
 mod tail;
 mod tmux;
+mod usage;
 mod worktree;
 
 #[derive(Parser)]
 #[command(
     name = "boop",
     version,
-    about = "Cross-harness agent transcript reader: tail agent events from every harness on this machine as one stream"
+    about = "Cross-harness agent transcript reader: drive agents with `beep`, read what they did with `db`",
+    after_help = "The pre-split verbs (harnesses, sessions, events, chat, tail, list, measure, \
+dispatch, lane, resolve, adopt, sweep, prune, hail, sync, follow) still run as hidden \
+aliases for one release. Use `beep` and `db`; `boop db sync create --rebuild` replaces \
+`boop sync --rebuild`."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -38,15 +45,33 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum SubCmd {
+    /// Drive agents: harnesses, lanes, mail, processes.
+    Beep {
+        #[command(subcommand)]
+        cmd: BeepCmd,
+    },
+    /// Read and count what agents did.
+    Db {
+        #[command(subcommand)]
+        cmd: DbCmd,
+    },
+    /// Report the caller's own identity and the rung that resolved it.
+    Whoami {
+        #[arg(long)]
+        json: bool,
+    },
     /// List registered harness adapters, one per line. (pass 1)
+    #[command(hide = true)]
     Harnesses,
     /// List on-disk sessions, newest last. (pass 1)
+    #[command(hide = true)]
     Sessions {
         /// Only sessions from this harness (its stable id).
         #[arg(long)]
         harness: Option<String>,
     },
     /// Tail one session's events from a byte offset. (pass 1)
+    #[command(hide = true)]
     Tail {
         /// The session id to read.
         session_id: String,
@@ -57,11 +82,13 @@ enum SubCmd {
         format: OutputFormat,
     },
     /// Stream turns across sessions, filtered from the db. (pass 4)
+    #[command(hide = true)]
     Events {
         #[command(flatten)]
         query: QueryArgs,
     },
     /// List lanes and messages like `bus list`.
+    #[command(hide = true)]
     List {
         #[arg(long)]
         agent: Option<String>,
@@ -71,11 +98,13 @@ enum SubCmd {
         mail_dir: Option<PathBuf>,
     },
     /// Measure per-lane pid, rss, cpu, uptime, child count.
+    #[command(hide = true)]
     Measure {
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
     /// Spawn a lane: tmux new-session + mailbox + registry route.
+    #[command(hide = true)]
     Dispatch {
         #[arg(long)]
         to: String,
@@ -112,6 +141,7 @@ enum SubCmd {
         base_sha: Option<String>,
     },
     /// Resolve a lane's harness session id into its registry route.
+    #[command(hide = true)]
     Resolve {
         #[arg(long)]
         to: String,
@@ -119,6 +149,7 @@ enum SubCmd {
         mail_dir: Option<PathBuf>,
     },
     /// Queue a message and inject it into a live pane.
+    #[command(hide = true)]
     Hail {
         #[arg(long)]
         to: String,
@@ -136,6 +167,7 @@ enum SubCmd {
         mail_dir: Option<PathBuf>,
     },
     /// Acknowledge unacked lanes via cass and stamp token usage.
+    #[command(hide = true)]
     Sweep {
         #[arg(long)]
         agent: Option<String>,
@@ -149,6 +181,7 @@ enum SubCmd {
         mail_dir: Option<PathBuf>,
     },
     /// Register and spawn a lane (the first-contact verb).
+    #[command(hide = true)]
     Lane {
         #[arg(long)]
         name: String,
@@ -170,6 +203,7 @@ enum SubCmd {
         dry_run: bool,
     },
     /// Rewrite a registry route only; never spawns.
+    #[command(hide = true)]
     Adopt {
         #[arg(long)]
         name: String,
@@ -190,11 +224,13 @@ enum SubCmd {
     },
     /// Drop lanes whose tmux sessions are gone. Refuses when tmux is
     /// unreachable because it cannot tell live from dead.
+    #[command(hide = true)]
     Prune {
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
     /// Project sessions into NDJSON chat-repr turns (the zipf door).
+    #[command(hide = true)]
     Chat {
         #[command(flatten)]
         query: QueryArgs,
@@ -208,8 +244,15 @@ enum SubCmd {
         json: bool,
     },
     /// Tail every harness forward from stored offsets into the db.
-    Sync {},
+    #[command(hide = true)]
+    Sync {
+        /// Drop every stored row and re-project every transcript from byte 0.
+        /// Required once to move a store off pre-dense turn ordinals.
+        #[arg(long)]
+        rebuild: bool,
+    },
     /// Stream new facts into the db on a coarse poll (idle near-zero CPU).
+    #[command(hide = true)]
     Follow {},
 }
 
@@ -251,6 +294,21 @@ enum OutputFormat {
     Json,
 }
 
+/// Write one line, treating a closed pipe as a normal end. Rust masks SIGPIPE,
+/// so a bare `println!` panics the moment output is piped into `head`.
+fn line(text: &str) {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    match writeln!(out, "{text}") {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => std::process::exit(0),
+        Err(error) => {
+            let _ = writeln!(std::io::stderr(), "write failed: {error}");
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let registry = Registry::discover();
@@ -263,7 +321,7 @@ fn main() -> Result<()> {
             format,
         } => run_tail(&registry, &session_id, from.unwrap_or(0), format),
         SubCmd::Events { query } => run_query(&query),
-        SubCmd::Sync {} => run_sync_all(&registry),
+        SubCmd::Sync { rebuild } => run_sync_all(&registry, rebuild),
         SubCmd::Follow {} => run_follow(&registry),
         SubCmd::Chat {
             query,
@@ -391,6 +449,9 @@ fn main() -> Result<()> {
             mail_dir.as_deref(),
         ),
         SubCmd::Prune { mail_dir } => run_prune(mail_dir.as_deref()),
+        SubCmd::Beep { cmd } => run_beep(&registry, cmd),
+        SubCmd::Db { cmd } => run_db(&registry, cmd),
+        SubCmd::Whoami { json } => run_whoami(json),
     }
 }
 
@@ -400,7 +461,7 @@ fn main() -> Result<()> {
 
 fn run_harnesses(registry: &Registry) -> Result<()> {
     for harness in registry.all() {
-        println!("{}", harness.id());
+        line(harness.id());
     }
     Ok(())
 }
@@ -412,15 +473,14 @@ fn run_sessions(registry: &Registry, harness_id: Option<&str>) -> Result<()> {
     };
     for adapter in harnesses {
         for session in adapter.sessions()? {
-            println!(
-                "{}\t{}\t{}\t{}\t{}\t{}",
+            line(&format!("{}\t{}\t{}\t{}\t{}\t{}",
                 session.session_id,
                 session.harness,
                 session.cwd.as_deref().unwrap_or("-"),
                 session.git_branch.as_deref().unwrap_or("-"),
                 session.modified_ms,
                 session.size,
-            );
+            ));
         }
     }
     Ok(())
@@ -497,7 +557,7 @@ fn run_chat_query(query: &QueryArgs, all: bool, follow: bool, _json: bool) -> Re
 fn emit_edges(store: &ident::Store, session: Option<&str>, limit: Option<u64>) -> Result<()> {
     let edges = store.query_edges(session)?;
     for edge in edges.into_iter().take(limit.unwrap_or(u64::MAX) as usize) {
-        println!("{}", serde_json::to_string(&edge)?);
+        line(&serde_json::to_string(&edge)?.to_string());
     }
     Ok(())
 }
@@ -506,51 +566,59 @@ fn emit_rows(rows: &[ident::Row], format: QueryFormat) {
     for row in rows {
         match format {
             QueryFormat::Ndjson => {
-                if let Ok(line) = serde_json::to_string(row) {
-                    println!("{line}");
+                if let Ok(encoded) = serde_json::to_string(row) {
+                    line(&encoded);
                 }
             }
             QueryFormat::Text => {
-                println!(
-                    "{} {} {} {} {}",
+                line(&format!("{} {} {} {} {}",
                     row["session"].as_str().unwrap_or(""),
                     row["turn"].as_i64().unwrap_or(0),
                     row["role"].as_str().unwrap_or(""),
                     row["ts"].as_i64().unwrap_or(0),
                     row["said"].as_str().unwrap_or(""),
-                );
+                ));
             }
         }
     }
 }
 
 /// `boop sync`: tail every harness forward from stored offsets into the db.
-fn run_sync_all(registry: &Registry) -> Result<()> {
+fn run_sync_all(registry: &Registry, rebuild: bool) -> Result<()> {
     let started = std::time::Instant::now();
     let store = ident::Store::open(ident::Store::default_path()?)?;
+    if rebuild {
+        store.rebuild()?;
+    } else {
+        refuse_stale(&store)?;
+    }
     store.begin()?;
     let result = (|| {
-        let mut events = 0u64;
+        let mut stat = ident::SyncStat::default();
         for adapter in registry.all() {
             for session in adapter.sessions()? {
-                events += ident::sync_session(&store, &session)?;
+                stat.add(ident::sync_session(&store, &session)?);
             }
         }
-        Ok::<u64, anyhow::Error>(events)
+        Ok::<ident::SyncStat, anyhow::Error>(stat)
     })();
     match result {
-        Ok(events) => {
+        Ok(stat) => {
             store.commit()?;
             let elapsed_ms = started.elapsed().as_millis();
             let counts = store.counts()?;
             let db_bytes = store.db_bytes()?;
-            let rate = (events as u128)
+            let sparse = store.sparse_sessions()?.len();
+            let rate = (stat.written as u128)
                 .saturating_mul(1000)
                 .checked_div(elapsed_ms.max(1))
                 .unwrap_or(0) as u64;
             println!(
-                "events={events} elapsed_ms={elapsed_ms} rate={}/s db_bytes={db_bytes} counts={}",
-                rate,
+                "events={} dropped={} usage_new={} usage_updated={} sparse_sessions={sparse} elapsed_ms={elapsed_ms} rate={rate}/s db_bytes={db_bytes} counts={}",
+                stat.written,
+                stat.dropped,
+                stat.usage_written,
+                stat.usage_updated,
                 serde_json::to_string(&counts)?
             );
         }
@@ -562,10 +630,26 @@ fn run_sync_all(registry: &Registry) -> Result<()> {
     Ok(())
 }
 
+/// A store written before dense ordinals is readable but not appendable, so
+/// the refusal names the one command that fixes it.
+fn refuse_stale(store: &ident::Store) -> Result<()> {
+    if !store.is_stale()? {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "store is schema version {}, this boop writes version {}: rows stored under \
+         an older schema cannot be appended to. Run `boop db sync create --rebuild` \
+         to drop every stored row and re-project every transcript from byte 0.",
+        store.schema_version()?,
+        ident::SCHEMA_VERSION
+    )
+}
+
 /// `boop follow`: the same projection on a coarse poll. Sessions and their
 /// mtimes are discovered once, and a file is only re-read when its mtime
 /// changed, so steady-state idle is a stat per file plus a sleep.
 fn run_follow(registry: &Registry) -> Result<()> {
+    refuse_stale(&ident::Store::open(ident::Store::default_path()?)?)?;
     let mut sessions = Vec::new();
     for adapter in registry.all() {
         sessions.extend(adapter.sessions()?);
@@ -702,8 +786,7 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
                 let padded_mode = pad(route.mode.as_deref().unwrap_or("-"), 6);
                 let padded_model = pad(route.model.as_deref().unwrap_or("-"), 46);
                 let padded_tmux = pad(route.tmux.as_deref().unwrap_or("-"), 16);
-                println!(
-                    "{} {} {} {} {} {} {}",
+                line(&format!("{} {} {} {} {} {} {}",
                     pad(state, 4),
                     padded_name,
                     padded_harness,
@@ -711,7 +794,7 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
                     padded_model,
                     padded_tmux,
                     route.cwd.as_deref().unwrap_or("-"),
-                );
+                ));
             }
             let messages = all_messages(&dir)?;
             let rows = if all {
@@ -720,13 +803,12 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
                 bus::unacked(&messages)
             };
             for message in rows {
-                println!("{}", bus::message_line(&message));
+                line(&bus::message_line(&message).to_string());
             }
             if !all {
-                println!(
-                    "{} open (closed history: --all)",
+                line(&format!("{} open (closed history: --all)",
                     bus::unacked(&all_messages(&dir)?).len()
-                );
+                ));
             }
         }
         Some(agent_id) => {
@@ -739,19 +821,18 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
                 .cloned()
                 .collect();
             for message in &inbox {
-                println!("in  {}", bus::message_line(message));
+                line(&format!("in  {}", bus::message_line(message)));
             }
             for message in &outbox {
-                println!("out {}", bus::message_line(message));
+                line(&format!("out {}", bus::message_line(message)));
             }
             let mut combined = inbox.clone();
             combined.extend(outbox.iter().cloned());
-            println!(
-                "{agent_id}: {} in, {} out, {} unacked",
+            line(&format!("{agent_id}: {} in, {} out, {} unacked",
                 inbox.len(),
                 outbox.len(),
                 bus::unacked(&combined).len()
-            );
+            ));
         }
     }
     Ok(())
@@ -773,21 +854,20 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
     let routes = bus::read_routes(&dir)?;
     let snapshot = proc::SysinfoSnapshot::capture()?;
-    println!("lane\tpid\trss_kb\tcpu_pct\tuptime_sec\tchildren");
+    line("lane\tpid\trss_kb\tcpu_pct\tuptime_sec\tchildren");
     for (name, route) in &routes {
         let pane_pid = pane_pid(route.tmux.as_deref()).unwrap_or(0);
         match snapshot.process(pane_pid) {
             Some(info) => {
                 let uptime = info.start_time_secs;
-                println!(
-                    "{}\t{}\t{}\t{:.1}\t{}\t{}",
+                line(&format!("{}\t{}\t{}\t{:.1}\t{}\t{}",
                     name,
                     pane_pid,
                     info.rss_bytes / 1024,
                     info.cpu_percent,
                     uptime,
                     snapshot.descendent_count(pane_pid),
-                );
+                ));
             }
             None => println!("{}\t{}\t-\t-\t-\t-", name, pane_pid),
         }
@@ -836,6 +916,8 @@ struct DispatchArgs {
 
 fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
     let adapter = resolve_dispatch_harness(registry, args.harness.as_deref())?;
+    // The caller is the PARENT of the lane being born, never its identity.
+    let caller = identity::resolve(&bus::read_routes(&mail_dir(args.mail_dir.as_deref())?)?)?;
     let harness_id = adapter.id().to_owned();
     let branch = args.tmux.clone().unwrap_or_else(|| args.to.clone());
     let base_sha = match &args.base_sha {
@@ -867,6 +949,12 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         socket: args.socket.clone(),
         worktree_dir: None,
         repo: std::path::PathBuf::from(&args.cwd),
+        env_stamp: Some(identity::child_stamp(
+            &args.to,
+            &args.to,
+            &harness_id,
+            caller.session.as_deref(),
+        )),
     };
     let session = adapter.spawn(&spec)?;
 
@@ -1068,6 +1156,7 @@ fn run_hail(
     let session = crate::harness::SessionRef {
         harness: adapter.id(),
         session_id: to.to_owned(),
+        nickname: to.to_owned(),
         path: std::path::PathBuf::from("/tmp/hail.jsonl"),
         cwd: route.cwd.clone(),
         git_branch: None,
@@ -1429,5 +1518,962 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("opencode"), "message: {message}");
         assert!(message.contains("claude"), "registered set: {message}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The two trees. `beep` controls agents, `db` reads what they did; the mapping
+// to REST is 1:1 per plans/2026-08-09-boop-openapi.yaml.
+// ---------------------------------------------------------------------------
+
+#[derive(Subcommand)]
+enum BeepCmd {
+    /// Harness adapters and what each can do.
+    Harness {
+        #[command(subcommand)]
+        cmd: HarnessCmd,
+    },
+    /// Lanes: the agents boop spawns and tracks.
+    Lane {
+        #[command(subcommand)]
+        cmd: LaneCmd,
+    },
+    /// Type into a running agent, and say whether the keystrokes landed.
+    Hail {
+        lane: String,
+        #[arg(long)]
+        body: String,
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        socket: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// Mail across lanes.
+    Message {
+        #[command(subcommand)]
+        cmd: MessageCmd,
+    },
+    /// pid, rss, cpu, uptime, child count per lane.
+    Ps {
+        lane: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum HarnessCmd {
+    List,
+    Get { harness: String },
+}
+
+#[derive(Subcommand)]
+enum LaneCmd {
+    /// Every lane, with live or dead.
+    List {
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        harness: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// Make a worktree, spawn the agent, register the route.
+    Create {
+        #[arg(long)]
+        lane: String,
+        #[arg(long)]
+        cwd: String,
+        #[arg(long)]
+        harness: Option<String>,
+        #[arg(long)]
+        brief: Option<PathBuf>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        tmux: Option<String>,
+        #[arg(long)]
+        parent: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// One lane's route and state.
+    Get {
+        lane: String,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// Point a lane at a pane that already exists.
+    Patch {
+        lane: String,
+        #[arg(long)]
+        tmux: String,
+        #[arg(long)]
+        harness: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        cwd: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        mode: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// Stop a lane and forget it, or bulk-delete by state.
+    Delete {
+        lane: Option<String>,
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// Which tmux pane and harness session id.
+    Route {
+        lane: String,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// Show the lane's screen.
+    Pane {
+        lane: String,
+        #[arg(long)]
+        lines: Option<u32>,
+        #[arg(long)]
+        socket: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// The lane's mailbox.
+    Message {
+        #[command(subcommand)]
+        cmd: LaneMessageCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum LaneMessageCmd {
+    List {
+        lane: String,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum MessageCmd {
+    /// Mark mail handled, in bulk.
+    Ack {
+        #[arg(long)]
+        lane: Option<String>,
+        #[arg(long)]
+        box_: Option<String>,
+        #[arg(long)]
+        close_routeless: bool,
+        #[arg(long, default_value_t = 7)]
+        max_age_days: u64,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DbCmd {
+    Session {
+        #[command(subcommand)]
+        cmd: SessionCmd,
+    },
+    Turn {
+        #[command(subcommand)]
+        cmd: TurnCmd,
+    },
+    Chat {
+        #[command(subcommand)]
+        cmd: ChatCmd,
+    },
+    Touch {
+        #[command(subcommand)]
+        cmd: FactCmd,
+    },
+    Command {
+        #[command(subcommand)]
+        cmd: FactCmd,
+    },
+    Fetch {
+        #[command(subcommand)]
+        cmd: FactCmd,
+    },
+    Skill {
+        #[command(subcommand)]
+        cmd: FactCmd,
+    },
+    Pr {
+        #[command(subcommand)]
+        cmd: FactCmd,
+    },
+    Span {
+        #[command(subcommand)]
+        cmd: FactCmd,
+    },
+    Edge {
+        #[command(subcommand)]
+        cmd: EdgeCmd,
+    },
+    /// Tokens and cost. A leaf with --group-by, and a parent of blocks and
+    /// burn-rate; clap needs both attributes to accept the two forms.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+    Usage {
+        #[command(flatten)]
+        args: UsageArgs,
+        #[command(subcommand)]
+        cmd: Option<UsageCmd>,
+    },
+    /// The rate table cost is computed from.
+    Price {
+        #[command(subcommand)]
+        cmd: PriceCmd,
+    },
+    /// Ingest new transcript bytes.
+    Sync {
+        #[command(subcommand)]
+        cmd: SyncCmd,
+    },
+    /// How far ingest has read each transcript.
+    SyncCursor {
+        #[command(subcommand)]
+        cmd: CursorCmd,
+    },
+    /// Who is alive, who moved recently, and what it cost.
+    Status {
+        /// Window in minutes.
+        #[arg(long, default_value_t = 10)]
+        window: u64,
+        #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
+        format: QueryFormat,
+    },
+}
+
+#[derive(clap::Args, Clone, Default)]
+struct UsageArgs {
+    /// Bucket the report; omit for one totals row.
+    #[arg(long, value_enum)]
+    group_by: Option<usage::GroupBy>,
+    /// Fold the session's whole spawn subtree into the numbers.
+    #[arg(long)]
+    rollup_subtree: bool,
+    #[arg(long)]
+    session: Option<String>,
+    #[arg(long)]
+    since: Option<u64>,
+    #[arg(long)]
+    until: Option<u64>,
+    #[arg(long)]
+    limit: Option<u64>,
+    #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
+    format: QueryFormat,
+}
+
+#[derive(clap::Args, Clone, Default)]
+struct FactArgs {
+    #[arg(long)]
+    session: Option<String>,
+    #[arg(long)]
+    since: Option<u64>,
+    #[arg(long)]
+    until: Option<u64>,
+    /// Prefix match on the row's leading dictionary column.
+    #[arg(long)]
+    like: Option<String>,
+    #[arg(long)]
+    limit: Option<u64>,
+    #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
+    format: QueryFormat,
+}
+
+#[derive(Subcommand)]
+enum UsageCmd {
+    /// Gap-aware billing windows.
+    Blocks {
+        #[arg(long, default_value_t = 5)]
+        window_hours: u64,
+        /// Only the window that is still open.
+        #[arg(long)]
+        active: bool,
+        #[command(flatten)]
+        args: UsageArgs,
+    },
+    /// Tokens per minute and dollars per hour over a trailing window.
+    BurnRate {
+        #[arg(long, default_value_t = 60)]
+        window_minutes: u64,
+        #[command(flatten)]
+        args: UsageArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum PriceCmd {
+    List,
+    /// Write one rate row by hand, in USD per million tokens.
+    Set {
+        model: String,
+        #[arg(long)]
+        input_per_mtok: f64,
+        #[arg(long)]
+        output_per_mtok: f64,
+        #[arg(long)]
+        cache_write_5m_per_mtok: f64,
+        #[arg(long)]
+        cache_write_1h_per_mtok: f64,
+        #[arg(long)]
+        cache_read_per_mtok: f64,
+        #[arg(long, default_value = "manual")]
+        source: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum FactCmd {
+    List {
+        #[command(flatten)]
+        args: FactArgs,
+    },
+}
+
+#[derive(Subcommand)]
+enum SessionCmd {
+    List {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
+        format: QueryFormat,
+    },
+    Get {
+        session: String,
+        #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
+        format: QueryFormat,
+    },
+}
+
+#[derive(Subcommand)]
+enum TurnCmd {
+    List {
+        #[command(flatten)]
+        query: QueryArgs,
+    },
+    Get {
+        session: String,
+        turn: u64,
+        #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
+        format: QueryFormat,
+    },
+}
+
+#[derive(Subcommand)]
+enum ChatCmd {
+    List {
+        #[command(flatten)]
+        query: QueryArgs,
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        follow: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum EdgeCmd {
+    List {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        limit: Option<u64>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SyncCmd {
+    Create {
+        #[arg(long)]
+        rebuild: bool,
+        /// Keep syncing on a poll instead of returning.
+        #[arg(long)]
+        forever: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum CursorCmd {
+    List {
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
+        format: QueryFormat,
+    },
+}
+
+// ---------------------------------------------------------------------------
+// beep
+// ---------------------------------------------------------------------------
+
+fn run_beep(registry: &Registry, cmd: BeepCmd) -> Result<()> {
+    match cmd {
+        BeepCmd::Harness { cmd } => match cmd {
+            HarnessCmd::List => run_harnesses(registry),
+            HarnessCmd::Get { harness } => run_harness_get(registry, &harness),
+        },
+        BeepCmd::Lane { cmd } => run_beep_lane(registry, cmd),
+        BeepCmd::Hail {
+            lane,
+            body,
+            from,
+            kind,
+            socket,
+            mail_dir,
+        } => run_hail(
+            registry,
+            &lane,
+            &body,
+            from.as_deref(),
+            kind.as_deref(),
+            None,
+            socket.as_deref(),
+            mail_dir.as_deref(),
+        ),
+        BeepCmd::Message { cmd } => match cmd {
+            MessageCmd::Ack {
+                lane,
+                box_,
+                close_routeless,
+                max_age_days,
+                mail_dir,
+            } => run_sweep(
+                mail_dir.as_deref(),
+                box_.as_deref(),
+                lane.as_deref(),
+                close_routeless,
+                max_age_days,
+            ),
+        },
+        BeepCmd::Ps { lane, mail_dir } => run_ps(mail_dir.as_deref(), lane.as_deref()),
+    }
+}
+
+fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
+    match cmd {
+        LaneCmd::List {
+            state,
+            harness,
+            mail_dir,
+        } => run_lane_list(mail_dir.as_deref(), state.as_deref(), harness.as_deref()),
+        LaneCmd::Create {
+            lane,
+            cwd,
+            harness,
+            brief,
+            model,
+            tmux,
+            parent,
+            mail_dir,
+            dry_run,
+        } => run_lane(
+            registry,
+            LaneArgs {
+                name: lane,
+                cwd,
+                harness,
+                brief,
+                model,
+                tmux,
+                parent,
+                mail_dir,
+                dry_run,
+            },
+        ),
+        LaneCmd::Get { lane, mail_dir } => run_lane_get(mail_dir.as_deref(), &lane),
+        LaneCmd::Patch {
+            lane,
+            tmux,
+            harness,
+            session_id,
+            cwd,
+            model,
+            mode,
+            mail_dir,
+        } => run_adopt(
+            &lane,
+            &tmux,
+            harness.as_deref(),
+            session_id.as_deref(),
+            cwd.as_deref(),
+            model.as_deref(),
+            mode.as_deref(),
+            mail_dir.as_deref(),
+        ),
+        LaneCmd::Delete {
+            lane,
+            state,
+            mail_dir,
+        } => match (lane, state) {
+            (Some(lane), _) => run_lane_delete(mail_dir.as_deref(), &lane),
+            (None, Some(_)) => run_prune(mail_dir.as_deref()),
+            (None, None) => {
+                anyhow::bail!("name a lane to delete, or pass --state dead for a bulk delete")
+            }
+        },
+        LaneCmd::Route { lane, mail_dir } => run_resolve(&lane, mail_dir.as_deref()),
+        LaneCmd::Pane {
+            lane,
+            lines,
+            socket,
+            mail_dir,
+        } => run_lane_pane(mail_dir.as_deref(), &lane, lines, socket.as_deref()),
+        LaneCmd::Message { cmd } => match cmd {
+            LaneMessageCmd::List { lane, mail_dir } => {
+                run_list(mail_dir.as_deref(), Some(&lane), true)
+            }
+        },
+    }
+}
+
+fn run_harness_get(registry: &Registry, id: &str) -> Result<()> {
+    let adapter = resolve_harness(registry, id)?;
+    let caps = adapter.capabilities();
+    println!(
+        "{}",
+        serde_json::json!({
+            "harness": adapter.id(),
+            "send_midflight": caps.send_midflight,
+            "resume": caps.resume,
+            "spawn": caps.spawn,
+            "subagent_visible": caps.subagent_visible,
+        })
+    );
+    Ok(())
+}
+
+/// Lanes only. `boop list` printed routes and mail together; the two trees
+/// split that, so this half never prints a message.
+fn run_lane_list(
+    mail_dir_arg: Option<&Path>,
+    state_filter: Option<&str>,
+    harness_filter: Option<&str>,
+) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    let routes = bus::read_routes(&dir)?;
+    let live = tmux::live_sessions(None);
+    for (name, route) in &routes {
+        let state = lane_state(&live, route);
+        if let Some(want) = state_filter {
+            if state != want {
+                continue;
+            }
+        }
+        if let Some(want) = harness_filter {
+            if route.harness.as_deref() != Some(want) {
+                continue;
+            }
+        }
+        line(&format!("{} {} {} {} {} {} {}",
+            pad(state, 4),
+            pad(name, 16),
+            pad(route.harness.as_deref().unwrap_or("-"), 10),
+            pad(route.mode.as_deref().unwrap_or("-"), 6),
+            pad(route.model.as_deref().unwrap_or("-"), 46),
+            pad(route.tmux.as_deref().unwrap_or("-"), 16),
+            route.cwd.as_deref().unwrap_or("-"),
+        ));
+    }
+    Ok(())
+}
+
+fn lane_state(live: &Option<tmux::LiveSessions>, route: &Route) -> &'static str {
+    match live {
+        None => "?",
+        Some(sessions) if sessions.has(route.tmux.as_deref().unwrap_or("")) => "live",
+        Some(_) => "dead",
+    }
+}
+
+fn run_lane_get(mail_dir_arg: Option<&Path>, lane: &str) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    let routes = bus::read_routes(&dir)?;
+    let Some(route) = routes.get(lane) else {
+        anyhow::bail!("no registry route for lane `{lane}`")
+    };
+    let live = tmux::live_sessions(None);
+    println!(
+        "{}",
+        serde_json::json!({
+            "lane": lane,
+            "state": lane_state(&live, route),
+            "harness": route.harness,
+            "tmux": route.tmux,
+            "cwd": route.cwd,
+            "model": route.model,
+            "mode": route.mode,
+            "session_id": route.session_id,
+        })
+    );
+    Ok(())
+}
+
+/// Stop one lane and drop its route. Refuses when tmux is unreachable, for the
+/// same reason the bulk delete does: it cannot tell live from dead.
+fn run_lane_delete(mail_dir_arg: Option<&Path>, lane: &str) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    let routes = bus::read_routes(&dir)?;
+    let Some(route) = routes.get(lane) else {
+        anyhow::bail!("no registry route for lane `{lane}`")
+    };
+    if let Some(session) = route.tmux.as_deref() {
+        match tmux::has_session(None, session) {
+            Ok(true) => tmux::kill_session(None, session)?,
+            Ok(false) => {}
+            Err(error) => anyhow::bail!("tmux unreachable, refusing to delete {lane}: {error}"),
+        }
+    }
+    let path = dir.join("registry.json");
+    bus::cas_update_json(&path, |current| {
+        current.remove(lane);
+        Ok(())
+    })?;
+    println!("deleted {lane}");
+    Ok(())
+}
+
+fn run_lane_pane(
+    mail_dir_arg: Option<&Path>,
+    lane: &str,
+    lines: Option<u32>,
+    socket: Option<&str>,
+) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    let routes = bus::read_routes(&dir)?;
+    let Some(route) = routes.get(lane) else {
+        anyhow::bail!("no registry route for lane `{lane}`")
+    };
+    let Some(target) = route.tmux.as_deref() else {
+        anyhow::bail!("lane `{lane}` has no tmux session to capture")
+    };
+    print!("{}", tmux::capture_pane(socket, target, lines)?);
+    Ok(())
+}
+
+/// `beep ps`, optionally narrowed to one lane.
+fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    let routes = bus::read_routes(&dir)?;
+    let snapshot = proc::SysinfoSnapshot::capture()?;
+    line("lane\tpid\trss_kb\tcpu_pct\tuptime_sec\tchildren");
+    for (name, route) in &routes {
+        if let Some(want) = lane {
+            if name != want {
+                continue;
+            }
+        }
+        let pane_pid = pane_pid(route.tmux.as_deref()).unwrap_or(0);
+        match snapshot.process(pane_pid) {
+            Some(info) => println!(
+                "{}\t{}\t{}\t{:.1}\t{}\t{}",
+                name,
+                pane_pid,
+                info.rss_bytes / 1024,
+                info.cpu_percent,
+                info.start_time_secs,
+                snapshot.descendent_count(pane_pid),
+            ),
+            None => println!("{}\t{}\t-\t-\t-\t-", name, pane_pid),
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// db
+// ---------------------------------------------------------------------------
+
+fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
+    match cmd {
+        DbCmd::Session { cmd } => match cmd {
+            SessionCmd::List { limit, format } => {
+                let store = open_store()?;
+                emit_json_rows(&store.query_sessions(None, limit)?, format);
+                Ok(())
+            }
+            SessionCmd::Get { session, format } => {
+                let store = open_store()?;
+                emit_json_rows(&store.query_sessions(Some(&session), None)?, format);
+                Ok(())
+            }
+        },
+        DbCmd::Turn { cmd } => match cmd {
+            TurnCmd::List { query } => run_query(&query),
+            TurnCmd::Get {
+                session,
+                turn,
+                format,
+            } => {
+                let store = open_store()?;
+                let filter = ident::TurnQuery {
+                    session: Some(session),
+                    turn_from: Some(turn),
+                    turn_to: Some(turn),
+                    ..Default::default()
+                };
+                emit_json_rows(&store.query_turns(&filter)?, format);
+                Ok(())
+            }
+        },
+        DbCmd::Chat { cmd } => match cmd {
+            ChatCmd::List { query, all, follow } => run_chat_query(&query, all, follow, false),
+        },
+        DbCmd::Touch { cmd } => run_fact(query::FactKind::Touch, cmd),
+        DbCmd::Command { cmd } => run_fact(query::FactKind::Command, cmd),
+        DbCmd::Fetch { cmd } => run_fact(query::FactKind::Fetch, cmd),
+        DbCmd::Skill { cmd } => run_fact(query::FactKind::Skill, cmd),
+        DbCmd::Pr { cmd } => run_fact(query::FactKind::Pr, cmd),
+        DbCmd::Span { cmd } => run_fact(query::FactKind::Span, cmd),
+        DbCmd::Edge { cmd } => match cmd {
+            EdgeCmd::List { session, limit } => {
+                let store = open_store()?;
+                emit_edges(&store, session.as_deref(), limit)
+            }
+        },
+        DbCmd::Usage { args, cmd } => match cmd {
+            None => run_usage(&args),
+            Some(UsageCmd::Blocks {
+                window_hours,
+                active,
+                args,
+            }) => run_usage_blocks(&args, window_hours, active),
+            Some(UsageCmd::BurnRate {
+                window_minutes,
+                args,
+            }) => run_usage_burn_rate(&args, window_minutes),
+        },
+        DbCmd::Price { cmd } => run_price(cmd),
+        DbCmd::Sync { cmd } => match cmd {
+            SyncCmd::Create { rebuild, forever } => {
+                if forever {
+                    run_follow(registry)
+                } else {
+                    run_sync_all(registry, rebuild)
+                }
+            }
+        },
+        DbCmd::SyncCursor { cmd } => match cmd {
+            CursorCmd::List { limit, format } => {
+                let store = open_store()?;
+                emit_json_rows(&store.query_sync_cursors(limit)?, format);
+                Ok(())
+            }
+        },
+        DbCmd::Status { window, format } => run_status(window, format),
+    }
+}
+
+fn open_store() -> Result<ident::Store> {
+    ident::Store::open(ident::Store::default_path()?)
+}
+
+fn run_fact(kind: query::FactKind, cmd: FactCmd) -> Result<()> {
+    let FactCmd::List { args } = cmd;
+    let store = open_store()?;
+    let filter = query::FactQuery {
+        session: args.session.clone(),
+        since: args.since,
+        until: args.until,
+        like: args.like.clone(),
+        limit: args.limit,
+    };
+    emit_json_rows(&store.query_facts(kind, &filter)?, args.format);
+    Ok(())
+}
+
+/// Liveness is asked of tmux once and joined onto the rows; the store cannot
+/// know it and a per-row tmux call would be an N+1.
+fn run_status(window_minutes: u64, format: QueryFormat) -> Result<()> {
+    let store = open_store()?;
+    let now = now_ms();
+    let mut rows = store.query_status(window_minutes * 60_000, now)?;
+    let dir = mail_dir(None)?;
+    let routes = bus::read_routes(&dir).unwrap_or_default();
+    let live = tmux::live_sessions(None);
+    for row in &mut rows {
+        let session = row["session"].as_str().unwrap_or("").to_owned();
+        let lane = routes.iter().find(|(_, route)| {
+            route.session_id.as_deref() == Some(session.as_str())
+                || route.cwd.as_deref() == row["cwd"].as_str()
+        });
+        let (lane_name, state) = match lane {
+            Some((name, route)) => (Some(name.clone()), lane_state(&live, route)),
+            None => (None, "unknown"),
+        };
+        if let Some(object) = row.as_object_mut() {
+            object.insert("lane".into(), serde_json::json!(lane_name));
+            object.insert("state".into(), serde_json::json!(state));
+        }
+    }
+    emit_json_rows(&rows, format);
+    Ok(())
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn emit_json_rows(rows: &[ident::Row], format: QueryFormat) {
+    match format {
+        QueryFormat::Ndjson => {
+            for row in rows {
+                if let Ok(encoded) = serde_json::to_string(row) {
+                    line(&encoded);
+                }
+            }
+        }
+        QueryFormat::Text => {
+            for row in rows {
+                let Some(object) = row.as_object() else {
+                    continue;
+                };
+                let cells: Vec<String> = object
+                    .values()
+                    .map(|value| match value {
+                        serde_json::Value::String(text) => text.clone(),
+                        serde_json::Value::Null => "-".to_owned(),
+                        other => other.to_string(),
+                    })
+                    .collect();
+                line(&cells.join("\t"));
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// whoami
+// ---------------------------------------------------------------------------
+
+fn run_whoami(json: bool) -> Result<()> {
+    let dir = mail_dir(None)?;
+    let routes = bus::read_routes(&dir).unwrap_or_default();
+    let identity = identity::resolve(&routes)?;
+    if json {
+        println!("{}", identity.to_json());
+        return Ok(());
+    }
+    let rung = identity.rung.unwrap_or(identity::Rung::None);
+    println!("session  {}", identity.session.as_deref().unwrap_or("-"));
+    println!("lane     {}", identity.lane.as_deref().unwrap_or("-"));
+    println!("parent   {}", identity.parent.as_deref().unwrap_or("-"));
+    println!("harness  {}", identity.harness.as_deref().unwrap_or("-"));
+    println!("pane     {}", identity.pane.as_deref().unwrap_or("-"));
+    println!("rung     {} ({})", rung.as_str(), rung.confidence());
+    Ok(())
+}
+
+fn usage_filter(args: &UsageArgs) -> usage::UsageQuery {
+    usage::UsageQuery {
+        session: args.session.clone(),
+        since: args.since,
+        until: args.until,
+        rollup_subtree: args.rollup_subtree,
+        limit: args.limit,
+    }
+}
+
+/// `db usage`: one totals row, or one row per bucket. The report names the
+/// models it could not price rather than folding them in as zero.
+fn run_usage(args: &UsageArgs) -> Result<()> {
+    let store = open_store()?;
+    let filter = usage_filter(args);
+    let rows = store.usage_report(args.group_by, &filter)?;
+    emit_json_rows(&rows, args.format);
+    for row in store.unpriced_models(&filter)? {
+        line(&serde_json::json!({
+            "unpriced_model": row["model"],
+            "calls": row["calls"],
+        })
+        .to_string());
+    }
+    Ok(())
+}
+
+fn run_usage_blocks(args: &UsageArgs, window_hours: u64, active_only: bool) -> Result<()> {
+    let store = open_store()?;
+    let window_ms = (window_hours * 3_600_000) as i64;
+    let blocks = store.usage_blocks(window_ms, &usage_filter(args))?;
+    let now = now_ms() as i64;
+    let rows: Vec<ident::Row> = blocks
+        .iter()
+        .filter(|block| !active_only || block.last_ts + window_ms > now)
+        .map(|block| {
+            serde_json::json!({
+                "window_start": block.window_start,
+                "first_ts": block.first_ts,
+                "last_ts": block.last_ts,
+                "calls": block.calls,
+                "total_tokens": block.total_tokens,
+                "is_gap": block.is_gap,
+                "is_active": !block.is_gap && block.last_ts + window_ms > now,
+            })
+        })
+        .collect();
+    emit_json_rows(&rows, args.format);
+    if let Some(ceiling) = usage::p90_ceiling(&blocks) {
+        line(&serde_json::json!({ "p90_token_ceiling": ceiling }).to_string());
+    }
+    Ok(())
+}
+
+fn run_usage_burn_rate(args: &UsageArgs, window_minutes: u64) -> Result<()> {
+    let store = open_store()?;
+    let mut filter = usage_filter(args);
+    if filter.since.is_none() {
+        filter.since = Some(now_ms().saturating_sub(window_minutes * 60_000));
+    }
+    emit_json_rows(&store.usage_burn_rate(&filter)?, args.format);
+    Ok(())
+}
+
+fn run_price(cmd: PriceCmd) -> Result<()> {
+    let store = open_store()?;
+    match cmd {
+        PriceCmd::List => {
+            emit_json_rows(&store.price_list()?, QueryFormat::Ndjson);
+            Ok(())
+        }
+        PriceCmd::Set {
+            model,
+            input_per_mtok,
+            output_per_mtok,
+            cache_write_5m_per_mtok,
+            cache_write_1h_per_mtok,
+            cache_read_per_mtok,
+            source,
+        } => {
+            store.price_set(&usage::ModelPrice {
+                model: &model,
+                input_per_mtok,
+                output_per_mtok,
+                cache_write_5m_per_mtok,
+                cache_write_1h_per_mtok,
+                cache_read_per_mtok,
+                source: &source,
+            })?;
+            line(&format!("priced {model}"));
+            Ok(())
+        }
     }
 }

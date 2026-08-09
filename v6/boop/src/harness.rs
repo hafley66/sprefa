@@ -48,7 +48,11 @@ pub trait Harness {
 #[derive(Clone, Debug)]
 pub struct SessionRef {
     pub harness: &'static str,
+    /// Unique across every transcript the harness can see; a file stem is not
+    /// (52 of 1318 claude stems name two different subagents).
     pub session_id: String,
+    /// The short name a human types; unique only by luck.
+    pub nickname: String,
     pub path: PathBuf,
     pub cwd: Option<String>,
     pub git_branch: Option<String>,
@@ -114,4 +118,7 @@ pub struct SpawnSpec {
     /// The git checkout a worktree branches from (or the main-tree working
     /// dir when `main_tree` is true).
     pub repo: std::path::PathBuf,
+    /// Env assignments prefixed to the launch command. Every value describes
+    /// the CHILD; the spawner appears only as BOOP_PARENT.
+    pub env_stamp: Option<String>,
 }

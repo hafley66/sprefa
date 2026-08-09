@@ -70,6 +70,7 @@ impl Harness for Claude {
         Ok(SessionRef {
             harness: "claude",
             session_id: session_id.clone(),
+            nickname: session_id.clone(),
             path: cwd.join(session_id).with_extension("jsonl"),
             cwd: Some(cwd.display().to_string()),
             git_branch: Some(spec.branch.clone()),
@@ -107,9 +108,13 @@ impl Harness for Claude {
 /// The claude command line a spawn runs. Resuming an existing session wins
 /// over a fresh prompt.
 fn launch_command(spec: &SpawnSpec) -> String {
-    match &spec.resume_session {
+    let command = match &spec.resume_session {
         Some(id) => format!("claude --resume {id}"),
         None => format!("claude {}", shell_quote(&spec.prompt)),
+    };
+    match &spec.env_stamp {
+        Some(stamp) => format!("{stamp} {command}"),
+        None => command,
     }
 }
 
@@ -153,11 +158,16 @@ fn sessions_in(base: &std::path::Path) -> anyhow::Result<Vec<SessionRef>> {
             continue;
         }
         let path = entry.path();
-        let session_id = path
+        let nickname = path
             .file_stem()
             .and_then(|stem| stem.to_str())
             .unwrap_or_default()
             .to_string();
+        let parent = parent_for(path);
+        let session_id = match &parent {
+            Some(parent) => format!("{parent}/{nickname}"),
+            None => nickname.clone(),
+        };
         let metadata = path.metadata().ok();
         let modified_ms = metadata
             .as_ref()
@@ -171,6 +181,7 @@ fn sessions_in(base: &std::path::Path) -> anyhow::Result<Vec<SessionRef>> {
         sessions.push(SessionRef {
             harness: "claude",
             session_id,
+            nickname,
             path: path.to_path_buf(),
             cwd,
             git_branch,
@@ -178,7 +189,7 @@ fn sessions_in(base: &std::path::Path) -> anyhow::Result<Vec<SessionRef>> {
             size,
             tmux: None,
             tmux_socket: None,
-            parent: parent_for(path),
+            parent,
         });
     }
     sessions.sort_by_key(|session| session.modified_ms);
@@ -366,11 +377,12 @@ mod tests {
         }
     }
 
-    fn session_for(path: &PathBuf, size: u64) -> SessionRef {
+    fn session_for(path: &std::path::Path, size: u64) -> SessionRef {
         SessionRef {
             harness: "claude",
             session_id: "test-session".to_owned(),
-            path: path.clone(),
+            nickname: "test-session".to_owned(),
+            path: path.to_path_buf(),
             cwd: None,
             git_branch: None,
             modified_ms: 0,
@@ -442,21 +454,25 @@ mod tests {
         socket: String,
     }
 
+    static NEXT_SOCKET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
     impl TmuxGuard {
+        /// One socket per guard: tests run in parallel and a shared name makes
+        /// each new guard kill its neighbour's server.
         fn new() -> TmuxGuard {
-            let socket = format!("boop-test-{}-ctl", std::process::id());
-            let _ = std::process::Command::new("tmux")
-                .args(["-L", &socket, "kill-server"])
-                .status();
+            let socket = format!(
+                "boop-test-{}-ctl{}",
+                std::process::id(),
+                NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            crate::tmux::kill_test_server(&socket);
             TmuxGuard { socket }
         }
     }
 
     impl Drop for TmuxGuard {
         fn drop(&mut self) {
-            let _ = std::process::Command::new("tmux")
-                .args(["-L", &self.socket, "kill-server"])
-                .status();
+            crate::tmux::kill_test_server(&self.socket);
         }
     }
 
@@ -472,6 +488,7 @@ mod tests {
             socket: Some(guard.socket.clone()),
             worktree_dir: None,
             repo: std::env::temp_dir(),
+            env_stamp: None,
         }
     }
 
@@ -591,6 +608,7 @@ mod tests {
         let session = SessionRef {
             harness: "claude",
             session_id: "ctl".to_owned(),
+            nickname: "ctl".to_owned(),
             path: PathBuf::from("/tmp/ctl.jsonl"),
             cwd: None,
             git_branch: None,
@@ -628,12 +646,41 @@ mod tests {
         let sessions = sessions_in(&base).unwrap();
         let sub = sessions
             .iter()
-            .find(|s| s.session_id == "agent-a6cee372fea5c1c2f")
+            .find(|s| s.nickname == "agent-a6cee372fea5c1c2f")
             .expect("subagent transcript present in fixture");
         assert_eq!(
             sub.parent.as_deref(),
             Some("2579238b-e154-40c0-b018-f6aa80f87a90")
         );
+        assert_eq!(
+            sub.session_id,
+            "2579238b-e154-40c0-b018-f6aa80f87a90/agent-a6cee372fea5c1c2f"
+        );
+    }
+
+    /// FAIL-FIRST (D4). 52 of 1318 live transcript stems name two different
+    /// subagent transcripts under two different parents.
+    #[test]
+    fn two_transcripts_sharing_a_stem_get_distinct_session_ids() {
+        use super::sessions_in;
+        let base = std::path::PathBuf::from("tests/fixtures/claude");
+        let sessions = sessions_in(&base).unwrap();
+        let sharing: Vec<&SessionRef> = sessions
+            .iter()
+            .filter(|session| session.path.to_string_lossy().contains("agent-dupstem00000000"))
+            .collect();
+        assert_eq!(sharing.len(), 2, "the fixture pair must both be discovered");
+        assert_ne!(
+            sharing[0].session_id, sharing[1].session_id,
+            "one id for two agents merges their turns and their spawn edges"
+        );
+        for session in &sharing {
+            assert!(
+                session.session_id.contains(session.parent.as_deref().unwrap()),
+                "a subagent id carries its parent: {}",
+                session.session_id
+            );
+        }
     }
 
     fn has_session_on(guard: &TmuxGuard, name: &str) -> bool {

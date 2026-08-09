@@ -100,7 +100,7 @@ mod tests {
         Command::new("git")
             .args([
                 "-C",
-                &path.to_string_lossy().to_string(),
+                path.to_string_lossy().as_ref(),
                 "config",
                 "user.email",
                 "t@t",
@@ -110,7 +110,7 @@ mod tests {
         Command::new("git")
             .args([
                 "-C",
-                &path.to_string_lossy().to_string(),
+                path.to_string_lossy().as_ref(),
                 "config",
                 "user.name",
                 "t",
@@ -119,14 +119,14 @@ mod tests {
             .unwrap();
         std::fs::write(path.join("seed.txt"), "seed").unwrap();
         let out = Command::new("git")
-            .args(["-C", &path.to_string_lossy().to_string(), "add", "-A"])
+            .args(["-C", path.to_string_lossy().as_ref(), "add", "-A"])
             .output()
             .unwrap();
         assert!(out.status.success());
         let out = Command::new("git")
             .args([
                 "-C",
-                &path.to_string_lossy().to_string(),
+                path.to_string_lossy().as_ref(),
                 "commit",
                 "-qm",
                 "seed",
@@ -137,7 +137,7 @@ mod tests {
         let out = Command::new("git")
             .args([
                 "-C",
-                &path.to_string_lossy().to_string(),
+                path.to_string_lossy().as_ref(),
                 "rev-parse",
                 "HEAD",
             ])
@@ -163,6 +163,7 @@ mod tests {
             socket: None,
             worktree_dir: Some(worktree.to_path_buf()),
             repo: repo.to_path_buf(),
+            env_stamp: None,
         }
     }
 
