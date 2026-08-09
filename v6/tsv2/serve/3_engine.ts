@@ -57,6 +57,7 @@ import type {
   IArrivalBatch,
   IBootServedProgram,
   ILiveEngine,
+  IReloadPlan,
   IRow,
   IServedProgram,
   ISqlSeam,
@@ -221,8 +222,43 @@ export class LiveEngine implements ILiveEngine {
 // boot statements.
 // ─────────────────────────────────────────────────────────────────────────────
 
-function is_already_exists(failure: unknown): boolean {
-  return failure instanceof Error && /already exists/i.test(failure.message);
+const QUOTED_IDENTIFIER = /"([^"]+)"/;
+
+const CREATED_OBJECT = /^CREATE\s+(?:TEMP\s+)?(?:TABLE|VIEW|INDEX)\s+(?:IF\s+NOT\s+EXISTS\s+)?"([^"]+)"/i;
+
+/** The planner writes every statement with its target table as the first quoted
+ *  identifier (serve/reloadPlan.ts); nothing else on this path parses SQL. */
+function plan_target(sql: string): string | null {
+  return QUOTED_IDENTIFIER.exec(sql)?.[1] ?? null;
+}
+
+/** A swap against `:memory:` opens an EMPTY database, and `DELETE FROM` an
+ *  absent table throws where the plan meant a no-op. */
+function reload_discards(reload: IReloadPlan | undefined, table_names: readonly string[]): readonly string[] {
+  if (reload === undefined) return [];
+  const present = new Set(table_names);
+  return reload.statements.filter((sql) => {
+    const target = plan_target(sql);
+    return target !== null && present.has(target);
+  });
+}
+
+function dropped_tables(discards: readonly string[]): ReadonlySet<string> {
+  const dropped = new Set<string>();
+  for (const sql of discards) {
+    if (!/^DROP\s+TABLE/i.test(sql)) continue;
+    const target = plan_target(sql);
+    if (target !== null) dropped.add(target);
+  }
+  return dropped;
+}
+
+/** A CREATE for a table the plan JUST DROPPED cannot legitimately already
+ *  exist; swallowing that leaves the new rule writing into the old shape. */
+function tolerates_existing(failure: unknown, sql: string, dropped: ReadonlySet<string>): boolean {
+  if (!(failure instanceof Error) || !/already exists/i.test(failure.message)) return false;
+  const created = CREATED_OBJECT.exec(sql)?.[1];
+  return created === undefined || !dropped.has(created);
 }
 
 const DICTIONARY_TABLE = "__str";
@@ -258,22 +294,34 @@ function intern_crossing_failure(program: IServedProgram, tableNames: readonly s
 export const boot_served_program: IBootServedProgram = (
   seam: ISqlSeam,
   program: IServedProgram,
+  reload?: IReloadPlan,
 ): Observable<void> => {
   const statements = [...program.ddl, ...WitnessCache.ddl()];
   return select_rows(seam, USER_TABLES_SQL, ["name"], ["text"]).pipe(
     map((rows) => rows.map((row) => String(row[0]))),
     concatMap((tableNames) => {
       const failure = intern_crossing_failure(program, tableNames);
-      return failure === null ? of(undefined) : throwError(() => failure);
+      return failure === null ? of(reload_discards(reload, tableNames)) : throwError(() => failure);
     }),
-    concatMap(() => from(statements)),
-  ).pipe(
-    concatMap((sql) =>
-      seam.runner.execute(seam.db, sql).pipe(
-        catchError((failure: unknown) => (is_already_exists(failure) ? of(undefined) : throwError(() => failure))),
+    concatMap((discards) =>
+      from(discards).pipe(
+        concatMap((sql) => seam.runner.execute(seam.db, sql)),
+        toArray(),
+        map(() => dropped_tables(discards)),
       ),
     ),
-    toArray(),
+    concatMap((dropped) =>
+      from(statements).pipe(
+        concatMap((sql) =>
+          seam.runner.execute(seam.db, sql).pipe(
+            catchError((failure: unknown) =>
+              tolerates_existing(failure, sql, dropped) ? of(undefined) : throwError(() => failure),
+            ),
+          ),
+        ),
+        toArray(),
+      ),
+    ),
     concatMap(() => BootRunner.run(seam, program.boot)),
   );
 };

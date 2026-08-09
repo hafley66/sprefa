@@ -64,6 +64,9 @@ import { ScratchStore } from "../runtime/scratchStore.ts";
 import { ServeStats } from "../runtime/serveStats.ts";
 import type {
   IArrivalBatch,
+  IRelCatalogRow,
+  IReloadOutcome,
+  IReloadPlan,
   IRowColumnType,
   IRowValue,
   IServeConfig,
@@ -77,6 +80,7 @@ import { ProgramCompiler } from "./0_compile.ts";
 import { HostRunner } from "./1_hosts.ts";
 import { IntervalBindRunner, NodeWatchSource, WatchBindRunner, bind_plans_for } from "./2_binds.ts";
 import { LiveEngine, boot_served_program } from "./3_engine.ts";
+import { ReloadPlanner } from "./reloadPlan.ts";
 
 export const ROUTE_LIST: readonly string[] = [
   "POST /program",
@@ -144,6 +148,15 @@ function dispose_program(state: ServerState): void {
   state.program = null;
 }
 
+function reload_outcome(program: IServedProgram, plan: IReloadPlan): IReloadOutcome {
+  return {
+    program: program.name,
+    verdicts: [...plan.verdicts].sort(([left], [right]) => left.localeCompare(right)),
+    statements: plan.statements,
+    unsupported: plan.unsupported,
+  };
+}
+
 /** The loaded program's whole life as one observable: the tick loop (subscribing
  *  it is what makes ticks turn), the live host effects, and the bind firings,
  *  all until the next accepted program swaps them out. The 200 is written LAST,
@@ -152,39 +165,57 @@ function dispose_program(state: ServerState): void {
 function run_program$(state: ServerState, config: IServeConfig, load: ProgramLoad): Observable<IServeEvent> {
   const scheduler: SchedulerLike = config.scheduler ?? asyncScheduler;
   return defer(() => {
+    // The outgoing catalog is readable only BEFORE dispose, and only a swap has
+    // one: a cold boot must keep tolerating tables it did not build.
+    const previous_catalog: readonly IRelCatalogRow[] = state.program?.rel_catalog ?? [];
+    const swapped = previous_catalog.length > 0;
+    const reload_plan = ReloadPlanner.plan(previous_catalog, load.program.rel_catalog, true);
+    const outcome = reload_outcome(load.program, reload_plan);
     dispose_program(state);
     const seam = ScratchStore.open(config.db_url);
     const engine = new LiveEngine(load.program, seam);
     state.seam = seam;
     state.engine = engine;
     state.program = load.program;
-    return boot_served_program(seam, load.program).pipe(
-      concatMap(() =>
-        merge(
-          engine.ticks$.pipe(map((outcome): IServeEvent => ({ kind: "tick", outcome }))),
-          new HostRunner(engine, seam, load.program.host_plans).effects$.pipe(
-            map((done): IServeEvent => ({ kind: "effect", done })),
-          ),
-          new IntervalBindRunner(engine, bind_plans_for(load.program.bind_plans, "live_interval"), scheduler).firings$.pipe(
-            map((fired): IServeEvent => ({ kind: "bind", fired })),
-          ),
-          new WatchBindRunner(engine, bind_plans_for(load.program.bind_plans, "live_watch"), {
-            root: config.watch_root ?? process.cwd(),
-            coalesce_ms: config.watch_coalesce_ms ?? 100,
-            scheduler,
-            source: config.watch_source ?? new NodeWatchSource(),
-          }).firings$.pipe(map((fired): IServeEvent => ({ kind: "watch", fired }))),
-          defer(() => {
-            write_json(load.response, 200, {
-              loaded: true,
-              rels: Object.keys(load.program.rel_columns).sort(),
-              arrival_targets: load.program.arrival_targets,
-              hosts: load.program.host_plans.map((plan) => plan.name),
-              binds: load.program.bind_plans.map((plan) => ({ name: plan.name, literals: plan.literals })),
-            });
-            return of<IServeEvent>({ kind: "loaded", program: load.program.name });
-          }),
-        ),
+    return boot_served_program(seam, load.program, swapped ? reload_plan : undefined).pipe(
+      map(() => true),
+      // A boot failure used to error the inner observable, which under switchMap
+      // inside the app's ONE subscription killed the process with the POST unanswered.
+      catchError((failure: unknown) => {
+        dispose_program(state);
+        write_json(load.response, 500, { error: failure instanceof Error ? failure.message : String(failure) });
+        return of(false);
+      }),
+      concatMap((booted) =>
+        booted
+          ? merge(
+              engine.ticks$.pipe(map((tick): IServeEvent => ({ kind: "tick", outcome: tick }))),
+              new HostRunner(engine, seam, load.program.host_plans).effects$.pipe(
+                map((done): IServeEvent => ({ kind: "effect", done })),
+              ),
+              new IntervalBindRunner(engine, bind_plans_for(load.program.bind_plans, "live_interval"), scheduler).firings$.pipe(
+                map((fired): IServeEvent => ({ kind: "bind", fired })),
+              ),
+              new WatchBindRunner(engine, bind_plans_for(load.program.bind_plans, "live_watch"), {
+                root: config.watch_root ?? process.cwd(),
+                coalesce_ms: config.watch_coalesce_ms ?? 100,
+                scheduler,
+                source: config.watch_source ?? new NodeWatchSource(),
+              }).firings$.pipe(map((fired): IServeEvent => ({ kind: "watch", fired }))),
+              defer(() => {
+                write_json(load.response, 200, {
+                  loaded: true,
+                  rels: Object.keys(load.program.rel_columns).sort(),
+                  arrival_targets: load.program.arrival_targets,
+                  hosts: load.program.host_plans.map((plan) => plan.name),
+                  binds: load.program.bind_plans.map((plan) => ({ name: plan.name, literals: plan.literals })),
+                  ...(swapped ? { reload: outcome } : {}),
+                });
+                const loaded: IServeEvent = { kind: "loaded", program: load.program.name };
+                return swapped ? from([{ kind: "reloaded", outcome } as IServeEvent, loaded]) : of(loaded);
+              }),
+            )
+          : of<IServeEvent>({ kind: "served", method: "POST", path: "/program" }),
       ),
     );
   });
