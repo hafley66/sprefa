@@ -108,14 +108,17 @@ impl Harness for Claude {
 /// The claude command line a spawn runs. Resuming an existing session wins
 /// over a fresh prompt.
 fn launch_command(spec: &SpawnSpec) -> String {
-    let command = match &spec.resume_session {
+    let mut command = match &spec.resume_session {
         Some(id) => format!("claude --resume {id}"),
         None => format!("claude {}", shell_quote(&spec.prompt)),
     };
-    match &spec.env_stamp {
+    if let Some(model) = spec.model.as_deref().filter(|value| !value.is_empty()) {
+        command.push_str(&format!(" --model {}", shell_quote(model)));
+    }
+    spec.with_on_exit(match &spec.env_stamp {
         Some(stamp) => format!("{stamp} {command}"),
         None => command,
-    }
+    })
 }
 
 fn shell_quote(value: &str) -> String {
@@ -489,6 +492,8 @@ mod tests {
             worktree_dir: None,
             repo: std::env::temp_dir(),
             env_stamp: None,
+            model: None,
+            on_exit: None,
         }
     }
 
