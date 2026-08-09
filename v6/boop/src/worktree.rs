@@ -91,39 +91,67 @@ mod tests {
     use super::prepare_spawn_dir;
 
     fn init_repo(path: &std::path::Path) -> String {
-        Command::new("git").arg("init").arg("-q").arg(path).status().unwrap();
         Command::new("git")
-            .args(["-C", &path.to_string_lossy().to_string(), "config", "user.email", "t@t"])
+            .arg("init")
+            .arg("-q")
+            .arg(path)
             .status()
             .unwrap();
         Command::new("git")
-            .args(["-C", &path.to_string_lossy().to_string(), "config", "user.name", "t"])
+            .args([
+                "-C",
+                &path.to_string_lossy().to_string(),
+                "config",
+                "user.email",
+                "t@t",
+            ])
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                &path.to_string_lossy().to_string(),
+                "config",
+                "user.name",
+                "t",
+            ])
             .status()
             .unwrap();
         std::fs::write(path.join("seed.txt"), "seed").unwrap();
-        let out = Command::new("git")
-            .args(["-C", &path.to_string_lossy().to_string(), "rev-parse", "--show-toplevel"])
-            .output()
-            .unwrap();
-        let _ = out;
         let out = Command::new("git")
             .args(["-C", &path.to_string_lossy().to_string(), "add", "-A"])
             .output()
             .unwrap();
         assert!(out.status.success());
         let out = Command::new("git")
-            .args(["-C", &path.to_string_lossy().to_string(), "commit", "-qm", "seed"])
+            .args([
+                "-C",
+                &path.to_string_lossy().to_string(),
+                "commit",
+                "-qm",
+                "seed",
+            ])
             .output()
             .unwrap();
         assert!(out.status.success());
         let out = Command::new("git")
-            .args(["-C", &path.to_string_lossy().to_string(), "rev-parse", "HEAD"])
+            .args([
+                "-C",
+                &path.to_string_lossy().to_string(),
+                "rev-parse",
+                "HEAD",
+            ])
             .output()
             .unwrap();
         String::from_utf8_lossy(&out.stdout).trim().to_owned()
     }
 
-    fn spec(repo: &std::path::Path, base: &str, worktree: &std::path::Path, main_tree: bool) -> SpawnSpec {
+    fn spec(
+        repo: &std::path::Path,
+        base: &str,
+        worktree: &std::path::Path,
+        main_tree: bool,
+    ) -> SpawnSpec {
         SpawnSpec {
             harness: "claude".to_owned(),
             branch: "lane-wt".to_owned(),
@@ -146,10 +174,19 @@ mod tests {
         let wt = base.with_file_name(format!("boop-wt-{}-work", std::process::id()));
         let _ = std::fs::remove_dir_all(&wt);
         let dir = prepare_spawn_dir(&spec(&base, &sha, &wt, false)).unwrap();
-        assert!(dir.join("seed.txt").exists(), "worktree must carry the seed commit");
+        assert!(
+            dir.join("seed.txt").exists(),
+            "worktree must carry the seed commit"
+        );
         let branch = String::from_utf8_lossy(
             &Command::new("git")
-                .args(["-C", &wt.display().to_string(), "rev-parse", "--abbrev-ref", "HEAD"])
+                .args([
+                    "-C",
+                    &wt.display().to_string(),
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "HEAD",
+                ])
                 .output()
                 .unwrap()
                 .stdout,
@@ -169,10 +206,16 @@ mod tests {
         let wt = base.with_file_name(format!("boop-st-{}-work", std::process::id()));
         let _ = std::fs::remove_dir_all(&wt);
         let mut s = spec(&base, &sha, &wt, false);
-        s.setup = vec!["echo first > marker.txt".to_owned(), "echo second >> marker.txt".to_owned()];
+        s.setup = vec![
+            "echo first > marker.txt".to_owned(),
+            "echo second >> marker.txt".to_owned(),
+        ];
         let dir = prepare_spawn_dir(&s).unwrap();
         let marker = std::fs::read_to_string(dir.join("marker.txt")).unwrap();
-        assert_eq!(marker, "first\nsecond\n", "setup steps run in order in the worktree");
+        assert_eq!(
+            marker, "first\nsecond\n",
+            "setup steps run in order in the worktree"
+        );
         let _ = std::fs::remove_dir_all(&base);
         let _ = std::fs::remove_dir_all(&wt);
     }
@@ -185,8 +228,14 @@ mod tests {
         let path = base.to_string_lossy().to_string();
         // Move HEAD forward on the default branch: commit A on top of sha0.
         std::fs::write(base.join("a.txt"), "a").unwrap();
-        Command::new("git").args(["-C", &path, "add", "-A"]).status().unwrap();
-        Command::new("git").args(["-C", &path, "commit", "-qm", "a"]).status().unwrap();
+        Command::new("git")
+            .args(["-C", &path, "add", "-A"])
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", &path, "commit", "-qm", "a"])
+            .status()
+            .unwrap();
         let main_branch = String::from_utf8_lossy(
             &Command::new("git")
                 .args(["-C", &path, "rev-parse", "--abbrev-ref", "HEAD"])
@@ -197,20 +246,42 @@ mod tests {
         .trim()
         .to_owned();
         // Diverge on a side branch: commit B on top of sha0, then return HEAD.
-        Command::new("git").args(["-C", &path, "branch", "other", &sha0]).status().unwrap();
-        Command::new("git").args(["-C", &path, "checkout", "-q", "other"]).status().unwrap();
+        Command::new("git")
+            .args(["-C", &path, "branch", "other", &sha0])
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", &path, "checkout", "-q", "other"])
+            .status()
+            .unwrap();
         std::fs::write(base.join("b.txt"), "b").unwrap();
-        Command::new("git").args(["-C", &path, "add", "-A"]).status().unwrap();
-        Command::new("git").args(["-C", &path, "commit", "-qm", "b"]).status().unwrap();
+        Command::new("git")
+            .args(["-C", &path, "add", "-A"])
+            .status()
+            .unwrap();
+        Command::new("git")
+            .args(["-C", &path, "commit", "-qm", "b"])
+            .status()
+            .unwrap();
         let divergent = String::from_utf8_lossy(
-            &Command::new("git").args(["-C", &path, "rev-parse", "HEAD"]).output().unwrap().stdout,
+            &Command::new("git")
+                .args(["-C", &path, "rev-parse", "HEAD"])
+                .output()
+                .unwrap()
+                .stdout,
         )
         .trim()
         .to_owned();
-        Command::new("git").args(["-C", &path, "checkout", "-q", &main_branch]).status().unwrap();
+        Command::new("git")
+            .args(["-C", &path, "checkout", "-q", &main_branch])
+            .status()
+            .unwrap();
         // Pin a main-tree spawn to the diverged commit: it cannot fast-forward.
         let result = prepare_spawn_dir(&spec(&base, &divergent, &base.join("nope"), true));
-        assert!(result.is_err(), "non-fast-forward main-tree spawn must be refused");
+        assert!(
+            result.is_err(),
+            "non-fast-forward main-tree spawn must be refused"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 }

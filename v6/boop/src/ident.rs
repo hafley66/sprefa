@@ -14,7 +14,6 @@ use rusqlite::{params, Connection};
 
 use crate::harness::SessionRef;
 
-
 /// The relational store.
 pub struct Store {
     connection: Connection,
@@ -74,7 +73,9 @@ impl Store {
         let insert = format!("INSERT OR IGNORE INTO {table} (id, value) VALUES (NULL, ?1)");
         self.connection.execute(&insert, params![value])?;
         let select = format!("SELECT id FROM {table} WHERE value = ?1");
-        Ok(self.connection.query_row(&select, params![value], |row| row.get(0))?)
+        Ok(self
+            .connection
+            .query_row(&select, params![value], |row| row.get(0))?)
     }
 
     fn session_id(&self, session: &str) -> Result<i64> {
@@ -129,7 +130,14 @@ impl Store {
         Ok(())
     }
 
-    fn add_cmd(&self, session: &str, turn: u64, ts: u64, program: &str, argline: &str) -> Result<()> {
+    fn add_cmd(
+        &self,
+        session: &str,
+        turn: u64,
+        ts: u64,
+        program: &str,
+        argline: &str,
+    ) -> Result<()> {
         let sid = self.session_id(session)?;
         let program_id = self.intern("dict_program", program)?;
         self.connection.execute(
@@ -254,24 +262,29 @@ impl Store {
             "agent_skill",
             "agent_pr",
         ] {
-            let n: i64 = self
-                .connection
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))?;
+            let n: i64 =
+                self.connection
+                    .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                        row.get(0)
+                    })?;
             out.insert(table.into(), serde_json::json!(n));
         }
         Ok(out)
     }
 
     pub fn db_bytes(&self) -> Result<u64> {
-        let bytes: i64 = self.connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
-        let size: i64 = self.connection.pragma_query_value(None, "page_size", |row| row.get(0))?;
+        let bytes: i64 = self
+            .connection
+            .pragma_query_value(None, "page_count", |row| row.get(0))?;
+        let size: i64 = self
+            .connection
+            .pragma_query_value(None, "page_size", |row| row.get(0))?;
         Ok((bytes * size) as u64)
     }
 
     // ------------------------------------------------------------------
     // Queries (join ids back to the TEXT query surface)
     // ------------------------------------------------------------------
-
 
     /// Query turns with the shared filter set. Returns JSON rows with the TEXT
     /// query surface joined back out.
@@ -380,7 +393,11 @@ pub fn sync_session(store: &Store, session: &SessionRef) -> Result<u64> {
     for line in &result.lines {
         project_line(store, session, line, &mut turn)?;
     }
-    store.set_cursor(&session.session_id, &session.path.display().to_string(), result.next_offset)?;
+    store.set_cursor(
+        &session.session_id,
+        &session.path.display().to_string(),
+        result.next_offset,
+    )?;
     Ok(turn)
 }
 
@@ -405,7 +422,10 @@ fn project_line(
         .and_then(crate::harness::claude::parse_iso_ms)
         .unwrap_or(0);
     let sid = session.session_id.clone();
-    let record_type = object.get("type").and_then(serde_json::Value::as_str).unwrap_or("");
+    let record_type = object
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
 
     if record_type == "pr-link" {
         let pr_url = object
@@ -437,21 +457,35 @@ fn project_line(
             if let Some(text) = content.and_then(serde_json::Value::as_str) {
                 vec![serde_json::json!({"type":"text","text":text})]
             } else {
-                content.and_then(serde_json::Value::as_array).map(|a| a.to_vec()).unwrap_or_default()
+                content
+                    .and_then(serde_json::Value::as_array)
+                    .map(|a| a.to_vec())
+                    .unwrap_or_default()
             }
         }
     };
     for block in &blocks {
-        let Some(block) = block.as_object() else { continue };
-        let kind = block.get("type").and_then(serde_json::Value::as_str).unwrap_or("");
+        let Some(block) = block.as_object() else {
+            continue;
+        };
+        let kind = block
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
         *turn += 1;
         match kind {
             "text" => {
-                let said = block.get("text").and_then(serde_json::Value::as_str).unwrap_or("");
+                let said = block
+                    .get("text")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
                 store.add_turn(&sid, *turn, ts, role, said)?;
             }
             "tool_use" => {
-                let name = block.get("name").and_then(serde_json::Value::as_str).unwrap_or("");
+                let name = block
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
                 let input = block.get("input");
                 // tool turns have no said; the fact table carries the detail.
                 store.add_turn(&sid, *turn, ts, "tool", "")?;
@@ -643,7 +677,7 @@ mod tests {
 
     use crate::harness::SessionRef;
 
-    use super::{Store, sync_session};
+    use super::{sync_session, Store};
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("boop_rel_{}_{}", std::process::id(), name))
@@ -671,14 +705,22 @@ mod tests {
         let store = Store::open(db_path.clone()).unwrap();
 
         let lines_path = temp_path("log");
-        let mut file = OpenOptions::new().create(true).truncate(true).write(true).open(&lines_path).unwrap();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&lines_path)
+            .unwrap();
         writeln!(file, r#"{{"type":"user","sessionId":"ses-1","timestamp":"2026-08-01T00:00:00.100Z","gitBranch":"main","message":"hello"}}"#).unwrap();
         writeln!(file, r#"{{"type":"assistant","sessionId":"ses-1","timestamp":"2026-08-01T00:00:01.000Z","gitBranch":"main","message":{{"content":[{{"type":"tool_use","name":"Read","input":{{"file_path":"/tmp/a.rs"}}}},{{"type":"tool_use","name":"Bash","input":{{"command":"git diff --stat"}}}}]}}}}"#).unwrap();
         drop(file);
 
         let session = session_for(&lines_path);
         let turns_written = sync_session(&store, &session).unwrap();
-        assert_eq!(turns_written, 3, "user text, tool Read, tool Bash = 3 turns");
+        assert_eq!(
+            turns_written, 3,
+            "user text, tool Read, tool Bash = 3 turns"
+        );
 
         let counts = store.counts().unwrap();
         assert_eq!(counts["agent_turn"], 3);
@@ -713,9 +755,17 @@ mod tests {
         let store = Store::open(db_path.clone()).unwrap();
 
         let lines_path = temp_path("log3");
-        let mut file =
-            OpenOptions::new().create(true).truncate(true).write(true).open(&lines_path).unwrap();
-        writeln!(file, r#"{{"type":"user","sessionId":"child","message":"go"}}"#).unwrap();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&lines_path)
+            .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"user","sessionId":"child","message":"go"}}"#
+        )
+        .unwrap();
         let mut session = session_for(&lines_path);
         session.session_id = "child".to_owned();
         session.parent = Some("parent".to_owned());
