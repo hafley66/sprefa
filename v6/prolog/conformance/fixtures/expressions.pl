@@ -287,3 +287,48 @@ fixture(typed_int_contradicts_text_witness,
   [],
   [ throws(type_arrival_shape_mismatch(typed_conflict/1, value, int,
                                        field_not_int(text_value))) ]).
+
+% ═══ the numeric equality pair: =:= and =\= ══════════════════════════════════
+% Until the registry gained these two expression rows, an operator with no
+% expression/5 row refused by name as unknown_comparison_operator. =:= and
+% =\= evaluate both operands numerically (both_number) like the ordered
+% comparisons, unlike ==/\\== which are term identity, and SQLite renders them
+% as `=`/`<>` respectively.
+
+fixture(numeric_equality_operator_filters,
+  prog([], [ (matched(Value) <- row(Value), Value =:= 2) ]),
+  [ row(1), row(2), row(3) ],
+  [],
+  [ final(matched/1, [ matched(2) ]) ]).
+
+fixture(numeric_inequality_operator_filters,
+  prog([], [ (kept(Value) <- row(Value), Value =\= 2) ]),
+  [ row(1), row(2), row(3) ],
+  [],
+  [ final(kept/1, [ kept(1), kept(3) ]) ]).
+
+% ═══ a comparison under not/1 flips to its complement ════════════════════════
+% not(Value > 1) refused while Value =< 1 lowered. The expansion phase inverts
+% the operator: not(X > 1) -> X =< 1, and both doors run that phase, so the
+% rewritten program is what compiles and what the oracle solves.
+fixture(negated_ordered_guard_flips_to_complement,
+  prog([], [ (small(Value) <- row(Value), not(Value > 1)) ]),
+  [ row(1), row(2), row(3) ],
+  [],
+  [ final(small/1, [ small(1) ]) ]).
+
+fixture(negated_identity_guard_flips_to_complement,
+  prog([], [ (distinct(Left, Right) <- pair(Left, Right), not(Left == Right)) ]),
+  [ pair(a, a), pair(a, b) ],
+  [],
+  [ final(distinct/2, [ distinct(a, b) ]) ]).
+
+% An atom containing a single quote: sql_literal/2 refused it by name
+% (quote_in_literal) instead of doubling the quote, the SQL escape. The seed
+% row value here is O'Brien (one embedded quote) and the filter compares the
+% name column to that same atom; the emitted SQL literal must double the quote.
+fixture(quote_in_literal_doubles_the_escape,
+  prog([], [ (selected(Name) <- person(Name), Name == 'O''Brien') ]),
+  [ person('Ada'), person('O''Brien') ],
+  [],
+  [ final(selected/1, [ selected('O''Brien') ]) ]).

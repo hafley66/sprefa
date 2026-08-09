@@ -145,30 +145,26 @@ fixture(aggregate_in_edge_head_rejected,
 % An aggregate spelling neither door implements is a load error, not a value.
 %
 % group_concat is SQLite's, which is precisely why a cold author reaches for
-% it, and this language has no such aggregate. With no registry row it was not
-% a construct at all: the head argument fell through to generic compound
-% rendering and stored ONE ROW PER INPUT holding the literal text of the call.
+% it. With no registry row it was not a construct at all: the head argument
+% fell through to generic compound rendering and stored ONE ROW PER INPUT
+% holding the literal text of the call, then -- once the row existed -- refused
+% by name as aggregate_not_implemented.
 %
-% FAIL-FIRST RECEIPT for this exact program, both doors, before the row and
-% the aggregate_not_implemented class existed:
+% FAIL-FIRST RECEIPT (both doors, before the row and the class existed):
 %
 %   oracle    rows=[roster(group_concat(ada)), roster(group_concat(grace))]
 %   compiler  COMPILED CLEAN, emitting
 %             json_object('fn','group_concat','args',json_array(b0."col1"))
 %
 % Two rows of call text where the author asked for one joined row, and no
-% error at either door. The unsupported construct carries the aggregates that DO lower,
-% read off the registry, because a unsupported construct for a word the author reasonably
-% expected has to say what to write instead. Both doors report the identical
-% term; the compiler wraps it in unsupported_construct/1 as it wraps every
-% unsupported construct.
-fixture(unimplemented_aggregate_head_rejected,
+% error at either door. Revived by giving group_concat/1 a surface row that
+% defaults its separator to `,`; this same program now produces ONE joined row,
+% byte-identical across the two doors:
+fixture(group_concat_one_argument_joins_members,
   prog([], [ (roster(group_concat(Name)) <- member_of(Name)) ]),
   [],
   [ [ +member_of(ada), +member_of(grace) ] ],
-  [ throws(aggregate_not_implemented(roster/1, group_concat/1,
-                                     [avg, count, group_concat, json_group_array,
-                                      max, min, sum])) ]).
+  [ final(roster/1, [ roster('ada,grace') ]) ]).
 
 % Retention is meaningful only on Log relations. A keep clause on a Set was
 % previously accepted and had no effect.

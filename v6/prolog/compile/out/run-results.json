@@ -42,6 +42,27 @@
     "final_detail": ""
   },
   {
+    "name": "rtrim_strips_trailing_chars",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "replace_rewrites_all_occurrences",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "derive_directory_prefix_via_rtrim_replace",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "variant_field_float_stays_float",
     "bucket": "identical",
     "detail": "",
@@ -637,6 +658,20 @@
     "final_detail": ""
   },
   {
+    "name": "ordered_group_concat_one_argument_defaults_to_comma",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "ordered_group_concat_explicit_comma_matches_one_argument",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "ordered_aggregate_retraction_rebuild",
     "bucket": "identical",
     "detail": "",
@@ -805,6 +840,13 @@
     "final_detail": ""
   },
   {
+    "name": "group_concat_one_argument_joins_members",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "log_retraction_rejected",
     "bucket": "rejection",
     "detail": "retract from log rel 'event'",
@@ -939,6 +981,41 @@
   },
   {
     "name": "typed_int_without_literal_witness",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "numeric_equality_operator_filters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "numeric_inequality_operator_filters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "negated_ordered_guard_flips_to_complement",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "negated_identity_guard_flips_to_complement",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "quote_in_literal_doubles_the_escape",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",

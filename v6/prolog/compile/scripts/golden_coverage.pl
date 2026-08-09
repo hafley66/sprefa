@@ -47,7 +47,6 @@ expected_absent(json_each/2,    'registry status `refused`').
 expected_absent(json_array/1,   'registry status `refused`').
 expected_absent(json_object/2,  'registry status `refused`').
 expected_absent(sg_pattern/3,   'registry status `refused`').
-expected_absent(group_concat/1, 'registry status `refused`').
 expected_absent(tagged_brace/1, 'reserved').
 expected_absent(set/0,          'removed word').
 expected_absent(scan/variadic,  'reserved removed word').

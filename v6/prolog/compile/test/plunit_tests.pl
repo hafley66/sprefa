@@ -3028,23 +3028,23 @@ test(two_arms_on_unbounded_log_stay_accepted_at_both_doors) :-
     OracleVerdict == accepted,
     CompilerVerdict == accepted.
 
-% An aggregate spelling NEITHER door implements. Same term at both doors,
-% because there is nothing for the two vocabularies to disagree about: the
-% word is not evaluable anywhere. The payload lists the aggregates that do
-% lower, read off the registry, which is the only actionable thing a unsupported construct
-% for a word the author reasonably expected can carry.
+% group_concat/1 was the aggregate spelling NEITHER door implemented, and
+% both refused the same term at load (the compiler wrapping it in
+% unsupported_construct/1 as it wraps every unsupported construct):
+%
+%   aggregate_not_implemented(roster/1, group_concat/1, [...]).
 %
 % Before the registry row, this program compiled clean at both doors and
-% stored one row per input holding the literal text `group_concat(ada)`.
-test(unimplemented_aggregate_refuses_at_both_doors) :-
+% stored one row per input holding the literal text `group_concat(ada)`; the
+% row then made it a load refusal. Revived by giving group_concat/1 a surface
+% row that defaults its separator to `,`, so this same program now lowers to
+% ONE joined row, accepted (and byte-identical) at both doors.
+test(group_concat_one_argument_now_accepted_by_both_doors) :-
     Prog = prog([], [ (roster(group_concat(Name)) <- member_of(Name)) ]),
     door_verdict(oracle, Prog, OracleVerdict),
     door_verdict(compiler, Prog, CompilerVerdict),
-    Expected = aggregate_not_implemented(roster/1, group_concat/1,
-                                         [avg, count, group_concat, json_group_array,
-                                          max, min, sum]),
-    OracleVerdict == Expected,
-    CompilerVerdict == unsupported_construct(Expected).
+    OracleVerdict == accepted,
+    CompilerVerdict == accepted.
 
 % RESERVED body words. The compiler refused these before the trigger became
 % shared and the ORACLE had no clause for any of them, so the same program was
@@ -3415,7 +3415,8 @@ test(declared_phase_order) :-
     findall(Order-Name, expansion_phase(Order, Name, _), Unordered),
     msort(Unordered, Ordered),
     Ordered == [10-enum, 20-decl_spread, 30-row_spread, 40-match,
-                42-seq, 44-dot, 45-coalesce, 46-ast, 50-relation_edge].
+                42-seq, 44-dot, 45-coalesce, 46-ast, 47-negated_guard,
+                50-relation_edge].
 
 test(spread_phases_are_placeholders) :-
     expansion_phase(20, decl_spread, unwired),
@@ -3666,7 +3667,11 @@ expected_row('>'/2,    ordered_comparison,  0, infix('>'),            both_numbe
 expected_row('>='/2,   ordered_comparison,  0, infix('>='),           both_number).
 expected_row('=='/2,   identity_comparison, 0, infix('='),            same_type).
 expected_row('\\=='/2, identity_comparison, 0, infix('<>'),           same_type).
+expected_row('=:='/2,   ordered_comparison, 0, infix('='),            both_number).
+expected_row('=\\='/2,   ordered_comparison, 0, infix('<>'),           both_number).
 expected_row(norm/1,    text_scalar,         3, ascii_alnum_lower,    text_only).
+expected_row(rtrim/2,   text_scalar,         3, rtrim,                text_only).
+expected_row(replace/3, text_scalar,         3, replace,              text_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
     findall(Signature-Family-Precedence-Sql-Type,
@@ -3892,24 +3897,22 @@ test(registry_carries_the_ordered_aggregate_rows) :-
                 json_array/1, json_group_array/1, json_group_array/2,
                 json_object/2, max/1, min/1, sum/1 ].
 
-% The aggregate axis carries THREE kinds of row and they are three different
-% statements, which is why they need three different lowering roles rather
+% The aggregate axis carries the registry rows and the two DISTINCT lowering
+% roles they need, which is why they need two different lowering roles rather
 % than one `refused` status:
 %
-%   head(lower)                   both doors evaluate it
-%   head(refuse(aggregate))       oracle evaluates it, compiler refuses --
-%                                 the oracle is the wider language on purpose
-%   head(refuse(not_implemented)) NEITHER door evaluates it, so both refuse
-%                                 at load and no program can reach the value
+%   head(lower)             both doors evaluate it
+%   head(refuse(aggregate)) oracle evaluates it, compiler refuses -- the
+%                           oracle is the wider language on purpose
 %
-% Collapsing the last two would either make group_concat silently computable
-% by the oracle (it has no agg_compute clause, so the rule would fail and
-% derive nothing) or make the json pair refuse on a door that implements it.
-test(aggregate_axis_carries_three_distinct_roles) :-
+% The third role -- head(refuse(not_implemented)), where NEITHER door could
+% evaluate the form -- exited when group_concat/1 revived: the row that carried
+% it now lowers with `,` as its default separator. aggregate_not_implemented
+% stays an empty class in 0_program_check so a future refused arity lands there.
+test(aggregate_axis_carries_two_distinct_roles) :-
     surface(count/1, aggregate, _, head(lower), live),
     surface(json_array/1, aggregate, _, head(refuse(aggregate)), refused),
-    surface(group_concat/1, aggregate, _, head(refuse(not_implemented)),
-            refused).
+    surface(group_concat/1, aggregate, _, head(lower), live).
 
 % The both-doors half of this row lives in the cross_plane_check_parity unit,
 % beside every other shared unsupported construct, because door_verdict/3 is that unit's.

@@ -31,18 +31,6 @@
 #                                  log side; emission still owed).
 #   sg_pattern/3                   registry status `refused`
 #                                  (slot_sg_metavariable_semantics).
-#   group_concat/1                 registry status `refused`, role
-#                                  head(refuse(not_implemented)): SQLite has
-#                                  this aggregate and this language does not,
-#                                  so BOTH doors refuse it at load
-#                                  (aggregate_not_implemented). Distinct from
-#                                  the json_array/json_object row above, which
-#                                  the reference engine DOES compute and only
-#                                  the compiler refuses. Before it had a row it
-#                                  was not a construct at all: the head
-#                                  argument fell through to generic compound
-#                                  rendering and stored one row per input
-#                                  holding the literal text of the call.
 #   spread/1, $/1, **/0, {}/0      the json value/pattern axis. LIVE and graded
 #                                  -- seven fixtures in conformance/fixtures/
 #                                  json_arm.pl, sweep 140 compiled / 138
@@ -397,6 +385,16 @@ rel pick_story(story: text).
 pick_story(group_concat(Picker, ' > ', TreeId)) <-
   pick_event(TreeId, Picker, _Kilos, _Sugar).
 
+# group_concat/1 defaults its separator to ',': byte-identical to /2 with ','.
+rel picker_dump(roster: text).
+picker_dump(group_concat(Picker)) <- pick_event(_TreeId, Picker, _Kilos, _Sugar).
+
+# The numeric (arithmetically-evaluated) equality pair, =:= and =\=.
+rel sugar_equals_two(tree_id: int).
+sugar_equals_two(TreeId) <- pick_event(TreeId, _Picker, _Kilos, Sugar), Sugar =:= 2.
+rel sugar_is_not_two(tree_id: int).
+sugar_is_not_two(TreeId) <- pick_event(TreeId, _Picker, _Kilos, Sugar), Sugar =\= 2.
+
 # ═══ edge rules (<+) ═══════════════════════════════════════════════════════
 
 # A bare positive atom in an edge body is the TRIGGER (an occurrence, not a
@@ -515,6 +513,14 @@ rel dispatch_route(dispatch_id: int, route: text, hops: int).
 dispatch_route(DispatchId, RouteName, HopCount) <-
   dispatch_manifest(DispatchId, ManifestPayload),
   decode(ManifestPayload, {route: {name: RouteName, hops: HopCount: int}}).
+
+# The str-stratum minimum: replace/3 and rtrim/2, both native SQLite scalars.
+rel route_flattened(dispatch_id: int, flat: text).
+route_flattened(DispatchId, Flat) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Flat := replace(RouteName, '/', '_').
+rel route_bare(dispatch_id: int, bare: text).
+route_bare(DispatchId, Bare) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Bare := rtrim(RouteName, '/').
 
 # The join that makes the match block a COMPOSITION rather than a second copy
 # of `graded`: the scrutinee carries the enum's tag AND the json's numbers, so

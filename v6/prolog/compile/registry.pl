@@ -154,6 +154,8 @@ surface('>'/2,          guard,     no_refs,                      infix(lower),  
 surface('>='/2,         guard,     no_refs,                      infix(lower),                          live).
 surface('=='/2,         guard,     no_refs,                      infix(lower),                          live).
 surface('\\=='/2,       guard,     no_refs,                      infix(lower),                          live).
+surface('=:='/2,         guard,     no_refs,                      infix(lower),                          live).
+surface('=\\='/2,         guard,     no_refs,                      infix(lower),                          live).
 surface(regexp/2,        guard,     no_refs,                      wrapper(expr_pair, lower),             live).
 
 surface(count/1,        aggregate, no_refs,                      head(lower),                           live).
@@ -170,9 +172,9 @@ surface(json_group_array/1, aggregate, no_refs,                   head(lower),  
 surface(json_group_array/2, aggregate, no_refs,                   head(lower),                           live).
 surface(group_concat/2,     aggregate, no_refs,                   head(lower),                           live).
 surface(group_concat/3,     aggregate, no_refs,                   head(lower),                           live).
-% This old one-argument spelling remains a named unsupported construct. The four writable
-% forms above are the complete ordered aggregate surface.
-surface(group_concat/1,     aggregate, no_refs,                   head(refuse(not_implemented)),         refused).
+% The one-argument spelling defaults its separator to SQLite's own `,`
+% (group_concat/1 and group_concat/2 with `,` are byte-identical).
+surface(group_concat/1,     aggregate, no_refs,                   head(lower),                           live).
 
 surface(enum_decl/2,     decl,      no_refs,                      decl(enum_variants),                    live).
 surface(';' /2,          decl,      no_refs,                      decl(enum_variant_separator),           live).
@@ -245,9 +247,20 @@ expression('>='/2,   ordered_comparison,  0, infix('>='),            both_number
 expression('=='/2,   identity_comparison, 0, infix('='),             same_type).
 expression('\\=='/2, identity_comparison, 0, infix('<>'),            same_type).
 
+% Numeric (arithmetically-evaluated) equality pair; an operator with no
+% expression/5 row refused by name (unknown_comparison_operator).
+expression('=:='/2,   ordered_comparison, 0, infix('='),             both_number).
+expression('=\\='/2,   ordered_comparison, 0, infix('<>'),            both_number).
+
 % V5 `sprf_norm`: retain ASCII letters/digits and lowercase letters. This is
 % an existing expression-call shape; lowering stays inside SQLite.
 expression(norm/1,    text_scalar,         3, ascii_alnum_lower,     text_only).
+% The str-stratum minimum: rtrim/2 and replace/3 are SQLite scalar functions
+% with no registered UDF, so the rendering is the bare SQLite call. This is
+% the shape that lets a program derive a directory prefix with
+% rtrim(path, replace(path, '/', '')).
+expression(rtrim/2,   text_scalar,         3, rtrim,                text_only).
+expression(replace/3, text_scalar,         3, replace,              text_only).
 
 expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
     nonvar(Term),

@@ -283,31 +283,16 @@ arrival_target_refs(Rules, ArrivalRefs) :-
 % (snake_case of the surface Prolog variable name). A position that is never
 % a plain named variable anywhere falls back to col<N>.
 
-% findall/bagof would COPY_TERM every solution's Args, which severs the
-% shared variable identity this whole scheme depends on (the same hazard
-% engine.pl's trigger_items comment calls out: "findall copies its template,
-% which would sever the trigger atom from the body"). column_name_at/5
-% therefore drives the occurrence list with member/2 directly inside an
-% if-then, backtracking over the ORIGINAL Args terms without ever collecting
-% them into a list by findall/bagof.
-%
-% The quadratic the index kills: the old code had column_name_at/4 call
-% ref_occurrence_args/3 -- a fresh member(Rule, Rules) scan over every rule
-% plus a full body_ref_uses body walk -- once per column position, so
-% rel_columns/4 cost columns x rules full body walks per ref. ref_occurrence_
-% args_list/3 collects that ref's occurrences ONCE (a single pass over Rules,
-% head before body uses), then the per-column maplist reads the list with
-% member/2 of the original Args instead of re-walking every rule.
+% findall/bagof would COPY_TERM every solution's Args, severing the ==/2
+% identity the Bindings match depends on; only member/2 over ORIGINAL terms.
 
 rel_columns(Rules, Bindings, Name/Arity, Columns) :-
     numlist(1, Arity, Positions),
     ref_occurrence_args_list(Rules, Name/Arity, Occurrences),
-    maplist(column_name_at(Occurrences, Bindings, Name/Arity), Positions, Columns).
+    maplist(column_name_at(Occurrences, Bindings), Positions, Columns).
 
-% Occurrences: every Args of Ref in program order -- rules in order, each
-% rule's head occurrence before its body uses, body uses in body order --
-% accumulated by list-cell unification (never findall, which would copy the
-% Args and sever the ==/2 identity column_name_at/5 reads).
+% Program order (head before body uses per rule); list-cell accumulation,
+% never findall, so column_name_at/4 keeps the ==/2 identity of each Args.
 ref_occurrence_args_list(Rules, Ref, Occurrences) :-
     collect_ref_occurrences(Rules, Ref, [], Rev),
     reverse(Rev, Occurrences).
@@ -361,7 +346,7 @@ ref_occurrence_args(Rules, Ref, Args) :-
     ( rule_head(Rule, Head), rel_ref(Head, Ref), Head =.. [_ | Args]
     ; rule_body(Rule, Body), body_ref_uses(Body, Uses), member(use(Ref, Args, _, _), Uses) ).
 
-column_name_at(Occurrences, Bindings, Ref, Position, ColumnName) :-
+column_name_at(Occurrences, Bindings, Position, ColumnName) :-
     ( member(Args, Occurrences),
       nth1(Position, Args, Arg),
       member(SurfaceName = BoundVar, Bindings),
@@ -1646,12 +1631,8 @@ check_level_rule_shape((Head <- Body)) :-
     -> check_aggregate_rule_shape(Head, Body)
     ; true ).
 
-% A comparison or bind nested under not/1. compile_negative_uses/4 renders a
-% negated atom as a bare NOT EXISTS over rel columns and never sees the
-% conjunction's other goals, so a guard inside the negation would be SILENTLY
-% DROPPED (the exact silent-filter-loss class the phase-C sweep found for
-% un-negated comparisons). No corpus fixture writes one; refused by name
-% rather than left to miscompile.
+% A bind, or a guard inside a conjunction, under not/1 (a not/1 over a single
+% comparison flips to its complement at expansion). Refused rather than dropped.
 negated_guard_goal(Body, Goal) :-
     conjunction_goals(Body, Goals),
     member(NegatedGoal, Goals),
@@ -1705,6 +1686,10 @@ classify_head_arg(Arg, agg(json_group_array_ordered, ValueExpr-OrdinalExpr)) :-
     nonvar(Arg),
     surface_for_term(Arg, json_group_array/2, aggregate, no_refs, head(_), live),
     arg(1, Arg, ValueExpr), arg(2, Arg, OrdinalExpr), !.
+classify_head_arg(Arg, agg(group_concat(','), ValueExpr)) :-
+    nonvar(Arg),
+    surface_for_term(Arg, group_concat/1, aggregate, no_refs, head(_), live),
+    arg(1, Arg, ValueExpr), !.
 classify_head_arg(Arg, agg(group_concat(Sep), ValueExpr)) :-
     nonvar(Arg),
     surface_for_term(Arg, group_concat/2, aggregate, no_refs, head(_), live),
