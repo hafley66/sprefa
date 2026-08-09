@@ -249,6 +249,44 @@ pub(crate) fn kill_test_server(socket: &str) {
     }
 }
 
+/// The tmux session that owns a pane. `None` when tmux is unreachable or the
+/// pane is unknown.
+pub fn session_of_pane(socket: Option<&str>, pane: &str) -> Option<String> {
+    let mut builder = Command::new("tmux");
+    if let Some(socket) = socket {
+        builder.arg("-L").arg(socket);
+    }
+    builder.args(["display-message", "-p", "-t", pane, "#{session_name}"]);
+    let output = builder.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Capture a pane's visible region, or the last `lines` rows of its history.
+pub fn capture_pane(socket: Option<&str>, target: &str, lines: Option<u32>) -> Result<String> {
+    let mut builder = Command::new("tmux");
+    if let Some(socket) = socket {
+        builder.arg("-L").arg(socket);
+    }
+    builder.args(["capture-pane", "-p", "-t", target]);
+    let start;
+    if let Some(lines) = lines {
+        start = format!("-{lines}");
+        builder.args(["-S", &start]);
+    }
+    let output = builder.output().context("tmux capture-pane")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "capture-pane {target}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 /// One-shot `tmux list-sessions`. `None` means tmux itself is unreachable,
 /// which is NOT the same as "no sessions".
 pub fn live_sessions(socket: Option<&str>) -> Option<LiveSessions> {

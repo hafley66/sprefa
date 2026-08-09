@@ -163,6 +163,7 @@ mod tests {
             socket: None,
             worktree_dir: Some(worktree.to_path_buf()),
             repo: repo.to_path_buf(),
+            env_stamp: None,
         }
     }
 

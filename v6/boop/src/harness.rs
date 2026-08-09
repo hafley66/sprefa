@@ -118,4 +118,7 @@ pub struct SpawnSpec {
     /// The git checkout a worktree branches from (or the main-tree working
     /// dir when `main_tree` is true).
     pub repo: std::path::PathBuf,
+    /// Env assignments prefixed to the launch command. Every value describes
+    /// the CHILD; the spawner appears only as BOOP_PARENT.
+    pub env_stamp: Option<String>,
 }

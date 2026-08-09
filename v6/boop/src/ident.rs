@@ -317,6 +317,38 @@ impl Store {
         Ok(max as u64)
     }
 
+    /// Run a SELECT and hand back one JSON object per row, keyed by column
+    /// name, so a read surface never restates the column list twice.
+    pub(crate) fn rows(&self, sql: &str, values: Vec<rusqlite::types::Value>) -> Result<Vec<Row>> {
+        let mut statement = self.connection.prepare(sql)?;
+        let names: Vec<String> = statement
+            .column_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let mut out = Vec::new();
+        let iter = statement.query_map(rusqlite::params_from_iter(values.iter()), |row| {
+            let mut object = serde_json::Map::new();
+            for (index, name) in names.iter().enumerate() {
+                let value = match row.get_ref(index)? {
+                    rusqlite::types::ValueRef::Null => serde_json::Value::Null,
+                    rusqlite::types::ValueRef::Integer(number) => serde_json::json!(number),
+                    rusqlite::types::ValueRef::Real(number) => serde_json::json!(number),
+                    rusqlite::types::ValueRef::Text(text) => {
+                        serde_json::json!(String::from_utf8_lossy(text))
+                    }
+                    rusqlite::types::ValueRef::Blob(_) => serde_json::Value::Null,
+                };
+                object.insert(name.clone(), value);
+            }
+            Ok(serde_json::Value::Object(object))
+        })?;
+        for row in iter {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// Sessions whose ordinals are not dense. Empty is the invariant every
     /// sync preserves; the CLI prints the count as a sync receipt.
     pub fn sparse_sessions(&self) -> Result<Vec<(String, i64, i64)>> {
