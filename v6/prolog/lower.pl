@@ -150,7 +150,7 @@
             catalog_ddl_contract/2,
             % The same rows the catalog INSERT renders, read by emit_ts.pl.
             catalog_rows/4,
-            catalog_all_rows/9,
+            catalog_all_rows/10,
             % Reproduce the RuleLevelStatements input the producer needs, used
             % by the catalog rail to plan rows outside lower_program/2.
             plan_rule_level_statements/2 ]).
@@ -779,9 +779,9 @@ canonical_hash_key(Term, KeyAtom) :-
 % Ids are positional for a byte-stable recompile: primitives, list rows,
 % module, then each rel and its columns.
 catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
-                Types, RuleLevelStatements, [Statement]) :-
+                Types, RuleLevelStatements, Decls, [Statement]) :-
     catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs,
-                     PreRefs, Types, RuleLevelStatements, AllRows),
+                     PreRefs, Types, RuleLevelStatements, Decls, AllRows),
     foldl(catalog_row_part(Mode), AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
@@ -809,17 +809,18 @@ plan_rule_level_statements(
                            RuleLevelStatements).
 
 %! catalog_all_rows(+Mode, +ModuleName, +Rules, +RelPlans, +DepartureRefs,
-%!                  +PreRefs, +Types, +RuleLevelStatements, -Rows) is det.
+%!                  +PreRefs, +Types, +RuleLevelStatements, +Decls, -Rows)
+%!                  is det.
 %   The block the seed renders: the decl rows (catalog_rows/4, byte-stable),
-%   then the plane rows (catalog_plane_rows/9: the Rules-derivable families
-%   plus the level-statement families). DepartureRefs, PreRefs and
-%   RuleLevelStatements mirror the lower_program/2 call-site derivations so a
-%   plane row exists exactly where its DDL mint site emitted.
+%   then the plane rows (catalog_plane_rows/10: the Rules-derivable families,
+%   the level-statement families, and the sh/bind port rows). DepartureRefs,
+%   PreRefs, RuleLevelStatements and Decls mirror the lower_program/2 call-site
+%   derivations so a plane row exists exactly where its DDL mint site emitted.
 catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
-                 Types, RuleLevelStatements, AllRows) :-
+                 Types, RuleLevelStatements, Decls, AllRows) :-
     catalog_decl_rows(ModuleName, Rules, RelPlans, DeclRows, Context),
     catalog_plane_rows(Mode, ModuleName, RelPlans, DepartureRefs, PreRefs,
-                       Types, RuleLevelStatements, Context, PlaneRows),
+                       Types, RuleLevelStatements, Decls, Context, PlaneRows),
     append(DeclRows, PlaneRows, AllRows).
 
 % The plane half is appended after the rels+columns block (plan 4) so no
@@ -830,7 +831,7 @@ catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
 % PreRefs, declared_type_name), so a plane row cannot describe a table the
 % lowering did not create. That is the whole point of this step.
 catalog_plane_rows(Mode, _ModuleName, RelPlans, DepartureRefs, PreRefs,
-                   Types, RuleLevelStatements,
+                   Types, RuleLevelStatements, Decls,
                    ctx(ModuleHash, ModuleId, RelIdMap, _ListIdMap, StartId),
                    PlaneRows) :-
     catalog_rel_plane_rows(Mode, RelPlans, DepartureRefs, PreRefs, RelIdMap,
@@ -840,8 +841,10 @@ catalog_plane_rows(Mode, _ModuleName, RelPlans, DepartureRefs, PreRefs,
                     IdAfterRel, DictRows, IdAfterDict),
     catalog_level_plane_rows(RelPlans, RuleLevelStatements, RelIdMap,
                              ModuleHash, ModuleId, IdAfterDict, LevelRows,
-                             _IdAfterLevel),
-    append([RelPlaneRows, DictRows, LevelRows], PlaneRows).
+                             IdAfterLevel),
+    catalog_port_plane_rows(Decls, RelIdMap, ModuleHash, ModuleId,
+                            IdAfterLevel, PortRows, _IdAfterPort),
+    append([RelPlaneRows, DictRows, LevelRows, PortRows], PlaneRows).
 
 % ── per-rel planes ─────────────────────────────────────────────────────────
 catalog_rel_plane_rows(_Mode, [], _DepartureRefs, _PreRefs, _RelIdMap,
@@ -1127,6 +1130,45 @@ catalog_avg_row(ModuleId, RelId, RelHId, AccTable, ScopeColumns, _ScopeTypes,
     Row = row(Id0, RelId, 0, AccTable, avg_accumulator, 0, AccArity,
               ModuleId, AccHId, '', ''),
     Id1 is Id0 + 1.
+
+% ── host and bind port rows ───────────────────────────────────────────────
+% A sh_decl is an effect: it mints a port row (the demand rel in type_id, the
+% declared INPUT count as arity) plus a port_response child (the response rel,
+% the declared OUTPUT count). A bind_decl mints a port row with NO response
+% child (effect-ness only from a bind at link time), its own rel in type_id.
+catalog_port_plane_rows([], _RelIdMap, _ModuleHash, _ModuleId, Id, [], Id).
+catalog_port_plane_rows([Decl | Rest], RelIdMap, ModuleHash, ModuleId,
+                        Id0, Rows, IdFinal) :-
+    (   Decl = sh_decl(Name, Inputs, Outputs, template(_)),
+        atom_concat('__host_demand_', Name, DemandName),
+        atom_concat('__host_response_', Name, ResponseName)
+    ->  rel_row_id(RelIdMap, DemandName, DemandId),
+        rel_row_id(RelIdMap, ResponseName, ResponseId),
+        length(Inputs, InputCount),
+        length(Outputs, OutputCount),
+        rel_h_id(ModuleHash, Name, InputCount, PortHId),
+        rel_h_id(ModuleHash, ResponseName, OutputCount, ResponseHId),
+        PortRow = row(Id0, ModuleId, 0, Name, port, DemandId, InputCount,
+                      ModuleId, PortHId, '', ''),
+        Id1 is Id0 + 1,
+        ResponseRow = row(Id1, Id0, 0, ResponseName, port_response,
+                          ResponseId, OutputCount, ModuleId, ResponseHId,
+                          '', ''),
+        Id2 is Id1 + 1,
+        ThisRows = [PortRow, ResponseRow]
+    ;   Decl = bind_decl(Name, Columns)
+    ->  rel_row_id(RelIdMap, Name, BindId),
+        length(Columns, BindArity),
+        rel_h_id(ModuleHash, Name, BindArity, BindHId),
+        BindRow = row(Id0, ModuleId, 0, Name, port, BindId, BindArity,
+                      ModuleId, BindHId, '', ''),
+        Id2 is Id0 + 1,
+        ThisRows = [BindRow]
+    ;   ThisRows = [], Id2 = Id0
+    ),
+    catalog_port_plane_rows(Rest, RelIdMap, ModuleHash, ModuleId, Id2,
+                            RestRows, IdFinal),
+    append(ThisRows, RestRows, Rows).
 
 %! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
 %   The relplan carries each column's full type, ref(_) and list(_) included.
@@ -5345,7 +5387,8 @@ lower_program(plan(Name, prog(Decls, Rules), RelPlans, ArrivalTargets, RuleOrder
     -> catalog_table_ddl(CatalogTableDdl),
        % Ordering: must run after level_statement_groups (RuleLevelStatements is its input).
        catalog_row_ddl(Mode, Name, Rules, RelPlans, DepartureRefs, PreRefs,
-                       LoweringTypes, RuleLevelStatements, CatalogRowDdl)
+                       LoweringTypes, RuleLevelStatements, Decls,
+                       CatalogRowDdl)
     ;  CatalogTableDdl = [], CatalogRowDdl = [] ),
     % STRUCT-AS-ROWS: the dictionaries come FIRST in the DDL list, in
     % topological order, so a program's storage plane exists before any table

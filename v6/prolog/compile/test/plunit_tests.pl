@@ -27,7 +27,7 @@
                 intern_write_sql/4,
                 catalog_ddl_contract/2,
                 catalog_rows/4,
-                catalog_all_rows/9,
+                catalog_all_rows/10,
                 plan_rule_level_statements/2,
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
@@ -923,7 +923,7 @@ test(catalog_all_rows_equals_decl_rows) :-
                  relplan(items/1, set, [list_col], none, [list(text)]) ],
     lower:catalog_rows(catalog_all_eq, [], RelPlans, DeclRows),
     lower:catalog_all_rows(direct, catalog_all_eq, [], RelPlans, [], [], [],
-                           [], AllRows),
+                           [], [], AllRows),
     append(DeclRows, PlaneRows, AllRows),
     % the plane half is non-empty (nine frontier rows) so the stability is not
     % vacuous, and it never touches a decl row's id.
@@ -946,7 +946,8 @@ test(catalog_seed_ddl_byte_identical_after_split) :-
     type_definitions(Decls, Types),
     lower:plan_rule_level_statements(Plan, RuleLevelStatements),
     lower:catalog_all_rows(Mode, Name, Rules, RelPlans, DepartureRefs,
-                           PreRefs, Types, RuleLevelStatements, AllRows),
+                           PreRefs, Types, RuleLevelStatements, Decls,
+                           AllRows),
     catalog_seed_render(AllRows, AllSeed),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
     once(( member(Seed, Ddl),
@@ -1196,7 +1197,8 @@ catalog_plane_local_names(Plan, LocalNames) :-
     type_definitions(Decls, Types),
     lower:plan_rule_level_statements(Plan, RuleLevelStatements),
     lower:catalog_all_rows(Mode, Name, Rules, RelPlans, DepartureRefs,
-                           PreRefs, Types, RuleLevelStatements, AllRows),
+                           PreRefs, Types, RuleLevelStatements, Decls,
+                           AllRows),
     findall(LocalName,
             ( member(row(_, _, _, LocalName, Kind, _, _, _, _, _, _), AllRows),
               plane_kind(Kind) ),
@@ -1235,7 +1237,7 @@ corpus_plane_kind_counts(Counts) :-
               type_definitions(Decls, Types),
               lower:plan_rule_level_statements(Plan, RLS),
               lower:catalog_all_rows(Mode, ModName, Rules, RelPlans, Deps,
-                                     PreRefs, Types, RLS, All),
+                                     PreRefs, Types, RLS, Decls, All),
               member(row(_, _, _, _, Kind, _, _, _, _, _, _), All),
               member(Kind, [scope, refcount, refcount_staging, expand, dred,
                             avg_accumulator]) ),
@@ -1268,6 +1270,59 @@ corpus_path(Path) :-
     atomic_list_concat([Dir, '/', Entry], Path).
 
 :- end_tests(catalog_plane_rail).
+
+% Step 5, over 2_hosts_wiring.pl's nine fixtures. A sh_decl mints a port row
+% (declared INPUT count as arity) plus a port_response child (declared OUTPUT
+% count); a bind_decl mints a port row with NO response child.
+:- begin_tests(catalog_port_rows).
+
+hosts_wiring_fixture_file(File) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../conformance/fixtures/2_hosts_wiring.pl'],
+                       File).
+
+hosts_ports_are(Name, Ports, Responses) :-
+    hosts_wiring_fixture_file(File),
+    read_fixture_term(File, Name, Term, Bindings),
+    program_plan(Term-Bindings, [intern(dict)], Plan),
+    Plan = plan(ModName, prog(Decls, Rules), RelPlans, _, _, _, _, Mode),
+    findall(Ref, (member((_ <+ EB), Rules), level_body_pre_ref(EB, Ref)), R0),
+    sort(R0, PreRefs),
+    listened_departure_refs(Rules, Deps),
+    type_definitions(Decls, Types),
+    lower:plan_rule_level_statements(Plan, RLS),
+    lower:catalog_all_rows(Mode, ModName, Rules, RelPlans, Deps, PreRefs,
+                           Types, RLS, Decls, All),
+    findall(row(Id, P, Ord, N, K, T, A, M, H, S, R),
+            ( member(row(Id, P, Ord, N, K, T, A, M, H, S, R), All),
+              K == port ), Ports),
+    findall(row(Id, P, Ord, N, K, T, A, M, H, S, R),
+            ( member(row(Id, P, Ord, N, K, T, A, M, H, S, R), All),
+              K == port_response ), Responses).
+
+test(step5_effect_host_mints_port_and_response) :-
+    hosts_ports_are(extraction_fork_callgraph, Ports, Responses),
+    memberchk(row(SgId, _, 0, sg, port, _, 2, _, _, '', ''), Ports),
+    memberchk(row(_, SgId, 0, '__host_response_sg', port_response, _, 4, _,
+                  _, '', ''), Responses),
+    hosts_ports_are(extraction_fork_span_line, Ports2, Responses2),
+    memberchk(row(SpanId, _, 0, span_scan, port, _, 2, _, _, '', ''), Ports2),
+    memberchk(row(_, SpanId, 0, '__host_response_span_scan', port_response,
+                  _, 2, _, _, '', ''), Responses2),
+    !.
+
+test(step5_bind_port_never_has_a_response_child) :-
+    hosts_ports_are(native_ts_query_term, Ports, Responses),
+    memberchk(row(TsId, _, 0, tree_sitter, port, _, 2, _, _, '', ''), Ports),
+    memberchk(row(_, TsId, 0, '__host_response_tree_sitter', port_response,
+                  _, 1, _, _, '', ''), Responses),
+    memberchk(row(IntervalId, _, 0, interval, port, _, 2, _, _, '', ''),
+              Ports),
+    \+ memberchk(row(_, IntervalId, _, _, port_response, _, _, _, _, '', ''),
+                 Responses),
+    !.
+
+:- end_tests(catalog_port_rows).
 
 :- begin_tests(catalog_type_ids).
 
