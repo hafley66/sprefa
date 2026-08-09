@@ -125,7 +125,7 @@ mod tests {
 
     fn spec(repo: &std::path::Path, base: &str, worktree: &std::path::Path, main_tree: bool) -> SpawnSpec {
         SpawnSpec {
-            harness: "claude",
+            harness: "claude".to_owned(),
             branch: "lane-wt".to_owned(),
             base_sha: base.to_owned(),
             main_tree,

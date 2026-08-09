@@ -425,7 +425,7 @@ mod tests {
 
     fn spec(guard: &TmuxGuard) -> crate::harness::SpawnSpec {
         crate::harness::SpawnSpec {
-            harness: "claude",
+            harness: "claude".to_owned(),
             branch: "lane-test".to_owned(),
             base_sha: "0000000000000000000000000000000000000000".to_owned(),
             main_tree: true,

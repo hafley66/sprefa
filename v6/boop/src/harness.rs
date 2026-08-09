@@ -98,7 +98,7 @@ pub enum SendOutcome {
 /// What a spawn should create.
 #[derive(Clone, Debug)]
 pub struct SpawnSpec {
-    pub harness: &'static str,
+    pub harness: String,
     pub branch: String,
     pub base_sha: String,
     pub main_tree: bool,
