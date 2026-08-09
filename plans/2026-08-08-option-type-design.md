@@ -52,16 +52,44 @@ campaign's json-hole family already gates it.
 | rust (kimi step d) | `Option<String>` |
 | jsonschema (steps e/h) | property absent from `required` |
 
+## Optional REFERENCES: the other half (user word, same session: "yes i want
+## optional rel's that is like the other half of it")
+
+`option(<rel-ref>)` is SUPPORTED, with a DIFFERENT desugar than scalars: the
+split rel. An optional reference is exactly the case where absence-as-missing-
+row is the natural lowering, and it keeps ids out of the value plane (the
+invariant that bans ids inside json stays intact).
+
+```
+rel commit(id: int, reviewed_by: option(person));
+   ==== desugars to ====
+rel commit(id: int) key(id);
+rel commit__reviewed_by(commit_id: int, person_id: int) key(commit_id);
+% absence = no row; presence = one row per commit (keyed), retractable
+```
+
+Reads are the join you would write by hand; `none` never exists as a value:
+
+```
+reviewed(CommitId, PersonName) <-
+  commit(CommitId), commit__reviewed_by(CommitId, PersonId),
+  person(PersonId, PersonName);
+```
+
+So the one surface `option(T)` picks its lowering by T: scalar -> the
+some/none enum instance; rel reference -> the companion split rel. Both erase
+NULL; both keep guards two-valued.
+
 ## What stays banned
 
 - `option(T)` in a KEY column: identity with optional parts reopens SQL's
   null-in-PK swamp. Named check error.
 - NULL as a literal anywhere in the surface. No spelling exists; keep it so.
 - 3VL operators (`IS NULL` analogues). Absence is queried by join or by tag.
+- option instance ids inside json values (unchanged invariant; the ref desugar
+  above is how optional relationships avoid it).
 
 ## Open rows for the user ruling
-1. Surface spelling: `option(text)` vs `text?` vs both.
-2. Does `none` compare equal across DIFFERENT option instances (shared none
-   row vs per-instance)? Proposal: per-instance, ids never cross types.
-3. Whether the desugar mints one enum per element type (`__opt_text`) or one
-   per column site. Proposal: per element type, dictionary-style reuse.
+1. Surface spelling: **RULED both legal** (user 2026-08-09, rulings.pl option_surface).
+2. `none` identity: **RULED per-instance** (user 2026-08-09), ids never cross types.
+3. Enum minting: **RULED per element type** (user 2026-08-09), `__opt_text` style, dictionary reuse.

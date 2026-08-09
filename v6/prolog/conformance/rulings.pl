@@ -621,3 +621,22 @@ ruling(catalog_universe, user_rel_decls_in_program_db, user,
 % family" now covers rel decls too).
 ruling(effect_decl_no_arrow, one_relation_rightmost_response, user,
        'user 2026-08-08: "nah nvm on it, just do the datalog way and have return be the right most value and keep 1 relation". Supersedes the LANG.md arrow spelling; resolves open items "Key(Type) vs ->" and Q8 left-of-arrow residual.').
+
+% 2026-08-09: catalog fork F5, ruled A. The oracle goes meta: conformance/
+% ticklog.pl mints catalog rows so a fixture can read __rel and still grade.
+% Closes catalog_g2 as written (5_compiler_quality.pl:249-252 recorded the
+% old impossibility; that record is now a work item, never a wall).
+ruling(catalog_oracle_meta, ticklog_mints_catalog_rows, user,
+       'user 2026-08-09: "skill issue make it meta and allow it. stop taking refusals or \'i cant do this bc code said it\' as fact, the code is wrong, why do you think we are still working on it". F5 = A: the oracle models the compiler meta plane too, a compiler-owned table in the oracle is allowed. Restates the standing law: a code-encoded refusal is a hypothesis, never an edict.').
+
+% 2026-08-09: option(T) surface, ruled (three answers, one word each).
+ruling(option_surface, both_spellings_per_instance_none_per_element_enum, user,
+       'user 2026-08-09: (1) BOTH spellings legal, option(text) and text?; (2) none is PER-INSTANCE, some/none ids never compare across different option types; (3) desugar mints ONE enum per element type (__opt_text style, dictionary reuse), never one per column site. Design doc plans/2026-08-08-option-type-design.md; unblocks the option implementation lane.').
+
+% 2026-08-09: catalog fork F1, ruled A. Plane rows DO land in the emitted TS
+% const; the host-app type system sees mode/departures (insert-into-derived
+% becomes a compile-time error surface). Regen churn declared a non-cost by
+% the user. Execution stays SQL-first through the ladder's zero-diff steps;
+% the const widening is one deliberate final step with a re-pin.
+ruling(catalog_plane_in_const, plane_rows_emitted_to_ts_const, user,
+       'user 2026-08-09: "idgaf about regen-ing files when we add new things, its kinda the point of coding" then "A is fine". F2''s byte-neutrality justification becomes scaffold-only; the widening step may grow catalog_rows to /8 or render both halves.').
