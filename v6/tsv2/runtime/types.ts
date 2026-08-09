@@ -1009,11 +1009,10 @@ export interface IStageOrderedFrontiers {
   ): Observable<boolean>;
 }
 
-/** Boot one served program: its DDL (restart-tolerant, "already exists" is the
- *  one tolerated error), the witness table, then its own boot statements
- *  (`serve/3_engine.ts`). */
+/** Reload discards, DDL, witness table, boot statements (`serve/3_engine.ts`).
+ *  `reload` absent = cold boot, "already exists" tolerated blindly. */
 export interface IBootServedProgram {
-  (seam: ISqlSeam, program: IServedProgram): Observable<void>;
+  (seam: ISqlSeam, program: IServedProgram, reload?: IReloadPlan): Observable<void>;
 }
 
 /** The witness cache's current rows, ordered, for the endurance receipt that
