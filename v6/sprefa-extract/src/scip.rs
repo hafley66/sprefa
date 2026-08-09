@@ -49,7 +49,12 @@ use crate::types::{
 /// probe's signal to try its fallback; a timeout is a hard error and never
 /// falls back, because "this took too long" is not answered by running a second
 /// copy of the same work.
-fn attempt(argv: &[&str], cwd: &Path, log_dir: &Path, out: &Path) -> Result<Option<PathBuf>, ScipError> {
+fn attempt(
+    argv: &[&str],
+    cwd: &Path,
+    log_dir: &Path,
+    out: &Path,
+) -> Result<Option<PathBuf>, ScipError> {
     match run_capped(argv, cwd, log_dir) {
         Capped::Exited {
             success: true,
@@ -124,8 +129,7 @@ impl ScipSource for ScipTypescript {
             .into_iter()
             .chain(argv.iter().copied())
             .collect();
-        attempt(&fallback, &work, &stage, &out)?
-            .ok_or(ScipError::IndexerMissing("scip-typescript"))
+        attempt(&fallback, &work, &stage, &out)?.ok_or(ScipError::IndexerMissing("scip-typescript"))
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
@@ -195,10 +199,14 @@ impl ScipSource for ScipGo {
         if let Some(path) = attempt(&direct, root, &stage, &out)? {
             return Ok(path);
         }
-        let fallback: Vec<&str> = ["go", "run", "github.com/scip-code/scip-go/cmd/scip-go@v0.2.7"]
-            .into_iter()
-            .chain(argv.iter().copied())
-            .collect();
+        let fallback: Vec<&str> = [
+            "go",
+            "run",
+            "github.com/scip-code/scip-go/cmd/scip-go@v0.2.7",
+        ]
+        .into_iter()
+        .chain(argv.iter().copied())
+        .collect();
         attempt(&fallback, root, &stage, &out)?.ok_or(ScipError::IndexerMissing("scip-go"))
     }
 

@@ -26,6 +26,7 @@ RECORD SHAPES
   record=param  family=df                  span={start,end}   pos=<u32>
   record=arg    family=df                  call={start,end}   pos=<i64>  arg={start,end}
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
+  record=reference  family=call            span={start,end}   functor=<name/arity>  position=<goal|head_arg|term_arg>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
   record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
@@ -68,6 +69,10 @@ FIELDS
   ty           the referenced type's bare name, UNRESOLVED in phase 1.
   callee       the callee's trailing name as written (the resolution key).
   callee_path  the full qualified path when >1 segment (filled by resolution; else null).
+  functor      a Prolog term-occurrence: the interned `name/arity` key at a span.
+  position     where a Prolog term-occurrence sits: goal (executed as a body
+               goal), head_arg (inside a clause head's arguments), term_arg
+               (inside another term's arguments, data).
   field        dotted path into an object const, or an enum member (else null).
   text         the resolved string value of a const.
   query        caller-supplied identity for one batched ast-grep pattern.

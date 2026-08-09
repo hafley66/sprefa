@@ -221,8 +221,10 @@ fn the_diet_scip_family_stream_is_the_resolve_pass_output() {
     ]);
     assert_eq!(stream, DIET_SCIP_GOLDEN);
     assert!(
-        stream.lines().all(|line| line.contains("\"resolved_edge\"")
-            || line.contains("\"resolved_type_edge\"")),
+        stream
+            .lines()
+            .all(|line| line.contains("\"resolved_edge\"")
+                || line.contains("\"resolved_type_edge\"")),
         "no scip-derived record may appear in a diet stream: {stream}"
     );
 }
@@ -298,7 +300,8 @@ fn the_rust_plane_produces_the_relations_only_a_real_index_carries() {
     let header = records(&stream, "scip_index");
     assert_eq!(header.len(), 1, "exactly one index header: {header:?}");
     assert!(
-        header[0].contains("\"reused\":false") && header[0].contains("\"tool_name\":\"rust-analyzer\""),
+        header[0].contains("\"reused\":false")
+            && header[0].contains("\"tool_name\":\"rust-analyzer\""),
         "the header must name the tool that answered: {}",
         header[0]
     );
