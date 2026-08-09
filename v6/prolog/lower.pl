@@ -149,7 +149,8 @@
             % rel path builds the table from real decls instead of caller spellings.
             catalog_ddl_contract/2,
             % The same rows the catalog INSERT renders, read by emit_ts.pl.
-            catalog_rows/4 ]).
+            catalog_rows/4,
+            catalog_all_rows/5 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -775,13 +776,25 @@ canonical_hash_key(Term, KeyAtom) :-
 % Ids are positional for a byte-stable recompile: primitives, list rows,
 % module, then each rel and its columns.
 catalog_row_ddl(Mode, ModuleName, Rules, RelPlans, [Statement]) :-
-    catalog_rows(ModuleName, Rules, RelPlans, AllRows),
+    catalog_all_rows(Mode, ModuleName, Rules, RelPlans, AllRows),
     foldl(catalog_row_part(Mode), AllRows, [], ReversedParts),
     reverse(ReversedParts, Parts),
     atomic_list_concat(Parts, ',', ValuesText),
     format(atom(Statement),
            'INSERT OR IGNORE INTO "__rel" ("rel_id", "parent_id", "ordinal", "local_name", "kind", "type_id", "arity", "module_id", "h_id", "h_schema", "h_rule") VALUES ~w',
            [ValuesText]).
+
+%! catalog_all_rows(+Mode, +ModuleName, +Rules, +RelPlans, -Rows) is det.
+%   The block the seed renders: the decl rows (catalog_rows/4, byte-stable)
+%   then the plane rows (catalog_plane_rows/5, an empty scaffold this step).
+catalog_all_rows(Mode, ModuleName, Rules, RelPlans, AllRows) :-
+    catalog_rows(ModuleName, Rules, RelPlans, DeclRows),
+    catalog_plane_rows(Mode, ModuleName, Rules, RelPlans, PlaneRows),
+    append(DeclRows, PlaneRows, AllRows).
+
+% The plane half is appended after the rels+columns block (plan 4), so no
+% existing id moves; content arrives in steps 3-6.
+catalog_plane_rows(_Mode, _ModuleName, _Rules, _RelPlans, []).
 
 %! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
 %   The relplan carries each column's full type, ref(_) and list(_) included.
