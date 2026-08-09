@@ -1296,9 +1296,11 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % Step 4's families, counted across the same corpus the name rail walks. The
 % six level-statement families must mint in step with their DDL mint sites, so
 % the count is the rail's twin, not a fresh check over different rows.
+% Measured on the nesting arc: the compiler changes alone leave every count at
+% 40/293/293/8/12/2, so the +1/+16/+16 is the 7 new module_path fixtures.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-40, refcount-293, refcount_staging-293,
+    Counts = [scope-41, refcount-309, refcount_staging-309,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
@@ -1583,6 +1585,79 @@ test(catalog_inferred_list_column_resolves_to_the_list_row) :-
            TypeId == ListId).
 
 :- end_tests(catalog_type_ids).
+
+:- begin_tests(catalog_nested_rows).
+
+% A nested rel parents at its PARENT REL row, not the module row, and its
+% local_name is its own segment so (__rel_parent) is a per-parent child seek.
+test(catalog_nested_rel_parents_at_the_parent_rel) :-
+    inferred_relplans([ rel_spec(orchard/1, set, [orchard_id], none, [int]),
+                        rel_spec(orchard__tree/2, set, [parent, tree_id],
+                                 none, [ref(orchard), int]) ],
+                      RelPlans),
+    lower:catalog_decl_rows(catalog_nest, [], RelPlans,
+                            [rel_path_decl(orchard__tree/2, [orchard, tree])],
+                            Rows, _),
+    memberchk(row(7, 6, 0, orchard, rel, 0, 1, 6, _, _, _), Rows),
+    memberchk(row(9, 7, 0, tree, rel, 0, 2, 6, _, _, _), Rows).
+
+% `north` names no decl of its own, so without a minted room row the chain
+% from `tree` upward would point at a rel_id no row carries.
+test(catalog_interior_segment_gets_an_arity_less_room_row) :-
+    inferred_relplans([ rel_spec(orchard__north__tree/1, set, [tree_id],
+                                 none, [int]) ],
+                      RelPlans),
+    lower:catalog_decl_rows(catalog_room, [], RelPlans,
+                            [rel_path_decl(orchard__north__tree/1,
+                                           [orchard, north, tree])],
+                            Rows, _),
+    memberchk(row(9, 6, 0, orchard, rel, 0, 0, 6, _, '', ''), Rows),
+    memberchk(row(10, 9, 0, north, rel, 0, 0, 6, _, '', ''), Rows),
+    memberchk(row(7, 10, 0, tree, rel, 0, 1, 6, _, _, _), Rows).
+
+% Room rows take ids PAST the rel block, so no rel or column row moves and the
+% plane half still starts one past the last decl row.
+test(catalog_room_rows_do_not_move_the_rel_block) :-
+    inferred_relplans([ rel_spec(orchard__north__tree/1, set, [tree_id],
+                                 none, [int]) ],
+                      RelPlans),
+    lower:catalog_decl_rows(catalog_room_ids, [], RelPlans,
+                            [rel_path_decl(orchard__north__tree/1,
+                                           [orchard, north, tree])],
+                            _, ctx(_, 6, _, _, FinalId)),
+    FinalId =:= 11.
+
+% Depth 3, every level declared: each rel row parents at the one above it.
+test(catalog_three_declared_levels_chain_the_parent_ids) :-
+    inferred_relplans([ rel_spec(orchard/1, set, [orchard_id], none, [int]),
+                        rel_spec(orchard__tree/2, set, [parent, tree_id],
+                                 none, [ref(orchard), int]),
+                        rel_spec(orchard__tree__branch/2,
+                                 set, [parent, branch_id],
+                                 none, [ref(orchard__tree), int]) ],
+                      RelPlans),
+    lower:catalog_decl_rows(catalog_deep, [], RelPlans,
+                            [ rel_path_decl(orchard__tree/2, [orchard, tree]),
+                              rel_path_decl(orchard__tree__branch/2,
+                                            [orchard, tree, branch]) ],
+                            Rows, _),
+    memberchk(row(7, 6, 0, orchard, rel, 0, 1, 6, _, _, _), Rows),
+    memberchk(row(9, 7, 0, tree, rel, 0, 2, 6, _, _, _), Rows),
+    memberchk(row(12, 9, 0, branch, rel, 0, 2, 6, _, _, _), Rows).
+
+% A program with no dotted decl emits the ids it always did: the whole nesting
+% path sits behind an empty rel_path_decl set.
+test(catalog_flat_program_ids_unchanged_by_the_nesting_pass) :-
+    inferred_relplans([ rel_spec(a_rel/1, set, [c1], none, [text]),
+                        rel_spec(b_rel/1, set, [c2], none, [int]) ],
+                      RelPlans),
+    lower:catalog_decl_rows(catalog_flat, [], RelPlans, [], Rows,
+                            ctx(_, _, _, _, FinalId)),
+    memberchk(row(7, 6, 0, a_rel, rel, 0, 1, 6, _, _, _), Rows),
+    memberchk(row(9, 6, 0, b_rel, rel, 0, 1, 6, _, _, _), Rows),
+    FinalId =:= 11.
+
+:- end_tests(catalog_nested_rows).
 
 :- begin_tests(supported_subset_gate).
 
@@ -5217,6 +5292,103 @@ test(a_dotted_decl_prints_back_at_its_path) :-
     atom_codes(Text, PrintedCodes),
     once(parse_dl(PrintedCodes, RoundTripped, _, [])),
     Program =@= RoundTripped.
+
+% ── nesting: the implicit leading parent reference ──────────────────────────
+
+% A dotted decl whose PARENT carries a decl of its own gains a leading column
+% typed ref(Parent), which lower.pl:column_def/3 stores as INTEGER NOT NULL.
+test(a_nested_decl_gains_the_leading_parent_reference) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).',
+        Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(Expanded, _), _),
+    memberchk(col_type(orchard__tree/2, parent, orchard), Expanded),
+    memberchk(col_type(orchard__tree/2, tree_id, int), Expanded),
+    memberchk(rel_path_decl(orchard__tree/2, [orchard, tree]), Expanded),
+    memberchk(type_decl(orchard, [col(orchard_id, int)]), Expanded).
+
+% Reference is by IDENTITY: a parent with no decl of its own is an interior
+% room, not a target, so the child keeps the arity it was written with.
+test(a_parent_with_no_decl_captures_nothing) :-
+    parsed_module_path_program(
+        'rel orchard.north.tree(tree_id: int).', Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(Expanded, _), _),
+    memberchk(col_type(orchard__north__tree/1, tree_id, int), Expanded),
+    \+ memberchk(col_type(orchard__north__tree/_, parent, _), Expanded).
+
+% THE CONTRIBUTION RULE: a head short by one takes the body's own parent atom
+% as its leading argument, which is the term bind_reference_target_identity/6
+% compiles to the joined row's `__id`.
+test(a_contribution_head_resolves_the_parent_by_natural_join) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).\nrel planted(orchard_id: int, tree_id: int).\norchard.tree(TreeId) <- orchard(OrchardId), planted(OrchardId, TreeId).',
+        Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(_, Expanded), _),
+    Expanded =@= [(orchard__tree(orchard(OrchardId), TreeId) <-
+                      (orchard(OrchardId), planted(OrchardId, TreeId)))].
+
+% A BODY atom short by one reads across every partition, so each occurrence
+% takes its own leading variable rather than coupling two parents.
+test(a_body_atom_short_by_one_reads_every_partition) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).\nrel any_tree(tree_id: int).\nany_tree(TreeId) <- orchard.tree(TreeId).',
+        Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(_, Expanded), _),
+    Expanded =@= [(any_tree(TreeId) <- orchard__tree(_Partition, TreeId))].
+
+% Fork F-A: the captured ref claims position 1, so an author's own key
+% positions all move one right.
+test(the_captured_reference_shifts_the_authors_key_positions) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int, picked: int) key(1).',
+        Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(Expanded, _), _),
+    memberchk(keyed(orchard__tree/3, [2]), Expanded).
+
+test(a_contribution_head_with_no_parent_atom_refuses_by_name) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).\nrel planted(orchard_id: int, tree_id: int).\norchard.tree(TreeId) <- planted(_, TreeId).',
+        Decls, Rules),
+    catch(( expand_program(prog(Decls, Rules), _, _), Refusal = none ),
+          unsupported_construct(Caught),
+          Refusal = Caught),
+    Refusal == nested_parent_unbound(orchard__tree).
+
+% Two distinct parent atoms give the natural join two answers, and picking
+% either silently would put the child row under the wrong parent.
+test(a_contribution_head_with_two_parent_atoms_refuses_by_name) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel orchard.tree(tree_id: int).\nrel planted(orchard_id: int, tree_id: int).\norchard.tree(TreeId) <- orchard(A), orchard(B), planted(A, TreeId), planted(B, TreeId).',
+        Decls, Rules),
+    catch(( expand_program(prog(Decls, Rules), _, _), Refusal = none ),
+          unsupported_construct(Caught),
+          Refusal = Caught),
+    Refusal == nested_parent_ambiguous(orchard__tree).
+
+% FAIL-FIRST RECEIPT, measured before 0_option_expand.pl carried
+% rel_path_decl/2 through shrink_parent_ref/5: the companion split left
+% rel_path_decl(orchard__tree/2) beside col_type(orchard__tree/1), so the dot
+% phase read an arity no other decl carried and the child SILENTLY lost its
+% parent reference -- no `parent` column, no type_decl, no refusal.
+test(a_reference_option_on_a_nested_rel_keeps_its_path) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel swatch(name: text).\nrel orchard.tree(tree_id: int, label: option(swatch)).',
+        Decls, Rules),
+    expand_program(prog(Decls, Rules), prog(Expanded, _), _),
+    memberchk(rel_path_decl(orchard__tree/2, [orchard, tree]), Expanded),
+    memberchk(col_type(orchard__tree/2, parent, orchard), Expanded),
+    memberchk(col_type(orchard__tree__label/2, orchard__tree_id, int),
+              Expanded).
+
+% Probe b: the option companion `Parent__Column` and the path mangle
+% `A__B__C` share the `__` glue, so the path takes the digest.
+test(a_mangle_colliding_with_an_option_companion_takes_the_digest) :-
+    parsed_module_path_program(
+        'rel orchard(orchard_id: int).\nrel swatch(name: text).\nrel orchard.tree(tree_id: int, label: option(swatch)).\nrel orchard.tree.label(note: text).',
+        Decls, _),
+    memberchk(rel_path_decl(Digested/1, [orchard, tree, label]), Decls),
+    atom_concat('orchard__tree__label__', _, Digested),
+    memberchk(col_type(Digested/1, note, text), Decls).
 
 :- end_tests(module_path_decls).
 

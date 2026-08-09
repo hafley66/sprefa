@@ -574,6 +574,48 @@
     "final_detail": ""
   },
   {
+    "name": "nested_child_carries_the_parent_reference",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_two_parent_rows_partition_the_child",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_parent_with_no_rows_yields_an_empty_child",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_body_atom_reads_every_partition",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_three_levels_chain_the_references",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_child_and_an_option_column_coexist",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_string_control_escapes_are_valid_json",
     "bucket": "identical",
     "detail": "",
