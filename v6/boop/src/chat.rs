@@ -245,6 +245,7 @@ mod tests {
         SessionRef {
             harness: "claude",
             session_id: "fixture-session".to_owned(),
+            nickname: "fixture-session".to_owned(),
             path: PathBuf::from("tests/fixtures/chat_fixture.jsonl"),
             cwd: Some("/w".to_owned()),
             git_branch: Some("main".to_owned()),

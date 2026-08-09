@@ -336,9 +336,14 @@ mod tests {
     }
 
     impl TestServer {
+        /// One socket per server, never one per process: tests run in parallel
+        /// and a shared socket name makes each new server kill its neighbour.
         fn new() -> TestServer {
-            let socket = format!("boop-test-{}", std::process::id());
-            // Clear any stale server from an earlier interleaved test run.
+            let socket = format!(
+                "boop-test-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            );
             let _ = Command::new("tmux")
                 .args(["-L", &socket, "kill-server"])
                 .status();

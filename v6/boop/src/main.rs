@@ -208,7 +208,12 @@ enum SubCmd {
         json: bool,
     },
     /// Tail every harness forward from stored offsets into the db.
-    Sync {},
+    Sync {
+        /// Drop every stored row and re-project every transcript from byte 0.
+        /// Required once to move a store off pre-dense turn ordinals.
+        #[arg(long)]
+        rebuild: bool,
+    },
     /// Stream new facts into the db on a coarse poll (idle near-zero CPU).
     Follow {},
 }
@@ -263,7 +268,7 @@ fn main() -> Result<()> {
             format,
         } => run_tail(&registry, &session_id, from.unwrap_or(0), format),
         SubCmd::Events { query } => run_query(&query),
-        SubCmd::Sync {} => run_sync_all(&registry),
+        SubCmd::Sync { rebuild } => run_sync_all(&registry, rebuild),
         SubCmd::Follow {} => run_follow(&registry),
         SubCmd::Chat {
             query,
@@ -525,32 +530,39 @@ fn emit_rows(rows: &[ident::Row], format: QueryFormat) {
 }
 
 /// `boop sync`: tail every harness forward from stored offsets into the db.
-fn run_sync_all(registry: &Registry) -> Result<()> {
+fn run_sync_all(registry: &Registry, rebuild: bool) -> Result<()> {
     let started = std::time::Instant::now();
     let store = ident::Store::open(ident::Store::default_path()?)?;
+    if rebuild {
+        store.rebuild()?;
+    } else {
+        refuse_stale(&store)?;
+    }
     store.begin()?;
     let result = (|| {
-        let mut events = 0u64;
+        let mut stat = ident::SyncStat::default();
         for adapter in registry.all() {
             for session in adapter.sessions()? {
-                events += ident::sync_session(&store, &session)?;
+                stat.add(ident::sync_session(&store, &session)?);
             }
         }
-        Ok::<u64, anyhow::Error>(events)
+        Ok::<ident::SyncStat, anyhow::Error>(stat)
     })();
     match result {
-        Ok(events) => {
+        Ok(stat) => {
             store.commit()?;
             let elapsed_ms = started.elapsed().as_millis();
             let counts = store.counts()?;
             let db_bytes = store.db_bytes()?;
-            let rate = (events as u128)
+            let sparse = store.sparse_sessions()?.len();
+            let rate = (stat.written as u128)
                 .saturating_mul(1000)
                 .checked_div(elapsed_ms.max(1))
                 .unwrap_or(0) as u64;
             println!(
-                "events={events} elapsed_ms={elapsed_ms} rate={}/s db_bytes={db_bytes} counts={}",
-                rate,
+                "events={} dropped={} sparse_sessions={sparse} elapsed_ms={elapsed_ms} rate={rate}/s db_bytes={db_bytes} counts={}",
+                stat.written,
+                stat.dropped,
                 serde_json::to_string(&counts)?
             );
         }
@@ -562,10 +574,27 @@ fn run_sync_all(registry: &Registry) -> Result<()> {
     Ok(())
 }
 
+/// A store written before dense ordinals is readable but not appendable, so
+/// the refusal names the one command that fixes it.
+fn refuse_stale(store: &ident::Store) -> Result<()> {
+    if !store.is_stale()? {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "store is schema version {}, this boop writes version {}: \
+         turn ordinals stored before the dense-ordinal fix cannot be appended to. \
+         Run `boop sync --rebuild` to drop every stored row and re-project every \
+         transcript from byte 0.",
+        store.schema_version()?,
+        ident::SCHEMA_VERSION
+    )
+}
+
 /// `boop follow`: the same projection on a coarse poll. Sessions and their
 /// mtimes are discovered once, and a file is only re-read when its mtime
 /// changed, so steady-state idle is a stat per file plus a sleep.
 fn run_follow(registry: &Registry) -> Result<()> {
+    refuse_stale(&ident::Store::open(ident::Store::default_path()?)?)?;
     let mut sessions = Vec::new();
     for adapter in registry.all() {
         sessions.extend(adapter.sessions()?);
@@ -1068,6 +1097,7 @@ fn run_hail(
     let session = crate::harness::SessionRef {
         harness: adapter.id(),
         session_id: to.to_owned(),
+        nickname: to.to_owned(),
         path: std::path::PathBuf::from("/tmp/hail.jsonl"),
         cwd: route.cwd.clone(),
         git_branch: None,
