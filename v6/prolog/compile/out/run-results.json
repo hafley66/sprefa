@@ -994,6 +994,13 @@
     "final_detail": ""
   },
   {
+    "name": "quote_in_literal_doubles_the_escape",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_array_spread_fans_out_correlated_siblings",
     "bucket": "identical",
     "detail": "",

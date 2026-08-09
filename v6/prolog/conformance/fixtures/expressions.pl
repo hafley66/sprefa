@@ -322,3 +322,13 @@ fixture(negated_identity_guard_flips_to_complement,
   [ pair(a, a), pair(a, b) ],
   [],
   [ final(distinct/2, [ distinct(a, b) ]) ]).
+
+% An atom containing a single quote: sql_literal/2 refused it by name
+% (quote_in_literal) instead of doubling the quote, the SQL escape. The seed
+% row value here is O'Brien (one embedded quote) and the filter compares the
+% name column to that same atom; the emitted SQL literal must double the quote.
+fixture(quote_in_literal_doubles_the_escape,
+  prog([], [ (selected(Name) <- person(Name), Name == 'O''Brien') ]),
+  [ person('Ada'), person('O''Brien') ],
+  [],
+  [ final(selected/1, [ selected('O''Brien') ]) ]).

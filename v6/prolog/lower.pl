@@ -257,10 +257,7 @@ sql_literal(Atom, Literal) :-
           -> format(atom(Literal), '~h', [Atom])
           ; throw(unsupported_construct(non_finite_float_literal(Atom))) )
        ; format(atom(Literal), '~w', [Atom]) )
-    ;  ( sub_atom(Atom, _, _, _, '\'')
-       -> throw(unsupported_construct(quote_in_literal(Atom)))
-       ; format(atom(Literal), '\'~w\'', [Atom]) )
-    ).
+    ;  sql_text_literal(Atom, Literal) ).
 sql_literal(bool_lit(true), '1') :- !.
 sql_literal(bool_lit(false), '0') :- !.
 

@@ -214,6 +214,7 @@
   {"name":"numeric_inequality_operator_filters","file":"expressions.pl","bucket":"compiled","reason":""},
   {"name":"negated_ordered_guard_flips_to_complement","file":"expressions.pl","bucket":"compiled","reason":""},
   {"name":"negated_identity_guard_flips_to_complement","file":"expressions.pl","bucket":"compiled","reason":""},
+  {"name":"quote_in_literal_doubles_the_escape","file":"expressions.pl","bucket":"compiled","reason":""},
   {"name":"braces_literal_canonicalizes","file":"json_arm.pl","bucket":"unsupported","reason":"json_value_expression({stars:4,name:A})"},
   {"name":"braces_in_head_position","file":"json_arm.pl","bucket":"unsupported","reason":"json_value_expression({repo:A})"},
   {"name":"decode_open_pattern_binds_nested","file":"json_arm.pl","bucket":"unsupported","reason":"decode_source_not_struct(decode(A,{name:B}))"},
