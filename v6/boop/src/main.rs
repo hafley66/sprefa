@@ -685,12 +685,35 @@ fn run_sync_all(registry: &Registry, rebuild: bool) -> Result<()> {
     } else {
         refuse_stale(&store)?;
     }
+    let routes = bus::read_routes(&mail_dir(None)?).unwrap_or_default();
     store.begin()?;
     let result = (|| {
         let mut stat = ident::SyncStat::default();
+        let offsets = store.all_cursor_offsets()?;
         for adapter in registry.all() {
             for session in adapter.sessions()? {
-                stat.add(ident::sync_session(&store, adapter.as_ref(), &session)?);
+                // Freshness gate: a transcript whose length still equals its
+                // consumed cursor needs no re-read (walking+stat-ing all files
+                // costs ~0.02s; opening every 2.86 GB corpus does not). A
+                // shorter file is the existing truncation path, left to sync.
+                let key = session.path.display().to_string();
+                let at_cursor = offsets
+                    .get(&(session.session_id.clone(), key))
+                    .copied()
+                    .unwrap_or(0);
+                let unchanged = std::fs::metadata(&session.path)
+                    .map(|meta| meta.len() == at_cursor)
+                    .unwrap_or(false);
+                if unchanged {
+                    continue;
+                }
+                let pid = session_route_pid(&routes, &session);
+                stat.add(ident::sync_session_with_pid(
+                    &store,
+                    adapter.as_ref(),
+                    &session,
+                    pid,
+                )?);
             }
         }
         Ok::<ident::SyncStat, anyhow::Error>(stat)
@@ -756,6 +779,7 @@ fn run_follow(registry: &Registry) -> Result<()> {
             (session.session_id.clone(), mtime)
         })
         .collect();
+    let routes = bus::read_routes(&mail_dir(None)?).unwrap_or_default();
     loop {
         let store = ident::Store::open(ident::Store::default_path()?)?;
         store.begin()?;
@@ -765,12 +789,29 @@ fn run_follow(registry: &Registry) -> Result<()> {
                 continue;
             }
             let adapter = harness_by_id(registry, harness_id)?;
-            let _ = ident::sync_session(&store, adapter, session)?;
+            let pid = session_route_pid(&routes, session);
+            let _ = ident::sync_session_with_pid(&store, adapter, session, pid)?;
             last_mtime.insert(session.session_id.clone(), mtime);
         }
         store.commit()?;
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
+}
+
+/// The pane pid for a session that maps to a lane route (by session id or cwd).
+/// A session with no route owns no process and yields `None`, never a guess.
+fn session_route_pid(
+    routes: &BTreeMap<String, bus::Route>,
+    session: &boop::harness::SessionRef,
+) -> Option<i64> {
+    let route = routes.iter().find(|(_, route)| {
+        route.session_id.as_deref() == Some(session.session_id.as_str())
+            || route.cwd.as_deref() == session.cwd.as_deref()
+    });
+    route
+        .and_then(|(_, route)| route.tmux.as_deref())
+        .and_then(|target| tmux::pane_pid(None, target))
+        .map(i64::from)
 }
 
 fn file_mtime_ms(path: &std::path::Path) -> Result<u64> {

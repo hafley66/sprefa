@@ -109,13 +109,21 @@ impl Store {
         if tables_before == 0 {
             store.stamp_version()?;
         } else if store.schema_version()? < SCHEMA_VERSION {
+            // Each step runs only from the version it leaves, so a store that
+            // already migrated 6->7 never re-runs those ALTERs.
+            if store.schema_version()? < 7 {
+                store.connection.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS dict_record
+                       (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                     ALTER TABLE sync_cursor ADD COLUMN record_id_id INTEGER;
+                     ALTER TABLE sync_cursor ADD COLUMN turn INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE sync_cursor ADD COLUMN timestamp INTEGER NOT NULL DEFAULT 0;
+                     PRAGMA user_version = 7;",
+                )?;
+            }
+            // 7 -> 8: agent_pr carries pr_url_id in its key.
             store.connection.execute_batch(
-                "CREATE TABLE IF NOT EXISTS dict_record
-                   (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
-                 ALTER TABLE sync_cursor ADD COLUMN record_id_id INTEGER;
-                 ALTER TABLE sync_cursor ADD COLUMN turn INTEGER NOT NULL DEFAULT 0;
-                 ALTER TABLE sync_cursor ADD COLUMN timestamp INTEGER NOT NULL DEFAULT 0;
-                 CREATE TABLE agent_pr_new (
+                "CREATE TABLE agent_pr_new (
                    session_id INTEGER NOT NULL,
                    turn INTEGER NOT NULL,
                    pr_url_id INTEGER NOT NULL,
@@ -571,6 +579,36 @@ impl Store {
         Ok(())
     }
 
+    /// The consumed byte offset for a transcript, 0 when never synced. The
+    /// sync freshness gate compares it to `metadata.len()` to skip re-reads.
+    pub fn cursor_offset(&self, session: &str, path: &str) -> Result<u64> {
+        self.get_cursor(session, path)
+    }
+
+    /// Every (session, transcript) cursor offset, keyed so the freshness gate
+    /// does one read instead of interning a path per session.
+    pub fn all_cursor_offsets(&self) -> Result<std::collections::HashMap<(String, String), u64>> {
+        let mut statement = self.connection.prepare(
+            "SELECT ds.value, dp.value, sc.offset
+             FROM sync_cursor sc
+             JOIN dict_session ds ON ds.id = sc.session_id
+             JOIN dict_path dp ON dp.id = sc.path_id",
+        )?;
+        let mut out = std::collections::HashMap::new();
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (session, path, offset) = row?;
+            out.insert((session, path), offset as u64);
+        }
+        Ok(out)
+    }
+
     /// Record a spawn edge between two known sessions, stamped at the current
     /// wall clock.
     pub fn add_edge(&self, parent: &str, child: &str, kind: &str) -> Result<()> {
@@ -900,6 +938,17 @@ pub fn sync_session(
     adapter: &dyn crate::harness::Harness,
     session: &SessionRef,
 ) -> Result<SyncStat> {
+    sync_session_with_pid(store, adapter, session, None)
+}
+
+/// The pid-observing variant. The observation path (a lane route's pane pid)
+/// names this session's process, so agent_live.pid can link session to process.
+pub fn sync_session_with_pid(
+    store: &Store,
+    adapter: &dyn crate::harness::Harness,
+    session: &SessionRef,
+    pid: Option<i64>,
+) -> Result<SyncStat> {
     let key = session.path.display().to_string();
     let from = store.get_cursor(&session.session_id, &key)?;
     store.set_cursor(&session.session_id, &key, from)?;
@@ -918,7 +967,7 @@ pub fn sync_session(
         } else {
             "idle"
         },
-        None,
+        pid,
         session.tmux.as_deref(),
     )?;
     if ingested.stat.written > 0 || ingested.stat.usage_written > 0 {
@@ -1470,7 +1519,7 @@ mod tests {
 
     use crate::harness::SessionRef;
 
-    use super::{sync_session, Store};
+    use super::{sync_session, sync_session_with_pid, Store};
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("boop_rel_{}_{}", std::process::id(), name))
@@ -2015,6 +2064,51 @@ mod tests {
             assert_eq!(rows.len(), 2, "post-migration, both urls survive one turn");
         }
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (Job 4). The pid-observing sync stores the lane pane pid on
+    /// the agent_live row, so a session can be linked to its process.
+    #[test]
+    fn an_observed_live_lane_row_carries_its_pid() {
+        let db_path = temp_path("pid4db");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+
+        let lines_path = temp_path("pid4log");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&lines_path)
+            .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"user","sessionId":"ses-1","message":"go"}}"#
+        )
+        .unwrap();
+        drop(file);
+        let session = session_for(&lines_path);
+        sync_session_with_pid(
+            &store,
+            &crate::harness::claude::Claude,
+            &session,
+            Some(4242),
+        )
+        .unwrap();
+        let pid: Option<i64> = store
+            .connection
+            .query_row(
+                "SELECT pid FROM agent_live
+                 WHERE session_id = (SELECT id FROM dict_session WHERE value = 'ses-1')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pid, Some(4242), "the observed live row must carry its pid");
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&lines_path);
     }
 
     #[test]
