@@ -1823,7 +1823,10 @@ mod tests {
         let at_250 = store.query_live_at(250).unwrap();
         assert_eq!(at_250[0]["status"], "idle");
         let at_350 = store.query_live_at(350).unwrap();
-        assert_eq!(at_350[0]["status"], "live", "open interval covers the present");
+        assert_eq!(
+            at_350[0]["status"], "live",
+            "open interval covers the present"
+        );
 
         let current: String = store
             .connection
@@ -1857,7 +1860,12 @@ mod tests {
             .unwrap();
         writeln!(file, r#"{{"type":"assistant","sessionId":"ses-1","timestamp":"2026-08-01T00:00:01.000Z","gitBranch":"main","message":{{"content":[{{"type":"tool_use","name":"Read","input":{{"file_path":"/tmp/a.rs"}}}},{{"type":"tool_use","name":"Write","input":{{"file_path":"/tmp/b.rs"}}}}]}}}}"#).unwrap();
         drop(file);
-        sync_session(&store, &crate::harness::claude::Claude, &session_for(&lines_path)).unwrap();
+        sync_session(
+            &store,
+            &crate::harness::claude::Claude,
+            &session_for(&lines_path),
+        )
+        .unwrap();
 
         // A second adapter (opencode/codex path) funnels through the same
         // canonical write site with lowercase verbs.
@@ -1880,14 +1888,23 @@ mod tests {
             .connection
             .query_row(verb_sql, [], |row| row.get(0))
             .unwrap();
-        assert!(verbs.contains("\"read\"") && verbs.contains("\"write\""), "{verbs}");
-        assert!(!verbs.contains("\"Read\""), "canonical verb is lowercase: {verbs}");
+        assert!(
+            verbs.contains("\"read\"") && verbs.contains("\"write\""),
+            "{verbs}"
+        );
+        assert!(
+            !verbs.contains("\"Read\""),
+            "canonical verb is lowercase: {verbs}"
+        );
 
         // The raw spelling (raw_verb_id) retains the harness casing.
         let raw_sql = "SELECT COUNT(*) FROM agent_touch t
                        JOIN dict_verb dv ON dv.id = t.raw_verb_id
                        WHERE dv.value = 'Read'";
-        let raw_read: i64 = store.connection.query_row(raw_sql, [], |row| row.get(0)).unwrap();
+        let raw_read: i64 = store
+            .connection
+            .query_row(raw_sql, [], |row| row.get(0))
+            .unwrap();
         assert_eq!(raw_read, 1, "the claude 'Read' raw spelling survives");
         let raw_lower: i64 = store
             .connection
@@ -1921,7 +1938,12 @@ mod tests {
             .unwrap();
         writeln!(file, r#"{{"type":"user","sessionId":"ses-1","timestamp":"2026-08-01T00:00:00.100Z","message":"hello"}}"#).unwrap();
         drop(file);
-        sync_session(&store, &crate::harness::claude::Claude, &session_for(&lines_path)).unwrap();
+        sync_session(
+            &store,
+            &crate::harness::claude::Claude,
+            &session_for(&lines_path),
+        )
+        .unwrap();
 
         let cursors = store.query_cursors(Some("ses-1")).unwrap();
         assert_eq!(cursors.len(), 1);
