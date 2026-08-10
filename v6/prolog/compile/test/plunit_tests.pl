@@ -6894,7 +6894,7 @@ test(mount_emits_a_mount_decl_naming_the_module) :-
           "main.dl6" = "use \"lib.dl6\" as orchard.\nrel top(z:int).\n" ]),
     use_entry(Dir, 'main.dl6', Entry),
     expand_uses(Entry, [], [], _, prog(Decls, _), _),
-    memberchk(mount_decl(orchard, lib, Paths), Decls),
+    memberchk(mount_decl(orchard, lib, main, Paths), Decls),
     memberchk([tree]-tree, Paths).
 
 % The mounted subtree keeps the target's OWN dotted paths, alias-prefixed.
@@ -6904,7 +6904,7 @@ test(mount_paths_carry_the_targets_dotted_tree) :-
           "main.dl6" = "use \"lib.dl6\" as orchard.\nrel top(z:int).\n" ]),
     use_entry(Dir, 'main.dl6', Entry),
     expand_uses(Entry, [], [], _, prog(Decls, _), _),
-    memberchk(mount_decl(orchard, lib, Paths), Decls),
+    memberchk(mount_decl(orchard, lib, main, Paths), Decls),
     memberchk([grove, tree]-grove__tree, Paths).
 
 % A mount of a mount: the inner alias survives one level out, so a two-hop
@@ -6916,7 +6916,7 @@ test(mount_of_a_mount_nests_the_aliases) :-
           "main.dl6" = "use \"mid.dl6\" as orchard.\nrel top(z:int).\n" ]),
     use_entry(Dir, 'main.dl6', Entry),
     expand_uses(Entry, [], [], _, prog(Decls, _), _),
-    memberchk(mount_decl(orchard, mid, Paths), Decls),
+    memberchk(mount_decl(orchard, mid, main, Paths), Decls),
     memberchk([grove, tree]-tree, Paths).
 
 % THE POINT OF THE ARC: a dotted reference under the alias resolves to the

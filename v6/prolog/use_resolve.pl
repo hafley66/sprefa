@@ -56,8 +56,8 @@ expand_uses(EntryPath, OnStack, Loaded0, Loaded, ProgOut, ModuleTable,
 % Loaded threads through the fold, so a diamond's second sight of a file is a
 % cache hit; the cached entry carries the subtree's paths so a MOUNT of an
 % already-loaded file still grafts the same tree.
-collect_children([], _, _, Loaded, Loaded, [], [], []).
-collect_children([Spec | Rest], Roots, OnStack, Loaded0, Loaded,
+collect_children([], _, _, _, Loaded, Loaded, [], [], []).
+collect_children([Spec | Rest], Roots, OnStack, OwnerName, Loaded0, Loaded,
                  Files, Tables, MountDecls) :-
     use_spec_parts(Spec, UseText, AliasOrNone),
     (   resolve_use_path(Roots, UseText, AbsPath)
@@ -70,9 +70,9 @@ collect_children([Spec | Rest], Roots, OnStack, Loaded0, Loaded,
     ;   collect_all(AbsPath, OnStack, Loaded0, Loaded1, FirstFiles,
                     FirstTables, ChildPaths)
     ),
-    mount_decls_for(AliasOrNone, AbsPath, ChildPaths, HereMounts),
-    collect_children(Rest, Roots, OnStack, Loaded1, Loaded, MoreFiles,
-                     MoreTables, MoreMounts),
+    mount_decls_for(AliasOrNone, AbsPath, OwnerName, ChildPaths, HereMounts),
+    collect_children(Rest, Roots, OnStack, OwnerName, Loaded1, Loaded,
+                     MoreFiles, MoreTables, MoreMounts),
     append(FirstFiles, MoreFiles, Files),
     append(FirstTables, MoreTables, Tables),
     append(HereMounts, MoreMounts, MountDecls).
@@ -80,9 +80,9 @@ collect_children([Spec | Rest], Roots, OnStack, Loaded0, Loaded,
 use_spec_parts(use(Text), Text, none).
 use_spec_parts(use(Text, Alias), Text, alias(Alias)).
 
-mount_decls_for(none, _AbsPath, _ChildPaths, []).
-mount_decls_for(alias(Alias), AbsPath, ChildPaths,
-                [mount_decl(Alias, ChildName, ChildPaths)]) :-
+mount_decls_for(none, _AbsPath, _OwnerName, _ChildPaths, []).
+mount_decls_for(alias(Alias), AbsPath, OwnerName, ChildPaths,
+                [mount_decl(Alias, ChildName, OwnerName, ChildPaths)]) :-
     module_name(AbsPath, ChildName).
 
 % One module's whole subtree. The ENTRY parses LAST: parse_dl_source/5 retracts
@@ -99,11 +99,12 @@ collect_all(EntryPath, OnStack, Loaded0, Loaded, Files, Tables, SubtreePaths) :-
     ),
     strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes),
     include_roots(EntryPath, Roots),
+    module_name(EntryAbs, EntryName),
     collect_children(UseSpecs, Roots, [loaded(EntryAbs, []) | OnStack],
-                     Loaded0, Loaded1, ChildFiles, ChildTables, MountDecls),
+                     EntryName, Loaded0, Loaded1, ChildFiles, ChildTables,
+                     MountDecls),
     parse_dl_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
-    module_name(EntryAbs, EntryName),
     module_hash(EntryName, EntryHash),
     append(OwnDecls0, [module_decl(EntryName, EntryHash) | MountDecls],
            OwnDecls),

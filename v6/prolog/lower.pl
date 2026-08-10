@@ -1260,16 +1260,57 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     length(ListRowRows, ListCount),
     ModuleId is ListStartId + ListCount,
     ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash, '', ''),
-    FirstRelId is ModuleId + 1,
+    SpliceStartId is ModuleId + 1,
+    catalog_spliced_module_rows(Decls, ModuleName, SpliceStartId,
+                                SplicedRows, ModuleIdMap0, FirstRelId),
     catalog_rel_id_map(RelPlans, FirstRelId, [], RelIdMap),
     catalog_rel_block_end(RelPlans, FirstRelId, RelBlockEnd),
     catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, RelBlockEnd,
-                      NestMap, RoomRows, FinalId),
+                      NestMap, RoomRows, IdAfterRooms),
+    catalog_mount_rows(Decls, [ModuleName-ModuleId | ModuleIdMap0],
+                       IdAfterRooms, MountRows, FinalId),
     catalog_rel_rows(RelPlans, BodiesMap, ModuleId, ModuleHash, RelIdMap,
                      ListIdMap, NestMap, FirstRelId, _, RelRows),
-    append([PrimitiveRows, ListRowRows, [ModuleRow], RelRows, RoomRows],
+    append([PrimitiveRows, ListRowRows, [ModuleRow], SplicedRows, RelRows,
+            RoomRows, MountRows],
            AllRows),
     Context = ctx(ModuleHash, ModuleId, RelIdMap, ListIdMap, FinalId).
+
+% One module row per FILE. The entry's row is minted above from ModuleName, so
+% a single-file program mints nothing here and its byte layout does not move.
+catalog_spliced_module_rows(Decls, ModuleName, Id0, Rows, ModuleIdMap, IdEnd) :-
+    findall(Name-Hash,
+            ( member(module_decl(Name, Hash), Decls), Name \== ModuleName ),
+            Spliced0),
+    sort(Spliced0, Spliced),
+    spliced_module_rows(Spliced, Id0, Rows, ModuleIdMap, IdEnd).
+
+spliced_module_rows([], Id, [], [], Id).
+spliced_module_rows([Name-Hash | Rest], Id0, [Row | More],
+                    [Name-Id0 | MoreMap], IdEnd) :-
+    Row = row(Id0, 0, 0, Name, module, 0, 0, Id0, Hash, '', ''),
+    Id1 is Id0 + 1,
+    spliced_module_rows(Rest, Id1, More, MoreMap, IdEnd).
+
+% local_name is the ALIAS, parent_id the mounting module's row, module_id the
+% MOUNTED module's row: the graft, readable without re-reading source.
+catalog_mount_rows(Decls, ModuleIdMap, Id0, Rows, IdEnd) :-
+    findall(Alias-Mounted-Owner,
+            member(mount_decl(Alias, Mounted, Owner, _Paths), Decls),
+            Mounts0),
+    sort(Mounts0, Mounts),
+    mount_rows(Mounts, ModuleIdMap, Id0, Rows, IdEnd).
+
+mount_rows([], _, Id, [], Id).
+mount_rows([Alias-Mounted-Owner | Rest], ModuleIdMap, Id0, [Row | More],
+           IdEnd) :-
+    memberchk(Owner-OwnerId, ModuleIdMap),
+    memberchk(Mounted-MountedId, ModuleIdMap),
+    module_hash(Owner, OwnerHash),
+    rel_h_id(OwnerHash, Alias, 0, MountHId),
+    Row = row(Id0, OwnerId, 0, Alias, mount, 0, 0, MountedId, MountHId, '', ''),
+    Id1 is Id0 + 1,
+    mount_rows(Rest, ModuleIdMap, Id1, More, IdEnd).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
     catalog_primitive_rows(StartId, [text, int, float, bool, json], [], PrimitiveRows).

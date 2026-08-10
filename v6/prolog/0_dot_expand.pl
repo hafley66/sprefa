@@ -171,7 +171,7 @@ declared_path(Decls, [Name], Name) :-
 % The mount graft. The mounted module's rel keeps its own flat NAME, so a
 % reference through the alias resolves by identity and mints no new rel.
 declared_path(Decls, [Alias | Segments], Name) :-
-    member(mount_decl(Alias, _ModuleName, Paths), Decls),
+    member(mount_decl(Alias, _Mounted, _Owner, Paths), Decls),
     member(Segments-Name, Paths).
 
 declared_flat_name(Decls, Name) :- member(col_type(Name/_, _, _), Decls).
