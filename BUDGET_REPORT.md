@@ -56,4 +56,4 @@ Measured: fixpoint 1242ms, peak RSS 606MB; grid checksum
 
 ## Commit sha
 
-TBD
+`fe2ee5c2` on branch `chore/dl6-bench-budget` (no push, no PR).
