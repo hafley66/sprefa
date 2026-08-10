@@ -154,8 +154,8 @@
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
-:- use_module(library(crypto)).
 :- use_module(analyze).
+:- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
 :- use_module('compile/registry', [expression/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
@@ -748,22 +748,16 @@ option_some_index_ddl(Table, IndexDdl) :-
 catalog_table_ddl([
     'CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")']).
 
-%! module_hash(+ModuleName, -HashText) is det.
-%   SHA-256 of the module name, truncated to 16 hex characters (64 bits).
-module_hash(ModuleName, HashText) :-
-    crypto_data_hash(ModuleName, FullHash, [algorithm(sha256)]),
-    sub_atom(FullHash, 0, 16, _, HashText).
-
 %! rel_h_id(+ParentHash, +LocalName, +Arity, -HashText) is det.
 %   Under the PARENT's hash: two rels in one module can share a column name.
 rel_h_id(ParentHash, LocalName, Arity, HashText) :-
     format(atom(Key), '~w/~w/~w', [ParentHash, LocalName, Arity]),
-    module_hash(Key, HashText).
+    short_hash(Key, HashText).
 
 %! schema_hash(+Columns, +ColumnTypes, +KeyOrNone, -HashText) is det.
 schema_hash(Columns, ColumnTypes, KeyOrNone, HashText) :-
     canonical_hash_key(schema(Columns, ColumnTypes, KeyOrNone), Key),
-    module_hash(Key, HashText).
+    short_hash(Key, HashText).
 
 %! rule_bodies_map(+Rules, -Map) is det.
 %   msort, not sort: a duplicate body counts toward the hash. Head-Body keeps
@@ -784,7 +778,7 @@ rule_bodies_map(Rules, Map) :-
 rule_hash(BodiesMap, Ref, HashText) :-
     (   memberchk(Ref-Bodies, BodiesMap)
     ->  canonical_hash_key(rules(Bodies), Key),
-        module_hash(Key, HashText)
+        short_hash(Key, HashText)
     ;   HashText = ''
     ).
 
@@ -1250,7 +1244,7 @@ catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
 %   plane half needs (module id/hash, the rel and list id maps, and FinalId,
 %   the id one past the last decl row).
 catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
-    module_hash(ModuleName, ModuleHash),
+    short_hash(ModuleName, ModuleHash),
     rule_bodies_map(Rules, BodiesMap),
     catalog_primitive_rows(1, PrimitiveRows),
     length(PrimitiveRows, PrimitiveCount),
@@ -1306,7 +1300,7 @@ mount_rows([Alias-Mounted-Owner | Rest], ModuleIdMap, Id0, [Row | More],
            IdEnd) :-
     memberchk(Owner-OwnerId, ModuleIdMap),
     memberchk(Mounted-MountedId, ModuleIdMap),
-    module_hash(Owner, OwnerHash),
+    short_hash(Owner, OwnerHash),
     rel_h_id(OwnerHash, Alias, 0, MountHId),
     Row = row(Id0, OwnerId, 0, Alias, mount, 0, 0, MountedId, MountHId, '', ''),
     Id1 is Id0 + 1,

@@ -6879,10 +6879,9 @@ test(use_item_without_an_alias_still_parses) :-
     string_codes("use \"lib.dl6\".", Codes),
     use_item(use("lib.dl6"), Codes, []).
 
-% FAIL-FIRST PIN (MOD-8): module_hash/2 hashes the basename, not the path, so
-% a/b/c.dl6 and aa/b/c.dl6 mint ONE identity and HMR conflates the two files.
-test(same_basename_different_paths_get_distinct_module_identity,
-     [fixme(mod8_module_hash_ignores_path)]) :-
+% FAIL-FIRST RECEIPT (MOD-8): module_hash hashed the basename, so a/b/c.dl6
+% and aa/b/c.dl6 minted ONE identity and HMR conflated the two files.
+test(same_basename_different_paths_get_distinct_module_identity) :-
     make_use_dir(Dir),
     atomic_list_concat([Dir, '/a/b'], LeftDir),
     atomic_list_concat([Dir, '/aa/b'], RightDir),
