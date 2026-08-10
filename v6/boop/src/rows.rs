@@ -111,3 +111,42 @@ pub struct UsageRow {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_usd_priced_only: Option<f64>,
 }
+
+/// The resume, deduplication, and terminal-evidence coordinate for one harness
+/// record. Snapshot rows expose the parts every row has (turn + timestamp);
+/// `query_cursors` fills harness, session, transcript, and byte_offset from the
+/// store's per-transcript sync cursors.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct FactCursor {
+    pub harness: String,
+    pub session: String,
+    pub transcript: String,
+    pub byte_offset: u64,
+    pub record_id: String,
+    pub turn: u64,
+    pub timestamp: u64,
+}
+
+impl FactCursor {
+    /// A cursor whose per-record fields are known; adapters that carry a record
+    /// identity fill `record_id`, `turn`, and `timestamp`.
+    pub fn new(
+        harness: &str,
+        session: &str,
+        transcript: &str,
+        byte_offset: u64,
+        record_id: &str,
+        turn: u64,
+        timestamp: u64,
+    ) -> Self {
+        FactCursor {
+            harness: harness.to_owned(),
+            session: session.to_owned(),
+            transcript: transcript.to_owned(),
+            byte_offset,
+            record_id: record_id.to_owned(),
+            turn,
+            timestamp,
+        }
+    }
+}

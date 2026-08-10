@@ -25,7 +25,7 @@ pub use ident::{Store, SyncStat};
 pub use query::{FactKind, FactQuery};
 pub use registry::Registry;
 pub use rows::{
-    CommandRow, EdgeRow, FetchRow, SessionRow, StatusRow, TouchRow, TurnRow, UsageRow,
+    CommandRow, EdgeRow, FactCursor, FetchRow, SessionRow, StatusRow, TouchRow, TurnRow, UsageRow,
 };
 pub use usage::{GroupBy, UsageQuery};
 

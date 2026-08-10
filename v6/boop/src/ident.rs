@@ -1904,4 +1904,32 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(&lines_path);
     }
+
+    /// The per-transcript cursor surfaces transcript identity for a later
+    /// stream: harness, session, path, and the byte offset ingest read to.
+    #[test]
+    fn query_cursors_expose_transcript_identity() {
+        let db_path = temp_path("curdb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        let lines_path = temp_path("curlog");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&lines_path)
+            .unwrap();
+        writeln!(file, r#"{{"type":"user","sessionId":"ses-1","timestamp":"2026-08-01T00:00:00.100Z","message":"hello"}}"#).unwrap();
+        drop(file);
+        sync_session(&store, &crate::harness::claude::Claude, &session_for(&lines_path)).unwrap();
+
+        let cursors = store.query_cursors(Some("ses-1")).unwrap();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].session, "ses-1");
+        assert_eq!(cursors[0].harness, "claude");
+        assert!(cursors[0].byte_offset > 0, "cursor advanced past the line");
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&lines_path);
+    }
 }

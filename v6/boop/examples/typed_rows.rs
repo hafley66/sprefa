@@ -28,6 +28,13 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    for row in store.query_cursors(None)? {
+        println!(
+            "FactCursor {{ session={} transcript={} byte_offset={} }}",
+            row.session, row.transcript, row.byte_offset
+        );
+    }
+
     let usage = store.usage_report_rows(Some(GroupBy::Harness), &UsageQuery::default())?;
     for row in usage {
         println!(

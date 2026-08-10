@@ -5,7 +5,7 @@ use anyhow::Result;
 use rusqlite::params;
 
 use crate::ident::{Row, Store, TurnQuery};
-use crate::rows::{CommandRow, FetchRow, SessionRow, StatusRow, TouchRow, TurnRow};
+use crate::rows::{CommandRow, FactCursor, FetchRow, SessionRow, StatusRow, TouchRow, TurnRow};
 
 fn opt_string(value: Option<&str>) -> rusqlite::types::Value {
     value.map(|v| v.to_owned()).into()
@@ -322,6 +322,39 @@ impl Store {
         })?;
         let mut out = base.collect::<Result<Vec<_>, _>>()?;
         out.truncate(limit.unwrap_or(u64::MAX) as usize);
+        Ok(out)
+    }
+
+    /// The per-transcript resume cursor for each session: the harness, session
+    /// id, transcript path, and the byte offset ingest has read to. `record_id`,
+    /// `turn`, and `timestamp` stay zero until a delta stream fills them per
+    /// record.
+    pub fn query_cursors(&self, session: Option<&str>) -> Result<Vec<FactCursor>> {
+        let sql = "SELECT dict_harness.value, dict_session.value, dict_path.value, cursor.offset
+                   FROM sync_cursor cursor
+                   JOIN dict_session ON dict_session.id = cursor.session_id
+                   JOIN dict_path ON dict_path.id = cursor.path_id
+                   JOIN agent_session ON agent_session.session_id = cursor.session_id
+                   JOIN dict_harness ON dict_harness.id = agent_session.harness_id
+                   WHERE (?1 IS NULL OR dict_session.value = ?1)
+                   ORDER BY dict_session.value, dict_path.value";
+        let mut statement = self.connection().prepare(sql)?;
+        let filter: Option<String> = session.map(str::to_owned);
+        let iter = statement.query_map(params![filter], |row| {
+            Ok(FactCursor {
+                harness: row.get(0)?,
+                session: row.get(1)?,
+                transcript: row.get(2)?,
+                byte_offset: row.get::<_, i64>(3)? as u64,
+                record_id: String::new(),
+                turn: 0,
+                timestamp: 0,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in iter {
+            out.push(row?);
+        }
         Ok(out)
     }
 
