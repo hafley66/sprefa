@@ -1230,6 +1230,7 @@ fn run_hail(
         r#ref: None,
     };
     append_message_to(&dir, box_name.unwrap_or("bus.ndjson"), &message)?;
+    record_control_edge(&message)?;
     println!("queued {} -> {to}", message.id);
 
     let routes = bus::read_routes(&dir)?;
@@ -1269,6 +1270,22 @@ fn run_hail(
             println!("{to} harness has no send support: message stays queued");
         }
     }
+    Ok(())
+}
+
+fn record_control_edge(message: &boop::bus::Message) -> Result<()> {
+    if !matches!(
+        message.kind.as_str(),
+        "hail" | "result" | "retry" | "resume" | "cancel"
+    ) {
+        return Ok(());
+    }
+    let store = boop::Store::open(boop::Store::default_path()?)?;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    store.add_edge_at(&message.from, &message.to, &message.kind, timestamp)?;
     Ok(())
 }
 

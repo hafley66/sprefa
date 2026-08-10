@@ -32,6 +32,26 @@ pub struct StatusRow {
     pub turns: i64,
     pub calls_in_window: i64,
     pub tokens_in_window: i64,
+    pub lane: Option<String>,
+    pub state: Option<String>,
+    pub pid: Option<i64>,
+    pub tmux_pane: Option<String>,
+    pub rss_kb: Option<i64>,
+    pub cpu_pct: Option<f64>,
+    pub uptime_sec: Option<i64>,
+    pub first_seen_ts: Option<i64>,
+    pub last_seen_ts: Option<i64>,
+    pub died_ts: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct LiveSpanRow {
+    pub session: String,
+    pub status: String,
+    pub from_ts: i64,
+    pub to_ts: Option<i64>,
+    pub pid: Option<i64>,
+    pub tmux_pane: Option<String>,
 }
 
 /// One turn: a text block or a tool call, dense per session. `turn` and `ts`

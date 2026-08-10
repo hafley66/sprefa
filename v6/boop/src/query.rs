@@ -326,16 +326,16 @@ impl Store {
     }
 
     /// The per-transcript resume cursor for each session: the harness, session
-    /// id, transcript path, and the byte offset ingest has read to. `record_id`,
-    /// `turn`, and `timestamp` stay zero until a delta stream fills them per
-    /// record.
+    /// id, transcript path, byte offset, and the last emitted record fields.
     pub fn query_cursors(&self, session: Option<&str>) -> Result<Vec<FactCursor>> {
-        let sql = "SELECT dict_harness.value, dict_session.value, dict_path.value, cursor.offset
+        let sql = "SELECT dict_harness.value, dict_session.value, dict_path.value, cursor.offset,
+                          COALESCE(dict_record.value, ''), cursor.turn, cursor.timestamp
                    FROM sync_cursor cursor
                    JOIN dict_session ON dict_session.id = cursor.session_id
                    JOIN dict_path ON dict_path.id = cursor.path_id
                    JOIN agent_session ON agent_session.session_id = cursor.session_id
                    JOIN dict_harness ON dict_harness.id = agent_session.harness_id
+                   LEFT JOIN dict_record ON dict_record.id = cursor.record_id_id
                    WHERE (?1 IS NULL OR dict_session.value = ?1)
                    ORDER BY dict_session.value, dict_path.value";
         let mut statement = self.connection().prepare(sql)?;
@@ -346,9 +346,9 @@ impl Store {
                 session: row.get(1)?,
                 transcript: row.get(2)?,
                 byte_offset: row.get::<_, i64>(3)? as u64,
-                record_id: String::new(),
-                turn: 0,
-                timestamp: 0,
+                record_id: row.get(4)?,
+                turn: row.get::<_, i64>(5)? as u64,
+                timestamp: row.get::<_, i64>(6)? as u64,
             })
         })?;
         let mut out = Vec::new();
@@ -456,7 +456,23 @@ impl Store {
                    (SELECT COALESCE(SUM(u.input_tokens + u.output_tokens + u.cache_create_5m_tokens
                                         + u.cache_create_1h_tokens + u.cache_read_tokens), 0)
                       FROM agent_usage u
-                      WHERE u.session_id = agent_session.session_id AND u.ts >= ?1) AS tokens_in_window
+                      WHERE u.session_id = agent_session.session_id AND u.ts >= ?1) AS tokens_in_window,
+                   NULL AS lane,
+                   live_status.value AS state,
+                   live.pid,
+                   live_pane.value AS tmux_pane,
+                   NULL AS rss_kb,
+                   NULL AS cpu_pct,
+                   NULL AS uptime_sec,
+                   (SELECT MIN(from_ts) FROM agent_live_span span
+                      WHERE span.session_id = agent_session.session_id) AS first_seen_ts,
+                   (SELECT MAX(COALESCE(to_ts, from_ts)) FROM agent_live_span span
+                      WHERE span.session_id = agent_session.session_id) AS last_seen_ts,
+                   (SELECT MAX(to_ts) FROM agent_live_span span
+                      WHERE span.session_id = agent_session.session_id AND to_ts IS NOT NULL
+                        AND NOT EXISTS (SELECT 1 FROM agent_live_span open_span
+                                        WHERE open_span.session_id = span.session_id
+                                          AND open_span.to_ts IS NULL)) AS died_ts
             FROM agent_session
             JOIN dict_session ON dict_session.id = agent_session.session_id
             JOIN dict_harness ON dict_harness.id = agent_session.harness_id
@@ -464,6 +480,9 @@ impl Store {
             LEFT JOIN agent_turn ON agent_turn.session_id = agent_session.session_id
             LEFT JOIN agent_edge ON agent_edge.child_session_id = agent_session.session_id
             LEFT JOIN dict_session AS parent ON parent.id = agent_edge.parent_session_id
+            LEFT JOIN agent_live live ON live.session_id = agent_session.session_id
+            LEFT JOIN dict_status live_status ON live_status.id = live.status_id
+            LEFT JOIN dict_pane live_pane ON live_pane.id = live.tmux_pane_id
             GROUP BY agent_session.session_id
             HAVING last_turn_ts >= ?1
             ORDER BY last_turn_ts DESC";
@@ -479,6 +498,16 @@ impl Store {
                 turns: row.get(6)?,
                 calls_in_window: row.get(7)?,
                 tokens_in_window: row.get(8)?,
+                lane: row.get(9)?,
+                state: row.get(10)?,
+                pid: row.get(11)?,
+                tmux_pane: row.get(12)?,
+                rss_kb: row.get(13)?,
+                cpu_pct: row.get(14)?,
+                uptime_sec: row.get(15)?,
+                first_seen_ts: row.get(16)?,
+                last_seen_ts: row.get(17)?,
+                died_ts: row.get(18)?,
             })
         })?;
         let mut out = Vec::new();
