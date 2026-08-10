@@ -183,4 +183,29 @@ Store-engine contrast @ **3168002 nodes** (dd aborted above):
 
 Fit: **224.1 B/node** (slope of host_peak vs nodes over the surviving ramp). Projecting the matrix memcap: ~**4462402 nodes per GB resident**; **53548821 nodes at the 12 GB matrix memcap** (4462402 nodes/GB × 12).
 
+## Appendix — `sqlite-signed-delta` (DRed sibling)
+
+The timestamped signed-delta retraction path (`cascade::retract_signed_delta`,
+`src/engine.rs`) measured head-to-head against the two-pass DRed/scc paths at the
+reference scales. Same input/output hashes as the matrix (correctness on cycles:
+signed-delta matches oracle/dd/DRed survivor sets byte-for-byte).
+
+| scale | engine | ms | stmts | correct |
+|---|---:|---:|:---:|---:|
+| DAG 960k | sqlite-dred-loop | 1753.4 | 53 | yes |
+| DAG 960k | sqlite-count-scc | 1756.1 | 39 | yes |
+| DAG 960k | **sqlite-signed-delta** | **1669.7** | **27** | yes |
+| DAG 960k | dd | 175.4 | 0 | yes |
+| CYC 960k s7 | sqlite-dred-loop | 1897.9 | 53 | yes |
+| CYC 960k s7 | **sqlite-signed-delta** | **1844.6** | **27** | yes |
+| CYC 960k s7 | oracle | 379.4 | 0 | ref |
+
+signed-delta is the single-pass least-fixpoint reachability sibling: no over-delete
+cone, no separate rederive walk, ~half the SQL statements of the two-pass DRed loop.
+The wall win over DRed is small (~4.8% here) because the single forward pass
+re-walks the surviving reach AND republishes the store's weight column for every
+row; the cycle-correct least-fixpoint sharing (a cut cycle collapses instead of
+self-sustaining) costs that re-walk — the recon's "remove the rederive pass" floor
+did not survive contact with the required cycle-correctness. Both sit ~10x dd.
+
 _Report generated for the G6-isolated ramp appended above. See `DD_WALL_REPORT.md` for the parity receipt and full run._
