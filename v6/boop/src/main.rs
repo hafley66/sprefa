@@ -1117,8 +1117,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         socket: args.socket.clone(),
         worktree_dir: args.worktree_dir.clone(),
         repo: std::path::PathBuf::from(&args.cwd),
-        env_stamp: Some(identity::child_stamp(
-            &args.to,
+        env_stamp: Some(spawn_env_stamp(
             &args.to,
             &harness_id,
             caller.session.as_deref(),
@@ -1160,6 +1159,16 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
     );
     std::thread::sleep(std::time::Duration::from_secs(args.resolve_wait));
     Ok(())
+}
+
+/// The environment a spawn's command carries: a UTF-8 locale, then the child's
+/// own identity. The pane's inherited locale is the tmux server's, not a shell's.
+fn spawn_env_stamp(lane_id: &str, harness_id: &str, caller_session: Option<&str>) -> String {
+    format!(
+        "{} {}",
+        lane::locale_stamp(),
+        identity::child_stamp(lane_id, lane_id, harness_id, caller_session)
+    )
 }
 
 /// The registered harness adapter for a dispatched `--harness`. A named
@@ -1560,10 +1569,9 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
     };
     let hail_mail_dir = mail_dir(args.mail_dir.as_deref())?;
     let routes = bus::read_routes(&hail_mail_dir)?;
-    let caller = identity::resolve(&routes)?
-        .lane
-        .filter(|lane| *lane != identity.lane);
-    let parent = lane::resolve_parent(args.parent.as_deref(), caller.as_deref(), &routes);
+    let caller = identity::resolve(&routes)?;
+    let caller_lane = caller.lane.clone().filter(|lane| *lane != identity.lane);
+    let parent = lane::resolve_parent(args.parent.as_deref(), caller_lane.as_deref(), &routes);
     // The epilogue runs in the lane's pane: the sender is the lane, and the
     // mailbox must be the one this dispatch registered in, never the default.
     let on_exit = parent.parent.as_ref().map(|parent| {
@@ -1590,7 +1598,11 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             socket: args.socket.clone(),
             worktree_dir: identity.worktree_dir.clone(),
             repo: repo.clone(),
-            env_stamp: None,
+            env_stamp: Some(spawn_env_stamp(
+                &identity.lane,
+                &harness_id,
+                caller.session.as_deref(),
+            )),
             model: model.clone(),
             on_exit: on_exit.clone(),
             tmux: Some(identity.tmux.clone()),

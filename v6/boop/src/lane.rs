@@ -203,6 +203,49 @@ fn git_line(repo: &Path, args: &[&str]) -> Option<String> {
     (!line.is_empty()).then_some(line)
 }
 
+/// The UTF-8 locale a spawn falls back to when the caller has none. macOS
+/// ships no `C.UTF-8`; minimal Linux images ship no `en_US.UTF-8`.
+pub const FALLBACK_LOCALE: &str = if cfg!(target_os = "macos") {
+    "en_US.UTF-8"
+} else {
+    "C.UTF-8"
+};
+
+/// `LC_ALL` and `LANG` for a spawn, as a shell prefix. A tmux server started
+/// outside a login shell hands its sessions a bare `C`, failing UTF-8 gates.
+pub fn locale_stamp() -> String {
+    let locale = shell_word(&utf8_locale());
+    format!("LC_ALL={locale} LANG={locale}")
+}
+
+/// The caller's own locale when it is UTF-8, else `FALLBACK_LOCALE`.
+pub fn utf8_locale() -> String {
+    locale_from(
+        std::env::var("LC_ALL").ok().as_deref(),
+        std::env::var("LANG").ok().as_deref(),
+    )
+}
+
+fn locale_from(lc_all: Option<&str>, lang: Option<&str>) -> String {
+    [lc_all, lang]
+        .into_iter()
+        .flatten()
+        .find(|value| is_utf8(value))
+        .unwrap_or(FALLBACK_LOCALE)
+        .to_owned()
+}
+
+fn is_utf8(value: &str) -> bool {
+    value
+        .to_ascii_lowercase()
+        .replace('-', "")
+        .ends_with("utf8")
+}
+
+fn shell_word(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
 /// The harness a model spelling names, or `None` when it names none.
 pub fn harness_for_model(model: &str) -> Option<&'static str> {
     let name = model.split('@').next().unwrap_or(model).trim();
@@ -283,7 +326,7 @@ mod tests {
 
     use super::{
         default_base_sha, derive, harness_for_model, harness_for_spawn, kind_of, repo_root,
-        resolve_parent, rev_parse, slug, LaneIdentity,
+        resolve_parent, rev_parse, slug, LaneIdentity, FALLBACK_LOCALE,
     };
 
     fn repo() -> PathBuf {
@@ -590,6 +633,46 @@ mod tests {
             .to_string();
         assert!(unknown.contains("--harness"), "message: {unknown}");
         assert!(unknown.contains("nothing-known"), "message: {unknown}");
+    }
+
+    /// RECEIPT (field). Two luna lanes failed SWI-Prolog UTF-8 gates that pass
+    /// in a shell: a lane inherits the tmux server's bare locale, not a shell's.
+    #[test]
+    fn a_spawn_always_gets_a_utf8_locale() {
+        assert_eq!(
+            super::locale_from(Some("en_US.UTF-8"), None),
+            "en_US.UTF-8",
+            "the caller's own locale is inherited when it is UTF-8"
+        );
+        assert_eq!(
+            super::locale_from(Some("C"), Some("en_GB.UTF-8")),
+            "en_GB.UTF-8",
+            "LC_ALL is read first, but a non-UTF-8 one never wins"
+        );
+        assert_eq!(
+            super::locale_from(Some("C"), Some("POSIX")),
+            FALLBACK_LOCALE
+        );
+        assert_eq!(super::locale_from(None, None), FALLBACK_LOCALE);
+        assert!(
+            FALLBACK_LOCALE.to_ascii_lowercase().contains("utf"),
+            "the fallback has to be a UTF-8 locale: {FALLBACK_LOCALE}"
+        );
+        assert!(super::is_utf8("ja_JP.utf8"), "the dashless spelling counts");
+    }
+
+    /// RECEIPT. The stamp sets both variables, quoted, so a locale with no
+    /// shell-safe spelling cannot split the command.
+    #[test]
+    fn the_locale_stamp_sets_lc_all_and_lang() {
+        let stamp = super::locale_stamp();
+        assert!(stamp.starts_with("LC_ALL='"), "stamp: {stamp}");
+        assert!(stamp.contains(" LANG='"), "stamp: {stamp}");
+        assert_eq!(
+            stamp.matches("UTF-8'").count() + stamp.matches("utf8'").count(),
+            2,
+            "both variables carry the same UTF-8 locale: {stamp}"
+        );
     }
 
     /// RECEIPT. Two coordinators are ambiguous, so nothing is guessed.
