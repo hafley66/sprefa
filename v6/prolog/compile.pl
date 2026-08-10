@@ -37,10 +37,7 @@
 :- use_module(lower).
 :- use_module(emit_ts).
 :- use_module(library(tableutil), [table_statistics/2]).
-:- use_module('compile/parse_dl',
-              [ parse_dl_file/4,
-                parse_dl_line_for_reason/2
-              ]).
+:- use_module('compile/parse_dl', [ parse_dl_line_for_reason/2 ]).
 :- use_module('use_resolve', [expand_uses/8]).
 :- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_type_plane',
@@ -386,14 +383,8 @@ fact_args_atomic(Fact) :-
     Fact =.. [_ | Args],
     forall(member(Arg, Args), atomic(Arg)).
 
-% EXPORTED because `bop check` is the SECOND caller of the text door and was
-% getting an unlocated unsupported construct for the identical file (cold-author defect D3):
-% scripts/bop_check.pl calls compile_program/6 itself (it owns the temp output
-% file and the exit-code mapping), so wrapping only at compile_dl6/2's own
-% catch site left the CLI printing "rule-index unavailable" where the compile
-% script printed `broken.dl6:4`. One wrapper, two catch sites; the line comes
-% from parse_dl.pl's source_statement_fact/3, asserted by whichever
-% parse_dl_file/4 call preceded the compile.
+% EXPORTED: scripts/bop_check.pl calls compile_program/6 itself, so it needs
+% the same wrapper compile_dl6/2's own catch site applies.
 throw_text_door_error(File, Error) :-
     Error = unsupported_construct(at(_, _, _)),
     !,
