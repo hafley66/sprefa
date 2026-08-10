@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 
 use crate::harness::SessionRef;
 
@@ -113,6 +113,15 @@ impl Store {
             store.stamp_version()?;
         }
         Ok(store)
+    }
+
+    /// Open the store read-only for the raw-SQL surface. No schema projection
+    /// runs here: a read-only connection cannot write, so it must not appear
+    /// to migrate a stale store.
+    pub fn open_readonly(path: PathBuf) -> Result<Self> {
+        let connection = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .with_context(|| format!("open boop.db read-only at {}", path.display()))?;
+        Ok(Store { connection })
     }
 
     fn stamp_version(&self) -> Result<()> {
@@ -327,6 +336,37 @@ impl Store {
     /// Intern a natural key into a dictionary, for callers outside this module.
     pub(crate) fn intern_public(&self, table: &str, value: &str) -> Result<i64> {
         self.intern(table, value)
+    }
+
+    /// Run raw read-only SQL against this connection; return the column names
+    /// (for a text header) and one JSON object per row. Errors surface SQLite's
+    /// own message verbatim, never rewritten.
+    pub fn passthrough(&self, sql: &str) -> Result<(Vec<String>, Vec<Row>)> {
+        let mut statement = self.connection.prepare(sql)?;
+        let names: Vec<String> = statement
+            .column_names()
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        let mut rows = statement.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let mut object = serde_json::Map::new();
+            for (index, name) in names.iter().enumerate() {
+                let value = match row.get_ref(index)? {
+                    rusqlite::types::ValueRef::Null => serde_json::Value::Null,
+                    rusqlite::types::ValueRef::Integer(number) => serde_json::json!(number),
+                    rusqlite::types::ValueRef::Real(number) => serde_json::json!(number),
+                    rusqlite::types::ValueRef::Text(text) => {
+                        serde_json::json!(String::from_utf8_lossy(text))
+                    }
+                    rusqlite::types::ValueRef::Blob(_) => serde_json::Value::Null,
+                };
+                object.insert(name.clone(), value);
+            }
+            out.push(serde_json::Value::Object(object));
+        }
+        Ok((names, out))
     }
 
     /// Run a SELECT and hand back one JSON object per row, keyed by column
@@ -1358,6 +1398,47 @@ mod tests {
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("boop_rel_{}_{}", std::process::id(), name))
+    }
+
+    /// RECEIPT (Job 1). The passthrough runs raw SELECT over a temp store and
+    /// hands back columns plus one JSON object per row.
+    #[test]
+    fn passthrough_select_returns_rows() {
+        let db_path = temp_path("pass");
+        let _ = std::fs::remove_file(&db_path);
+        let writable = Store::open(db_path.clone()).unwrap();
+        drop(writable);
+        let store = Store::open_readonly(db_path.clone()).unwrap();
+        let (names, rows) = store
+            .passthrough("SELECT 1 AS x, 'hi' AS y")
+            .expect("SELECT runs read-only");
+        assert_eq!(names, vec!["x".to_owned(), "y".to_owned()]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["x"], serde_json::json!(1));
+        assert_eq!(rows[0]["y"], "hi");
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// RECEIPT (Job 1). A write through the passthrough is refused by the
+    /// SQLITE_OPEN_READONLY open itself, not by inspecting the SQL.
+    #[test]
+    fn passthrough_update_is_refused_read_only() {
+        let db_path = temp_path("passro");
+        let _ = std::fs::remove_file(&db_path);
+        let writable = Store::open(db_path.clone()).unwrap();
+        drop(writable);
+        let store = Store::open_readonly(db_path.clone()).unwrap();
+        let result = store.passthrough("UPDATE agent_usage SET input_tokens = 1");
+        let message = result
+            .expect_err("a write must be refused read-only")
+            .to_string();
+        assert!(
+            message.contains("readonly") || message.contains("read only"),
+            "SQLite must name the read-only refusal: {message}"
+        );
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
     }
 
     fn session_for(path: &std::path::Path) -> SessionRef {
