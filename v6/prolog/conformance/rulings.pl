@@ -691,3 +691,12 @@ ruling(mount_mutual_cycles_deferred, use_cycle_throw_stays_esm_sketch_parked, us
 % pub/export hits in compile/parse_dl.pl at decision time.
 ruling(export_signifier_pub, pub_use_rust_spelling, user,
        'user 2026-08-10: "just use pub semantics i guess", closing the fork-2 spelling question (mechanism decided earlier as explicit re-export, no outward alias leak).').
+
+% 2026-08-10: @ is not a macro escape. The user refused making @ an
+% arity-driven exclusion from the language in the way rust quarantines
+% variadic shapes behind vec!-style macros. Currying and lists ARE
+% quarantined for initial use, for one stated reason: RHS types stay
+% symmetric. Generics arrive as comptime parens (parenthesized comptime
+% parameters), not a separate macro layer.
+ruling(at_not_macro_escape, curry_lists_quarantined_generics_comptime_parens, user,
+       'user 2026-08-10: "i dont want @ to be something we make as exclusion to language like rust and vec! for arity sake, but currying and lists are to be quarantined for initial use for the reason that we want symmetric rhs types, our generics will be comptime parens".').
