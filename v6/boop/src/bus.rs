@@ -37,6 +37,8 @@ pub struct Route {
     pub source_path: Option<String>,
     /// The lane that summoned this one; `None` when spawned without `--parent`.
     pub parent: Option<String>,
+    /// What the lane is running toward; `None` when spawned without `--goal`.
+    pub goal: Option<String>,
 }
 
 /// Read the route map out of the `--mail-dir` registry. Corrupt JSON is an
@@ -82,6 +84,7 @@ fn route_from_value(entry: &Value) -> Route {
         source_path: string_field(object, "sourcePath")
             .or_else(|| string_field(object, "source_path")),
         parent: string_field(object, "parent"),
+        goal: string_field(object, "goal"),
     }
 }
 
@@ -96,10 +99,10 @@ impl Route {
             session_id: None,
             source_path: None,
             parent: None,
+            goal: None,
         }
     }
 }
-
 fn string_field(object: &Map<String, Value>, key: &str) -> Option<String> {
     object.get(key).and_then(Value::as_str).map(str::to_owned)
 }
@@ -414,6 +417,37 @@ mod tests {
         let routes = read_routes(&dir).unwrap();
         let child = routes.get("child").unwrap();
         assert_eq!(child.parent, None);
+        assert_eq!(child.harness.as_deref(), Some("opencode"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_route_round_trips_its_goal_field() {
+        let dir = temp_dir("goal");
+        let path = dir.join("registry.json");
+        std::fs::write(
+            &path,
+            r#"{"child": {"harness": "opencode", "goal": "ship the edge"}}"#,
+        )
+        .unwrap();
+        let routes = read_routes(&dir).unwrap();
+        let child = routes.get("child").unwrap();
+        assert_eq!(child.goal.as_deref(), Some("ship the edge"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_registry_without_the_goal_field_still_loads() {
+        let dir = temp_dir("nogoal");
+        let path = dir.join("registry.json");
+        std::fs::write(
+            &path,
+            r#"{"child": {"harness": "opencode", "tmux": "lane-child"}}"#,
+        )
+        .unwrap();
+        let routes = read_routes(&dir).unwrap();
+        let child = routes.get("child").unwrap();
+        assert_eq!(child.goal, None);
         assert_eq!(child.harness.as_deref(), Some("opencode"));
         let _ = std::fs::remove_dir_all(&dir);
     }
