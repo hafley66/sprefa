@@ -23,8 +23,8 @@ pub struct Store {
 /// turn ordinals and per-transcript cursors. 3 = token usage. 4 = rate table.
 /// 5 = agent_fetch covers searches, not only url fetches. 6 = agent_live_span
 /// records historical liveness, agent_touch carries canonical verbs, and
-/// agent_edge carries temporal evidence.
-pub const SCHEMA_VERSION: i64 = 6;
+/// agent_edge carries temporal evidence. 7 = sync cursors carry record fields.
+pub const SCHEMA_VERSION: i64 = 7;
 
 /// A row returned to the CLI, joined back from ids to the TEXT the query
 /// surface exposes.
@@ -110,6 +110,15 @@ impl Store {
             .with_context(|| format!("initialise boop.db schema at {}", path.display()))?;
         let store = Store { connection };
         if tables_before == 0 {
+            store.stamp_version()?;
+        } else if store.schema_version()? < SCHEMA_VERSION {
+            store.connection.execute_batch(
+                "CREATE TABLE IF NOT EXISTS dict_record
+                   (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 ALTER TABLE sync_cursor ADD COLUMN record_id_id INTEGER;
+                 ALTER TABLE sync_cursor ADD COLUMN turn INTEGER NOT NULL DEFAULT 0;
+                 ALTER TABLE sync_cursor ADD COLUMN timestamp INTEGER NOT NULL DEFAULT 0;",
+            )?;
             store.stamp_version()?;
         }
         Ok(store)
@@ -536,6 +545,25 @@ impl Store {
         Ok(offset as u64)
     }
 
+    pub(crate) fn set_cursor_record(
+        &self,
+        session: &str,
+        path: &str,
+        record_id: &str,
+        turn: u64,
+        timestamp: u64,
+    ) -> Result<()> {
+        let sid = self.session_id(session)?;
+        let path_id = self.intern("dict_path", path)?;
+        let record_id_id = self.intern("dict_record", record_id)?;
+        self.connection.execute(
+            "UPDATE sync_cursor SET record_id_id = ?3, turn = ?4, timestamp = ?5
+             WHERE session_id = ?1 AND path_id = ?2",
+            params![sid, path_id, record_id_id, turn as i64, timestamp as i64],
+        )?;
+        Ok(())
+    }
+
     /// Record a spawn edge between two known sessions, stamped at the current
     /// wall clock.
     pub fn add_edge(&self, parent: &str, child: &str, kind: &str) -> Result<()> {
@@ -682,7 +710,7 @@ impl Store {
 
     /// Every liveness interval for one session (or all when `session` is
     /// `None`), joined back to the TEXT status surface.
-    pub fn live_span(&self, session: Option<&str>) -> Result<Vec<Row>> {
+    pub fn live_span(&self, session: Option<&str>) -> Result<Vec<crate::rows::LiveSpanRow>> {
         let sql = "SELECT dict_session.value, d.value AS status,
                           s.from_ts, s.to_ts, s.pid, p.value AS tmux_pane
                    FROM agent_live_span s
@@ -694,14 +722,14 @@ impl Store {
         let mut statement = self.connection.prepare(sql)?;
         let filter: Option<String> = session.map(str::to_owned);
         let iter = statement.query_map(params![filter], |row| {
-            Ok(serde_json::json!({
-                "session": row.get::<_, String>(0)?,
-                "status": row.get::<_, String>(1)?,
-                "from_ts": row.get::<_, i64>(2)?,
-                "to_ts": row.get::<_, Option<i64>>(3)?,
-                "pid": row.get::<_, Option<i64>>(4)?,
-                "tmux_pane": row.get::<_, Option<String>>(5)?,
-            }))
+            Ok(crate::rows::LiveSpanRow {
+                session: row.get(0)?,
+                status: row.get(1)?,
+                from_ts: row.get(2)?,
+                to_ts: row.get(3)?,
+                pid: row.get(4)?,
+                tmux_pane: row.get(5)?,
+            })
         })?;
         let mut rows = Vec::new();
         for row in iter {
@@ -712,22 +740,25 @@ impl Store {
 
     /// The interval active at a point in time, using the half-open rule
     /// `from_ts <= T AND (to_ts IS NULL OR to_ts > T)`.
-    pub fn query_live_at(&self, at_ts: u64) -> Result<Vec<Row>> {
-        let sql = "SELECT dict_session.value, d.value AS status, s.from_ts, s.to_ts, s.pid
+    pub fn query_live_at(&self, at_ts: u64) -> Result<Vec<crate::rows::LiveSpanRow>> {
+        let sql = "SELECT dict_session.value, d.value AS status, s.from_ts, s.to_ts, s.pid,
+                          p.value AS tmux_pane
                    FROM agent_live_span s
                    JOIN dict_session ON dict_session.id = s.session_id
                    JOIN dict_status d ON d.id = s.status_id
+                   LEFT JOIN dict_pane p ON p.id = s.tmux_pane_id
                    WHERE s.from_ts <= ?1 AND (s.to_ts IS NULL OR s.to_ts > ?1)
                    ORDER BY dict_session.value";
         let mut statement = self.connection.prepare(sql)?;
         let iter = statement.query_map(params![at_ts as i64], |row| {
-            Ok(serde_json::json!({
-                "session": row.get::<_, String>(0)?,
-                "status": row.get::<_, String>(1)?,
-                "from_ts": row.get::<_, i64>(2)?,
-                "to_ts": row.get::<_, Option<i64>>(3)?,
-                "pid": row.get::<_, Option<i64>>(4)?,
-            }))
+            Ok(crate::rows::LiveSpanRow {
+                session: row.get(0)?,
+                status: row.get(1)?,
+                from_ts: row.get(2)?,
+                to_ts: row.get(3)?,
+                pid: row.get(4)?,
+                tmux_pane: row.get(5)?,
+            })
         })?;
         let mut rows = Vec::new();
         for row in iter {
@@ -864,7 +895,25 @@ pub fn sync_session(
 ) -> Result<SyncStat> {
     let key = session.path.display().to_string();
     let from = store.get_cursor(&session.session_id, &key)?;
+    store.set_cursor(&session.session_id, &key, from)?;
     let ingested = adapter.ingest(store, session, from)?;
+    let observed_ts = session.modified_ms.max(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0),
+    );
+    store.record_status(
+        &session.session_id,
+        observed_ts,
+        if session.tmux.is_some() {
+            "live"
+        } else {
+            "idle"
+        },
+        None,
+        session.tmux.as_deref(),
+    )?;
     if ingested.stat.written > 0 || ingested.stat.usage_written > 0 {
         store.upsert_session_row(
             &session.session_id,
@@ -903,6 +952,22 @@ pub fn project_transcript(
     };
     for line in &result.lines {
         project_line(store, session, line, &mut walk)?;
+        let value: serde_json::Value = serde_json::from_slice(&line.bytes).unwrap_or_default();
+        let record_id = value
+            .get("uuid")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("record");
+        store.set_cursor_record(
+            &session.session_id,
+            &session.path.display().to_string(),
+            record_id,
+            walk.turn,
+            value
+                .get("timestamp")
+                .and_then(serde_json::Value::as_str)
+                .and_then(crate::harness::claude::parse_iso_ms)
+                .unwrap_or(0),
+        )?;
     }
     Ok(crate::harness::Ingested {
         stat: walk.stat,
@@ -1225,6 +1290,7 @@ CREATE TABLE IF NOT EXISTS dict_pane (id INTEGER PRIMARY KEY, value TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS dict_model (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_service_tier (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_price_source (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS dict_record (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 
 -- request_id is NOT NULL with '' for absent: SQLite treats NULLs in a UNIQUE
 -- index as distinct, and 8.4% of measured records carry no requestId.
@@ -1382,6 +1448,9 @@ CREATE TABLE IF NOT EXISTS sync_cursor (
   session_id INTEGER NOT NULL,
   path_id INTEGER NOT NULL,
   offset INTEGER NOT NULL,
+  record_id_id INTEGER,
+  turn INTEGER NOT NULL DEFAULT 0,
+  timestamp INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (session_id, path_id)
 ) WITHOUT ROWID;
 ";
@@ -1891,23 +1960,24 @@ mod tests {
 
         let spans = store.live_span(Some("s1")).unwrap();
         assert_eq!(spans.len(), 3, "a repeat never inserts a row");
-        assert_eq!(spans[0]["from_ts"], 100);
-        assert_eq!(spans[0]["to_ts"], 200, "state change closes the interval");
-        assert_eq!(spans[1]["from_ts"], 200);
-        assert_eq!(spans[1]["to_ts"], 300);
-        assert_eq!(spans[2]["from_ts"], 300);
-        assert_eq!(spans[2]["to_ts"], serde_json::Value::Null, "open interval");
+        assert_eq!(spans[0].from_ts, 100);
+        assert_eq!(
+            spans[0].to_ts,
+            Some(200),
+            "state change closes the interval"
+        );
+        assert_eq!(spans[1].from_ts, 200);
+        assert_eq!(spans[1].to_ts, Some(300));
+        assert_eq!(spans[2].from_ts, 300);
+        assert_eq!(spans[2].to_ts, None, "open interval");
 
         let at_150 = store.query_live_at(150).unwrap();
         assert_eq!(at_150.len(), 1);
-        assert_eq!(at_150[0]["status"], "live");
+        assert_eq!(at_150[0].status, "live");
         let at_250 = store.query_live_at(250).unwrap();
-        assert_eq!(at_250[0]["status"], "idle");
+        assert_eq!(at_250[0].status, "idle");
         let at_350 = store.query_live_at(350).unwrap();
-        assert_eq!(
-            at_350[0]["status"], "live",
-            "open interval covers the present"
-        );
+        assert_eq!(at_350[0].status, "live", "open interval covers the present");
 
         let current: String = store
             .connection
@@ -2031,6 +2101,9 @@ mod tests {
         assert_eq!(cursors[0].session, "ses-1");
         assert_eq!(cursors[0].harness, "claude");
         assert!(cursors[0].byte_offset > 0, "cursor advanced past the line");
+        assert!(!cursors[0].record_id.is_empty());
+        assert!(cursors[0].turn > 0);
+        assert!(cursors[0].timestamp > 0);
         drop(store);
         let _ = std::fs::remove_file(&db_path);
         let _ = std::fs::remove_file(&lines_path);
