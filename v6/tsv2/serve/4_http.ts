@@ -81,6 +81,7 @@ import { HostRunner } from "./1_hosts.ts";
 import { IntervalBindRunner, NodeWatchSource, WatchBindRunner, bind_plans_for } from "./2_binds.ts";
 import { LiveEngine, boot_served_program } from "./3_engine.ts";
 import { ReloadPlanner } from "./reloadPlan.ts";
+import { buildOpenapi } from "./openapiDoc.ts";
 
 export const ROUTE_LIST: readonly string[] = [
   "POST /program",
@@ -88,6 +89,7 @@ export const ROUTE_LIST: readonly string[] = [
   "GET /idb/:rel",
   "GET /ticks",
   "GET /stats",
+  "GET /openapi.json",
 ];
 
 interface Exchange {
@@ -99,10 +101,11 @@ interface ServerState {
   program: IServedProgram | null;
   seam: ISqlSeam | null;
   engine: LiveEngine | null;
+  openapi: unknown;
 }
 
 function new_server_state(): ServerState {
-  return { program: null, seam: null, engine: null };
+  return { program: null, seam: null, engine: null, openapi: buildOpenapi(null) };
 }
 
 function write_json(response: http.ServerResponse, status: number, body: unknown): void {
@@ -146,6 +149,7 @@ function dispose_program(state: ServerState): void {
   state.seam = null;
   state.engine = null;
   state.program = null;
+  state.openapi = buildOpenapi(null);
 }
 
 function reload_outcome(program: IServedProgram, plan: IReloadPlan): IReloadOutcome {
@@ -177,6 +181,7 @@ function run_program$(state: ServerState, config: IServeConfig, load: ProgramLoa
     state.seam = seam;
     state.engine = engine;
     state.program = load.program;
+    state.openapi = buildOpenapi(load.program);
     return boot_served_program(seam, load.program, swapped ? reload_plan : undefined).pipe(
       map(() => true),
       // A boot failure used to error the inner observable, which under switchMap
@@ -465,6 +470,10 @@ function route_request$(state: ServerState, exchange: Exchange, bump_active: (de
     }
     if (method === "GET" && segments.length === 1 && segments[0] === "stats") {
       return handle_stats$(state, request, response);
+    }
+    if (method === "GET" && segments.length === 1 && segments[0] === "openapi.json") {
+      write_json(response, 200, state.openapi);
+      return of({ kind: "served", method: "GET", path: "/openapi.json" });
     }
     write_json(response, 404, { error: "not found", routes: ROUTE_LIST });
     return of({ kind: "served", method, path: route });
