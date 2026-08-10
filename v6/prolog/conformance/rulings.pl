@@ -682,3 +682,12 @@ ruling(boop_dl6_sh_door, sh_hosts_now_ts_core_rust_emitters_later, user,
 % the throw, module_hash needs SCC-as-a-unit hashing.
 ruling(mount_mutual_cycles_deferred, use_cycle_throw_stays_esm_sketch_parked, user,
        'user 2026-08-10, first: "i would prefer if we allowed cycles like how js does it, where it does not care if u use something as a reference that is not reachable from module load traversal tick/pass, so if a subscribe happened like a query at top level (i think ?- or whatever it is is effectively .subscribe()) then that would yell at you"; then: "hmm i dont want cycles fuck it no cycles ... at least not yet".').
+
+% 2026-08-10: export signifier, ruled pub. Re-export and outward visibility
+% spell rust-style: `pub use` re-exports an inner mount through the module
+% boundary (the mount_inner_alias_private mechanism gets this spelling).
+% Bare rels stay all-public to the direct consumer (mount_alias_additive);
+% a declared-public default flip was NOT taken. Surface is unbuilt: zero
+% pub/export hits in compile/parse_dl.pl at decision time.
+ruling(export_signifier_pub, pub_use_rust_spelling, user,
+       'user 2026-08-10: "just use pub semantics i guess", closing the fork-2 spelling question (mechanism decided earlier as explicit re-export, no outward alias leak).').
