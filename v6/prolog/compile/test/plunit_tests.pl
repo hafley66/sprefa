@@ -7022,12 +7022,61 @@ test(catalog_attributes_a_used_modules_rel_to_that_module) :-
     memberchk(row(_, LibId, _, tree, rel, _, _, LibId, _, _, _), Rows),
     memberchk(row(_, MainId, _, ripe, rel, _, _, MainId, _, _, _), Rows).
 
+% ── the module graph: module rows and edge rows ─────────────────────────────
+% module(id, name, hash) reads off the kind=module rows; module_edge(consumer,
+% producer, kind) reads parent_id, module_id and kind off the edge rows.
+
+% FAIL-FIRST RECEIPT (MOD-2): a bare `use` minted no row at all, so a program
+% that imports without an alias had an invisible dependency edge.
+test(catalog_carries_a_use_edge_for_a_bare_use) :-
+    use_catalog_rows(Rows),
+    memberchk(row(LibId, _, _, lib, module, _, _, _, _, _, _), Rows),
+    memberchk(row(MainId, _, _, main, module, _, _, _, _, _, _), Rows),
+    memberchk(row(_, MainId, _, lib, use, _, _, LibId, EdgeHId, _, _), Rows),
+    EdgeHId \== ''.
+
+% An alias ADDS the mount edge beside the dependency edge (mount_alias_additive).
+test(catalog_carries_both_edges_for_an_aliased_use) :-
+    mount_catalog_rows(Rows),
+    memberchk(row(LibId, _, _, lib, module, _, _, _, _, _, _), Rows),
+    memberchk(row(MainId, _, _, main, module, _, _, _, _, _, _), Rows),
+    memberchk(row(_, MainId, _, lib, use, _, _, LibId, _, _, _), Rows),
+    memberchk(row(_, MainId, _, orchard, mount, _, _, LibId, _, _, _), Rows).
+
+% Two consumers of ONE file share the module row and its identity, while the
+% two edges carry distinct identity: the resolved position rides the EDGE.
+test(catalog_edges_into_one_module_carry_distinct_identity) :-
+    make_use_fixture(Dir,
+        [ "leaf.dl6" = "rel tree(tree_id:int).\n",
+          "mid.dl6" = "use \"leaf.dl6\".\nrel mid_row(y:int).\n",
+          "main.dl6" = "use \"mid.dl6\".\n\c
+                        use \"leaf.dl6\".\nrel top(z:int).\n" ]),
+    catalog_rows_of(Dir, Rows),
+    memberchk(row(LeafId, _, _, leaf, module, _, _, _, _, _, _), Rows),
+    findall(EdgeHId,
+            member(row(_, _, _, leaf, use, _, _, LeafId, EdgeHId, _, _), Rows),
+            EdgeHIds),
+    length(EdgeHIds, 2),
+    sort(EdgeHIds, Distinct),
+    length(Distinct, 2).
+
+use_catalog_rows(Rows) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\".\n\c
+                        rel ripe(tree_id:int).\n\c
+                        ripe(TreeId) <- tree(TreeId).\n" ]),
+    catalog_rows_of(Dir, Rows).
+
 mount_catalog_rows(Rows) :-
     make_use_fixture(Dir,
         [ "lib.dl6" = "rel tree(tree_id:int).\n",
           "main.dl6" = "use \"lib.dl6\" as orchard.\n\c
                         rel ripe(tree_id:int).\n\c
                         ripe(TreeId) <- orchard.tree(TreeId).\n" ]),
+    catalog_rows_of(Dir, Rows).
+
+catalog_rows_of(Dir, Rows) :-
     use_entry(Dir, 'main.dl6', Entry),
     expand_uses(Entry, [], [], _, Prog, _),
     program_plan(fixture(main, Prog, [], [], [])-[], Plan),

@@ -67,9 +67,9 @@ entry_base_dir(EntryPath, BaseDir) :-
 % Loaded threads through the fold, so a diamond's second sight of a file is a
 % cache hit; the cached entry carries the subtree's paths so a MOUNT of an
 % already-loaded file still grafts the same tree.
-collect_children([], _, _, _, _, Loaded, Loaded, [], [], []).
-collect_children([Spec | Rest], Roots, BaseDir, OnStack, OwnerName, Loaded0,
-                 Loaded, Files, Tables, MountDecls) :-
+collect_children([], _, _, _, _, _, Loaded, Loaded, [], [], []).
+collect_children([Spec | Rest], Roots, BaseDir, OnStack, OwnerName, OwnerHash,
+                 Loaded0, Loaded, Files, Tables, EdgeDecls) :-
     use_spec_parts(Spec, UseText, AliasOrNone),
     (   resolve_use_path(Roots, UseText, AbsPath)
     ->  true
@@ -81,20 +81,31 @@ collect_children([Spec | Rest], Roots, BaseDir, OnStack, OwnerName, Loaded0,
     ;   collect_all(AbsPath, BaseDir, OnStack, Loaded0, Loaded1, FirstFiles,
                     FirstTables, ChildPaths)
     ),
-    mount_decls_for(AliasOrNone, AbsPath, OwnerName, ChildPaths, HereMounts),
-    collect_children(Rest, Roots, BaseDir, OnStack, OwnerName, Loaded1, Loaded,
-                     MoreFiles, MoreTables, MoreMounts),
+    edge_decls_for(AliasOrNone, AbsPath, BaseDir, OwnerName, OwnerHash,
+                   ChildPaths, HereEdges),
+    collect_children(Rest, Roots, BaseDir, OnStack, OwnerName, OwnerHash,
+                     Loaded1, Loaded, MoreFiles, MoreTables, MoreEdges),
     append(FirstFiles, MoreFiles, Files),
     append(FirstTables, MoreTables, Tables),
-    append(HereMounts, MoreMounts, MountDecls).
+    append(HereEdges, MoreEdges, EdgeDecls).
 
 use_spec_parts(use(Text), Text, none).
 use_spec_parts(use(Text, Alias), Text, alias(Alias)).
 
-mount_decls_for(none, _AbsPath, _OwnerName, _ChildPaths, []).
-mount_decls_for(alias(Alias), AbsPath, OwnerName, ChildPaths,
-                [mount_decl(Alias, ChildName, OwnerName, ChildPaths)]) :-
-    module_name(AbsPath, ChildName).
+% The dependency edge is minted for every use; an alias ADDS the mount edge
+% beside it (ruling mount_alias_additive) rather than replacing it.
+edge_decls_for(AliasOrNone, AbsPath, BaseDir, OwnerName, OwnerHash, ChildPaths,
+               EdgeDecls) :-
+    canonical_abs(AbsPath, ChildAbs),
+    module_name(ChildAbs, ChildName),
+    module_hash(BaseDir, ChildAbs, ChildHash),
+    UseEdge = module_edge_decl(OwnerHash, ChildHash, use, ChildName),
+    (   AliasOrNone = alias(Alias)
+    ->  EdgeDecls = [ UseEdge,
+                      module_edge_decl(OwnerHash, ChildHash, mount, Alias),
+                      mount_decl(Alias, ChildName, OwnerName, ChildPaths) ]
+    ;   EdgeDecls = [UseEdge]
+    ).
 
 % One module's whole subtree. The ENTRY parses LAST: parse_dl_source/5 retracts
 % its statement table per call, and the diag channel reads the entry's.
@@ -112,15 +123,15 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes),
     include_roots(EntryPath, Roots),
     module_name(EntryAbs, EntryName),
+    module_hash(BaseDir, EntryAbs, EntryHash),
     collect_children(UseSpecs, Roots, BaseDir, [loaded(EntryAbs, []) | OnStack],
-                     EntryName, Loaded0, Loaded1, ChildFiles, ChildTables,
-                     MountDecls),
+                     EntryName, EntryHash, Loaded0, Loaded1, ChildFiles,
+                     ChildTables, EdgeDecls),
     parse_dl_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
-    module_hash(BaseDir, EntryAbs, EntryHash),
     rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls),
     append([OwnDecls0, [module_decl(EntryName, EntryHash)], RelModuleDecls,
-            MountDecls],
+            EdgeDecls],
            OwnDecls),
     append(ChildFiles,
            [file(EntryAbs, OwnDecls, OwnRules, OwnQueries, OwnBindings,

@@ -1263,18 +1263,17 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
                                 SplicedRows, SplicedModules, FirstRelId),
     Modules0 = [mod(ModuleName, ModuleHash, ModuleId) | SplicedModules],
     module_id_by_hash(Modules0, HashIdMap),
-    module_id_by_name(Modules0, NameIdMap),
     rel_module_map(Decls, HashIdMap, RelModuleMap),
     Modules = modules(ModuleHash, ModuleId, RelModuleMap),
     catalog_rel_id_map(RelPlans, FirstRelId, [], RelIdMap),
     catalog_rel_block_end(RelPlans, FirstRelId, RelBlockEnd),
     catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, RelBlockEnd,
                       NestMap, RoomRows, IdAfterRooms),
-    catalog_mount_rows(Decls, NameIdMap, IdAfterRooms, MountRows, FinalId),
+    catalog_module_edge_rows(Decls, HashIdMap, IdAfterRooms, EdgeRows, FinalId),
     catalog_rel_rows(RelPlans, BodiesMap, Modules, RelIdMap,
                      ListIdMap, NestMap, FirstRelId, _, RelRows),
     append([PrimitiveRows, ListRowRows, [ModuleRow], SplicedRows, RelRows,
-            RoomRows, MountRows],
+            RoomRows, EdgeRows],
            AllRows),
     Context = ctx(Modules, RelIdMap, ListIdMap, FinalId).
 
@@ -1297,9 +1296,6 @@ spliced_module_rows([Name-Hash | Rest], Id0, [Row | More],
 
 module_id_by_hash(Modules, Map) :-
     findall(Hash-Id, member(mod(_, Hash, Id), Modules), Map).
-
-module_id_by_name(Modules, Map) :-
-    findall(Name-Id, member(mod(Name, _, Id), Modules), Map).
 
 % Decls carry the used files first, so a rel both a used module and the entry
 % declare keys under the module that declared it first.
@@ -1326,25 +1322,34 @@ rel_module(modules(ModuleHash, ModuleId, RelModuleMap), Name, RelHash,
     ;   RelHash = ModuleHash, RelModuleId = ModuleId
     ).
 
-% local_name is the ALIAS, parent_id the mounting module's row, module_id the
-% MOUNTED module's row: the graft, readable without re-reading source.
-catalog_mount_rows(Decls, ModuleIdMap, Id0, Rows, IdEnd) :-
-    findall(Alias-Mounted-Owner,
-            member(mount_decl(Alias, Mounted, Owner, _Paths), Decls),
-            Mounts0),
-    sort(Mounts0, Mounts),
-    mount_rows(Mounts, ModuleIdMap, Id0, Rows, IdEnd).
+% The module graph as ordinary rows: parent_id is the CONSUMER's module row,
+% module_id the PRODUCER's, kind use or mount, local_name the alias or name.
+catalog_module_edge_rows(Decls, HashIdMap, Id0, Rows, IdEnd) :-
+    findall(Kind-LocalName-ConsumerHash-ProducerHash,
+            member(module_edge_decl(ConsumerHash, ProducerHash, Kind,
+                                    LocalName),
+                   Decls),
+            Edges0),
+    sort(Edges0, Edges),
+    module_edge_rows(Edges, HashIdMap, Id0, Rows, IdEnd).
 
-mount_rows([], _, Id, [], Id).
-mount_rows([Alias-Mounted-Owner | Rest], ModuleIdMap, Id0, [Row | More],
-           IdEnd) :-
-    memberchk(Owner-OwnerId, ModuleIdMap),
-    memberchk(Mounted-MountedId, ModuleIdMap),
-    short_hash(Owner, OwnerHash),
-    rel_h_id(OwnerHash, Alias, 0, MountHId),
-    Row = row(Id0, OwnerId, 0, Alias, mount, 0, 0, MountedId, MountHId, '', ''),
+module_edge_rows([], _, Id, [], Id).
+module_edge_rows([Edge | Rest], HashIdMap, Id0, [Row | More], IdEnd) :-
+    Edge = Kind-LocalName-ConsumerHash-ProducerHash,
+    memberchk(ConsumerHash-ConsumerId, HashIdMap),
+    memberchk(ProducerHash-ProducerId, HashIdMap),
+    module_edge_h_id(ConsumerHash, ProducerHash, Kind, LocalName, EdgeHId),
+    Row = row(Id0, ConsumerId, 0, LocalName, Kind, 0, 0, ProducerId, EdgeHId,
+              '', ''),
     Id1 is Id0 + 1,
-    mount_rows(Rest, ModuleIdMap, Id1, More, IdEnd).
+    module_edge_rows(Rest, HashIdMap, Id1, More, IdEnd).
+
+% BOTH endpoints enter the edge identity, so an edge says which resolved
+% position it connects and a re-parented consumer mints a different edge.
+module_edge_h_id(ConsumerHash, ProducerHash, Kind, LocalName, EdgeHId) :-
+    format(atom(Key), '~w/~w/~w/~w',
+           [ConsumerHash, Kind, LocalName, ProducerHash]),
+    short_hash(Key, EdgeHId).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
     catalog_primitive_rows(StartId, [text, int, float, bool, json], [], PrimitiveRows).
