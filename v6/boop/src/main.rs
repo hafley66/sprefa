@@ -170,6 +170,8 @@ enum SubCmd {
         #[arg(long)]
         r#ref: Option<String>,
         #[arg(long)]
+        goal: Option<String>,
+        #[arg(long)]
         mail_dir: Option<PathBuf>,
         #[arg(long, default_value_t = 3)]
         resolve_wait: u64,
@@ -247,6 +249,8 @@ enum SubCmd {
         #[arg(long)]
         socket: Option<String>,
         #[arg(long)]
+        goal: Option<String>,
+        #[arg(long)]
         mail_dir: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
@@ -271,6 +275,8 @@ enum SubCmd {
         /// The lane that summoned this one.
         #[arg(long)]
         parent: Option<String>,
+        #[arg(long)]
+        goal: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -407,6 +413,7 @@ fn main() -> Result<()> {
             socket,
             body,
             r#ref,
+            goal,
             mail_dir,
             resolve_wait,
             main_tree,
@@ -426,6 +433,7 @@ fn main() -> Result<()> {
                 socket,
                 body,
                 r#ref,
+                goal,
                 mail_dir,
                 resolve_wait,
                 main_tree,
@@ -479,6 +487,7 @@ fn main() -> Result<()> {
             branch,
             base_sha,
             socket,
+            goal,
             mail_dir,
             dry_run,
         } => run_lane(
@@ -494,6 +503,7 @@ fn main() -> Result<()> {
                 branch,
                 base_sha,
                 socket,
+                goal,
                 mail_dir,
                 dry_run,
             },
@@ -507,6 +517,7 @@ fn main() -> Result<()> {
             model,
             mode,
             parent,
+            goal,
             mail_dir,
         } => run_adopt(
             &name,
@@ -517,6 +528,7 @@ fn main() -> Result<()> {
             model.as_deref(),
             mode.as_deref(),
             parent.as_deref(),
+            goal.as_deref(),
             mail_dir.as_deref(),
         ),
         SubCmd::Prune { mail_dir } => run_prune(mail_dir.as_deref()),
@@ -993,6 +1005,8 @@ struct DispatchArgs {
     worktree_dir: Option<PathBuf>,
     /// The lane that summoned this one; written to the route's `parent`.
     parent: Option<String>,
+    /// What the lane is running toward; written to the route and dispatch mail.
+    goal: Option<String>,
     /// Shell appended after the harness command; `lane create --parent`
     /// composes the completion hail here.
     on_exit: Option<String>,
@@ -1011,7 +1025,12 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         Some(sha) => sha.clone(),
         None => git_head(&args.cwd)?.unwrap_or_else(|| "HEAD".into()),
     };
-    let body = args.body.clone().unwrap_or_else(|| args.cmd.clone());
+    let mut body = args.body.clone().unwrap_or_else(|| args.cmd.clone());
+    // A dispatch's goal rides the route's `goal` field; embed it in the mail
+    // row body too so history states the goal without a registry lookup.
+    if let Some(goal) = &args.goal {
+        body = format!("{body}\n[goal] {goal}");
+    }
 
     let message = bus::Message {
         id: bus::mint_id(),
@@ -1067,6 +1086,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         session_id: args.session_id.clone(),
         source_path: None,
         parent: args.parent.clone(),
+        goal: args.goal.clone(),
     };
     write_route(&dir, &args.to, route)?;
     append_message(&dir, &message)?;
@@ -1431,6 +1451,7 @@ struct LaneArgs {
     branch: Option<String>,
     base_sha: Option<String>,
     socket: Option<String>,
+    goal: Option<String>,
     mail_dir: Option<PathBuf>,
     dry_run: bool,
 }
@@ -1507,6 +1528,9 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
         if let Some(parent) = &args.parent {
             println!("parent: {parent} (completion hail appended on exit)");
         }
+        if let Some(goal) = &args.goal {
+            println!("goal: {goal}");
+        }
         return Ok(());
     }
     run_dispatch(
@@ -1534,6 +1558,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             branch: Some(branch),
             worktree_dir,
             parent: args.parent.clone(),
+            goal: args.goal.clone(),
             on_exit,
         },
     )
@@ -1557,6 +1582,7 @@ fn run_adopt(
     model: Option<&str>,
     mode: Option<&str>,
     parent: Option<&str>,
+    goal: Option<&str>,
     mail_dir_arg: Option<&Path>,
 ) -> Result<()> {
     if !tmux::has_session(None, tmux_session)? {
@@ -1573,6 +1599,7 @@ fn run_adopt(
         session_id: session_id.map(str::to_owned),
         source_path: None,
         parent: parent.map(str::to_owned),
+        goal: goal.map(str::to_owned),
     };
     write_route(&dir, name, route)?;
     println!("adopted {name} -> tmux {tmux_session}");
@@ -1637,6 +1664,9 @@ fn route_to_json(route: &Route) -> serde_json::Value {
     }
     if let Some(parent) = &route.parent {
         object.insert("parent".into(), serde_json::json!(parent));
+    }
+    if let Some(goal) = &route.goal {
+        object.insert("goal".into(), serde_json::json!(goal));
     }
     serde_json::Value::Object(object)
 }
@@ -1721,6 +1751,7 @@ mod tests {
                 session_id: None,
                 source_path: None,
                 parent: None,
+                goal: None,
             },
         )
         .unwrap();
@@ -1729,6 +1760,33 @@ mod tests {
         assert!(
             !routes.contains_key("l"),
             "a finished lane must leave no registry row"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RECEIPT (job 1). A route written with --goal round-trips through the
+    /// registry.
+    #[test]
+    fn route_goal_round_trips() {
+        let dir = temp_mail_dir();
+        let route = Route {
+            harness: Some("opencode".into()),
+            tmux: Some("lane-x".into()),
+            cwd: None,
+            model: None,
+            mode: None,
+            session_id: None,
+            source_path: None,
+            parent: None,
+            goal: Some("ship the edge".into()),
+        };
+        write_route(&dir, "child", route).unwrap();
+        let routes = read_routes(&dir).unwrap();
+        assert_eq!(
+            routes["child"].goal.as_deref(),
+            Some("ship the edge"),
+            "registry: {:#?}",
+            routes
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1743,6 +1801,7 @@ mod tests {
             session_id: None,
             source_path: None,
             parent: parent.map(str::to_owned),
+            goal: None,
         }
     }
 
@@ -1944,6 +2003,8 @@ enum LaneCmd {
         #[arg(long)]
         socket: Option<String>,
         #[arg(long)]
+        goal: Option<String>,
+        #[arg(long)]
         mail_dir: Option<PathBuf>,
         #[arg(long)]
         dry_run: bool,
@@ -1972,6 +2033,8 @@ enum LaneCmd {
         /// The lane that summoned this one.
         #[arg(long)]
         parent: Option<String>,
+        #[arg(long)]
+        goal: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -2335,6 +2398,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             branch,
             base_sha,
             socket,
+            goal,
             mail_dir,
             dry_run,
         } => run_lane(
@@ -2350,6 +2414,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 branch,
                 base_sha,
                 socket,
+                goal,
                 mail_dir,
                 dry_run,
             },
@@ -2364,6 +2429,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             model,
             mode,
             parent,
+            goal,
             mail_dir,
         } => run_adopt(
             &lane,
@@ -2374,6 +2440,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             model.as_deref(),
             mode.as_deref(),
             parent.as_deref(),
+            goal.as_deref(),
             mail_dir.as_deref(),
         ),
         LaneCmd::Delete {
