@@ -163,5 +163,24 @@ Same task, ramping nodes under a 700 MB memcap. dd is resident so it hits the wa
 | 2880002 | 630 ms / 1104 MB rss | 1350 ms / 876 MB rss | 6378 ms / 866 MB rss |
 | 5760002 | **ABORT** (>700 MB) | **ABORT** (>700 MB) | **ABORT** (>700 MB) |
 
+## Breakpoint ramp, isolated (G6 closed)
 
-_Report generated in 863s._
+Same task, ramping nodes under the 700 MB memcap, but with a STREAMING graph generator (rows/deps emitted on the fly, O(width) working memory) so the SHARED in-RAM builder (benchgraph's `Vec<Vec>` + row/edge Vecs) no longer masks the resident engine. Only dd is resident; only dd can blow the gun. The store engines keep retract state on disk (host_peak ~0.1 MB flat), so they complete where dd aborts — the resident wall vs the no-wall contrast, observed not asserted. Parity vs benchgraph banked at DAG 960k (input hash `ef153ee39296ef0f`, survivors 800002); the three engines agree on the output hash. Full receipt: `DD_WALL_REPORT.md`.
+
+| nodes | dd retract ms | dd host_peak MB | dd rss MB |
+|---:|---:|---:|---:|
+| 2880002 | 655.7 | 617.97 | 983.9 |
+| 2976002 | 687.0 | 635.95 | 1053.3 |
+| 3072002 | 733.2 | 653.95 | 973.3 |
+| 3168002 | **ABORT** (> 700 MB) | | |
+
+Store-engine contrast @ **3168002 nodes** (dd aborted above):
+
+| engine | retract ms | stmts | host_peak MB | rss MB | db MB | survivors |
+|---|---:|---:|---:|---:|---:|---:|
+| count | 1497.0 | 23 | 0.180 | 855.1 | 203.50 | 2640001 |
+| dred | 6184.5 | 53 | 0.180 | 893.3 | 203.50 | 2640001 |
+
+Fit: **224.1 B/node** (slope of host_peak vs nodes over the surviving ramp). Projecting the matrix memcap: ~**4462402 nodes per GB resident**; **53548821 nodes at the 12 GB matrix memcap** (4462402 nodes/GB × 12).
+
+_Report generated for the G6-isolated ramp appended above. See `DD_WALL_REPORT.md` for the parity receipt and full run._
