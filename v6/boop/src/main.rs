@@ -685,12 +685,35 @@ fn run_sync_all(registry: &Registry, rebuild: bool) -> Result<()> {
     } else {
         refuse_stale(&store)?;
     }
+    let routes = bus::read_routes(&mail_dir(None)?).unwrap_or_default();
     store.begin()?;
     let result = (|| {
         let mut stat = ident::SyncStat::default();
+        let offsets = store.all_cursor_offsets()?;
         for adapter in registry.all() {
             for session in adapter.sessions()? {
-                stat.add(ident::sync_session(&store, adapter.as_ref(), &session)?);
+                // Freshness gate: a transcript whose length still equals its
+                // consumed cursor needs no re-read (walking+stat-ing all files
+                // costs ~0.02s; opening every 2.86 GB corpus does not). A
+                // shorter file is the existing truncation path, left to sync.
+                let key = session.path.display().to_string();
+                let at_cursor = offsets
+                    .get(&(session.session_id.clone(), key))
+                    .copied()
+                    .unwrap_or(0);
+                let unchanged = std::fs::metadata(&session.path)
+                    .map(|meta| meta.len() == at_cursor)
+                    .unwrap_or(false);
+                if unchanged {
+                    continue;
+                }
+                let pid = session_route_pid(&routes, &session);
+                stat.add(ident::sync_session_with_pid(
+                    &store,
+                    adapter.as_ref(),
+                    &session,
+                    pid,
+                )?);
             }
         }
         Ok::<ident::SyncStat, anyhow::Error>(stat)
@@ -756,6 +779,7 @@ fn run_follow(registry: &Registry) -> Result<()> {
             (session.session_id.clone(), mtime)
         })
         .collect();
+    let routes = bus::read_routes(&mail_dir(None)?).unwrap_or_default();
     loop {
         let store = ident::Store::open(ident::Store::default_path()?)?;
         store.begin()?;
@@ -765,12 +789,35 @@ fn run_follow(registry: &Registry) -> Result<()> {
                 continue;
             }
             let adapter = harness_by_id(registry, harness_id)?;
-            let _ = ident::sync_session(&store, adapter, session)?;
+            let pid = session_route_pid(&routes, session);
+            let _ = ident::sync_session_with_pid(&store, adapter, session, pid)?;
             last_mtime.insert(session.session_id.clone(), mtime);
         }
         store.commit()?;
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
+}
+
+/// The pane pid for a session that maps to a lane route (by session id or cwd).
+/// A session with no route owns no process and yields `None`, never a guess.
+fn session_route_pid(
+    routes: &BTreeMap<String, bus::Route>,
+    session: &boop::harness::SessionRef,
+) -> Option<i64> {
+    let route = routes
+        .iter()
+        .find(|(_, route)| session_matches_route(route, session));
+    route
+        .and_then(|(_, route)| route.tmux.as_deref())
+        .and_then(|target| tmux::pane_pid(None, target))
+        .map(i64::from)
+}
+
+/// A routeless session must never borrow a pid: two `None` cwds are not a
+/// match, only a shared session id or a shared concrete cwd is.
+fn session_matches_route(route: &bus::Route, session: &boop::harness::SessionRef) -> bool {
+    route.session_id.as_deref() == Some(session.session_id.as_str())
+        || (route.cwd.is_some() && route.cwd.as_deref() == session.cwd.as_deref())
 }
 
 fn file_mtime_ms(path: &std::path::Path) -> Result<u64> {
@@ -957,15 +1004,16 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
             .as_deref()
             .and_then(|target| tmux::pane_pid(None, target))
             .unwrap_or(0);
-        match snapshot.process(pane_pid) {
-            Some(info) => {
-                let uptime = info.start_time_secs;
+        match snapshot.tree_sum(pane_pid) {
+            Some(sum) => {
+                let now = now_unix_secs();
+                let uptime = proc::uptime_secs(sum.start_time_secs, now);
                 line(&format!(
                     "{}\t{}\t{}\t{:.1}\t{}\t{}",
                     name,
                     pane_pid,
-                    info.rss_bytes / 1024,
-                    info.cpu_percent,
+                    sum.rss_bytes / 1024,
+                    sum.cpu_percent,
                     uptime,
                     snapshot.descendent_count(pane_pid),
                 ));
@@ -1705,7 +1753,10 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
-    use super::{resolve_dispatch_harness, run_lane_delete, write_route};
+    use super::{
+        append_message, resolve_dispatch_harness, run_lane_delete, session_matches_route,
+        write_route,
+    };
     use boop::bus::{read_routes, Route};
     use boop::registry::Registry;
 
@@ -1764,6 +1815,68 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    fn result_message(id: &str, lane: &str, rc: i32) -> boop::bus::Message {
+        boop::bus::Message {
+            id: id.into(),
+            from: lane.into(),
+            to: lane.into(),
+            from_timestamp: "2026-08-01T00:00:00.000Z".into(),
+            to_timestamp: None,
+            kind: "result".into(),
+            reply_to: None,
+            body: format!("lane {lane} done rc={rc}"),
+            r#ref: None,
+        }
+    }
+
+    /// RECEIPT (Job 3). A result row that already exists satisfies the wait
+    /// immediately with the rc its body names.
+    #[test]
+    fn wait_returns_rc_from_a_preexisting_result_row() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        append_message(&dir, &result_message("m-1", "l", 5)).unwrap();
+        let outcome = super::wait_for_result(
+            &dir,
+            "l",
+            Some(std::time::Duration::from_secs(2)),
+            std::time::Duration::from_millis(10),
+        );
+        assert_eq!(outcome, Some(5));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RECEIPT (Job 3). An empty mailbox times out to `None`, which the verb
+    /// maps to exit code 124.
+    #[test]
+    fn wait_times_out_when_no_result_row_arrives() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let outcome = super::wait_for_result(
+            &dir,
+            "l",
+            Some(std::time::Duration::from_millis(60)),
+            std::time::Duration::from_millis(10),
+        );
+        assert_eq!(
+            outcome, None,
+            "timeout returns the None the verb exits 124 on"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A non-result row for the lane never satisfies the wait.
+    #[test]
+    fn a_non_result_row_does_not_satisfy_the_wait() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut message = result_message("m-2", "l", 3);
+        message.kind = "note".into();
+        append_message(&dir, &message).unwrap();
+        assert_eq!(super::lane_result_rc(&dir, "l"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// RECEIPT (job 1). A route written with --goal round-trips through the
     /// registry.
     #[test]
@@ -1789,6 +1902,48 @@ mod tests {
             routes
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn session_with_cwd(cwd: Option<&str>) -> boop::harness::SessionRef {
+        boop::harness::SessionRef {
+            harness: "opencode",
+            session_id: "ses-1".into(),
+            nickname: "ses-1".into(),
+            path: std::path::PathBuf::from("/tmp/x.jsonl"),
+            cwd: cwd.map(str::to_owned),
+            git_branch: None,
+            modified_ms: 0,
+            size: 0,
+            tmux: None,
+            tmux_socket: None,
+            parent: None,
+        }
+    }
+
+    #[test]
+    fn none_cwd_on_both_sides_is_not_a_route_match() {
+        let mut route = route_with(None);
+        route.cwd = None;
+        assert!(!session_matches_route(&route, &session_with_cwd(None)));
+    }
+
+    #[test]
+    fn shared_concrete_cwd_matches_and_none_session_cwd_does_not() {
+        let mut route = route_with(None);
+        route.cwd = Some("/repo/wt".into());
+        assert!(session_matches_route(
+            &route,
+            &session_with_cwd(Some("/repo/wt"))
+        ));
+        assert!(!session_matches_route(&route, &session_with_cwd(None)));
+    }
+
+    #[test]
+    fn session_id_match_needs_no_cwd() {
+        let mut route = route_with(None);
+        route.session_id = Some("ses-1".into());
+        route.cwd = None;
+        assert!(session_matches_route(&route, &session_with_cwd(None)));
     }
 
     fn route_with(parent: Option<&str>) -> Route {
@@ -2124,6 +2279,16 @@ enum LaneCmd {
     Message {
         #[command(subcommand)]
         cmd: LaneMessageCmd,
+    },
+    /// Wait for the lane's result row, then exit with the rc it names. `--timeout`
+    /// seconds exits 124; a row that already exists returns its rc immediately.
+    Wait {
+        lane: String,
+        /// Seconds to wait before exiting 124; 0 waits forever.
+        #[arg(long, default_value_t = 0)]
+        timeout: u64,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
     },
 }
 
@@ -2521,6 +2686,11 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 run_list(mail_dir.as_deref(), Some(&lane), true)
             }
         },
+        LaneCmd::Wait {
+            lane,
+            timeout,
+            mail_dir,
+        } => run_lane_wait(mail_dir.as_deref(), &lane, timeout),
     }
 }
 
@@ -2651,6 +2821,64 @@ fn run_lane_pane(
     Ok(())
 }
 
+/// `beep lane wait`: poll for a `kind=result` row from `lane`, exit with its
+/// rc; `--timeout` seconds exits 124, a pre-existing row returns immediately.
+fn run_lane_wait(mail_dir_arg: Option<&Path>, lane: &str, timeout_secs: u64) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    let deadline = if timeout_secs == 0 {
+        None
+    } else {
+        Some(std::time::Duration::from_secs(timeout_secs))
+    };
+    match wait_for_result(&dir, lane, deadline, std::time::Duration::from_secs(1)) {
+        Some(rc) => std::process::exit(rc),
+        None => std::process::exit(124),
+    }
+}
+
+/// The rc from the lane's most recent `kind=result` mailbox row (`lane <id>
+/// done rc=N`), `None` when no result row for that lane exists yet.
+fn lane_result_rc(dir: &std::path::Path, lane: &str) -> Option<i32> {
+    let mut messages = Vec::new();
+    for box_path in bus::read_boxes(dir).unwrap_or_default() {
+        messages.extend(bus::parse_box(&box_path));
+    }
+    let folded = bus::fold(&messages);
+    folded
+        .iter()
+        .rev()
+        .find(|message| message.kind == "result" && message.to == lane)
+        .and_then(|message| parse_result_rc(&message.body))
+}
+
+fn parse_result_rc(body: &str) -> Option<i32> {
+    body.split_whitespace().find_map(|token| {
+        token
+            .strip_prefix("rc=")
+            .and_then(|value| value.parse().ok())
+    })
+}
+
+/// Poll `lane_result_rc` every `interval` until a result appears or `deadline`
+/// passes (`None` waits forever). `None` on deadline is a timeout.
+fn wait_for_result(
+    dir: &std::path::Path,
+    lane: &str,
+    deadline: Option<std::time::Duration>,
+    interval: std::time::Duration,
+) -> Option<i32> {
+    let start = std::time::Instant::now();
+    loop {
+        if let Some(rc) = lane_result_rc(dir, lane) {
+            return Some(rc);
+        }
+        if deadline.is_some_and(|limit| start.elapsed() >= limit) {
+            return None;
+        }
+        std::thread::sleep(interval);
+    }
+}
+
 /// `beep ps`, optionally narrowed to one lane.
 fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
@@ -2668,16 +2896,20 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<
             .as_deref()
             .and_then(|target| tmux::pane_pid(None, target))
             .unwrap_or(0);
-        match snapshot.process(pane_pid) {
-            Some(info) => println!(
-                "{}\t{}\t{}\t{:.1}\t{}\t{}",
-                name,
-                pane_pid,
-                info.rss_bytes / 1024,
-                info.cpu_percent,
-                info.start_time_secs,
-                snapshot.descendent_count(pane_pid),
-            ),
+        match snapshot.tree_sum(pane_pid) {
+            Some(sum) => {
+                let now = now_unix_secs();
+                let uptime = proc::uptime_secs(sum.start_time_secs, now);
+                println!(
+                    "{}\t{}\t{}\t{:.1}\t{}\t{}",
+                    name,
+                    pane_pid,
+                    sum.rss_bytes / 1024,
+                    sum.cpu_percent,
+                    uptime,
+                    snapshot.descendent_count(pane_pid),
+                );
+            }
             // A dead route prints only when asked for by name or --all.
             None if all || lane.is_some() => {
                 println!("{}\t{}\t-\t-\t-\t-", name, pane_pid);
@@ -2686,6 +2918,13 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<
         }
     }
     Ok(())
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------

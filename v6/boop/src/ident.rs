@@ -19,12 +19,9 @@ pub struct Store {
     connection: Connection,
 }
 
-/// Bumped whenever stored rows mean something different. 2 = dense per-session
-/// turn ordinals and per-transcript cursors. 3 = token usage. 4 = rate table.
-/// 5 = agent_fetch covers searches, not only url fetches. 6 = agent_live_span
-/// records historical liveness, agent_touch carries canonical verbs, and
-/// agent_edge carries temporal evidence. 7 = sync cursors carry record fields.
-pub const SCHEMA_VERSION: i64 = 7;
+/// Bumped whenever stored rows mean something different. 8 = agent_pr keyed
+/// (session_id, turn, pr_url_id): a turn with two PRs keeps two rows.
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// A row returned to the CLI, joined back from ids to the TEXT the query
 /// surface exposes.
@@ -112,12 +109,30 @@ impl Store {
         if tables_before == 0 {
             store.stamp_version()?;
         } else if store.schema_version()? < SCHEMA_VERSION {
+            // Each step runs only from the version it leaves, so a store that
+            // already migrated 6->7 never re-runs those ALTERs.
+            if store.schema_version()? < 7 {
+                store.connection.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS dict_record
+                       (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                     ALTER TABLE sync_cursor ADD COLUMN record_id_id INTEGER;
+                     ALTER TABLE sync_cursor ADD COLUMN turn INTEGER NOT NULL DEFAULT 0;
+                     ALTER TABLE sync_cursor ADD COLUMN timestamp INTEGER NOT NULL DEFAULT 0;
+                     PRAGMA user_version = 7;",
+                )?;
+            }
+            // 7 -> 8: agent_pr carries pr_url_id in its key.
             store.connection.execute_batch(
-                "CREATE TABLE IF NOT EXISTS dict_record
-                   (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
-                 ALTER TABLE sync_cursor ADD COLUMN record_id_id INTEGER;
-                 ALTER TABLE sync_cursor ADD COLUMN turn INTEGER NOT NULL DEFAULT 0;
-                 ALTER TABLE sync_cursor ADD COLUMN timestamp INTEGER NOT NULL DEFAULT 0;",
+                "CREATE TABLE agent_pr_new (
+                   session_id INTEGER NOT NULL,
+                   turn INTEGER NOT NULL,
+                   pr_url_id INTEGER NOT NULL,
+                   PRIMARY KEY (session_id, turn, pr_url_id)
+                 ) WITHOUT ROWID;
+                 INSERT INTO agent_pr_new (session_id, turn, pr_url_id)
+                   SELECT session_id, turn, pr_url_id FROM agent_pr;
+                 DROP TABLE agent_pr;
+                 ALTER TABLE agent_pr_new RENAME TO agent_pr;",
             )?;
             store.stamp_version()?;
         }
@@ -564,6 +579,36 @@ impl Store {
         Ok(())
     }
 
+    /// The consumed byte offset for a transcript, 0 when never synced. The
+    /// sync freshness gate compares it to `metadata.len()` to skip re-reads.
+    pub fn cursor_offset(&self, session: &str, path: &str) -> Result<u64> {
+        self.get_cursor(session, path)
+    }
+
+    /// Every (session, transcript) cursor offset, keyed so the freshness gate
+    /// does one read instead of interning a path per session.
+    pub fn all_cursor_offsets(&self) -> Result<std::collections::HashMap<(String, String), u64>> {
+        let mut statement = self.connection.prepare(
+            "SELECT ds.value, dp.value, sc.offset
+             FROM sync_cursor sc
+             JOIN dict_session ds ON ds.id = sc.session_id
+             JOIN dict_path dp ON dp.id = sc.path_id",
+        )?;
+        let mut out = std::collections::HashMap::new();
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (session, path, offset) = row?;
+            out.insert((session, path), offset as u64);
+        }
+        Ok(out)
+    }
+
     /// Record a spawn edge between two known sessions, stamped at the current
     /// wall clock.
     pub fn add_edge(&self, parent: &str, child: &str, kind: &str) -> Result<()> {
@@ -893,6 +938,17 @@ pub fn sync_session(
     adapter: &dyn crate::harness::Harness,
     session: &SessionRef,
 ) -> Result<SyncStat> {
+    sync_session_with_pid(store, adapter, session, None)
+}
+
+/// The pid-observing variant. The observation path (a lane route's pane pid)
+/// names this session's process, so agent_live.pid can link session to process.
+pub fn sync_session_with_pid(
+    store: &Store,
+    adapter: &dyn crate::harness::Harness,
+    session: &SessionRef,
+    pid: Option<i64>,
+) -> Result<SyncStat> {
     let key = session.path.display().to_string();
     let from = store.get_cursor(&session.session_id, &key)?;
     store.set_cursor(&session.session_id, &key, from)?;
@@ -911,7 +967,7 @@ pub fn sync_session(
         } else {
             "idle"
         },
-        None,
+        pid,
         session.tmux.as_deref(),
     )?;
     if ingested.stat.written > 0 || ingested.stat.usage_written > 0 {
@@ -1365,7 +1421,7 @@ CREATE TABLE IF NOT EXISTS agent_pr (
   session_id INTEGER NOT NULL,
   turn INTEGER NOT NULL,
   pr_url_id INTEGER NOT NULL,
-  PRIMARY KEY (session_id, turn)
+  PRIMARY KEY (session_id, turn, pr_url_id)
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS agent_span (
@@ -1463,7 +1519,7 @@ mod tests {
 
     use crate::harness::SessionRef;
 
-    use super::{sync_session, Store};
+    use super::{sync_session, sync_session_with_pid, Store};
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("boop_rel_{}_{}", std::process::id(), name))
@@ -1903,6 +1959,156 @@ mod tests {
         assert!(!plan.contains("SCAN agent_usage"), "plan scans: {plan}");
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (Job 1). A turn with two PR urls keeps two rows; the key is
+    /// (session_id, turn, pr_url_id) and a re-sync dedups on the full key.
+    #[test]
+    fn two_prs_in_one_turn_survive_and_resync_dedups() {
+        let db_path = temp_path("prdb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+
+        store
+            .add_pr("s1", 1, "https://github.com/a/b/pull/1")
+            .unwrap();
+        store
+            .add_pr("s1", 1, "https://github.com/a/b/pull/2")
+            .unwrap();
+        let n: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM agent_pr", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(n, 2, "two urls on one turn must both survive");
+
+        // A re-sync repeats the same urls; INSERT OR IGNORE dedups by the full
+        // key, so no row count can grow.
+        store
+            .add_pr("s1", 1, "https://github.com/a/b/pull/1")
+            .unwrap();
+        store
+            .add_pr("s1", 1, "https://github.com/a/b/pull/2")
+            .unwrap();
+        let n: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM agent_pr", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(n, 2, "re-sync must not grow the row count");
+
+        // The query surface exposes both urls for the turn.
+        let (_, urls) = store
+            .passthrough(
+                "SELECT dp.value FROM agent_pr pr
+                 JOIN dict_pr dp ON dp.id = pr.pr_url_id
+                 WHERE pr.session_id = (SELECT id FROM dict_session WHERE value = 's1')
+                 ORDER BY dp.value",
+            )
+            .unwrap();
+        assert_eq!(urls.len(), 2);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (Job 1 migration). A v7 store (agent_pr keyed on
+    /// (session_id, turn)) rebuilds onto the three-column key and keeps rows.
+    #[test]
+    fn a_v7_store_migrates_agent_pr_onto_the_three_column_key() {
+        let db_path = temp_path("prmig");
+        let _ = std::fs::remove_file(&db_path);
+        {
+            // The v7 store: agent_pr keyed on (session_id, turn), sync_cursor
+            // without the record fields, stamped 7.
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "PRAGMA user_version = 7;
+                 CREATE TABLE dict_session (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 CREATE TABLE dict_pr (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 CREATE TABLE agent_session (
+                   session_id INTEGER PRIMARY KEY,
+                   harness_id INTEGER NOT NULL,
+                   nickname TEXT,
+                   cwd_id INTEGER,
+                   branch_id INTEGER,
+                   started_ts INTEGER);
+                 CREATE TABLE dict_harness (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 CREATE TABLE agent_pr (
+                   session_id INTEGER NOT NULL,
+                   turn INTEGER NOT NULL,
+                   pr_url_id INTEGER NOT NULL,
+                   PRIMARY KEY (session_id, turn)
+                 ) WITHOUT ROWID;
+                 CREATE TABLE sync_cursor (
+                   session_id INTEGER NOT NULL,
+                   path_id INTEGER NOT NULL,
+                   offset INTEGER NOT NULL,
+                   PRIMARY KEY (session_id, path_id)
+                 ) WITHOUT ROWID;
+                 CREATE TABLE dict_path (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 INSERT INTO dict_session (id, value) VALUES (1, 's1');
+                 INSERT INTO dict_pr (id, value) VALUES (1, 'https://github.com/a/b/pull/1');
+                 INSERT INTO agent_pr (session_id, turn, pr_url_id) VALUES (1, 1, 1);",
+            )
+            .unwrap();
+        }
+        {
+            let store = Store::open(db_path.clone()).unwrap();
+            assert_eq!(store.schema_version().unwrap(), super::SCHEMA_VERSION);
+            // The migrated turn endorses a second urls; it must survive.
+            store
+                .add_pr("s1", 1, "https://github.com/a/b/pull/2")
+                .unwrap();
+            let (_, rows) = store
+                .passthrough("SELECT pr_url_id FROM agent_pr WHERE session_id = 1 AND turn = 1")
+                .unwrap();
+            assert_eq!(rows.len(), 2, "post-migration, both urls survive one turn");
+        }
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (Job 4). The pid-observing sync stores the lane pane pid on
+    /// the agent_live row, so a session can be linked to its process.
+    #[test]
+    fn an_observed_live_lane_row_carries_its_pid() {
+        let db_path = temp_path("pid4db");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+
+        let lines_path = temp_path("pid4log");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&lines_path)
+            .unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"user","sessionId":"ses-1","message":"go"}}"#
+        )
+        .unwrap();
+        drop(file);
+        let session = session_for(&lines_path);
+        sync_session_with_pid(
+            &store,
+            &crate::harness::claude::Claude,
+            &session,
+            Some(4242),
+        )
+        .unwrap();
+        let pid: Option<i64> = store
+            .connection
+            .query_row(
+                "SELECT pid FROM agent_live
+                 WHERE session_id = (SELECT id FROM dict_session WHERE value = 'ses-1')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pid, Some(4242), "the observed live row must carry its pid");
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&lines_path);
     }
 
     #[test]

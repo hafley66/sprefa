@@ -107,3 +107,71 @@ text:   demo-lane (-) [dead] -- prove the goal edge renders
 ndjson: {"lane":"demo-lane",...,"goal":"prove the goal edge renders",...}
 real registry: every row carries "goal":null
 ```
+
+## boop-store-close lane
+
+Agent key: `agent_pr`, StatusRow sources, sync cost gate + `agent_live.pid`,
+`beep lane wait`. Head was `29071a5b` (boop-goal-edge beneath). All in v6/boop.
+
+Job 1 (`22cdfaf8`) `boop: agent_pr PK collapse to (session_id, turn, pr_url_id)`:
+- `agent_pr` PRIMARY KEY changed from `(session_id, turn)` to
+  `(session_id, turn, pr_url_id)`: a turn mentioning two PRs keeps two rows.
+- SCHEMA_VERSION 7 -> 8; the migrate-on-open path now runs per version step, so
+  a v7 store that already applied the 6->7 record columns does not re-run those
+  ALTERs. The 7->8 step rebuilds `agent_pr` (create new, copy, drop, rename).
+- Tests: `two_prs_in_one_turn_survive_and_resync_dedups`,
+  `a_v7_store_migrates_agent_pr_onto_the_three_column_key`.
+
+Job 2 (`e21a951c`) `boop: beep ps and db status report tree-summed rss/cpu`:
+- `proc.rs` gains `TreeSum`, `tree_sum_of`, and `uptime_secs`. `beep ps` and
+  `measure` sum rss_kb/cpu_pct across the pane pid's descendant tree and print
+  `now - start_time` (a duration) not the epoch start.
+- `status_rows` (query.rs) replaces the hardcoded `NULL AS rss_kb/cpu_pct/
+  uptime_sec` with the same tree-sum path when a live pid exists.
+- Lane join: `StatusRow.lane` stays `None` in the store row; `db status`
+  (main.rs) joins the lane by route session_id OR cwd, the clean join, never a
+  guess. Verified against the goal-edge lane's machinery.
+- Tests: `tree_sum_exceeds_pane_only_on_a_fixture_tree`,
+  `uptime_is_a_duration_not_an_epoch_stamp`, `live_pid_status_row_carries_
+  nonzero_rss`.
+
+Job 4 (`16b254a0`) `boop: gate sync re-reads on cursor length and lane pane pid`:
+- `run_sync_all` now skips any transcript whose length still equals its
+  consumed cursor (metadata.len -vs- `sync_cursor.offset`), the run_follow
+  freshness law. Cursor offsets load in one batched query
+  (`all_cursor_offsets`). A shorter file keeps the truncation path.
+- `sync_session_with_pid` stores the lane route's pane pid on `agent_live`;
+  `session_route_pid` resolves it by session id or cwd. Test:
+  `an_observed_live_lane_row_carries_its_pid`.
+- Cost receipt, `boop db sync create`, release binary, same real store:
+
+```text
+before (brief, ungated):  11,331 ms  (24 events, ~2/s)
+after  (gated warm):       2,456 ms  (21 events, ~8/s)
+```
+
+The residual ~2.3s is harness discovery: `first_record_context`
+(v6/boop/src/harness/claude.rs:222) calls `read_complete_lines(file, 0)`,
+which reads the whole 2.86 GB corpus on every run. That lives in
+`src/harness/**`, where this lane is forbidden, so the gate alone cannot reach
+the 0.023 s walk floor. Reported rather than improvised into harness.
+
+Job 3 (`961bc5b6`) `boop: add beep lane wait`:
+- `beep lane wait <lane>` polls the mailbox every second for a `kind=result`
+  row from the lane, exits with the rc its body names (`lane <id> done rc=N`);
+  `--timeout` seconds exits 124, a pre-existing row returns immediately. Reads
+  the same bus.ndjson bus.rs writes, no new mailbox format.
+- Smoke-verified exit codes 5 (result) and 124 (timeout).
+- Tests: `wait_returns_rc_from_a_preexisting_result_row`,
+  `wait_times_out_when_no_result_row_arrives`, `a_non_result_row_does_not_
+  satisfy_the_wait`.
+
+Receipts from `v6/boop`:
+
+```text
+cargo test          118 ok (104 lib + 12 main + 2 bench), baseline 109, never drops
+cargo clippy --all-targets -- -D warnings   rc 0
+```
+
+Resisted: the compute cost of `beep ps`/`status_rows` by spawning a fresh
+sysinfo snapshot per row (it is captured once and queried many times).

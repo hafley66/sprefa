@@ -514,6 +514,20 @@ impl Store {
         for row in iter {
             out.push(row?);
         }
+        // RSS, CPU, and uptime live in the OS, not the store: source each live
+        // pid from the tree-summed process view. A dead or absent pid stays None.
+        if let Ok(snapshot) = crate::proc::SysinfoSnapshot::capture() {
+            let now = crate::proc::sys_now_secs();
+            for row in &mut out {
+                let Some(pid) = row.pid else { continue };
+                let Some(sum) = snapshot.tree_sum(pid as u32) else {
+                    continue;
+                };
+                row.rss_kb = Some((sum.rss_bytes / 1024) as i64);
+                row.cpu_pct = Some(sum.cpu_percent as f64);
+                row.uptime_sec = Some(crate::proc::uptime_secs(sum.start_time_secs, now) as i64);
+            }
+        }
         Ok(out)
     }
 }
@@ -638,6 +652,70 @@ mod tests {
         assert_eq!(touch.verb, "read", "canonical lowercase verb");
         assert_eq!(touch.raw_verb, "Read", "raw spelling retained");
         println!("TouchRow receipt: {touch:?}");
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&log_path);
+    }
+
+    /// RECEIPT (Job 2). A live pid on an agent_live row carries nonzero rss_kb
+    /// and a small duration uptime through `db status`: the hardcoded NULLs
+    /// are now sourced from the tree-summed process view.
+    #[test]
+    fn live_pid_status_row_carries_nonzero_rss() {
+        use crate::harness::SessionRef;
+        use std::io::Write;
+
+        let (store, db_path) = store();
+        let log_path = std::env::temp_dir().join(format!(
+            "boop_status_{}_{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let mut file = std::fs::File::create(&log_path).unwrap();
+        writeln!(file, r#"{{"type":"user","sessionId":"ses-1","timestamp":"2026-08-01T00:00:00.100Z","message":"hello"}}"#).unwrap();
+        drop(file);
+        let session = SessionRef {
+            harness: "claude",
+            session_id: "ses-1".to_owned(),
+            nickname: "ses-1".to_owned(),
+            path: log_path.clone(),
+            cwd: Some("/w".to_owned()),
+            git_branch: Some("main".to_owned()),
+            modified_ms: 0,
+            size: 0,
+            tmux: None,
+            tmux_socket: None,
+            parent: None,
+        };
+        crate::ident::sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
+
+        let now_ms = crate::proc::sys_now_secs() * 1000;
+        store
+            .record_status(
+                "ses-1",
+                now_ms,
+                "live",
+                Some(std::process::id() as i64),
+                None,
+            )
+            .unwrap();
+
+        // A window wide enough to include the transcript row.
+        let rows = store.status_rows(60 * 24 * 3600 * 1000, now_ms).unwrap();
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        let rss = row.rss_kb.expect("live pid must carry rss_kb");
+        assert!(rss > 0, "rss_kb must be nonzero, got {rss}");
+        let uptime = row.uptime_sec.expect("live pid must carry uptime_sec");
+        assert!(
+            uptime < 1_000_000,
+            "uptime is a duration, not epoch-sized: {uptime}"
+        );
+        assert!(row.pid.is_some(), "the observation path preserved the pid");
 
         drop(store);
         let _ = std::fs::remove_file(&db_path);
