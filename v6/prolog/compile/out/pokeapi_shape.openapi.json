@@ -1,0 +1,2505 @@
+{
+  "components": {
+    "schemas": {
+      "__opt_bool_none": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"}},
+        "required": ["id" ],
+        "type":"object"
+      },
+      "__opt_bool_some": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"value": {"type":"boolean"}},
+        "required": ["id", "value" ],
+        "type":"object"
+      },
+      "__opt_bool_tag": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+        "required": ["id", "tag" ],
+        "type":"object"
+      },
+      "__opt_int_none": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"}},
+        "required": ["id" ],
+        "type":"object"
+      },
+      "__opt_int_some": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"value": {"type":"integer"}},
+        "required": ["id", "value" ],
+        "type":"object"
+      },
+      "__opt_int_tag": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+        "required": ["id", "tag" ],
+        "type":"object"
+      },
+      "__opt_json_none": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"}},
+        "required": ["id" ],
+        "type":"object"
+      },
+      "__opt_json_some": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"value": {}},
+        "required": ["id", "value" ],
+        "type":"object"
+      },
+      "__opt_json_tag": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+        "required": ["id", "tag" ],
+        "type":"object"
+      },
+      "__opt_text_none": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"}},
+        "required": ["id" ],
+        "type":"object"
+      },
+      "__opt_text_some": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"value": {"type":"string"}},
+        "required": ["id", "value" ],
+        "type":"object"
+      },
+      "__opt_text_tag": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+        "required": ["id", "tag" ],
+        "type":"object"
+      },
+      "ability_change": {
+        "additionalProperties":false,
+        "properties": {
+          "effect_entries": {},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": ["version_group", "effect_entries" ],
+        "type":"object"
+      },
+      "ability_change_effect_text": {
+        "additionalProperties":false,
+        "properties": {
+          "effect": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["effect", "language" ],
+        "type":"object"
+      },
+      "ability_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "effect_changes": {},
+          "effect_entries": {},
+          "flavor_text_entries": {},
+          "generation": {"$ref":"#/components/schemas/generation_summary"},
+          "id": {"type":"integer"},
+          "is_main_series": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "is_main_series",
+          "generation",
+          "names",
+          "effect_entries",
+          "effect_changes",
+          "flavor_text_entries",
+          "pokemon"
+        ],
+        "type":"object"
+      },
+      "ability_effect_text": {
+        "additionalProperties":false,
+        "properties": {
+          "effect": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "short_effect": {"type":"string"}
+        },
+        "required": ["effect", "short_effect", "language" ],
+        "type":"object"
+      },
+      "ability_flavor_text": {
+        "additionalProperties":false,
+        "properties": {
+          "flavor_text": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": ["flavor_text", "language", "version_group" ],
+        "type":"object"
+      },
+      "ability_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "ability_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "berry_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "firmness": {"$ref":"#/components/schemas/berry_firmness_summary"},
+          "flavors": {},
+          "growth_time": {"type":"integer"},
+          "id": {"type":"integer"},
+          "item": {"$ref":"#/components/schemas/item_summary"},
+          "max_harvest": {"type":"integer"},
+          "name": {"type":"string"},
+          "natural_gift_power": {"type":"integer"},
+          "natural_gift_type": {"$ref":"#/components/schemas/type_summary"},
+          "size": {"type":"integer"},
+          "smoothness": {"type":"integer"},
+          "soil_dryness": {"type":"integer"}
+        },
+        "required": [
+          "id",
+          "name",
+          "growth_time",
+          "max_harvest",
+          "natural_gift_power",
+          "size",
+          "smoothness",
+          "soil_dryness",
+          "firmness",
+          "flavors",
+          "item",
+          "natural_gift_type"
+        ],
+        "type":"object"
+      },
+      "berry_firmness_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "berries": {},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "berries", "names" ],
+        "type":"object"
+      },
+      "berry_firmness_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "berry_firmness_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "berry_flavor_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "berries": {},
+          "contest_type": {"$ref":"#/components/schemas/contest_type_summary"},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "berries", "contest_type", "names" ],
+        "type":"object"
+      },
+      "berry_flavor_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "berry_flavor_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "berry_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "characteristic_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "characteristic_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "descriptions": {},
+          "gene_modulo": {"type":"integer"},
+          "highest_stat": {"$ref":"#/components/schemas/stat_summary"},
+          "id": {"type":"integer"},
+          "possible_values": {"items": {"type":"integer"},"type":"array"}
+        },
+        "required": [
+          "id",
+          "gene_modulo",
+          "possible_values",
+          "highest_stat",
+          "descriptions"
+        ],
+        "type":"object"
+      },
+      "characteristic_summary": {
+        "additionalProperties":false,
+        "properties": {"url": {"type":"string"}},
+        "required": ["url" ],
+        "type":"object"
+      },
+      "contest_effect_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "appeal": {"type":"integer"},
+          "effect_entries": {},
+          "flavor_text_entries": {},
+          "id": {"type":"integer"},
+          "jam": {"type":"integer"}
+        },
+        "required": ["id", "appeal", "jam", "effect_entries", "flavor_text_entries" ],
+        "type":"object"
+      },
+      "contest_effect_effect_text": {
+        "additionalProperties":false,
+        "properties": {
+          "effect": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["effect", "language" ],
+        "type":"object"
+      },
+      "contest_effect_flavor_text": {
+        "additionalProperties":false,
+        "properties": {
+          "flavor_text": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["flavor_text", "language" ],
+        "type":"object"
+      },
+      "contest_effect_summary": {
+        "additionalProperties":false,
+        "properties": {"url": {"type":"string"}},
+        "required": ["url" ],
+        "type":"object"
+      },
+      "contest_type_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "berry_flavor": {},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "berry_flavor", "names" ],
+        "type":"object"
+      },
+      "contest_type_name": {
+        "additionalProperties":false,
+        "properties": {
+          "color": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "color", "language" ],
+        "type":"object"
+      },
+      "contest_type_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "currency_detail": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"name": {"type":"string"},"names": {}},
+        "required": ["id", "name", "names" ],
+        "type":"object"
+      },
+      "currency_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "currency_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "egg_group_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_species": {}
+        },
+        "required": ["id", "name", "names", "pokemon_species" ],
+        "type":"object"
+      },
+      "egg_group_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "egg_group_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "encounter_condition_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "values": {}
+        },
+        "required": ["id", "name", "values", "names" ],
+        "type":"object"
+      },
+      "encounter_condition_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "encounter_condition_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "encounter_condition_value_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "condition": {"$ref":"#/components/schemas/encounter_condition_summary"},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "condition", "names" ],
+        "type":"object"
+      },
+      "encounter_condition_value_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "encounter_condition_value_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "encounter_method_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "order": {"type":"integer"}
+        },
+        "required": ["id", "name", "order", "names" ],
+        "type":"object"
+      },
+      "encounter_method_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "encounter_method_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "evolution_chain_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "baby_trigger_item": {"$ref":"#/components/schemas/item_summary"},
+          "chain": {},
+          "id": {"type":"integer"}
+        },
+        "required": ["id", "baby_trigger_item", "chain" ],
+        "type":"object"
+      },
+      "evolution_chain_summary": {
+        "additionalProperties":false,
+        "properties": {"url": {"type":"string"}},
+        "required": ["url" ],
+        "type":"object"
+      },
+      "evolution_trigger_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_species": {}
+        },
+        "required": ["id", "name", "names", "pokemon_species" ],
+        "type":"object"
+      },
+      "evolution_trigger_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "evolution_trigger_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "experience": {
+        "additionalProperties":false,
+        "properties": {"experience": {"type":"integer"},"level": {"type":"integer"}},
+        "required": ["level", "experience" ],
+        "type":"object"
+      },
+      "gender_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "pokemon_species_details": {},
+          "required_for_evolution": {}
+        },
+        "required": ["id", "name", "pokemon_species_details", "required_for_evolution" ],
+        "type":"object"
+      },
+      "gender_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "generation_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "abilities": {},
+          "id": {"type":"integer"},
+          "main_region": {"$ref":"#/components/schemas/region_summary"},
+          "moves": {},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_species": {},
+          "types": {},
+          "version_groups": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "abilities",
+          "main_region",
+          "moves",
+          "names",
+          "pokemon_species",
+          "types",
+          "version_groups"
+        ],
+        "type":"object"
+      },
+      "generation_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "generation_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "growth_rate_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "growth_rate_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "descriptions": {},
+          "formula": {"type":"string"},
+          "id": {"type":"integer"},
+          "levels": {},
+          "name": {"type":"string"},
+          "pokemon_species": {}
+        },
+        "required": ["id", "name", "formula", "descriptions", "levels", "pokemon_species" ],
+        "type":"object"
+      },
+      "growth_rate_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "item_attribute_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "item_attribute_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "descriptions": {},
+          "id": {"type":"integer"},
+          "items": {},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "descriptions", "items", "names" ],
+        "type":"object"
+      },
+      "item_attribute_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "item_attribute_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "item_category_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "items": {},
+          "name": {"type":"string"},
+          "names": {},
+          "pocket": {"$ref":"#/components/schemas/item_pocket_summary"}
+        },
+        "required": ["id", "name", "items", "names", "pocket" ],
+        "type":"object"
+      },
+      "item_category_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "item_category_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "item_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "attributes": {},
+          "baby_trigger_for": {},
+          "category": {"$ref":"#/components/schemas/item_category_summary"},
+          "effect_entries": {},
+          "flavor_text_entries": {},
+          "fling_effect": {"$ref":"#/components/schemas/item_fling_effect_summary"},
+          "fling_power": {"type":"integer"},
+          "game_indices": {},
+          "held_by_pokemon": {},
+          "id": {"type":"integer"},
+          "machines": {},
+          "name": {"type":"string"},
+          "names": {},
+          "prices": {},
+          "sprites": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "fling_power",
+          "fling_effect",
+          "attributes",
+          "category",
+          "effect_entries",
+          "flavor_text_entries",
+          "game_indices",
+          "prices",
+          "names",
+          "held_by_pokemon",
+          "sprites",
+          "baby_trigger_for",
+          "machines"
+        ],
+        "type":"object"
+      },
+      "item_effect_text": {
+        "additionalProperties":false,
+        "properties": {
+          "effect": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "short_effect": {"type":"string"}
+        },
+        "required": ["effect", "short_effect", "language" ],
+        "type":"object"
+      },
+      "item_flavor_text": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "text": {"type":"string"},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": ["text", "version_group", "language" ],
+        "type":"object"
+      },
+      "item_fling_effect_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "effect_entries": {},
+          "id": {"type":"integer"},
+          "items": {},
+          "name": {"type":"string"}
+        },
+        "required": ["id", "name", "effect_entries", "items" ],
+        "type":"object"
+      },
+      "item_fling_effect_effect_text": {
+        "additionalProperties":false,
+        "properties": {
+          "effect": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["effect", "language" ],
+        "type":"object"
+      },
+      "item_fling_effect_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "item_game_index": {
+        "additionalProperties":false,
+        "properties": {
+          "game_index": {"type":"integer"},
+          "generation": {"$ref":"#/components/schemas/generation_summary"}
+        },
+        "required": ["game_index", "generation" ],
+        "type":"object"
+      },
+      "item_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "item_pocket_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "categories": {},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "categories", "names" ],
+        "type":"object"
+      },
+      "item_pocket_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "item_pocket_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "item_price": {
+        "additionalProperties":false,
+        "properties": {
+          "currency": {"$ref":"#/components/schemas/currency_summary"},
+          "purchase_price": {"type":"integer"},
+          "sell_price": {"type":"integer"},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": ["purchase_price", "sell_price", "currency", "version_group" ],
+        "type":"object"
+      },
+      "item_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "language_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "iso3166": {"type":"string"},
+          "iso639": {"type":"string"},
+          "name": {"type":"string"},
+          "names": {},
+          "official": {"type":"integer"}
+        },
+        "required": ["id", "name", "official", "iso639", "iso3166", "names" ],
+        "type":"object"
+      },
+      "language_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "language_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "location_area_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "encounter_method_rates": {},
+          "game_index": {"type":"integer"},
+          "id": {"type":"integer"},
+          "location": {"$ref":"#/components/schemas/location_summary"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_encounters": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "game_index",
+          "encounter_method_rates",
+          "location",
+          "names",
+          "pokemon_encounters"
+        ],
+        "type":"object"
+      },
+      "location_area_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "location_area_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "location_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "areas": {},
+          "game_indices": {},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "region": {"$ref":"#/components/schemas/region_summary"}
+        },
+        "required": ["id", "name", "region", "names", "game_indices", "areas" ],
+        "type":"object"
+      },
+      "location_game_index": {
+        "additionalProperties":false,
+        "properties": {
+          "game_index": {"type":"integer"},
+          "generation": {"$ref":"#/components/schemas/generation_summary"}
+        },
+        "required": ["game_index", "generation" ],
+        "type":"object"
+      },
+      "location_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "location_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "machine_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "item": {"$ref":"#/components/schemas/item_summary"},
+          "move": {"$ref":"#/components/schemas/move_summary"},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": ["id", "item", "version_group", "move" ],
+        "type":"object"
+      },
+      "machine_summary": {
+        "additionalProperties":false,
+        "properties": {"url": {"type":"string"}},
+        "required": ["url" ],
+        "type":"object"
+      },
+      "move_battle_style_detail": {
+        "additionalProperties":false,
+        "properties": {"id": {"type":"integer"},"name": {"type":"string"},"names": {}},
+        "required": ["id", "name", "names" ],
+        "type":"object"
+      },
+      "move_battle_style_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "move_battle_style_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "move_change": {
+        "additionalProperties":false,
+        "properties": {
+          "accuracy": {"type":"integer"},
+          "effect_chance": {"type":"integer"},
+          "effect_entries": {},
+          "power": {"type":"integer"},
+          "pp": {"type":"integer"},
+          "type": {"$ref":"#/components/schemas/type_summary"},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": [
+          "accuracy",
+          "power",
+          "pp",
+          "effect_chance",
+          "effect_entries",
+          "type",
+          "version_group"
+        ],
+        "type":"object"
+      },
+      "move_damage_class_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "move_damage_class_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "descriptions": {},
+          "id": {"type":"integer"},
+          "moves": {},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "descriptions", "moves", "names" ],
+        "type":"object"
+      },
+      "move_damage_class_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "move_damage_class_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "move_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "accuracy": {"type":"integer"},
+          "contest_combos": {},
+          "contest_effect": {"$ref":"#/components/schemas/contest_effect_summary"},
+          "contest_type": {"$ref":"#/components/schemas/contest_type_summary"},
+          "damage_class": {"$ref":"#/components/schemas/move_damage_class_summary"},
+          "effect_chance": {"type":"integer"},
+          "effect_changes": {},
+          "effect_entries": {},
+          "flavor_text_entries": {},
+          "generation": {"$ref":"#/components/schemas/generation_summary"},
+          "id": {"type":"integer"},
+          "learned_by_pokemon": {},
+          "machines": {},
+          "meta": {},
+          "name": {"type":"string"},
+          "names": {},
+          "past_values": {},
+          "power": {"type":"integer"},
+          "pp": {"type":"integer"},
+          "priority": {"type":"integer"},
+          "stat_changes": {},
+          "super_contest_effect": {"$ref":"#/components/schemas/super_contest_effect_summary"},
+          "target": {"$ref":"#/components/schemas/move_target_summary"},
+          "type": {"$ref":"#/components/schemas/type_summary"}
+        },
+        "required": [
+          "id",
+          "name",
+          "accuracy",
+          "effect_chance",
+          "pp",
+          "priority",
+          "power",
+          "contest_combos",
+          "contest_type",
+          "contest_effect",
+          "damage_class",
+          "effect_entries",
+          "effect_changes",
+          "generation",
+          "meta",
+          "names",
+          "past_values",
+          "stat_changes",
+          "super_contest_effect",
+          "target",
+          "type",
+          "machines",
+          "flavor_text_entries",
+          "learned_by_pokemon"
+        ],
+        "type":"object"
+      },
+      "move_flavor_text": {
+        "additionalProperties":false,
+        "properties": {
+          "flavor_text": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": ["flavor_text", "language", "version_group" ],
+        "type":"object"
+      },
+      "move_learn_method_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "move_learn_method_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "descriptions": {},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "version_groups": {}
+        },
+        "required": ["id", "name", "names", "descriptions", "version_groups" ],
+        "type":"object"
+      },
+      "move_learn_method_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "move_learn_method_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "move_meta": {
+        "additionalProperties":false,
+        "properties": {
+          "ailment": {"$ref":"#/components/schemas/move_meta_ailment_summary"},
+          "ailment_chance": {"type":"integer"},
+          "category": {"$ref":"#/components/schemas/move_meta_category_summary"},
+          "crit_rate": {"type":"integer"},
+          "drain": {"type":"integer"},
+          "flinch_chance": {"type":"integer"},
+          "healing": {"type":"integer"},
+          "max_hits": {"type":"integer"},
+          "max_turns": {"type":"integer"},
+          "min_hits": {"type":"integer"},
+          "min_turns": {"type":"integer"},
+          "stat_chance": {"type":"integer"}
+        },
+        "required": [
+          "ailment",
+          "category",
+          "min_hits",
+          "max_hits",
+          "min_turns",
+          "max_turns",
+          "drain",
+          "healing",
+          "crit_rate",
+          "ailment_chance",
+          "flinch_chance",
+          "stat_chance"
+        ],
+        "type":"object"
+      },
+      "move_meta_ailment_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "moves": {},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "moves", "names" ],
+        "type":"object"
+      },
+      "move_meta_ailment_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "move_meta_ailment_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "move_meta_category_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "move_meta_category_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "descriptions": {},
+          "id": {"type":"integer"},
+          "moves": {},
+          "name": {"type":"string"}
+        },
+        "required": ["id", "name", "descriptions", "moves" ],
+        "type":"object"
+      },
+      "move_meta_category_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "move_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "move_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "move_target_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "move_target_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "descriptions": {},
+          "id": {"type":"integer"},
+          "moves": {},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "descriptions", "moves", "names" ],
+        "type":"object"
+      },
+      "move_target_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "move_target_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "nature_battle_style_preference": {
+        "additionalProperties":false,
+        "properties": {
+          "high_hp_preference": {"type":"integer"},
+          "low_hp_preference": {"type":"integer"},
+          "move_battle_style": {"$ref":"#/components/schemas/move_battle_style_summary"}
+        },
+        "required": ["low_hp_preference", "high_hp_preference", "move_battle_style" ],
+        "type":"object"
+      },
+      "nature_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "berries": {},
+          "decreased_stat": {"$ref":"#/components/schemas/stat_summary"},
+          "hates_flavor": {"$ref":"#/components/schemas/berry_flavor_summary"},
+          "id": {"type":"integer"},
+          "increased_stat": {"$ref":"#/components/schemas/stat_summary"},
+          "likes_flavor": {"$ref":"#/components/schemas/berry_flavor_summary"},
+          "move_battle_style_preferences": {},
+          "name": {"type":"string"},
+          "names": {},
+          "pokeathlon_stat_changes": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "decreased_stat",
+          "increased_stat",
+          "likes_flavor",
+          "hates_flavor",
+          "berries",
+          "pokeathlon_stat_changes",
+          "move_battle_style_preferences",
+          "names"
+        ],
+        "type":"object"
+      },
+      "nature_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "nature_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "paginated_ability_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_berry_firmness_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_berry_flavor_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_berry_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_characteristic_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_contest_effect_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_contest_type_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_currency_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_egg_group_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_encounter_condition_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_encounter_condition_value_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_encounter_method_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_evolution_chain_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_evolution_trigger_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_gender_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_generation_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_growth_rate_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_item_attribute_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_item_category_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_item_fling_effect_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_item_pocket_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_item_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_language_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_location_area_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_location_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_machine_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_move_battle_style_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_move_damage_class_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_move_learn_method_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_move_meta_ailment_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_move_meta_category_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_move_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_move_target_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_nature_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pal_park_area_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pokeathlon_stat_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pokedex_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pokemon_color_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pokemon_form_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pokemon_habitat_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pokemon_shape_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pokemon_species_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_pokemon_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_region_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_stat_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_super_contest_effect_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_type_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_version_group_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "paginated_version_summary_list": {
+        "additionalProperties":false,
+        "properties": {
+          "count": {"type":"integer"},
+          "next": {"type":"integer"},
+          "previous": {"type":"integer"},
+          "results": {}
+        },
+        "required": ["count", "next", "previous", "results" ],
+        "type":"object"
+      },
+      "pal_park_area_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_encounters": {}
+        },
+        "required": ["id", "name", "names", "pokemon_encounters" ],
+        "type":"object"
+      },
+      "pal_park_area_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "pal_park_area_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "pokeathlon_stat_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "affecting_natures": {},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": ["id", "name", "affecting_natures", "names" ],
+        "type":"object"
+      },
+      "pokeathlon_stat_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "pokeathlon_stat_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "pokedex_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "pokedex_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "descriptions": {},
+          "id": {"type":"integer"},
+          "is_main_series": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_entries": {},
+          "region": {"$ref":"#/components/schemas/region_summary"},
+          "version_groups": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "is_main_series",
+          "descriptions",
+          "names",
+          "pokemon_entries",
+          "region",
+          "version_groups"
+        ],
+        "type":"object"
+      },
+      "pokedex_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "pokedex_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "pokemon_color_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_species": {}
+        },
+        "required": ["id", "name", "names", "pokemon_species" ],
+        "type":"object"
+      },
+      "pokemon_color_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "pokemon_color_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "pokemon_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "abilities": {},
+          "base_experience": {"type":"integer"},
+          "cries": {},
+          "forms": {},
+          "game_indices": {},
+          "height": {"type":"integer"},
+          "held_items": {},
+          "id": {"type":"integer"},
+          "is_default": {"type":"integer"},
+          "location_area_encounters": {"type":"string"},
+          "moves": {},
+          "name": {"type":"string"},
+          "order": {"type":"integer"},
+          "past_abilities": {},
+          "past_stats": {},
+          "past_types": {},
+          "species": {"$ref":"#/components/schemas/pokemon_species_summary"},
+          "sprites": {},
+          "stats": {},
+          "types": {},
+          "weight": {"type":"integer"}
+        },
+        "required": [
+          "id",
+          "name",
+          "base_experience",
+          "height",
+          "is_default",
+          "order",
+          "weight",
+          "abilities",
+          "past_abilities",
+          "forms",
+          "game_indices",
+          "held_items",
+          "location_area_encounters",
+          "moves",
+          "species",
+          "sprites",
+          "cries",
+          "stats",
+          "past_stats",
+          "types",
+          "past_types"
+        ],
+        "type":"object"
+      },
+      "pokemon_dex_entry": {
+        "additionalProperties":false,
+        "properties": {
+          "entry_number": {"type":"integer"},
+          "pokedex": {"$ref":"#/components/schemas/pokedex_summary"}
+        },
+        "required": ["entry_number", "pokedex" ],
+        "type":"object"
+      },
+      "pokemon_form_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "form_name": {"type":"string"},
+          "form_names": {},
+          "form_order": {"type":"integer"},
+          "id": {"type":"integer"},
+          "is_battle_only": {"type":"integer"},
+          "is_default": {"type":"integer"},
+          "is_mega": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "order": {"type":"integer"},
+          "pokemon": {"$ref":"#/components/schemas/pokemon_summary"},
+          "sprites": {},
+          "trigger_conditions": {},
+          "types": {},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": [
+          "id",
+          "name",
+          "order",
+          "form_order",
+          "is_default",
+          "is_battle_only",
+          "is_mega",
+          "form_name",
+          "pokemon",
+          "sprites",
+          "version_group",
+          "form_names",
+          "names",
+          "types",
+          "trigger_conditions"
+        ],
+        "type":"object"
+      },
+      "pokemon_form_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "pokemon_game_index": {
+        "additionalProperties":false,
+        "properties": {
+          "game_index": {"type":"integer"},
+          "version": {"$ref":"#/components/schemas/version_summary"}
+        },
+        "required": ["game_index", "version" ],
+        "type":"object"
+      },
+      "pokemon_habitat_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_species": {}
+        },
+        "required": ["id", "name", "names", "pokemon_species" ],
+        "type":"object"
+      },
+      "pokemon_habitat_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "pokemon_habitat_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "pokemon_shape_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "awesome_names": {},
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "pokemon_species": {}
+        },
+        "required": ["id", "name", "awesome_names", "names", "pokemon_species" ],
+        "type":"object"
+      },
+      "pokemon_shape_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "pokemon_species_description": {
+        "additionalProperties":false,
+        "properties": {
+          "description": {"type":"integer"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["description", "language" ],
+        "type":"object"
+      },
+      "pokemon_species_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "base_happiness": {"type":"integer"},
+          "capture_rate": {"type":"integer"},
+          "color": {"$ref":"#/components/schemas/pokemon_color_summary"},
+          "egg_groups": {},
+          "evolution_chain": {"$ref":"#/components/schemas/evolution_chain_summary"},
+          "evolves_from_species": {"$ref":"#/components/schemas/pokemon_species_summary"},
+          "flavor_text_entries": {},
+          "form_descriptions": {},
+          "forms_switchable": {"type":"integer"},
+          "gender_rate": {"type":"integer"},
+          "genera": {},
+          "generation": {"$ref":"#/components/schemas/generation_summary"},
+          "growth_rate": {"$ref":"#/components/schemas/growth_rate_summary"},
+          "habitat": {"$ref":"#/components/schemas/pokemon_habitat_summary"},
+          "has_gender_differences": {"type":"integer"},
+          "hatch_counter": {"type":"integer"},
+          "id": {"type":"integer"},
+          "is_baby": {"type":"integer"},
+          "is_legendary": {"type":"integer"},
+          "is_mythical": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "order": {"type":"integer"},
+          "pal_park_encounters": {},
+          "pokedex_numbers": {},
+          "shape": {"$ref":"#/components/schemas/pokemon_shape_summary"},
+          "varieties": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "order",
+          "gender_rate",
+          "capture_rate",
+          "base_happiness",
+          "is_baby",
+          "is_legendary",
+          "is_mythical",
+          "hatch_counter",
+          "has_gender_differences",
+          "forms_switchable",
+          "growth_rate",
+          "pokedex_numbers",
+          "egg_groups",
+          "color",
+          "shape",
+          "evolves_from_species",
+          "evolution_chain",
+          "habitat",
+          "generation",
+          "names",
+          "pal_park_encounters",
+          "form_descriptions",
+          "flavor_text_entries",
+          "genera",
+          "varieties"
+        ],
+        "type":"object"
+      },
+      "pokemon_species_flavor_text": {
+        "additionalProperties":false,
+        "properties": {
+          "flavor_text": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "version": {"$ref":"#/components/schemas/version_summary"}
+        },
+        "required": ["flavor_text", "language", "version" ],
+        "type":"object"
+      },
+      "pokemon_species_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "pokemon_stat": {
+        "additionalProperties":false,
+        "properties": {
+          "base_stat": {"type":"integer"},
+          "effort": {"type":"integer"},
+          "stat": {"$ref":"#/components/schemas/stat_summary"}
+        },
+        "required": ["base_stat", "effort", "stat" ],
+        "type":"object"
+      },
+      "pokemon_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "region_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "locations": {},
+          "main_generation": {},
+          "name": {"type":"string"},
+          "names": {},
+          "pokedexes": {},
+          "version_groups": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "locations",
+          "main_generation",
+          "names",
+          "pokedexes",
+          "version_groups"
+        ],
+        "type":"object"
+      },
+      "region_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "region_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "stat_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "affecting_items": {},
+          "affecting_moves": {},
+          "affecting_natures": {},
+          "characteristics": {},
+          "game_index": {"type":"integer"},
+          "id": {"type":"integer"},
+          "is_battle_only": {"type":"integer"},
+          "move_damage_class": {"$ref":"#/components/schemas/move_damage_class_summary"},
+          "name": {"type":"string"},
+          "names": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "game_index",
+          "is_battle_only",
+          "affecting_moves",
+          "affecting_natures",
+          "affecting_items",
+          "characteristics",
+          "move_damage_class",
+          "names"
+        ],
+        "type":"object"
+      },
+      "stat_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "stat_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "super_contest_effect_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "appeal": {"type":"integer"},
+          "flavor_text_entries": {},
+          "id": {"type":"integer"},
+          "moves": {}
+        },
+        "required": ["id", "appeal", "flavor_text_entries", "moves" ],
+        "type":"object"
+      },
+      "super_contest_effect_flavor_text": {
+        "additionalProperties":false,
+        "properties": {
+          "flavor_text": {"type":"string"},
+          "language": {"$ref":"#/components/schemas/language_summary"}
+        },
+        "required": ["flavor_text", "language" ],
+        "type":"object"
+      },
+      "super_contest_effect_summary": {
+        "additionalProperties":false,
+        "properties": {"url": {"type":"string"}},
+        "required": ["url" ],
+        "type":"object"
+      },
+      "type_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "damage_relations": {},
+          "game_indices": {},
+          "generation": {"$ref":"#/components/schemas/generation_summary"},
+          "id": {"type":"integer"},
+          "move_damage_class": {"$ref":"#/components/schemas/move_damage_class_summary"},
+          "moves": {},
+          "name": {"type":"string"},
+          "names": {},
+          "past_damage_relations": {},
+          "pokemon": {},
+          "sprites": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "damage_relations",
+          "past_damage_relations",
+          "game_indices",
+          "generation",
+          "move_damage_class",
+          "names",
+          "pokemon",
+          "moves",
+          "sprites"
+        ],
+        "type":"object"
+      },
+      "type_game_index": {
+        "additionalProperties":false,
+        "properties": {
+          "game_index": {"type":"integer"},
+          "generation": {"$ref":"#/components/schemas/generation_summary"}
+        },
+        "required": ["game_index", "generation" ],
+        "type":"object"
+      },
+      "type_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "version_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "id": {"type":"integer"},
+          "name": {"type":"string"},
+          "names": {},
+          "version_group": {"$ref":"#/components/schemas/version_group_summary"}
+        },
+        "required": ["id", "name", "names", "version_group" ],
+        "type":"object"
+      },
+      "version_group_detail": {
+        "additionalProperties":false,
+        "properties": {
+          "generation": {"$ref":"#/components/schemas/generation_summary"},
+          "id": {"type":"integer"},
+          "move_learn_methods": {},
+          "name": {"type":"string"},
+          "order": {"type":"integer"},
+          "pokedexes": {},
+          "regions": {},
+          "versions": {}
+        },
+        "required": [
+          "id",
+          "name",
+          "order",
+          "generation",
+          "move_learn_methods",
+          "pokedexes",
+          "regions",
+          "versions"
+        ],
+        "type":"object"
+      },
+      "version_group_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      },
+      "version_name": {
+        "additionalProperties":false,
+        "properties": {
+          "language": {"$ref":"#/components/schemas/language_summary"},
+          "name": {"type":"string"}
+        },
+        "required": ["name", "language" ],
+        "type":"object"
+      },
+      "version_summary": {
+        "additionalProperties":false,
+        "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+        "required": ["name", "url" ],
+        "type":"object"
+      }
+    }
+  },
+  "info": {
+    "description":"The served tsv2 datalog engine (v6/tsv2/serve). One program at a time; POST /program swaps it. Every response body is JSON except GET /ticks, which is an SSE stream of canonical tick-log lines.",
+    "title":"sprefa tsv2 served engine",
+    "version":"6.2.0"
+  },
+  "openapi":"3.1.0",
+  "paths": {
+    "/edb/events": {
+      "post": {
+        "operationId":"postArrivals",
+        "responses": {
+          "200": {"description":"HTTP 200"},
+          "400": {"description":"HTTP 400"},
+          "409": {"description":"HTTP 409"}
+        },
+        "summary":"submit signed EDB arrivals"
+      }
+    },
+    "/idb/{rel}": {
+      "get": {
+        "operationId":"readRelation",
+        "parameters": [
+          {
+            "in":"path",
+            "name":"rel",
+            "required":true,
+            "schema": {"type":"string"}
+          }
+        ],
+        "responses": {
+          "200": {"description":"HTTP 200"},
+          "404": {"description":"HTTP 404"}
+        },
+        "summary":"read one relation snapshot"
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId":"readOpenapi",
+        "responses": {"200": {"description":"HTTP 200"}},
+        "summary":"read the loaded program OpenAPI document"
+      }
+    },
+    "/program": {
+      "post": {
+        "operationId":"loadProgram",
+        "responses": {
+          "200": {"description":"HTTP 200"},
+          "400": {"description":"HTTP 400"}
+        },
+        "summary":"compile and load a DL6 program"
+      }
+    },
+    "/stats": {
+      "get": {
+        "operationId":"readStats",
+        "responses": {
+          "200": {"description":"HTTP 200"},
+          "404": {"description":"HTTP 404"}
+        },
+        "summary":"read process memory and SQLite storage statistics"
+      }
+    },
+    "/ticks": {
+      "get": {
+        "operationId":"streamTicks",
+        "responses": {
+          "200": {"description":"HTTP 200"},
+          "404": {"description":"HTTP 404"}
+        },
+        "summary":"stream tick events as SSE"
+      }
+    }
+  },
+  "servers": [ {"description":"bop serve default port","url":"http://127.0.0.1:17500"} ]
+}
