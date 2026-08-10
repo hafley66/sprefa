@@ -804,14 +804,20 @@ fn session_route_pid(
     routes: &BTreeMap<String, bus::Route>,
     session: &boop::harness::SessionRef,
 ) -> Option<i64> {
-    let route = routes.iter().find(|(_, route)| {
-        route.session_id.as_deref() == Some(session.session_id.as_str())
-            || route.cwd.as_deref() == session.cwd.as_deref()
-    });
+    let route = routes
+        .iter()
+        .find(|(_, route)| session_matches_route(route, session));
     route
         .and_then(|(_, route)| route.tmux.as_deref())
         .and_then(|target| tmux::pane_pid(None, target))
         .map(i64::from)
+}
+
+/// A routeless session must never borrow a pid: two `None` cwds are not a
+/// match, only a shared session id or a shared concrete cwd is.
+fn session_matches_route(route: &bus::Route, session: &boop::harness::SessionRef) -> bool {
+    route.session_id.as_deref() == Some(session.session_id.as_str())
+        || (route.cwd.is_some() && route.cwd.as_deref() == session.cwd.as_deref())
 }
 
 fn file_mtime_ms(path: &std::path::Path) -> Result<u64> {
@@ -1747,7 +1753,10 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
-    use super::{append_message, resolve_dispatch_harness, run_lane_delete, write_route};
+    use super::{
+        append_message, resolve_dispatch_harness, run_lane_delete, session_matches_route,
+        write_route,
+    };
     use boop::bus::{read_routes, Route};
     use boop::registry::Registry;
 
@@ -1893,6 +1902,48 @@ mod tests {
             routes
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn session_with_cwd(cwd: Option<&str>) -> boop::harness::SessionRef {
+        boop::harness::SessionRef {
+            harness: "opencode",
+            session_id: "ses-1".into(),
+            nickname: "ses-1".into(),
+            path: std::path::PathBuf::from("/tmp/x.jsonl"),
+            cwd: cwd.map(str::to_owned),
+            git_branch: None,
+            modified_ms: 0,
+            size: 0,
+            tmux: None,
+            tmux_socket: None,
+            parent: None,
+        }
+    }
+
+    #[test]
+    fn none_cwd_on_both_sides_is_not_a_route_match() {
+        let mut route = route_with(None);
+        route.cwd = None;
+        assert!(!session_matches_route(&route, &session_with_cwd(None)));
+    }
+
+    #[test]
+    fn shared_concrete_cwd_matches_and_none_session_cwd_does_not() {
+        let mut route = route_with(None);
+        route.cwd = Some("/repo/wt".into());
+        assert!(session_matches_route(
+            &route,
+            &session_with_cwd(Some("/repo/wt"))
+        ));
+        assert!(!session_matches_route(&route, &session_with_cwd(None)));
+    }
+
+    #[test]
+    fn session_id_match_needs_no_cwd() {
+        let mut route = route_with(None);
+        route.session_id = Some("ses-1".into());
+        route.cwd = None;
+        assert!(session_matches_route(&route, &session_with_cwd(None)));
     }
 
     fn route_with(parent: Option<&str>) -> Route {
