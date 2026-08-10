@@ -926,7 +926,11 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
     let snapshot = proc::SysinfoSnapshot::capture()?;
     line("lane\tpid\trss_kb\tcpu_pct\tuptime_sec\tchildren");
     for (name, route) in &routes {
-        let pane_pid = pane_pid(route.tmux.as_deref()).unwrap_or(0);
+        let pane_pid = route
+            .tmux
+            .as_deref()
+            .and_then(|target| tmux::pane_pid(None, target))
+            .unwrap_or(0);
         match snapshot.process(pane_pid) {
             Some(info) => {
                 let uptime = info.start_time_secs;
@@ -944,22 +948,6 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// The pid of the shell in the first pane of `session`.
-fn pane_pid(session: Option<&str>) -> Option<u32> {
-    let session = session?;
-    let output = Command::new("tmux")
-        .args(["list-panes", "-t", session, "-F", "#{pane_pid}"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()
-        .and_then(|line| line.trim().parse().ok())
 }
 
 // ---------------------------------------------------------------------------
@@ -1442,11 +1430,13 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
     let hail_mail_dir = mail_dir(args.mail_dir.as_deref())?;
     let on_exit = args.parent.as_ref().map(|parent| {
         format!(
-            "boop hail --to {} --from {} --mail-dir {} --kind result --body \"lane {} done rc=$__rc\"",
+            "boop hail --to {} --from {} --mail-dir {} --kind result --body \"lane {} done rc=$__rc\" ; boop beep lane delete {} --route-only --mail-dir {}",
             shell_quote(parent),
             shell_quote(&args.name),
             shell_quote(&hail_mail_dir.display().to_string()),
-            args.name
+            args.name,
+            shell_quote(&args.name),
+            shell_quote(&hail_mail_dir.display().to_string()),
         )
     });
     let tmux_name = args.tmux.clone().unwrap_or_else(|| args.name.clone());
@@ -1554,14 +1544,19 @@ fn run_adopt(
 
 fn run_prune(mail_dir_arg: Option<&Path>) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
-    let Some(live) = tmux::live_sessions(None) else {
+    if tmux::live_sessions(None).is_none() {
         println!("refusing prune: tmux unreachable, cannot tell live from dead");
         return Ok(());
-    };
+    }
     let routes = bus::read_routes(&dir)?;
     let dead: Vec<String> = routes
         .iter()
-        .filter(|(_, route)| !live.has(route.tmux.as_deref().unwrap_or("")))
+        .filter(|(_, route)| {
+            let Some(target) = route.tmux.as_deref() else {
+                return true;
+            };
+            !tmux::target_alive(None, target)
+        })
         .map(|(name, _)| name.clone())
         .collect();
     let path = dir.join("registry.json");
@@ -1637,7 +1632,10 @@ fn append_ack(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_dispatch_harness;
+    use std::path::PathBuf;
+
+    use super::{resolve_dispatch_harness, run_lane_delete, write_route};
+    use boop::bus::{read_routes, Route};
     use boop::registry::Registry;
 
     /// A named harness that is not registered must be refused, never quietly
@@ -1653,6 +1651,44 @@ mod tests {
         assert!(message.contains("gemini-cli"), "message: {message}");
         assert!(message.contains("claude"), "registered set: {message}");
         assert!(message.contains("opencode"), "registered set: {message}");
+    }
+
+    fn temp_mail_dir() -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "boop_mail_{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    /// RECEIPT (Job 3b). A `--route-only` delete drops the lane's registry row
+    /// without touching pane or tmux, so the on-exit epilogue cleans up in-pane.
+    #[test]
+    fn route_only_delete_drops_the_registry_row_without_tmux() {
+        let dir = temp_mail_dir();
+        write_route(
+            &dir,
+            "l",
+            Route {
+                harness: Some("claude".into()),
+                tmux: Some("somesession".into()),
+                cwd: None,
+                model: None,
+                mode: None,
+                session_id: None,
+                source_path: None,
+            },
+        )
+        .unwrap();
+        run_lane_delete(Some(&dir), "l", true).unwrap();
+        let routes = read_routes(&dir).unwrap();
+        assert!(
+            !routes.contains_key("l"),
+            "a finished lane must leave no registry row"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -1778,6 +1814,10 @@ enum LaneCmd {
     /// Stop a lane and forget it, or bulk-delete by state.
     Delete {
         lane: Option<String>,
+        /// Drop only the registry route; never kill the pane. The `--parent`
+        /// on-exit epilogue uses this to clean up while still running inside it.
+        #[arg(long)]
+        route_only: bool,
         #[arg(long)]
         state: Option<String>,
         #[arg(long)]
@@ -2167,10 +2207,11 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
         ),
         LaneCmd::Delete {
             lane,
+            route_only,
             state,
             mail_dir,
         } => match (lane, state) {
-            (Some(lane), _) => run_lane_delete(mail_dir.as_deref(), &lane),
+            (Some(lane), _) => run_lane_delete(mail_dir.as_deref(), &lane, route_only),
             (None, Some(_)) => run_prune(mail_dir.as_deref()),
             (None, None) => {
                 anyhow::bail!("name a lane to delete, or pass --state dead for a bulk delete")
@@ -2274,19 +2315,21 @@ fn run_lane_get(mail_dir_arg: Option<&Path>, lane: &str) -> Result<()> {
     Ok(())
 }
 
-/// Stop one lane and drop its route. Refuses when tmux is unreachable, for the
-/// same reason the bulk delete does: it cannot tell live from dead.
-fn run_lane_delete(mail_dir_arg: Option<&Path>, lane: &str) -> Result<()> {
+/// Stop one lane and drop its route. Refuses when tmux is unreachable. `--route-only`
+/// drops the registry row and never touches the pane, so the on-exit epilogue can run inside it.
+fn run_lane_delete(mail_dir_arg: Option<&Path>, lane: &str, route_only: bool) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
     let routes = bus::read_routes(&dir)?;
     let Some(route) = routes.get(lane) else {
         anyhow::bail!("no registry route for lane `{lane}`")
     };
-    if let Some(session) = route.tmux.as_deref() {
-        match tmux::has_session(None, session) {
-            Ok(true) => tmux::kill_session(None, session)?,
-            Ok(false) => {}
-            Err(error) => anyhow::bail!("tmux unreachable, refusing to delete {lane}: {error}"),
+    if !route_only {
+        if let Some(session) = route.tmux.as_deref() {
+            match tmux::has_session(None, session) {
+                Ok(true) => tmux::kill_session(None, session)?,
+                Ok(false) => {}
+                Err(error) => anyhow::bail!("tmux unreachable, refusing to delete {lane}: {error}"),
+            }
         }
     }
     let path = dir.join("registry.json");
@@ -2328,7 +2371,11 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<
                 continue;
             }
         }
-        let pane_pid = pane_pid(route.tmux.as_deref()).unwrap_or(0);
+        let pane_pid = route
+            .tmux
+            .as_deref()
+            .and_then(|target| tmux::pane_pid(None, target))
+            .unwrap_or(0);
         match snapshot.process(pane_pid) {
             Some(info) => println!(
                 "{}\t{}\t{}\t{:.1}\t{}\t{}",
