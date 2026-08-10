@@ -1,0 +1,95 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+
+grid-columns: 3
+grid-gap: 24
+
+classes: {
+  ceiling: { style.fill: "#ffffff"; style.font-color: "#1a1a1a"; style.stroke: "#b08d00"; style.stroke-width: 4; style.font-size: 20 }
+  ram: { style.fill: "#ffffff"; style.font-color: "#1a1a1a"; style.stroke: "#c96a2a"; style.stroke-width: 4; style.font-size: 20 }
+  sq: { style.fill: "#ffffff"; style.font-color: "#1a1a1a"; style.stroke: "#3b82c4"; style.stroke-width: 4; style.font-size: 20 }
+  emitted: { style.fill: "#ffffff"; style.font-color: "#1a1a1a"; style.stroke: "#37a24d"; style.stroke-width: 4; style.font-size: 20 }
+  legend: { style.fill: "#ffffff"; style.font-color: "#333333"; style.stroke: "#adb5bd"; style.stroke-width: 3; style.font-size: 20 }
+}
+
+t1: |||md
+  ## TIER 1: dd in rust, the TRUE ceiling
+  | fact | number |
+  |---|---|
+  | retract 60k | 10.1 ms |
+  | retract 9.87M | 2963 ms |
+  | memory | MANDATORY resident, ~215 B/node |
+  | wall | unmeasured, lab-dd-resident-wall IN FLIGHT |
+||| {
+  shape: rectangle
+  class: ceiling
+}
+
+t2: |||md
+  ## TIER 2: hand-rolled rust RAM (shootout)
+  | engine | build fixpoint |
+  |---|---|
+  | mono | 68M rows/sec |
+  | rxgraph | 55M rows/sec |
+  | interp | 7M rows/sec |
+  | memory | resident, engine-owned |
+||| {
+  shape: rectangle
+  class: ram
+}
+
+t3: |||md
+  ## TIER 3: pure sqlite, disk class
+  | fact | number |
+  |---|---|
+  | retract 60k best | 31.3 ms |
+  | retract 9.87M best | 28.4 s |
+  | build baseline | BANKING NOW, lab lane in flight |
+  | memory | DISCRETIONARY cache 5 to 729 MB, cappable, completes slower |
+||| {
+  shape: rectangle
+  class: sq
+}
+
+t4: |||md
+  ## TIER 4: emitted dl6, the ratchet subject
+  | fact | number |
+  |---|---|
+  | grid build | 1173 ms, 911k rows/sec |
+  | budget gate | 2500 ms / 900 MB ceilings (PR #131) |
+  | tracing | per-statement ledger |
+  | target | close the gap to TIER 3 |
+||| {
+  shape: rectangle
+  class: emitted
+}
+
+ratchet: |||md
+  ## the ratchet reads bottom-up
+  | gap | meaning |
+  |---|---|
+  | T4 to T3 | emitter waste, fix by prediction |
+  | T3 to T2 | disk + SQL tax, priced, accepted |
+  | T2 to T1 | algorithm tax vs dd arrangements |
+||| {
+  shape: rectangle
+  class: legend
+}
+
+key: |||md
+  ## color = memory character
+  | color | meaning |
+  |---|---|
+  | gold | mandatory resident, has a wall |
+  | orange | resident, engine-owned |
+  | blue | cache, cappable, spills to disk |
+  | green | sqlite-backed, gated, traced |
+||| {
+  shape: rectangle
+  class: legend
+}

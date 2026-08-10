@@ -48,6 +48,10 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 - **Build-vs-buy**: never assert "write our own" for a common-shaped problem
   without library research + written candidate analysis first. No one-line
   dismissals.
+- **boop never reinvents SQLite or SQL** (user-set 2026-08-09): the store is
+  plain SQLite at ~/.agent/boop.db; `boop db "<sql>"` passthrough is the query
+  surface. No bespoke query-flag DSLs; canned reports are named SQL, visible
+  and deletable. External sqlite dbs: later, on ask.
 - **Infra is bought, never built** (2026-07-18): scheduling, job queue, HTTP,
   daemon lifecycle, logging (= the `tracing` spine in v5) run on established
   libraries or the OS. The datalog engine core is the one legitimately bespoke
@@ -73,6 +77,13 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   diagnosis/mid-task trade-offs; codex lanes per
   `claude-research/skills_archive/commands/codex-delegate.md`
   (evidence: plans/2026-08-02-flash-vs-opus-lane-report.md).
+
+- **Lang design happens with Chris in the room** (user-set 2026-08-10, "do not
+  let lang design happen without me i must understand type system"): no lane,
+  lab, or coordinator settles language or type-system design (generics,
+  monomorphization, list/option storage, @ surface, new type spellings)
+  without the user. Findings come back as cited forks with throw sites; the
+  user rules. Implementation of an already-ruled design is dispatchable.
 
 ## PR-per-arc law (user-set 2026-08-07)
 - Every completed arc reaches origin/main through a posted GitHub PR: push the
@@ -145,6 +156,9 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   early-out or `// @recompute unguarded: <reason>`; rail =
   examples/recompute-guard.dl --check.
 - Colocated consistency: inside a file, follow the file's existing style.
+- **"refusal" is banned in prose** (user-set 2026-08-09): a compiler error for
+  an unbuilt construct is "TODO" or "not built yet". The word stays only in
+  literal code identifiers and existing doc filenames.
 
 ## Open items
 **Awaiting user word (v6):** prolog folder names/numbering

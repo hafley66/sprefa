@@ -1,0 +1,129 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 24
+  }
+}
+
+grid-rows: 2
+grid-columns: 3
+grid-gap: 36
+
+classes: {
+  open: {
+    style.fill: "#fffaf2"
+    style.stroke: "#d9820b"
+    style.stroke-width: 5
+    style.font-color: "#111111"
+    style.font-size: 18
+  }
+  decided: {
+    style.fill: "#f4fbf5"
+    style.stroke: "#2f9e44"
+    style.stroke-width: 5
+    style.font-color: "#111111"
+    style.font-size: 18
+  }
+  mintbox: {
+    style.fill: "#f8f6ff"
+    style.stroke: "#7048e8"
+    style.stroke-width: 5
+    style.font-color: "#111111"
+    style.font-size: 18
+  }
+}
+
+d1: |`text
+  D1  LIST IDENTITY ................. OPEN
+
+  arm: entity  (list owns an id, shareable)
+    __gen__list_text(list_id INTEGER PK,
+                     position INT, value TEXT)
+    todo_tags(todo_id INT, list_id INT)
+    two parents may share list 41
+    delete needs refcount or gc on list_id
+
+  arm: owned  (rows belong to the parent)
+    todo_tags(todo_id INT, position INT,
+              value TEXT)
+    parent row gone -> members gone, no gc
+    sharing = copying
+
+  arm: interned  (one row per distinct content)
+    __list_dict(content_id INTEGER PK,
+                digest TEXT UNIQUE)
+    [a,b] == [a,b] is one integer compare
+    construction pays canonicalize + dedupe
+`| { class: open }
+
+d2x: |`text
+  D2  ORDERING ...................... OPEN
+
+  arm: dense      0:a 1:b 2:c     insert x@1
+                  0:a 1:x 2:b 3:c tail RENUMBERED
+
+  arm: gapped     10:a 20:b 30:c  insert x@15
+                  10:a 15:x 20:b  no renumber
+
+  arm: fractional "a":a "m":b     insert between
+                  "a" "g" "m"     labels exhaust
+
+  arm: linked     a.next=b        insert: 2 writes
+                  ordered read WALKS the chain
+`| { class: open }
+
+d3: |`text
+  D3  TEMPLATE RULES ..... DECIDED (round-1)
+
+  PICKED: decls only, template emits schema
+    rel(todo_tags, [todo_id:int,
+                    position:int, value:text])
+
+  a consumer derives length itself:
+    tag_count(TodoId, TagCount) :-
+      TagCount := count(todo_tags(TodoId, _, _)).
+
+  NOT taken: template-maintained __len,
+  __ordercheck, json view per instance
+`| { class: decided }
+
+d4: |`text
+  D4  SURFACE SPELLING .............. OPEN
+      (generics = comptime parens)
+
+  tags: list(text)                 stock form
+
+  tags: list(text, order: dense,   options,
+             identity: owned)      Zig-style
+
+  tags: deque(text)                named flavor
+
+  all three normalize to ONE canonical name
+`| { class: open }
+
+d5: |`text
+  D5  PLACEMENT ............. IMPLEMENTED
+
+  phase 5   0_generic_expand.pl
+            collect list(T) / option(..)
+            mint decls, FIXPOINT re-scan
+  phase 5   0_option_expand.pl (delegate)
+  phase 10  0_enum_expand.pl (adapter)
+
+  receipted: conformance 348/0, plunit
+  574/574, permutation byte-deterministic
+`| { class: decided }
+
+mint: |`text
+  CANONICAL NAME MINT
+  every D1-D4 arm changes this name
+
+  ?- canonical_type_name(
+       option(list(text)), Name).
+  Name = '__gen__option_list_text_0d79110c..'
+
+  stem + 16-hex sha256 of full encoding
+  collision -> named throw
+  no counters, no fixture paths
+`| { class: mintbox }
