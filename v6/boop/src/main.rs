@@ -1747,7 +1747,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
-    use super::{resolve_dispatch_harness, run_lane_delete, write_route};
+    use super::{append_message, resolve_dispatch_harness, run_lane_delete, write_route};
     use boop::bus::{read_routes, Route};
     use boop::registry::Registry;
 
@@ -1803,6 +1803,68 @@ mod tests {
             !routes.contains_key("l"),
             "a finished lane must leave no registry row"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn result_message(id: &str, lane: &str, rc: i32) -> boop::bus::Message {
+        boop::bus::Message {
+            id: id.into(),
+            from: lane.into(),
+            to: lane.into(),
+            from_timestamp: "2026-08-01T00:00:00.000Z".into(),
+            to_timestamp: None,
+            kind: "result".into(),
+            reply_to: None,
+            body: format!("lane {lane} done rc={rc}"),
+            r#ref: None,
+        }
+    }
+
+    /// RECEIPT (Job 3). A result row that already exists satisfies the wait
+    /// immediately with the rc its body names.
+    #[test]
+    fn wait_returns_rc_from_a_preexisting_result_row() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        append_message(&dir, &result_message("m-1", "l", 5)).unwrap();
+        let outcome = super::wait_for_result(
+            &dir,
+            "l",
+            Some(std::time::Duration::from_secs(2)),
+            std::time::Duration::from_millis(10),
+        );
+        assert_eq!(outcome, Some(5));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RECEIPT (Job 3). An empty mailbox times out to `None`, which the verb
+    /// maps to exit code 124.
+    #[test]
+    fn wait_times_out_when_no_result_row_arrives() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let outcome = super::wait_for_result(
+            &dir,
+            "l",
+            Some(std::time::Duration::from_millis(60)),
+            std::time::Duration::from_millis(10),
+        );
+        assert_eq!(
+            outcome, None,
+            "timeout returns the None the verb exits 124 on"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A non-result row for the lane never satisfies the wait.
+    #[test]
+    fn a_non_result_row_does_not_satisfy_the_wait() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut message = result_message("m-2", "l", 3);
+        message.kind = "note".into();
+        append_message(&dir, &message).unwrap();
+        assert_eq!(super::lane_result_rc(&dir, "l"), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2166,6 +2228,16 @@ enum LaneCmd {
     Message {
         #[command(subcommand)]
         cmd: LaneMessageCmd,
+    },
+    /// Wait for the lane's result row, then exit with the rc it names. `--timeout`
+    /// seconds exits 124; a row that already exists returns its rc immediately.
+    Wait {
+        lane: String,
+        /// Seconds to wait before exiting 124; 0 waits forever.
+        #[arg(long, default_value_t = 0)]
+        timeout: u64,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
     },
 }
 
@@ -2563,6 +2635,11 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 run_list(mail_dir.as_deref(), Some(&lane), true)
             }
         },
+        LaneCmd::Wait {
+            lane,
+            timeout,
+            mail_dir,
+        } => run_lane_wait(mail_dir.as_deref(), &lane, timeout),
     }
 }
 
@@ -2691,6 +2768,64 @@ fn run_lane_pane(
     };
     print!("{}", tmux::capture_pane(socket, target, lines)?);
     Ok(())
+}
+
+/// `beep lane wait`: poll for a `kind=result` row from `lane`, exit with its
+/// rc; `--timeout` seconds exits 124, a pre-existing row returns immediately.
+fn run_lane_wait(mail_dir_arg: Option<&Path>, lane: &str, timeout_secs: u64) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    let deadline = if timeout_secs == 0 {
+        None
+    } else {
+        Some(std::time::Duration::from_secs(timeout_secs))
+    };
+    match wait_for_result(&dir, lane, deadline, std::time::Duration::from_secs(1)) {
+        Some(rc) => std::process::exit(rc),
+        None => std::process::exit(124),
+    }
+}
+
+/// The rc from the lane's most recent `kind=result` mailbox row (`lane <id>
+/// done rc=N`), `None` when no result row for that lane exists yet.
+fn lane_result_rc(dir: &std::path::Path, lane: &str) -> Option<i32> {
+    let mut messages = Vec::new();
+    for box_path in bus::read_boxes(dir).unwrap_or_default() {
+        messages.extend(bus::parse_box(&box_path));
+    }
+    let folded = bus::fold(&messages);
+    folded
+        .iter()
+        .rev()
+        .find(|message| message.kind == "result" && message.to == lane)
+        .and_then(|message| parse_result_rc(&message.body))
+}
+
+fn parse_result_rc(body: &str) -> Option<i32> {
+    body.split_whitespace().find_map(|token| {
+        token
+            .strip_prefix("rc=")
+            .and_then(|value| value.parse().ok())
+    })
+}
+
+/// Poll `lane_result_rc` every `interval` until a result appears or `deadline`
+/// passes (`None` waits forever). `None` on deadline is a timeout.
+fn wait_for_result(
+    dir: &std::path::Path,
+    lane: &str,
+    deadline: Option<std::time::Duration>,
+    interval: std::time::Duration,
+) -> Option<i32> {
+    let start = std::time::Instant::now();
+    loop {
+        if let Some(rc) = lane_result_rc(dir, lane) {
+            return Some(rc);
+        }
+        if deadline.is_some_and(|limit| start.elapsed() >= limit) {
+            return None;
+        }
+        std::thread::sleep(interval);
+    }
 }
 
 /// `beep ps`, optionally narrowed to one lane.
