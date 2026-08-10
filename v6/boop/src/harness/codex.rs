@@ -23,9 +23,11 @@ impl Harness for Codex {
         "codex"
     }
 
+    /// `send_midflight` stays false: `codex exec` reads no stdin mid-turn,
+    /// and interactive codex never exits, so the on-exit hail never fires.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            send_midflight: true,
+            send_midflight: false,
             resume: true,
             spawn: true,
             subagent_visible: false,
@@ -151,17 +153,18 @@ fn codex_sessions_dir() -> anyhow::Result<PathBuf> {
     Ok(home.join(".codex").join("sessions"))
 }
 
-/// A model value may carry an `@low|@medium|@high` suffix, lowered to codex's
-/// `model_reasoning_effort` config override.
+/// `codex exec`, never interactive: the on-exit hail rides process exit and
+/// interactive codex idles forever (class 42). `@effort` -> reasoning config.
 fn launch_command(spec: &SpawnSpec) -> String {
     let mut command = match &spec.resume_session {
         Some(id) => format!(
-            "codex resume {} {}",
+            "codex exec resume {} {}",
             shell_quote(id),
             shell_quote(&spec.prompt)
         ),
-        None => format!("codex {}", shell_quote(&spec.prompt)),
+        None => format!("codex exec {}", shell_quote(&spec.prompt)),
     };
+    command.push_str(" --dangerously-bypass-approvals-and-sandbox");
     if let Some(model) = spec.model.as_deref().filter(|value| !value.is_empty()) {
         let (name, effort) = match model.rsplit_once('@') {
             Some((name, effort)) if matches!(effort, "low" | "medium" | "high") => {
@@ -592,7 +595,7 @@ mod tests {
     #[test]
     fn codex_capabilities_are_measured() {
         let caps = Codex.capabilities();
-        assert!(caps.send_midflight);
+        assert!(!caps.send_midflight, "codex exec reads no stdin mid-turn");
         assert!(caps.resume);
         assert!(caps.spawn);
         assert!(!caps.subagent_visible);
@@ -604,8 +607,12 @@ mod tests {
         spec.resume_session = Some("0192aef3-aaaa-bbbb-cccc-dddddddddddd".to_owned());
         spec.model = Some("gpt-5.6-luna".to_owned());
         let command = super::launch_command(&spec);
-        assert!(command.starts_with("codex resume "), "{command}");
+        assert!(command.starts_with("codex exec resume "), "{command}");
         assert!(command.contains("'do the lane'"), "{command}");
+        assert!(
+            command.contains(" --dangerously-bypass-approvals-and-sandbox"),
+            "{command}"
+        );
         assert!(command.ends_with(" -m 'gpt-5.6-luna'"), "{command}");
     }
 
@@ -614,7 +621,7 @@ mod tests {
         let mut spec = spawn_spec(None);
         spec.model = Some("gpt-5.6-luna@medium".to_owned());
         let command = super::launch_command(&spec);
-        assert!(command.starts_with("codex 'do the lane'"), "{command}");
+        assert!(command.starts_with("codex exec 'do the lane'"), "{command}");
         assert!(command.contains(" -m 'gpt-5.6-luna'"), "{command}");
         assert!(
             command.contains(" -c 'model_reasoning_effort=\"medium\"'"),
