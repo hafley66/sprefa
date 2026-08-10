@@ -104,7 +104,7 @@ node_string(Node, String) :-
 
 % B1-replay projection: map-owned level rules only, the exact shape the
 % dd-runner consumes (id/head/delete/inserts); non-map/edge maps are excluded.
-json_rule(op(Id, map(Ref), sqlite(_, Statements)),
+json_rule(op(Id, map(Ref), sqlite(_, Statements), _),
           _{id:IdText, head:Head, delete:Delete, inserts:Inserts}) :-
     member(levelstmt(Ref, Delete, Inserts, _, _, _, _), Statements),
     atom_string(Id, IdText),
@@ -113,16 +113,21 @@ json_rule(op(Id, map(Ref), sqlite(_, Statements)),
 json_rule(_, none).
 
 % Full operator description for the kernel twin: kind, writes-head, input refs,
-% edge/level classification, and per-kind details (join keys, reduce aggregate).
+% edge/level classification, per-kind details (join keys, reduce aggregate), and
+% for every op that reads rels the bindings / predicates / projection semantics.
 json_operator(_OrderedRules, _Arrangements, _Operators,
-              op(Id, map(Ref), sqlite(Refs, Statements)), Dict) :-
+              op(Id, map(Ref), sqlite(Refs, Statements), Semantics), Dict) :-
     atom_string(Id, IdText),
     ref_name(Ref, Head),
     subtract(Refs, [Ref], Removed),
     ref_name_list(Removed, InputRefs),
+    op_semantics_json(Semantics, SemanticsJson),
     (   member(levelstmt(Ref, Delete, Inserts, _, _, _, _), Statements)
     ->  Dict = _{id:IdText, kind:map, head:Head, refs:InputRefs,
-                 classification:level, delete:Delete, inserts:Inserts}
+                 classification:level, delete:Delete, inserts:Inserts,
+                 bindings:SemanticsJson.bindings,
+                 predicates:SemanticsJson.predicates,
+                 projection:SemanticsJson.projection}
     ;   member(edgestmt(Ref, TriggerRef, HeadColumns, KeyColumns,
                         ProjectSql, WriteSql, DeltaProjectSql,
                         TriggerKind, _EdgeInterns), Statements),
@@ -131,11 +136,14 @@ json_operator(_OrderedRules, _Arrangements, _Operators,
                  classification:edge, trigger:Trigger,
                  head_columns:HeadColumns, key_columns:KeyColumns,
                  project_sql:ProjectSql, write_sql:WriteSql,
-                 delta_project_sql:DeltaProjectSql, trigger_kind:TriggerKind}
+                 delta_project_sql:DeltaProjectSql, trigger_kind:TriggerKind,
+                 bindings:SemanticsJson.bindings,
+                 predicates:SemanticsJson.predicates,
+                 projection:SemanticsJson.projection}
     ).
 json_operator(_OrderedRules, Arrangements, Operators,
-              op(Id, join(Left, Right, LeftArr, RightArr), sqlite(_Refs, Payload)),
-              Dict) :-
+              op(Id, join(Left, Right, LeftArr, RightArr), sqlite(_Refs, Payload),
+                 Semantics), Dict) :-
     atom_string(Id, IdText),
     operator_owner_meta(Payload, Operators, HeadRef, Classification),
     ref_name(HeadRef, Head),
@@ -143,14 +151,19 @@ json_operator(_OrderedRules, Arrangements, Operators,
     ref_name(Right, RightName),
     arrangement_dict(Arrangements, LeftArr, LeftDict),
     arrangement_dict(Arrangements, RightArr, RightDict),
+    op_semantics_json(Semantics, SemanticsJson),
     Dict = _{id:IdText, kind:join, head:Head,
              refs:[LeftName, RightName],
              arrangement:[LeftArr, RightArr],
              join_keys:_{left:LeftDict, right:RightDict},
              constraints:_{left:LeftDict, right:RightDict},
-             classification:Classification}.
+             classification:Classification,
+             bindings:SemanticsJson.bindings,
+             predicates:SemanticsJson.predicates,
+             projection:SemanticsJson.projection}.
 json_operator(OrderedRules, Arrangements, Operators,
-              op(Id, reduce(Arrangement), sqlite(Refs, Payload)), Dict) :-
+              op(Id, reduce(Arrangement), sqlite(Refs, Payload), Semantics),
+              Dict) :-
     atom_string(Id, IdText),
     operator_owner_meta(Payload, Operators, HeadRef, Classification),
     ref_name(HeadRef, Head),
@@ -158,29 +171,84 @@ json_operator(OrderedRules, Arrangements, Operators,
     ref_name_list(Scoped, InputRefs),
     reduce_arrangement_dict(Arrangements, Arrangement, GroupCols, ValueCols),
     reduce_aggregate(Id, OrderedRules, AggregateKinds),
+    op_semantics_json(Semantics, SemanticsJson),
     Dict = _{id:IdText, kind:reduce, head:Head, refs:InputRefs,
              arrangement:Arrangement,
              aggregate:_{kind:AggregateKinds, group:GroupCols, value:ValueCols},
-             classification:Classification}.
+             classification:Classification,
+             bindings:SemanticsJson.bindings,
+             predicates:SemanticsJson.predicates,
+             projection:SemanticsJson.projection}.
 json_operator(_OrderedRules, _Arrangements, Operators,
-              op(Id, filter(Ref), sqlite(_Refs, Payload)), Dict) :-
+              op(Id, filter(Ref), sqlite(_Refs, Payload), Semantics), Dict) :-
     atom_string(Id, IdText),
     operator_owner_meta(Payload, Operators, HeadRef, Classification),
     ref_name(HeadRef, Head),
     ref_name(Ref, Filtered),
+    op_semantics_json(Semantics, SemanticsJson),
     Dict = _{id:IdText, kind:filter, head:Head, refs:[Filtered],
-             classification:Classification}.
+             classification:Classification,
+             bindings:SemanticsJson.bindings,
+             predicates:SemanticsJson.predicates,
+             projection:SemanticsJson.projection}.
 json_operator(_OrderedRules, _Arrangements, Operators,
-              op(Id, iterate(Ref), sqlite(_Refs, Payload)), Dict) :-
+              op(Id, iterate(Ref), sqlite(_Refs, Payload), Semantics), Dict) :-
     atom_string(Id, IdText),
     operator_owner_meta(Payload, Operators, HeadRef, Classification),
     ref_name(HeadRef, Head),
     ref_name(Ref, Iterated),
+    op_semantics_json(Semantics, SemanticsJson),
     Dict = _{id:IdText, kind:iterate, head:Head, refs:[Iterated],
-             classification:Classification}.
+             classification:Classification,
+             bindings:SemanticsJson.bindings,
+             predicates:SemanticsJson.predicates,
+             projection:SemanticsJson.projection}.
+
+op_semantics_json(semantics(Bindings, Predicates, Projection), Dict) :-
+    bindings_json(Bindings, BindingsJson),
+    predicates_json(Predicates, PredicatesJson),
+    projection_json(Projection, ProjectionJson),
+    Dict = _{bindings:BindingsJson, predicates:PredicatesJson,
+             projection:ProjectionJson}.
+
+bindings_json([], Dict) :- Dict = _{}.
+bindings_json([binding(Alias, Ref) | Rest], Dict) :-
+    ref_name(Ref, Name),
+    bindings_json(Rest, RestDict),
+    put_dict(Alias, RestDict, Name, Dict).
+
+predicates_json([], []).
+predicates_json([Predicate | Rest], [Json | More]) :-
+    predicate_json(Predicate, Json),
+    predicates_json(Rest, More).
+
+predicate_json(eq(col(LeftAlias, LeftColumn), col(RightAlias, RightColumn)), Json) :-
+    col_text(LeftAlias, LeftColumn, LeftText),
+    col_text(RightAlias, RightColumn, RightText),
+    Json = _{column_equals:[LeftText, RightText]}.
+predicate_json(eq_lit(col(Alias, Column), Literal), Json) :-
+    col_text(Alias, Column, ColumnText),
+    Json = _{literal_equals:_{column:ColumnText, value:Literal}}.
+
+col_text(Alias, Column, Text) :- format(atom(Text), '~w.~w', [Alias, Column]).
+
+projection_json([], []).
+projection_json([Projection | Rest], [Json | More]) :-
+    projection_one_json(Projection, Json),
+    projection_json(Rest, More).
+
+projection_one_json(proj(HeadColumn, col(Alias, Column)), Json) :-
+    col_text(Alias, Column, SourceText),
+    Json = _{head:HeadColumn, source:SourceText}.
+projection_one_json(proj_value(HeadColumn, Arg), Json) :-
+    render_plain(Arg, ArgText),
+    Json = _{head:HeadColumn, value:ArgText}.
+
+render_plain(Term, Text) :-
+    ( atomic(Term) -> Text = Term ; format(atom(Text), '~w', [Term]) ).
 
 operator_owner_meta(owner(MapId), Operators, HeadRef, Classification) :-
-    member(op(MapId, map(HeadRef), sqlite(_, OwnerStatements)), Operators),
+    member(op(MapId, map(HeadRef), sqlite(_, OwnerStatements), _), Operators),
     statement_classification(OwnerStatements, Classification).
 
 statement_classification(Statements, level) :-
@@ -233,7 +301,7 @@ dd_plan_term(plan(Name, prog(_, Rules), _, RelPlans, _, RuleOrder, _, _, _),
     maplist(rel_term, RelPlans, Rels),
     ordered_rules(RuleOrder, Rules, OrderedRules),
     arrangement_terms(RelPlans, OrderedRules, Arrangements),
-    rule_operators(OrderedRules, Lowered, Operators),
+    rule_operators(OrderedRules, Lowered, RelPlans, Operators),
     rule_wires(OrderedRules, Wires),
     tick_order(TickOrder).
 
@@ -378,15 +446,15 @@ argument_position(Argument, [_ | Rest], Position) :-
 rule_head_arguments((Head <- _), Arguments) :- Head =.. [_ | Arguments].
 rule_head_arguments((Head <+ _), Arguments) :- Head =.. [_ | Arguments].
 
-rule_operators(Rules, Lowered, Operators) :-
-    rule_operators(Rules, Lowered, 1, Operators).
+rule_operators(Rules, Lowered, RelPlans, Operators) :-
+    rule_operators(Rules, Lowered, RelPlans, 1, Operators).
 
-rule_operators([], _, _, []).
-rule_operators([Rule | Rest], Lowered, Number, Operators) :-
+rule_operators([], _, _, _, []).
+rule_operators([Rule | Rest], Lowered, RelPlans, Number, Operators) :-
     reject_mutual_recursion(Rule, [Rule | Rest]),
-    rule_operator_terms(Rule, Lowered, Number, Current),
+    rule_operator_terms(Rule, Lowered, RelPlans, Number, Current),
     Next is Number + 1,
-    rule_operators(Rest, Lowered, Next, More),
+    rule_operators(Rest, Lowered, RelPlans, Next, More),
     append(Current, More, Operators).
 
 reject_mutual_recursion(Rule, Rules) :-
@@ -414,19 +482,119 @@ rules_reach_ref(From, To, Rules, Seen) :-
         rules_reach_ref(Next, To, Rules, [From | Seen])
     ).
 
-rule_operator_terms(Rule, Lowered, Number, Operators) :-
+rule_operator_terms(Rule, Lowered, RelPlans, Number, Operators) :-
     rule_head_ref(Rule, HeadRef),
     rule_body_uses(Rule, Uses),
+    include(positive_use, Uses, PositiveUses),
+    operator_semantics(Rule, HeadRef, PositiveUses, RelPlans,
+                       Bindings, Predicates, MapProjection, ReduceProjection),
     operator_id(map, Number, MapId),
     operator_payload(Rule, HeadRef, Uses, Lowered, Sqlite),
-    Map = op(MapId, map(HeadRef), Sqlite),
+    Map = op(MapId, map(HeadRef), Sqlite,
+             semantics(Bindings, Predicates, MapProjection)),
     Owner = sqlite(Refs, owner(MapId)),
     Sqlite = sqlite(Refs, _),
-    join_operators(Uses, Number, Owner, Joins),
-    filter_operators(Uses, Number, Owner, Filters),
-    reduce_operators(Rule, Number, Owner, Reduces),
-    iterate_operators(HeadRef, Uses, Number, Owner, Iterates),
+    join_operators(Number, Owner, PositiveUses,
+                   Bindings, Predicates, MapProjection, Joins),
+    filter_operators(Uses, Number, Owner, Bindings, Predicates, Filters),
+    reduce_operators(Rule, Number, Owner, Bindings, Predicates,
+                     ReduceProjection, Reduces),
+    iterate_operators(HeadRef, Uses, Number, Owner, Bindings, Predicates,
+                      Iterates),
     append([[Map], Joins, Filters, Reduces, Iterates], Operators).
+
+operator_semantics(Rule, HeadRef, PositiveUses, RelPlans,
+                   Bindings, Predicates, MapProjection, ReduceProjection) :-
+    positive_bindings(PositiveUses, Bindings),
+    positive_occurrences(PositiveUses, RelPlans, Occurrences),
+    predicates_from_occurrences(Occurrences, [], [], Predicates),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    reduce_projection(Rule, HeadRef, RelPlans, Occurrences, ReduceProjection),
+    ( ReduceProjection == []
+    -> rule_head_arguments(Rule, HeadArgs),
+       head_projection(HeadArgs, HeadColumns, Occurrences, MapProjection)
+    ;  MapProjection = ReduceProjection
+    ).
+
+% The numbered aliases the level SQL gives its FROM sources: b0, b1, ... in
+% positive body-atom order, mirroring lower.pl:compile_positive_uses/7.
+positive_bindings(PositiveUses, Bindings) :-
+    positive_bindings(PositiveUses, 0, Bindings).
+positive_bindings([], _, []).
+positive_bindings([use(Ref, _, pos, _) | Rest], Index,
+                  [binding(Alias, Ref) | MoreBindings]) :-
+    format(atom(Alias), 'b~w', [Index]),
+    Next is Index + 1,
+    positive_bindings(Rest, Next, MoreBindings).
+
+% Every (variable | literal, aliased-column) pair a positive body atom reads,
+% linearized left to right. Lowering binds exactly these into the FROM scope.
+positive_occurrences(PositiveUses, RelPlans, Occurrences) :-
+    positive_occurrences(PositiveUses, RelPlans, 0, Occurrences).
+positive_occurrences([], _, _, []).
+positive_occurrences([use(Ref, Args, pos, _) | Rest], RelPlans, Index, Occs) :-
+    format(atom(Alias), 'b~w', [Index]),
+    relplan_columns(RelPlans, Ref, Columns),
+    args_occurrences(Args, Columns, Alias, HereOccs),
+    Next is Index + 1,
+    positive_occurrences(Rest, RelPlans, Next, MoreOccs),
+    append(HereOccs, MoreOccs, Occs).
+
+args_occurrences([], _, _, []).
+args_occurrences([Arg | RestArgs], [Column | RestColumns], Alias,
+                 [Arg-col(Alias, Column) | More]) :-
+    args_occurrences(RestArgs, RestColumns, Alias, More).
+
+% column-to-column equality for every SHARED body variable (its later columns
+% fold onto its first occurrence) and a column-to-literal for every atomic
+% argument. The result is the same data the SQL WHERE makes textual; here it is
+% structured, and it is never SQL text. Occurrences are matched by VARIABLE
+% IDENTITY (==), never unification, so two distinct unbound vars never collapse.
+predicates_from_occurrences([], _, Acc, Predicates) :-
+    reverse(Acc, Predicates).
+predicates_from_occurrences([Arg-col(Alias, Column) | Rest], Seen, Acc, Predicates) :-
+    ( var(Arg)
+    -> ( seen_first_col(Arg, Seen, FirstCol)
+       -> NextAcc = [eq(FirstCol, col(Alias, Column)) | Acc],
+          NextSeen = Seen
+       ;  NextAcc = Acc, NextSeen = [Arg-col(Alias, Column) | Seen] )
+    ;  NextAcc = [eq_lit(col(Alias, Column), Arg) | Acc], NextSeen = Seen ),
+    predicates_from_occurrences(Rest, NextSeen, NextAcc, Predicates).
+
+% First stored occurrence column whose key is the SAME variable instance.
+seen_first_col(Arg, [Key-Col | Rest], FirstCol) :-
+    ( Key == Arg -> FirstCol = Col ; seen_first_col(Arg, Rest, FirstCol) ).
+
+% Head projection: one row per head column, head column <- the source binding
+% column that supplies it. A simple variable head argument resolves to its
+% binding column (again by variable identity); a computed/literal head argument
+% is carried as proj_value.
+head_projection([], [], _, []).
+head_projection([Arg | RestArgs], [HeadColumn | RestColumns], Occurrences,
+                [Projection | RestProjection]) :-
+    ( var(Arg),
+      seen_first_col(Arg, Occurrences, FirstCol)
+    -> Projection = proj(HeadColumn, FirstCol)
+    ;  Projection = proj_value(HeadColumn, Arg)
+    ),
+    head_projection(RestArgs, RestColumns, Occurrences, RestProjection).
+
+% The reduce result row projects the aggregate head's plain (group) and agg
+% (value) arguments against the same source bindings; a non-aggregate rule has
+% no reduce op and so no reduce projection.
+reduce_projection(Rule, HeadRef, RelPlans, Occurrences, Projection) :-
+    rule_is_aggregate(Rule),
+    !,
+    aggregate_head_template_from_rule(Rule, Template),
+    aggregate_projection_args(Template, Args),
+    relplan_columns(RelPlans, HeadRef, HeadColumns),
+    head_projection(Args, HeadColumns, Occurrences, Projection).
+reduce_projection(_, _, _, _, []).
+
+aggregate_projection_args(Template, Args) :-
+    maplist(template_arg, Template, Args).
+template_arg(plain(Expr), Expr).
+template_arg(agg(_, Expr), Expr).
 
 operator_payload(_Rule, HeadRef, Uses,
                  lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
@@ -451,31 +619,37 @@ operator_refs(HeadRef, Uses, Refs) :-
 rule_body_uses((_ <- Body), Uses) :- body_ref_uses(Body, Uses).
 rule_body_uses((_ <+ Body), Uses) :- body_ref_uses(Body, Uses).
 
-join_operators(Uses, Number, Payload, Operators) :-
-    include(positive_use, Uses, PositiveUses),
-    join_operator_terms(PositiveUses, Number, 1, Payload, Operators).
+join_operators(Number, Payload, PositiveUses,
+               Bindings, Predicates, Projection, Operators) :-
+    join_operator_terms(PositiveUses, Number, 1, Payload,
+                        Bindings, Predicates, Projection, Operators).
 
 positive_use(use(_, _, pos, _)).
 
-join_operator_terms([_], _, _, _, []) :- !.
-join_operator_terms([], _, _, _, []) :- !.
+join_operator_terms([_], _, _, _, _, _, _, []) :- !.
+join_operator_terms([], _, _, _, _, _, _, []) :- !.
 join_operator_terms([LeftUse | [RightUse | Rest]], Number, Index, Payload,
-                    [op(Id, join(Left, Right, LeftArrangement, RightArrangement), Payload) | More]) :-
+                    Bindings, Predicates, Projection,
+                    [op(Id, join(Left, Right, LeftArrangement, RightArrangement), Payload,
+                        semantics(Bindings, Predicates, Projection)) | More]) :-
     LeftUse = use(Left, _, _, _),
     RightUse = use(Right, _, _, _),
     operator_id(join, Number-Index, Id),
     join_arrangement_id(LeftUse, Number, Index, left, LeftArrangement),
     join_arrangement_id(RightUse, Number, Index, right, RightArrangement),
     Next is Index + 1,
-    join_operator_terms([use(Right, [], pos, unmarked) | Rest], Number, Next, Payload, More).
+    join_operator_terms([use(Right, [], pos, unmarked) | Rest], Number, Next, Payload,
+                        Bindings, Predicates, Projection, More).
 
-filter_operators(Uses, Number, Payload, Operators) :-
-    findall(op(Id, filter(Ref), Payload),
+filter_operators(Uses, Number, Payload, Bindings, Predicates, Operators) :-
+    findall(op(Id, filter(Ref), Payload, semantics(Bindings, Predicates, [])),
             ( nth1(Index, Uses, use(Ref, _, neg, _)),
               operator_id(filter, Number-Index, Id) ),
             Operators).
 
-reduce_operators(Rule, Number, Payload, [op(Id, reduce(Arrangement), Payload)]) :-
+reduce_operators(Rule, Number, Payload, Bindings, Predicates,
+                 Projection, [op(Id, reduce(Arrangement), Payload,
+                                  semantics(Bindings, Predicates, Projection))]) :-
     rule_is_aggregate(Rule),
     !,
     operator_id(reduce, Number, Id),
@@ -484,13 +658,15 @@ reduce_operators(Rule, Number, Payload, [op(Id, reduce(Arrangement), Payload)]) 
     Use = use(Ref, _, _, _),
     Ref = Name/Arity,
     format(atom(Arrangement), 'arr_~w_~w_~w', [Name, Arity, Id]).
-reduce_operators(_, _, _, []).
+reduce_operators(_, _, _, _, _, _, []).
 
-iterate_operators(HeadRef, Uses, Number, Payload, [op(Id, iterate(HeadRef), Payload)]) :-
+iterate_operators(HeadRef, Uses, Number, Payload, Bindings, Predicates,
+                  [op(Id, iterate(HeadRef), Payload,
+                      semantics(Bindings, Predicates, []))]) :-
     member(use(HeadRef, _, pos, _), Uses),
     !,
     operator_id(iterate, Number, Id).
-iterate_operators(_, _, _, _, []).
+iterate_operators(_, _, _, _, _, _, []).
 
 operator_id(Kind, Number, Id) :-
     number_atom(Number, Suffix),
@@ -513,14 +689,15 @@ rule_wires([Rule | Rest], Number, Wires) :-
 
 rule_wires_for_operators(Rule, Uses, Number, HeadRef, Wires) :-
     include(positive_use, Uses, PositiveUses),
-    filter_operators(Uses, Number, none, FilterOperators),
-    reduce_operators(Rule, Number, none, ReduceOperators),
-    iterate_operators(HeadRef, Uses, Number, none, IterateOperators),
+    filter_operators(Uses, Number, none, [], [], FilterOperators),
+    reduce_operators(Rule, Number, none, [], [], [], ReduceOperators),
+    iterate_operators(HeadRef, Uses, Number, none, [], [], IterateOperators),
     operator_id(map, Number, MapId),
-    join_operators(PositiveUses, Number, none, JoinOperators),
-    append([FilterOperators, ReduceOperators, IterateOperators, [op(MapId, map(HeadRef), none)]],
+    join_operators(Number, none, PositiveUses, [], [], [], JoinOperators),
+    append([FilterOperators, ReduceOperators, IterateOperators,
+            [op(MapId, map(HeadRef), none, none)]],
            TailOperators),
-    TailOperators = [op(FirstTailId, _, _) | _],
+    TailOperators = [op(FirstTailId, _, _, _) | _],
     wire_operator_inputs(PositiveUses, JoinOperators, FirstTailId, InputWires),
     operator_chain_wires(TailOperators, HeadRef, TailWires),
     negative_filter_wires(Uses, FilterOperators, NegativeWires),
@@ -529,24 +706,24 @@ rule_wires_for_operators(Rule, Uses, Number, HeadRef, Wires) :-
 wire_operator_inputs([use(Ref, _, _, _)], [], FirstTailId,
                      [wire(Ref, FirstTailId, delta)]) :- !.
 wire_operator_inputs([use(Left, _, _, _), use(Right, _, _, _) | Rest],
-                     [op(JoinId, _, _) | JoinOperators], FirstTailId,
+                     [op(JoinId, _, _, _) | JoinOperators], FirstTailId,
                      [wire(Left, JoinId, delta), wire(Right, JoinId, delta) | More]) :-
     wire_join_inputs(Rest, JoinId, JoinOperators, FirstTailId, More).
 wire_operator_inputs([], [], _, []).
 
 wire_join_inputs([], JoinId, [], FirstTailId, [wire(JoinId, FirstTailId, delta)]).
 wire_join_inputs([use(Ref, _, _, _) | Rest], PreviousJoinId,
-                 [op(JoinId, _, _) | JoinOperators], FirstTailId,
+                 [op(JoinId, _, _, _) | JoinOperators], FirstTailId,
                  [wire(PreviousJoinId, JoinId, delta), wire(Ref, JoinId, delta) | More]) :-
     wire_join_inputs(Rest, JoinId, JoinOperators, FirstTailId, More).
 
-operator_chain_wires([op(Id, _, _)], HeadRef, [wire(Id, HeadRef, delta)]).
-operator_chain_wires([op(Id, _, _) | [op(NextId, _, _) | Rest]], HeadRef,
+operator_chain_wires([op(Id, _, _, _)], HeadRef, [wire(Id, HeadRef, delta)]).
+operator_chain_wires([op(Id, _, _, _) | [op(NextId, _, _, _) | Rest]], HeadRef,
                      [wire(Id, NextId, delta) | More]) :-
-    operator_chain_wires([op(NextId, _, _) | Rest], HeadRef, More).
+    operator_chain_wires([op(NextId, _, _, _) | Rest], HeadRef, More).
 
 negative_filter_wires(_, [], []).
-negative_filter_wires(Uses, [op(FilterId, _, _) | _], Wires) :-
+negative_filter_wires(Uses, [op(FilterId, _, _, _) | _], Wires) :-
     findall(wire(Ref, FilterId, delta), member(use(Ref, _, neg, _), Uses), Wires).
 
 tick_order([ phase(absorb_arrivals), phase(index_delta),

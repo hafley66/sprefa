@@ -88,12 +88,84 @@ test(json_twin_carries_arrangements_and_wires) :-
     get_dict(from, Wire, 'join_1_1'),
     get_dict(to, Wire, 'map_1').
 
+test(json_twin_carries_map_bindings_predicates_projection) :-
+    dd_fixture_file('5_value_plane.pl', Fixture),
+    fixture_dd_plan_json_text(Fixture, float_exact_join_has_no_epsilon, Text),
+    json_text_dict(Text, Dict),
+    get_dict(operators, Dict, Operators),
+    member(Op, Operators),
+    get_dict(kind, Op, map),
+    get_dict(bindings, Op, Bindings),
+    get_dict(b0, Bindings, 'left/2'),
+    get_dict(b1, Bindings, 'right/2'),
+    get_dict(predicates, Op, Predicates),
+    member(NameEquals, Predicates),
+    get_dict(column_equals, NameEquals, ['b0.name', 'b1.name']),
+    member(ValueEquals, Predicates),
+    get_dict(column_equals, ValueEquals, ['b0.value', 'b1.value']),
+    get_dict(projection, Op, Projection),
+    member(Proj, Projection),
+    get_dict(head, Proj, name),
+    get_dict(source, Proj, 'b0.name').
+
+test(json_twin_carries_reduce_projection) :-
+    dd_fixture_file('5_value_plane.pl', Fixture),
+    fixture_dd_plan_json_text(Fixture, float_avg_is_grouped, Text),
+    json_text_dict(Text, Dict),
+    get_dict(operators, Dict, Operators),
+    member(Op, Operators),
+    get_dict(kind, Op, reduce),
+    get_dict(projection, Op, Projection),
+    member(GroupProj, Projection),
+    get_dict(head, GroupProj, group),
+    get_dict(source, GroupProj, 'b0.group'),
+    member(ValueProj, Projection),
+    get_dict(head, ValueProj, value),
+    get_dict(source, ValueProj, 'b0.value').
+
+test(operator_semantics_columns_exist_on_bound_rels) :-
+    dd_fixture_file('engine_core.pl', EngineFixture),
+    dd_fixture_file('5_value_plane.pl', ValueFixture),
+    forall(member(Fixture-Name,
+                  [ EngineFixture-retraction_only_tick_retracts_level_view,
+                    ValueFixture-float_exact_join_has_no_epsilon,
+                    ValueFixture-float_avg_is_grouped ]),
+           ( fixture_dd_plan_text(Fixture, Name, Text),
+             text_plan(Text, dd_plan(_, rels(Rels), _, operators(Operators), _, _)),
+             forall(member(Op, Operators), op_semantics_columns_valid(Op, Rels)) )).
+
+op_semantics_columns_valid(op(_, _, _, semantics(Bindings, Predicates, Projection)), Rels) :-
+    binding_columns(Bindings, Rels, BindingMap),
+    forall(member(P, Predicates), predicate_cols_valid(P, BindingMap)),
+    forall(member(Pr, Projection), projection_col_valid(Pr, BindingMap)).
+
+binding_columns(Bindings, Rels, BindingMap) :-
+    findall(Alias-Columns,
+            ( member(binding(Alias, Ref), Bindings),
+              member(rel(Ref, Columns, _), Rels) ),
+            BindingMap).
+
+predicate_cols_valid(eq(Left, Right), BindingMap) :-
+    col_valid(Left, BindingMap),
+    col_valid(Right, BindingMap).
+predicate_cols_valid(eq_lit(Col, _), BindingMap) :-
+    col_valid(Col, BindingMap).
+
+col_valid(col(Alias, Column), BindingMap) :-
+    memberchk(Alias-Columns, BindingMap),
+    memberchk(Column, Columns).
+
+projection_col_valid(proj(_, col(Alias, Column)), BindingMap) :-
+    memberchk(Alias-Columns, BindingMap),
+    memberchk(Column, Columns).
+projection_col_valid(proj_value(_, _), _).
+
 test(every_operator_has_a_wire) :-
     dd_fixture_file('5_value_plane.pl', Fixture),
     forall(member(Name, [float_exact_join_has_no_epsilon, float_avg_is_grouped]),
            ( fixture_dd_plan_text(Fixture, Name, Text),
              text_plan(Text, dd_plan(_, _, _, operators(Operators), wires(Wires), _)),
-             forall(member(op(Id, _, _), Operators), operator_has_wire(Id, Wires)) )).
+             forall(member(op(Id, _, _, _), Operators), operator_has_wire(Id, Wires)) )).
 
 test(each_rule_sql_appears_on_its_head_writing_map_once) :-
     dd_fixture_file('engine_core.pl', EngineFixture),
@@ -105,27 +177,27 @@ test(each_rule_sql_appears_on_its_head_writing_map_once) :-
            ( fixture_dd_plan_text(Fixture, Name, Text),
              text_plan(Text, dd_plan(_, rels(Rels), _, operators(Operators), _, _)),
              findall(Ref, member(rel(Ref, _, _), Rels), PlanRefs),
-             forall(member(op(MapId, map(_), sqlite(PayloadRefs, Statements)), Operators),
+             forall(member(op(MapId, map(_), sqlite(PayloadRefs, Statements), _), Operators),
                     ( PayloadRefs \== [],
                       Statements \== [],
                       forall(member(Ref, PayloadRefs), memberchk(Ref, PlanRefs)),
                       forall(member(Statement, Statements), payload_statement(Statement)),
                       forall(member(Statement, Statements),
                              ( findall(Id,
-                                       member(op(Id, _, sqlite(_, Statements)), Operators),
+                                       member(op(Id, _, sqlite(_, Statements), _), Operators),
                                        StatementIds),
                                StatementIds = [MapId] )) )),
-             forall(member(op(Id, Description, sqlite(PayloadRefs, owner(MapId))), Operators),
+             forall(member(op(Id, Description, sqlite(PayloadRefs, owner(MapId)), _), Operators),
                     ( Description \= map(_),
                       PayloadRefs \== [],
-                      memberchk(op(MapId, map(_), sqlite(PayloadRefs, _)), Operators),
+                      memberchk(op(MapId, map(_), sqlite(PayloadRefs, _), _), Operators),
                       Id \= MapId )) )).
 
 test(join_inputs_have_keyed_arrangements) :-
     dd_fixture_file('5_value_plane.pl', Fixture),
     fixture_dd_plan_text(Fixture, float_exact_join_has_no_epsilon, Text),
     text_plan(Text, dd_plan(_, _, arrangements(Arrangements),
-                            operators([_, op(_, join(_, _, LeftId, RightId), _)]), _, _)),
+                            operators([_, op(_, join(_, _, LeftId, RightId), _, _)]), _, _)),
     memberchk(arr(LeftId, left/2, [name,value], [], signed), Arrangements),
     memberchk(arr(RightId, right/2, [name,value], [], signed), Arrangements).
 
@@ -168,7 +240,7 @@ test(empty_rule_order_falls_back_to_program_rules) :-
     Plan = plan(Name, Prog, Types, RelPlans, ArrivalTargets, _RuleOrder, EdgeRules, SubscribedRels, Mode),
     dd_plan_text(plan(Name, Prog, Types, RelPlans, ArrivalTargets, [], EdgeRules, SubscribedRels, Mode), Text),
     text_plan(Text, dd_plan(_, _, _, operators(Operators), _, _)),
-    memberchk(op(map_1, map(copy/1), _), Operators).
+    memberchk(op(map_1, map(copy/1), _, _), Operators).
 
 test(mutual_recursion_is_rejected,
      [throws(unsupported_construct(mutual_recursion(left/1)))]) :-
