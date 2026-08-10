@@ -6879,6 +6879,26 @@ test(use_item_without_an_alias_still_parses) :-
     string_codes("use \"lib.dl6\".", Codes),
     use_item(use("lib.dl6"), Codes, []).
 
+% FAIL-FIRST PIN (MOD-8): module_hash/2 hashes the basename, not the path, so
+% a/b/c.dl6 and aa/b/c.dl6 mint ONE identity and HMR conflates the two files.
+test(same_basename_different_paths_get_distinct_module_identity,
+     [fixme(mod8_module_hash_ignores_path)]) :-
+    make_use_dir(Dir),
+    atomic_list_concat([Dir, '/a/b'], LeftDir),
+    atomic_list_concat([Dir, '/aa/b'], RightDir),
+    make_directory_path(LeftDir),
+    make_directory_path(RightDir),
+    write_use_file(Dir, 'a/b/c.dl6' = "rel tree(tree_id:int).\n"),
+    write_use_file(Dir, 'aa/b/c.dl6' = "rel plot(plot_id:int).\n"),
+    write_use_file(Dir, 'main.dl6' =
+        "use \"a/b/c.dl6\" as left.\nuse \"aa/b/c.dl6\" as right.\nrel top(z:int).\n"),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, _, ModuleTable),
+    findall(Hash, member(module(_, c, Hash), ModuleTable), BasenameHashes),
+    length(BasenameHashes, 2),
+    sort(BasenameHashes, DistinctHashes),
+    length(DistinctHashes, 2).
+
 % `as` is a whole-word match, so a path followed by an identifier that merely
 % starts with `as` is not an alias clause.
 test(use_item_alias_word_is_whole) :-
