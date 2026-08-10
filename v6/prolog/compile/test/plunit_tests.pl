@@ -7418,3 +7418,153 @@ test(openapi_text_matches_checked_in_fixture) :-
     Text == CheckedIn, !.
 
 :- end_tests(schema_emit).
+
+:- begin_tests(schema_parity_golden).
+
+parity_row(jsonschema, '$defs', emits,
+           'module_defs/4 renders named relations below `$defs`.',
+           '$defs').
+parity_row(jsonschema, '$id', emits,
+           'entry module name and hash render as `name#hash`.',
+           '$id').
+parity_row(jsonschema, '$ref via declared type name', emits,
+           'a declared column type renders a `$ref` into `$defs`.',
+           '$ref').
+parity_row(jsonschema, '$ref via rel-typed column', emits,
+           'a relational column renders a `$ref` into `$defs`.',
+           '$ref').
+parity_row(jsonschema, 'additionalProperties', emits,
+           'relation objects render `additionalProperties: false`.',
+           'additionalProperties').
+parity_row(jsonschema, 'anyOf-null (option)', no_surface,
+           'option(T) schema rows are not produced by the current dl6 compiler.',
+           '').
+parity_row(jsonschema, 'array items', no_surface,
+           'list(T) is not accepted by the current inline compiler door.',
+           '').
+parity_row(jsonschema, 'const', no_surface,
+           'no const literal or schema keyword exists in the dl6 surface.',
+           '').
+parity_row(jsonschema, 'enum', no_surface,
+           'no enum schema emission path exists in the current emitter.',
+           '').
+parity_row(jsonschema, 'format', no_surface,
+           'no format annotation surface exists in the current emitter.',
+           '').
+parity_row(jsonschema, 'integer', emits,
+           '`int` renders `type: integer`.',
+           'integer').
+parity_row(jsonschema, 'maximum', 'deferred-@',
+           'annotation_at_curry; user 2026-08-10: constraints are @ stuff.',
+           '').
+parity_row(jsonschema, 'minimum', 'deferred-@',
+           'annotation_at_curry; user 2026-08-10: constraints are @ stuff.',
+           '').
+parity_row(jsonschema, 'multipleOf', 'deferred-@',
+           'annotation_at_curry; user 2026-08-10: constraints are @ stuff.',
+           '').
+parity_row(jsonschema, 'number', no_surface,
+           'the current compiled schema fixture has no float-valued column.',
+           '').
+parity_row(jsonschema, 'object', emits,
+           'each relation renders `type: object`.',
+           'object').
+parity_row(jsonschema, 'oneOf/discriminated union', no_surface,
+           'no variant or oneOf surface exists in the current emitter.',
+           '').
+parity_row(jsonschema, 'pattern', 'deferred-@',
+           'annotation_at_curry; user 2026-08-10: constraints are @ stuff.',
+           '').
+parity_row(jsonschema, 'patternProperties', no_surface,
+           'no patternProperties annotation or emission path exists.',
+           '').
+parity_row(jsonschema, 'prefixItems', no_surface,
+           'no prefixItems list surface or emission path exists.',
+           '').
+parity_row(jsonschema, 'properties', emits,
+           'relation columns render under `properties`.',
+           'properties').
+parity_row(jsonschema, 'recursive $ref', no_surface,
+           'type_cycle_witness rejects cyclic declared types before emission.',
+           '').
+parity_row(jsonschema, 'required', emits,
+           'non-option columns render in the `required` array.',
+           'required').
+parity_row(jsonschema, 'string', emits,
+           '`text` renders `type: string`.',
+           'string').
+
+parity_row(openapi, callbacks, no_surface,
+           'no callback declaration or route callback metadata exists.',
+           '').
+parity_row(openapi, 'components.schemas', emits,
+           'the loaded relation shapes render below `components.schemas`.',
+           'components').
+parity_row(openapi, examples, no_surface,
+           'no example declaration or emitter input exists.',
+           '').
+parity_row(openapi, parameters, emits,
+           'path parameters from the served route table render as parameters.',
+           'parameters').
+parity_row(openapi, paths, emits,
+           'api_route/5 facts render the served path table.',
+           'paths').
+parity_row(openapi, requestBody, no_surface,
+           'served routes have no request body schema metadata.',
+           '').
+parity_row(openapi, responses, emits,
+           'operation response status objects render from operation_responses/2.',
+           'responses').
+parity_row(openapi, securitySchemes, runtime_only,
+           'auth declarations depend on the served authentication policy.',
+           '').
+parity_row(openapi, webhooks, no_surface,
+           'no webhook route declaration or emitter input exists.',
+           '').
+
+parity_rows(Rows) :-
+    once(plunit_schema_emit:schema_emit_rows(
+        'struct_column_renders_canonical_json.dl6',
+        struct_column_renders_canonical_json, Rows)).
+
+parity_emitted_text(jsonschema, Text) :-
+    parity_rows(Rows),
+    jsonschema_text(struct_column_renders_canonical_json, Rows, Text).
+parity_emitted_text(openapi, Text) :-
+    parity_rows(Rows),
+    openapi_text(struct_column_renders_canonical_json, Rows, Text).
+
+parity_rows_markdown(Markdown) :-
+    findall(row(Dialect, Feature, Status, Receipt, Needle),
+            parity_row(Dialect, Feature, Status, Receipt, Needle),
+            Rows),
+    with_output_to(string(Markdown),
+                   ( format('# JSON Schema/OpenAPI parity~n~n', []),
+                     format('| feature | dialect | status | receipt |~n', []),
+                     format('| --- | --- | --- | --- |~n', []),
+                     forall(member(row(Dialect, Feature, Status, Receipt, _), Rows),
+                            format('| ~w | ~w | ~w | ~w |~n',
+                                   [Feature, Dialect, Status, Receipt])) )).
+
+parity_checked_in(Path, Text) :-
+    test_dir_fact(Dir),
+    atomic_list_concat([Dir, '/emit/PARITY.golden.md'], Path),
+    plunit_schema_emit:read_emit_fixture(Path, Text).
+
+parity_diff(Expected, Actual) :-
+    format(user_error, 'PARITY.golden.md mismatch~n--- expected~n~s+++ actual~n~s',
+           [Expected, Actual]).
+
+test(schema_parity_is_one_executable_golden) :-
+    forall(parity_row(Dialect, _Feature, emits, _Receipt, Needle),
+           ( parity_emitted_text(Dialect, Text),
+             sub_string(Text, _, _, _, Needle) )),
+    parity_rows_markdown(Actual),
+    parity_checked_in(Path, Expected),
+    (   Actual == Expected
+    ->  true
+    ;   parity_diff(Expected, Actual), fail
+    ),
+    Path \== ''.
+
+:- end_tests(schema_parity_golden).
