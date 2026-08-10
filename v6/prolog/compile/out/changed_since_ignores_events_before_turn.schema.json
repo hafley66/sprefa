@@ -1,0 +1,40 @@
+{
+  "$defs": {
+    "agent_turn": {
+      "additionalProperties":false,
+      "properties": {"tick": {"type":"integer"},"turn_id": {"type":"string"}},
+      "required": ["turn_id", "tick" ],
+      "type":"object"
+    },
+    "change_event": {
+      "additionalProperties":false,
+      "properties": {
+        "digest": {"type":"string"},
+        "path": {"type":"string"},
+        "tick": {"type":"integer"}
+      },
+      "required": ["path", "digest", "tick" ],
+      "type":"object"
+    },
+    "changed_since": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"turn_id": {"type":"string"}},
+      "required": ["turn_id", "path" ],
+      "type":"object"
+    },
+    "turn_marker": {
+      "additionalProperties":false,
+      "properties": {"turn_id": {"type":"string"}},
+      "required": ["turn_id" ],
+      "type":"object"
+    },
+    "worktree_edit": {
+      "additionalProperties":false,
+      "properties": {"digest": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "digest" ],
+      "type":"object"
+    }
+  },
+  "$id":"changed_since_ignores_events_before_turn#89703fe3030a0b5a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

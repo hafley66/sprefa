@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "cache": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "poll_result": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"match_edge_arm_keeps_edge_semantics#7f5554a3b4cb46d1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

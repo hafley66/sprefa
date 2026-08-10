@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "scaled": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"number"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "source": {
+      "additionalProperties":false,
+      "properties": {"count": {"type":"integer"}},
+      "required": ["count" ],
+      "type":"object"
+    }
+  },
+  "$id":"head_column_int_widens_into_float#e146a367e5479e0c",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

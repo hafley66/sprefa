@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "kick": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"}},
+      "required": ["col1" ],
+      "type":"object"
+    },
+    "pulse": {
+      "additionalProperties":false,
+      "properties": {"next": {"type":"integer"}},
+      "required": ["next" ],
+      "type":"object"
+    }
+  },
+  "$id":"repeat_is_a_self_carry_chain#313901b726106a49",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "arrival": {
+      "additionalProperties":false,
+      "properties": {"payload": {"type":"string"}},
+      "required": ["payload" ],
+      "type":"object"
+    },
+    "numbered": {
+      "additionalProperties":false,
+      "properties": {"ordinal": {"type":"integer"},"payload": {"type":"string"}},
+      "required": ["ordinal", "payload" ],
+      "type":"object"
+    },
+    "seq_numbered_1": {
+      "additionalProperties":false,
+      "properties": {"at": {"type":"integer"},"partition": {"type":"string"}},
+      "required": ["partition", "at" ],
+      "type":"object"
+    }
+  },
+  "$id":"seq_wire_surface#252bece0e8a2b9e2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

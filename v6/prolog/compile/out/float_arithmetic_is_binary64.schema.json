@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "adjusted": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"number"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    },
+    "score": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"number"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"float_arithmetic_is_binary64#6bf4c78357ee9863",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

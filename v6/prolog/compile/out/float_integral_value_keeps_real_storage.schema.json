@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "score": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"number"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"float_integral_value_keeps_real_storage#57993e3d4935aa84",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

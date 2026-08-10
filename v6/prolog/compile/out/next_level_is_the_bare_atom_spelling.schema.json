@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "source": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"next_level_is_the_bare_atom_spelling#82ccbab513f6bcac",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

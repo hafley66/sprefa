@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "demanded": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"target": {"type":"string"}},
+      "required": ["target", "session_id" ],
+      "type":"object"
+    },
+    "open_scope": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"target": {"type":"string"}},
+      "required": ["session_id", "target" ],
+      "type":"object"
+    },
+    "route_change": {
+      "additionalProperties":false,
+      "properties": {"route_id": {"type":"string"},"session_id": {"type":"string"}},
+      "required": ["session_id", "route_id" ],
+      "type":"object"
+    },
+    "route_row": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"route_id": {"type":"string"}},
+      "required": ["route_id", "body" ],
+      "type":"object"
+    },
+    "route_view": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"route_id": {"type":"string"}},
+      "required": ["route_id", "body" ],
+      "type":"object"
+    }
+  },
+  "$id":"switch_as_keyed_replace#15bdbee12f5ed5b7",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

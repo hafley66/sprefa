@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "hit": {
+      "additionalProperties":false,
+      "properties": {
+        "item": {"type":"integer"},
+        "leaf": {"type":"integer"},
+        "name": {"type":"string"}
+      },
+      "required": ["item", "name", "leaf" ],
+      "type":"object"
+    },
+    "spec": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_spread_and_capture_and_descent_multiply#1d4738cbb48dfa83",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

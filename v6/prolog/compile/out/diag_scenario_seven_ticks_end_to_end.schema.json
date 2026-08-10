@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "diag_history": {
+      "additionalProperties":false,
+      "properties": {
+        "code": {"type":"string"},
+        "line": {"type":"integer"},
+        "opened_at": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line", "code", "opened_at" ],
+      "type":"object"
+    },
+    "diagnostic": {
+      "additionalProperties":false,
+      "properties": {
+        "code": {"type":"string"},
+        "col4": {"type":"string"},
+        "line": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line", "code", "col4" ],
+      "type":"object"
+    },
+    "file_line": {
+      "additionalProperties":false,
+      "properties": {
+        "code": {"type":"string"},
+        "line": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line", "code" ],
+      "type":"object"
+    },
+    "hook_window": {
+      "additionalProperties":false,
+      "properties": {"since": {"type":"integer"},"turn": {"type":"string"}},
+      "required": ["turn", "since" ],
+      "type":"object"
+    },
+    "lint_count": {
+      "additionalProperties":false,
+      "properties": {"code": {"type":"string"},"count": {"type":"integer"}},
+      "required": ["code", "count" ],
+      "type":"object"
+    },
+    "ratchet": {
+      "additionalProperties":false,
+      "properties": {"allowed": {"type":"integer"},"code": {"type":"string"}},
+      "required": ["code", "allowed" ],
+      "type":"object"
+    },
+    "turn_diag": {
+      "additionalProperties":false,
+      "properties": {
+        "code": {"type":"string"},
+        "line": {"type":"integer"},
+        "opened_at": {"type":"integer"},
+        "path": {"type":"string"},
+        "turn": {"type":"string"}
+      },
+      "required": ["turn", "path", "line", "code", "opened_at" ],
+      "type":"object"
+    },
+    "unratcheted_lint": {
+      "additionalProperties":false,
+      "properties": {"code": {"type":"string"},"count": {"type":"integer"}},
+      "required": ["code", "count" ],
+      "type":"object"
+    },
+    "violation": {
+      "additionalProperties":false,
+      "properties": {
+        "allowed": {"type":"integer"},
+        "code": {"type":"string"},
+        "count": {"type":"integer"}
+      },
+      "required": ["code", "count", "allowed" ],
+      "type":"object"
+    }
+  },
+  "$id":"diag_scenario_seven_ticks_end_to_end#66c965addf71e1c5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

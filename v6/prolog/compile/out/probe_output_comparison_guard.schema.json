@@ -1,0 +1,39 @@
+{
+  "$defs": {
+    "__host_demand_score": {
+      "additionalProperties":false,
+      "properties": {
+        "identity_digest": {"type":"string"},
+        "path": {"type":"string"},
+        "witness_digest": {"type":"string"}
+      },
+      "required": ["identity_digest", "witness_digest", "path" ],
+      "type":"object"
+    },
+    "__host_response_score": {
+      "additionalProperties":false,
+      "properties": {
+        "ordinal": {"type":"integer"},
+        "path": {"type":"string"},
+        "score": {"type":"integer"},
+        "witness_digest": {"type":"string"}
+      },
+      "required": ["witness_digest", "ordinal", "path", "score" ],
+      "type":"object"
+    },
+    "accepted": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"score": {"type":"integer"}},
+      "required": ["path", "score" ],
+      "type":"object"
+    },
+    "input": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    }
+  },
+  "$id":"probe_output_comparison_guard#0bf7dbd89eb6c54d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

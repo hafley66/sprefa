@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "audit_trail": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "audited": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "reading": {
+      "additionalProperties":false,
+      "properties": {"sensor": {"type":"string"},"value": {"type":"integer"}},
+      "required": ["sensor", "value" ],
+      "type":"object"
+    },
+    "watched": {
+      "additionalProperties":false,
+      "properties": {"sensor": {"type":"string"}},
+      "required": ["sensor" ],
+      "type":"object"
+    }
+  },
+  "$id":"host_free_query_leaves_a_derived_rel_unsubscribed#a58c970dc15c567a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

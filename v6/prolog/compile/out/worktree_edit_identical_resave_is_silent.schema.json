@@ -1,0 +1,26 @@
+{
+  "$defs": {
+    "worktree_edit": {
+      "additionalProperties":false,
+      "properties": {
+        "digest": {"type":"string"},
+        "kind": {"type":"string"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "digest", "kind" ],
+      "type":"object"
+    },
+    "worktree_file": {
+      "additionalProperties":false,
+      "properties": {
+        "digest": {"type":"string"},
+        "kind": {"type":"string"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "digest", "kind" ],
+      "type":"object"
+    }
+  },
+  "$id":"worktree_edit_identical_resave_is_silent#e8d277d4c9ba37ff",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

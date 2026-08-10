@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "enabled_name": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "flag": {
+      "additionalProperties":false,
+      "properties": {"enabled": {"type":"boolean"},"name": {"type":"string"}},
+      "required": ["name", "enabled" ],
+      "type":"object"
+    }
+  },
+  "$id":"bool_identity_comparison_filters#c6da8b31510d61cc",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "closed_at": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"},"tick": {"type":"integer"}},
+      "required": ["item", "tick" ],
+      "type":"object"
+    },
+    "mirror": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "source_row": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    }
+  },
+  "$id":"departed_fires_next_tick_on_retraction#df1d95666548fc07",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

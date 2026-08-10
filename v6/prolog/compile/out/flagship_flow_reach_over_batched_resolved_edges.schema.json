@@ -1,0 +1,39 @@
+{
+  "$defs": {
+    "flow_edge": {
+      "additionalProperties":false,
+      "properties": {
+        "from_name": {"type":"string"},
+        "from_path": {"type":"string"},
+        "to_name": {"type":"string"},
+        "to_path": {"type":"string"}
+      },
+      "required": ["from_path", "from_name", "to_path", "to_name" ],
+      "type":"object"
+    },
+    "flow_reach": {
+      "additionalProperties":false,
+      "properties": {
+        "from_name": {"type":"string"},
+        "from_path": {"type":"string"},
+        "to_name": {"type":"string"},
+        "to_path": {"type":"string"}
+      },
+      "required": ["from_path", "from_name", "to_path", "to_name" ],
+      "type":"object"
+    },
+    "resolved_call_edge": {
+      "additionalProperties":false,
+      "properties": {
+        "callee_name": {"type":"string"},
+        "callee_path": {"type":"string"},
+        "caller_name": {"type":"string"},
+        "caller_path": {"type":"string"}
+      },
+      "required": ["caller_path", "caller_name", "callee_path", "callee_name" ],
+      "type":"object"
+    }
+  },
+  "$id":"flagship_flow_reach_over_batched_resolved_edges#b523e2bd8d400a9e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

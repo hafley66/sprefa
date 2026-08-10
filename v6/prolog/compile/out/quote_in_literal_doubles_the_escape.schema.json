@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "person": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "selected": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"quote_in_literal_doubles_the_escape#54bfba85f1a5f107",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

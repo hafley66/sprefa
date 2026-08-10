@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "matched": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "row": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"numeric_equality_operator_filters#762878da033f3d41",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

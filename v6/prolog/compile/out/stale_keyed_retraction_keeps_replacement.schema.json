@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "current_value": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"},"col2": {"type":"string"}},
+      "required": ["col1", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"stale_keyed_retraction_keeps_replacement#d5065f49636b137d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

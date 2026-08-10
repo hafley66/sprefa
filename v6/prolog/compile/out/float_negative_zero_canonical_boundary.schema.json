@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "score": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"number"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"float_negative_zero_canonical_boundary#029f2ca57cdbc6e2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

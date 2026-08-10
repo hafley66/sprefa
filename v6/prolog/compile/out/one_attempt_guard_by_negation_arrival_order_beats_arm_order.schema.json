@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "dispatch_ack": {
+      "additionalProperties":false,
+      "properties": {"dispatch_id": {"type":"integer"}},
+      "required": ["dispatch_id" ],
+      "type":"object"
+    },
+    "dispatch_first": {
+      "additionalProperties":false,
+      "properties": {"_ack_tag": {"type":"string"},"dispatch_id": {"type":"integer"}},
+      "required": ["dispatch_id", "_ack_tag" ],
+      "type":"object"
+    },
+    "dispatch_seal": {
+      "additionalProperties":false,
+      "properties": {"sealed_id": {"type":"integer"}},
+      "required": ["sealed_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"one_attempt_guard_by_negation_arrival_order_beats_arm_order#bd779a40e10f0595",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

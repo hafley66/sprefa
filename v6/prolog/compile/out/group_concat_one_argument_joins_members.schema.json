@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "member_of": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "roster": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"}},
+      "required": ["col1" ],
+      "type":"object"
+    }
+  },
+  "$id":"group_concat_one_argument_joins_members#5469c6f1388fc3e7",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

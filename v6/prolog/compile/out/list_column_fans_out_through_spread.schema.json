@@ -1,0 +1,21 @@
+{
+  "$defs": {
+    "repo": {
+      "additionalProperties":false,
+      "properties": {
+        "name": {"type":"string"},
+        "tags": {"items": {"type":"string"},"type":"array"}
+      },
+      "required": ["name", "tags" ],
+      "type":"object"
+    },
+    "repo_tag": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"tag": {"type":"string"}},
+      "required": ["name", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"list_column_fans_out_through_spread#40eef20b085080c9",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

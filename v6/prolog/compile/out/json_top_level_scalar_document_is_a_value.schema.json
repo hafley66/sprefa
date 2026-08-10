@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "echoed": {
+      "additionalProperties":false,
+      "properties": {"body": {},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    },
+    "label": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    },
+    "labelled": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    },
+    "payload": {
+      "additionalProperties":false,
+      "properties": {"body": {},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_top_level_scalar_document_is_a_value#f551fa089ee36b62",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

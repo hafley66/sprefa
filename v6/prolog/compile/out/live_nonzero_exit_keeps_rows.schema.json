@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "stream_end": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"},"col2": {"type":"string"}},
+      "required": ["col1", "col2" ],
+      "type":"object"
+    },
+    "stream_item": {
+      "additionalProperties":false,
+      "properties": {
+        "col1": {"type":"string"},
+        "col2": {"type":"integer"},
+        "col3": {"type":"string"}
+      },
+      "required": ["col1", "col2", "col3" ],
+      "type":"object"
+    }
+  },
+  "$id":"live_nonzero_exit_keeps_rows#a73b61348b0781bf",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

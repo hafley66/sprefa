@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "demanded": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"target": {"type":"string"}},
+      "required": ["target", "session_id" ],
+      "type":"object"
+    },
+    "effect_call": {
+      "additionalProperties":false,
+      "properties": {"target": {"type":"string"}},
+      "required": ["target" ],
+      "type":"object"
+    },
+    "open_feed": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"target": {"type":"string"}},
+      "required": ["session_id", "target" ],
+      "type":"object"
+    }
+  },
+  "$id":"demand_laziness_effect_rows#de1ae2f2113234ec",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

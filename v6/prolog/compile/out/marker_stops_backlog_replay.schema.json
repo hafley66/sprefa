@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "change_ev": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "sent": {
+      "additionalProperties":false,
+      "properties": {"client": {"type":"string"},"item": {"type":"string"}},
+      "required": ["client", "item" ],
+      "type":"object"
+    },
+    "subscriber": {
+      "additionalProperties":false,
+      "properties": {"client": {"type":"string"}},
+      "required": ["client" ],
+      "type":"object"
+    }
+  },
+  "$id":"marker_stops_backlog_replay#cee7c557d5e00a5e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

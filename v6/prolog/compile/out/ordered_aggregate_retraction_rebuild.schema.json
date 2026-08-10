@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "item": {
+      "additionalProperties":false,
+      "properties": {
+        "group": {"type":"string"},
+        "ordinal": {"type":"integer"},
+        "value": {"type":"string"}
+      },
+      "required": ["group", "ordinal", "value" ],
+      "type":"object"
+    },
+    "ordered_values": {
+      "additionalProperties":false,
+      "properties": {"col2": {},"group": {"type":"string"}},
+      "required": ["group", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"ordered_aggregate_retraction_rebuild#75634971707b27d7",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

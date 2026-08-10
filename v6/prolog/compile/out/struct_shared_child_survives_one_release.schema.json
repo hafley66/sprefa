@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "hit": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/span"},"owner": {"type":"string"}},
+      "required": ["owner", "at" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["start", "end" ],
+      "type":"object"
+    }
+  },
+  "$id":"struct_shared_child_survives_one_release#00aab9b5efffe6ef",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

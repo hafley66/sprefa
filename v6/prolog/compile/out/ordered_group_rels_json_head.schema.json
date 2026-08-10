@@ -1,0 +1,23 @@
+{
+  "$defs": {
+    "group_rels_json": {
+      "additionalProperties":false,
+      "properties": {"col2": {},"group_name": {"type":"string"}},
+      "required": ["group_name", "col2" ],
+      "type":"object"
+    },
+    "rel_catalog": {
+      "additionalProperties":false,
+      "properties": {
+        "_column_text": {"type":"string"},
+        "_documentation_text": {"type":"string"},
+        "group_name": {"type":"string"},
+        "relation_name": {"type":"string"}
+      },
+      "required": ["relation_name", "group_name", "_column_text", "_documentation_text" ],
+      "type":"object"
+    }
+  },
+  "$id":"ordered_group_rels_json_head#6bbfcc15d8468e60",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

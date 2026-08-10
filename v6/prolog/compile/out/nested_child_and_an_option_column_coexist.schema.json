@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "__opt_text_none": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__opt_text_some": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"string"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "__opt_text_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "labelled": {
+      "additionalProperties":false,
+      "properties": {"state": {"type":"string"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "state" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {"orchard_id": {"type":"integer"}},
+      "required": ["orchard_id" ],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {
+        "label": {"type":"integer"},
+        "parent": {"$ref":"#/$defs/orchard"},
+        "tree_id": {"type":"integer"}
+      },
+      "required": ["parent", "tree_id", "label" ],
+      "type":"object"
+    },
+    "planted": {
+      "additionalProperties":false,
+      "properties": {"orchard_id": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["orchard_id", "tree_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"nested_child_and_an_option_column_coexist#bfd5080f8edb2530",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

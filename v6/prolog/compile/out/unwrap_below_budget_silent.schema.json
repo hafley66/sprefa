@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "changed_file": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    },
+    "diag": {
+      "additionalProperties":false,
+      "properties": {
+        "col": {"type":"integer"},
+        "col3": {"type":"string"},
+        "col4": {"type":"string"},
+        "col5": {"type":"string"},
+        "end_col": {"type":"integer"},
+        "line_no": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line_no", "col3", "col4", "col5", "col", "end_col" ],
+      "type":"object"
+    },
+    "unwrap_count": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"total": {"type":"integer"}},
+      "required": ["path", "total" ],
+      "type":"object"
+    },
+    "unwrap_hit": {
+      "additionalProperties":false,
+      "properties": {
+        "col": {"type":"integer"},
+        "end_col": {"type":"integer"},
+        "line_no": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line_no", "col", "end_col" ],
+      "type":"object"
+    }
+  },
+  "$id":"unwrap_below_budget_silent#bde6e7f4e34f45e5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

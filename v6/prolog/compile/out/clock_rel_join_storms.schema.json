@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "diag_history": {
+      "additionalProperties":false,
+      "properties": {
+        "code": {"type":"string"},
+        "line": {"type":"integer"},
+        "opened_at": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line", "code", "opened_at" ],
+      "type":"object"
+    },
+    "diag_seen": {
+      "additionalProperties":false,
+      "properties": {
+        "at": {"type":"integer"},
+        "code": {"type":"string"},
+        "line": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line", "code", "at" ],
+      "type":"object"
+    },
+    "diagnostic": {
+      "additionalProperties":false,
+      "properties": {
+        "code": {"type":"string"},
+        "col4": {"type":"string"},
+        "line": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line", "code", "col4" ],
+      "type":"object"
+    },
+    "file_line": {
+      "additionalProperties":false,
+      "properties": {
+        "code": {"type":"string"},
+        "line": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line", "code" ],
+      "type":"object"
+    },
+    "ratchet": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"},"col2": {"type":"integer"}},
+      "required": ["col1", "col2" ],
+      "type":"object"
+    },
+    "tick_rel": {
+      "additionalProperties":false,
+      "properties": {"at": {"type":"integer"}},
+      "required": ["at" ],
+      "type":"object"
+    }
+  },
+  "$id":"clock_rel_join_storms#4a5019510431a2fd",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

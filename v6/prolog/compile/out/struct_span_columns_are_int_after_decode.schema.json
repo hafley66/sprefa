@@ -1,0 +1,28 @@
+{
+  "$defs": {
+    "def_start": {
+      "additionalProperties":false,
+      "properties": {"offset": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "offset" ],
+      "type":"object"
+    },
+    "node_fact": {
+      "additionalProperties":false,
+      "properties": {
+        "at": {"$ref":"#/$defs/span"},
+        "name": {"type":"string"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "name", "at" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["end", "start" ],
+      "type":"object"
+    }
+  },
+  "$id":"struct_span_columns_are_int_after_decode#64fad9917dfc6f2f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

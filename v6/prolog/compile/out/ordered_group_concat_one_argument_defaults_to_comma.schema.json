@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "item": {
+      "additionalProperties":false,
+      "properties": {"group": {"type":"string"},"value": {"type":"string"}},
+      "required": ["group", "value" ],
+      "type":"object"
+    },
+    "simple_joined": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"group": {"type":"string"}},
+      "required": ["group", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"ordered_group_concat_one_argument_defaults_to_comma#b7b3a64a588dc382",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

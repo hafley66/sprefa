@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "head": {
+      "additionalProperties":false,
+      "properties": {"repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
+      "required": ["repo_id", "rev_id" ],
+      "type":"object"
+    },
+    "head_move": {
+      "additionalProperties":false,
+      "properties": {"repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
+      "required": ["repo_id", "rev_id" ],
+      "type":"object"
+    },
+    "known_repo": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"integer"}},
+      "required": ["col1" ],
+      "type":"object"
+    },
+    "pin_extracted": {
+      "additionalProperties":false,
+      "properties": {
+        "from_span_id": {"type":"integer"},
+        "kind": {"type":"string"},
+        "to_path": {"type":"string"},
+        "to_repo_id": {"type":"integer"},
+        "to_rev_id": {"type":"integer"}
+      },
+      "required": ["from_span_id", "to_repo_id", "to_rev_id", "to_path", "kind" ],
+      "type":"object"
+    },
+    "xref": {
+      "additionalProperties":false,
+      "properties": {
+        "col5": {"type":"string"},
+        "from_span_id": {"type":"integer"},
+        "kind": {"type":"string"},
+        "to_path": {"type":"string"},
+        "to_repo_id": {"type":"integer"},
+        "to_rev_id": {"type":"integer"}
+      },
+      "required": ["from_span_id", "to_repo_id", "to_rev_id", "to_path", "col5", "kind" ],
+      "type":"object"
+    }
+  },
+  "$id":"xref_rev_is_pin_data_not_live_head#d0f017e9f7ac8ea6",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

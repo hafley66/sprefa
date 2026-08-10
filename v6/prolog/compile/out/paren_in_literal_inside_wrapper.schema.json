@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "link": {
+      "additionalProperties":false,
+      "properties": {"_target": {"type":"string"},"source": {"type":"string"}},
+      "required": ["source", "_target" ],
+      "type":"object"
+    },
+    "orphan": {
+      "additionalProperties":false,
+      "properties": {"source": {"type":"string"}},
+      "required": ["source" ],
+      "type":"object"
+    }
+  },
+  "$id":"paren_in_literal_inside_wrapper#16a5cd9ea94de46e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

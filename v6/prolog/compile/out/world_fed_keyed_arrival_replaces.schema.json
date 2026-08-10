@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "world_mode": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"integer"},"col2": {"type":"string"}},
+      "required": ["col1", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"world_fed_keyed_arrival_replaces#1af09ed3f2802c4d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

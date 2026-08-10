@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "append_line": {
+      "additionalProperties":false,
+      "properties": {"channel": {"type":"string"},"piece": {"type":"string"}},
+      "required": ["channel", "piece" ],
+      "type":"object"
+    },
+    "log_text": {
+      "additionalProperties":false,
+      "properties": {"channel": {"type":"string"},"next": {"type":"string"}},
+      "required": ["channel", "next" ],
+      "type":"object"
+    }
+  },
+  "$id":"concat_fold_reversed_arrival_reverses_result#1c27936d2c566f76",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

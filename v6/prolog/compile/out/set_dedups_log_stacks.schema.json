@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "heard": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "heard_count": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "seen_count": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    }
+  },
+  "$id":"set_dedups_log_stacks#8c8665f4fbf14f42",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

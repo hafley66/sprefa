@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "active": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "disabled": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"boolean"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    },
+    "item": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"bool_relation_negation_is_two_valued#452101119b73f71a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

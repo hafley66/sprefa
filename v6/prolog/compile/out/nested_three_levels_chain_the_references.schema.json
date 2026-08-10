@@ -1,0 +1,37 @@
+{
+  "$defs": {
+    "grew": {
+      "additionalProperties":false,
+      "properties": {
+        "branch_id": {"type":"integer"},
+        "orchard_id": {"type":"integer"},
+        "tree_id": {"type":"integer"}
+      },
+      "required": ["orchard_id", "tree_id", "branch_id" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {"orchard_id": {"type":"integer"}},
+      "required": ["orchard_id" ],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {"parent": {"$ref":"#/$defs/orchard"},"tree_id": {"type":"integer"}},
+      "required": ["parent", "tree_id" ],
+      "type":"object"
+    },
+    "orchard.tree.branch": {
+      "additionalProperties":false,
+      "properties": {
+        "branch_id": {"type":"integer"},
+        "parent": {"$ref":"#/$defs/orchard.tree"}
+      },
+      "required": ["parent", "branch_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"nested_three_levels_chain_the_references#db6e44ec4ae7d612",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

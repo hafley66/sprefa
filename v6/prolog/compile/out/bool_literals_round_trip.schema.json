@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "flag": {
+      "additionalProperties":false,
+      "properties": {"enabled": {"type":"boolean"},"name": {"type":"string"}},
+      "required": ["name", "enabled" ],
+      "type":"object"
+    }
+  },
+  "$id":"bool_literals_round_trip#e8c4f040f13c09bd",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "pull_request": {
+      "additionalProperties":false,
+      "properties": {
+        "author": {"type":"string"},
+        "number": {"type":"integer"},
+        "title": {"type":"string"}
+      },
+      "required": ["number", "title", "author" ],
+      "type":"object"
+    },
+    "resp": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_array_spread_fans_out_correlated_siblings#debeec344dd525d2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

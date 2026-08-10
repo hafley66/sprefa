@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "source": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"next_edge_is_the_bare_atom_spelling#51f963c204542458",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

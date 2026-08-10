@@ -1,0 +1,40 @@
+{
+  "$defs": {
+    "dirty": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    },
+    "head": {
+      "additionalProperties":false,
+      "properties": {"_repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
+      "required": ["_repo_id", "rev_id" ],
+      "type":"object"
+    },
+    "tree_file": {
+      "additionalProperties":false,
+      "properties": {
+        "path": {"type":"string"},
+        "rev_id": {"type":"integer"},
+        "tree_digest": {"type":"string"}
+      },
+      "required": ["rev_id", "path", "tree_digest" ],
+      "type":"object"
+    },
+    "worktree_edit": {
+      "additionalProperties":false,
+      "properties": {"digest": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "digest" ],
+      "type":"object"
+    },
+    "worktree_file": {
+      "additionalProperties":false,
+      "properties": {"digest": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "digest" ],
+      "type":"object"
+    }
+  },
+  "$id":"dirty_derives_from_digest_mismatch#3bcf7edcb9f391b7",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

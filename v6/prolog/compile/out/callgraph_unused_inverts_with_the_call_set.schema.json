@@ -1,0 +1,39 @@
+{
+  "$defs": {
+    "call": {
+      "additionalProperties":false,
+      "properties": {"callee": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "callee" ],
+      "type":"object"
+    },
+    "def": {
+      "additionalProperties":false,
+      "properties": {
+        "kind": {"type":"string"},
+        "name": {"type":"string"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "name", "kind" ],
+      "type":"object"
+    },
+    "node_fact": {
+      "additionalProperties":false,
+      "properties": {
+        "kind": {"type":"string"},
+        "name": {"type":"string"},
+        "path": {"type":"string"},
+        "record": {"type":"string"}
+      },
+      "required": ["path", "record", "kind", "name" ],
+      "type":"object"
+    },
+    "unused": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"callgraph_unused_inverts_with_the_call_set#ffe9798e0347107f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

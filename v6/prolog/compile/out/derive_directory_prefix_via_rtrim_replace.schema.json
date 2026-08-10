@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "directory": {
+      "additionalProperties":false,
+      "properties": {"dir": {"type":"string"},"file": {"type":"string"}},
+      "required": ["file", "dir" ],
+      "type":"object"
+    },
+    "file_path": {
+      "additionalProperties":false,
+      "properties": {"file": {"type":"string"}},
+      "required": ["file" ],
+      "type":"object"
+    }
+  },
+  "$id":"derive_directory_prefix_via_rtrim_replace#37778b64d6cd597a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

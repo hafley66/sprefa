@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "note": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"}},
+      "required": ["body" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_string_control_escapes_are_valid_json#bdcf978b33307d4b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

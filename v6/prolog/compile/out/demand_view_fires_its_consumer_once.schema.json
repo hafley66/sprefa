@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "fetch_call": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"}},
+      "required": ["endpoint" ],
+      "type":"object"
+    },
+    "fetch_demand": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"}},
+      "required": ["endpoint" ],
+      "type":"object"
+    },
+    "stale": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"}},
+      "required": ["endpoint" ],
+      "type":"object"
+    }
+  },
+  "$id":"demand_view_fires_its_consumer_once#71d953d567a252c2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

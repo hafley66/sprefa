@@ -1,0 +1,23 @@
+{
+  "$defs": {
+    "arrive": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"payload": {"type":"string"}},
+      "required": ["id", "payload" ],
+      "type":"object"
+    },
+    "thing": {
+      "additionalProperties":false,
+      "properties": {
+        "born": {"type":"integer"},
+        "id": {"type":"integer"},
+        "payload": {"type":"string"},
+        "tick": {"type":"integer"}
+      },
+      "required": ["id", "payload", "born", "tick" ],
+      "type":"object"
+    }
+  },
+  "$id":"created_at_pinned_updated_at_advances#17cf1a5e0b03187b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

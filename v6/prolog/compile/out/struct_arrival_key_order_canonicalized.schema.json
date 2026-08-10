@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "finding": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/span"},"path": {"type":"string"}},
+      "required": ["path", "at" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["start", "end" ],
+      "type":"object"
+    }
+  },
+  "$id":"struct_arrival_key_order_canonicalized#432fdb16857bae41",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

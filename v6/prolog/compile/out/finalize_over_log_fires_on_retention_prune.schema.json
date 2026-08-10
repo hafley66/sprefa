@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "ev": {
+      "additionalProperties":false,
+      "properties": {"ordinal": {"type":"integer"},"payload": {"type":"string"}},
+      "required": ["ordinal", "payload" ],
+      "type":"object"
+    },
+    "gone": {
+      "additionalProperties":false,
+      "properties": {"ordinal": {"type":"integer"},"payload": {"type":"string"}},
+      "required": ["ordinal", "payload" ],
+      "type":"object"
+    }
+  },
+  "$id":"finalize_over_log_fires_on_retention_prune#4bb1d8c16cc5c1ae",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

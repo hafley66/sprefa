@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "diag": {
+      "additionalProperties":false,
+      "properties": {"message": {"type":"string"},"where": {"$ref":"#/$defs/place"}},
+      "required": ["where", "message" ],
+      "type":"object"
+    },
+    "diag_file": {
+      "additionalProperties":false,
+      "properties": {"file": {"type":"string"}},
+      "required": ["file" ],
+      "type":"object"
+    },
+    "place": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/span"},"file": {"type":"string"}},
+      "required": ["file", "at" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["start", "end" ],
+      "type":"object"
+    }
+  },
+  "$id":"struct_nested_value_renders_whole_tree#2982987fdf674a62",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "mean": {
+      "additionalProperties":false,
+      "properties": {"group": {"type":"string"},"value": {"type":"number"}},
+      "required": ["group", "value" ],
+      "type":"object"
+    },
+    "score": {
+      "additionalProperties":false,
+      "properties": {"group": {"type":"string"},"value": {"type":"number"}},
+      "required": ["group", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"float_avg_is_grouped#e3d0b7ffad9ff94a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

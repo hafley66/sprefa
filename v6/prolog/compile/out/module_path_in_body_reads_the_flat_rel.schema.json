@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {},
+      "required": [],
+      "type":"object"
+    },
+    "orchard.fruit": {
+      "additionalProperties":false,
+      "properties": {"picked": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "picked" ],
+      "type":"object"
+    },
+    "ripe": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"module_path_in_body_reads_the_flat_rel#c4c42c892f94d114",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

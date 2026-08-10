@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "rust_file": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    },
+    "worktree_edit": {
+      "additionalProperties":false,
+      "properties": {
+        "digest": {"type":"string"},
+        "kind": {"type":"string"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "digest", "kind" ],
+      "type":"object"
+    },
+    "worktree_file": {
+      "additionalProperties":false,
+      "properties": {
+        "digest": {"type":"string"},
+        "kind": {"type":"string"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "digest", "kind" ],
+      "type":"object"
+    }
+  },
+  "$id":"worktree_edit_replaces_digest_and_flips_kind_view#1888c33af6259fd1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

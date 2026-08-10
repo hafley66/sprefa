@@ -1,0 +1,68 @@
+{
+  "$defs": {
+    "diag": {
+      "additionalProperties":false,
+      "properties": {
+        "col3": {"type":"string"},
+        "col4": {"type":"string"},
+        "col5": {"type":"string"},
+        "col6": {"type":"string"},
+        "col7": {"type":"string"},
+        "line_no": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "line_no", "col3", "col4", "col5", "col6", "col7" ],
+      "type":"object"
+    },
+    "eprintln_baseline": {
+      "additionalProperties":false,
+      "properties": {"allowed": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "allowed" ],
+      "type":"object"
+    },
+    "eprintln_count": {
+      "additionalProperties":false,
+      "properties": {"hits": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "hits" ],
+      "type":"object"
+    },
+    "eprintln_counted": {
+      "additionalProperties":false,
+      "properties": {"line_no": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "line_no" ],
+      "type":"object"
+    },
+    "eprintln_hit": {
+      "additionalProperties":false,
+      "properties": {"line_no": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "line_no" ],
+      "type":"object"
+    },
+    "eprintln_waived": {
+      "additionalProperties":false,
+      "properties": {"line_no": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "line_no" ],
+      "type":"object"
+    },
+    "eprintln_waiver_line": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"waiver_line": {"type":"integer"}},
+      "required": ["path", "waiver_line" ],
+      "type":"object"
+    },
+    "waiver_block_comment": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"waiver_line": {"type":"string"}},
+      "required": ["path", "waiver_line" ],
+      "type":"object"
+    },
+    "waiver_trailing_comment": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"waiver_line": {"type":"integer"}},
+      "required": ["path", "waiver_line" ],
+      "type":"object"
+    }
+  },
+  "$id":"new_file_diag_at_hit_line_exact_rows#cd3607f290ba5ebd",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

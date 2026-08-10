@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "demanded": {
+      "additionalProperties":false,
+      "properties": {"pane_id": {"type":"string"},"target": {"type":"string"}},
+      "required": ["target", "pane_id" ],
+      "type":"object"
+    },
+    "detail_row": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"item_id": {"type":"string"}},
+      "required": ["item_id", "body" ],
+      "type":"object"
+    },
+    "detail_view": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"item_id": {"type":"string"}},
+      "required": ["item_id", "body" ],
+      "type":"object"
+    },
+    "live_detail": {
+      "additionalProperties":false,
+      "properties": {"pane_id": {"type":"string"},"target": {"type":"string"}},
+      "required": ["pane_id", "target" ],
+      "type":"object"
+    },
+    "open_detail": {
+      "additionalProperties":false,
+      "properties": {"item_id": {"type":"string"},"pane_id": {"type":"string"}},
+      "required": ["pane_id", "item_id" ],
+      "type":"object"
+    },
+    "open_pane": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"},"col2": {"type":"string"}},
+      "required": ["col1", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"zombie_scope_negative_case_a2b#981e9c9f0195e8de",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

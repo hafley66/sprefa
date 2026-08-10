@@ -1,0 +1,23 @@
+{
+  "$defs": {
+    "star_row": {
+      "additionalProperties":false,
+      "properties": {"repo": {"type":"string"},"stars": {"type":"integer"}},
+      "required": ["repo", "stars" ],
+      "type":"object"
+    },
+    "stat": {
+      "additionalProperties":false,
+      "properties": {
+        "col2": {"type":"integer"},
+        "col3": {"type":"integer"},
+        "col4": {"type":"integer"},
+        "repo": {"type":"string"}
+      },
+      "required": ["repo", "col2", "col3", "col4" ],
+      "type":"object"
+    }
+  },
+  "$id":"aggregate_count_min_max_track_arrivals_and_retraction#e7306939e199b838",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

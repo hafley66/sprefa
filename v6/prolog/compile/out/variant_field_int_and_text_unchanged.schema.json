@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "record_num": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"n": {"type":"integer"}},
+      "required": ["id", "n" ],
+      "type":"object"
+    },
+    "record_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "record_word": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"w": {"type":"string"}},
+      "required": ["id", "w" ],
+      "type":"object"
+    }
+  },
+  "$id":"variant_field_int_and_text_unchanged#997d6130eedd81b2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

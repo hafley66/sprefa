@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "demand": {
+      "additionalProperties":false,
+      "properties": {"args": {"type":"string"},"salt": {"type":"string"}},
+      "required": ["args", "salt" ],
+      "type":"object"
+    },
+    "fill": {
+      "additionalProperties":false,
+      "properties": {
+        "args": {"type":"string"},
+        "payload": {"type":"string"},
+        "salt": {"type":"string"}
+      },
+      "required": ["args", "salt", "payload" ],
+      "type":"object"
+    },
+    "response": {
+      "additionalProperties":false,
+      "properties": {
+        "args": {"type":"string"},
+        "payload": {"type":"string"},
+        "salt": {"type":"string"}
+      },
+      "required": ["args", "salt", "payload" ],
+      "type":"object"
+    },
+    "watch_request": {
+      "additionalProperties":false,
+      "properties": {
+        "args": {"type":"string"},
+        "col1": {"type":"string"},
+        "salt": {"type":"string"}
+      },
+      "required": ["col1", "args", "salt" ],
+      "type":"object"
+    }
+  },
+  "$id":"identical_demand_dedups#b1da6808eafd3558",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

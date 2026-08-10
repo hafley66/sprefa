@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "copied": {
+      "additionalProperties":false,
+      "properties": {"items": {}},
+      "required": ["items" ],
+      "type":"object"
+    },
+    "source": {
+      "additionalProperties":false,
+      "properties": {"items": {"items": {"type":"string"},"type":"array"}},
+      "required": ["items" ],
+      "type":"object"
+    }
+  },
+  "$id":"head_column_list_and_json_share_storage#a2d734ca1e03a0c8",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

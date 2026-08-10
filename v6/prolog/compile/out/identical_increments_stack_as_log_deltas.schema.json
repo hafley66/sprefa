@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "counter": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"next": {"type":"integer"}},
+      "required": ["name", "next" ],
+      "type":"object"
+    },
+    "increment": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"identical_increments_stack_as_log_deltas#fbbfc2a9c55669d1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

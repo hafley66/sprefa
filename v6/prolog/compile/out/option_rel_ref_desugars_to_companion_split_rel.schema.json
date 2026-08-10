@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "commit": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "commit__reviewed_by": {
+      "additionalProperties":false,
+      "properties": {"commit_id": {"type":"integer"},"person_id": {"type":"integer"}},
+      "required": ["commit_id", "person_id" ],
+      "type":"object"
+    },
+    "person": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["id", "name" ],
+      "type":"object"
+    },
+    "reviewed": {
+      "additionalProperties":false,
+      "properties": {"commit_id": {"type":"integer"},"reviewer_name": {"type":"string"}},
+      "required": ["commit_id", "reviewer_name" ],
+      "type":"object"
+    }
+  },
+  "$id":"option_rel_ref_desugars_to_companion_split_rel#1fcea250257a28b6",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "grade_green": {
+      "additionalProperties":false,
+      "properties": {"days": {"type":"integer"},"id": {"type":"integer"}},
+      "required": ["id", "days" ],
+      "type":"object"
+    },
+    "grade_ripe": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"sugar": {"type":"integer"}},
+      "required": ["id", "sugar" ],
+      "type":"object"
+    },
+    "grade_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "picked": {
+      "additionalProperties":false,
+      "properties": {"g": {"type":"integer"},"id": {"type":"integer"}},
+      "required": ["id", "g" ],
+      "type":"object"
+    },
+    "picked_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"enum_name_is_a_column_type#f74935c9d2e39489",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

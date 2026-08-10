@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "line": {
+      "additionalProperties":false,
+      "properties": {
+        "_name": {"type":"string"},
+        "_stream_id": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["_stream_id", "path", "_name" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    }
+  },
+  "$id":"level_view_reads_set_projection_not_occurrences#0b61ebd012822bfd",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

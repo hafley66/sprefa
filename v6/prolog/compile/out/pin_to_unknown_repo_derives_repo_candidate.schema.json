@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "known_repo": {
+      "additionalProperties":false,
+      "properties": {"to_repo_id": {"type":"integer"}},
+      "required": ["to_repo_id" ],
+      "type":"object"
+    },
+    "pin_extracted": {
+      "additionalProperties":false,
+      "properties": {
+        "from_span_id": {"type":"integer"},
+        "kind": {"type":"string"},
+        "to_path": {"type":"string"},
+        "to_repo_id": {"type":"integer"},
+        "to_rev_id": {"type":"integer"}
+      },
+      "required": ["from_span_id", "to_repo_id", "to_rev_id", "to_path", "kind" ],
+      "type":"object"
+    },
+    "repo_candidate": {
+      "additionalProperties":false,
+      "properties": {"to_repo_id": {"type":"integer"}},
+      "required": ["to_repo_id" ],
+      "type":"object"
+    },
+    "xref": {
+      "additionalProperties":false,
+      "properties": {
+        "col5": {"type":"string"},
+        "from_span_id": {"type":"integer"},
+        "kind": {"type":"string"},
+        "to_path": {"type":"string"},
+        "to_repo_id": {"type":"integer"},
+        "to_rev_id": {"type":"integer"}
+      },
+      "required": ["from_span_id", "to_repo_id", "to_rev_id", "to_path", "col5", "kind" ],
+      "type":"object"
+    }
+  },
+  "$id":"pin_to_unknown_repo_derives_repo_candidate#917126b85bb62110",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

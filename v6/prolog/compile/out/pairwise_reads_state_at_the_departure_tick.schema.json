@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "reading": {
+      "additionalProperties":false,
+      "properties": {"previous": {"type":"integer"},"sensor": {"type":"string"}},
+      "required": ["sensor", "previous" ],
+      "type":"object"
+    },
+    "step": {
+      "additionalProperties":false,
+      "properties": {
+        "current": {"type":"integer"},
+        "previous": {"type":"integer"},
+        "sensor": {"type":"string"}
+      },
+      "required": ["sensor", "previous", "current" ],
+      "type":"object"
+    }
+  },
+  "$id":"pairwise_reads_state_at_the_departure_tick#202b17d32719975b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

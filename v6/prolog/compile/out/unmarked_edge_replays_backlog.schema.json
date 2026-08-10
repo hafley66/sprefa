@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "change_ev": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "sent": {
+      "additionalProperties":false,
+      "properties": {"client": {"type":"string"},"item": {"type":"string"}},
+      "required": ["client", "item" ],
+      "type":"object"
+    },
+    "subscriber": {
+      "additionalProperties":false,
+      "properties": {"client": {"type":"string"}},
+      "required": ["client" ],
+      "type":"object"
+    }
+  },
+  "$id":"unmarked_edge_replays_backlog#2ca95891d99d5d4d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

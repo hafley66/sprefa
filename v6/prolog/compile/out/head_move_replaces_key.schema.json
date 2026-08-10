@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "head": {
+      "additionalProperties":false,
+      "properties": {"repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
+      "required": ["repo_id", "rev_id" ],
+      "type":"object"
+    },
+    "head_move": {
+      "additionalProperties":false,
+      "properties": {"repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
+      "required": ["repo_id", "rev_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"head_move_replaces_key#3720ef969c8957bf",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "df_param": {
+      "additionalProperties":false,
+      "properties": {
+        "end": {"type":"integer"},
+        "node": {"type":"string"},
+        "path": {"type":"string"},
+        "pos": {"type":"integer"}
+      },
+      "required": ["path", "node", "pos", "end" ],
+      "type":"object"
+    },
+    "flow_node_type": {
+      "additionalProperties":false,
+      "properties": {
+        "name": {"type":"string"},
+        "node": {"type":"string"},
+        "path": {"type":"string"},
+        "ty": {"type":"string"}
+      },
+      "required": ["node", "path", "name", "ty" ],
+      "type":"object"
+    },
+    "flow_param_type": {
+      "additionalProperties":false,
+      "properties": {
+        "name": {"type":"string"},
+        "path": {"type":"string"},
+        "pos": {"type":"integer"},
+        "ty": {"type":"string"}
+      },
+      "required": ["path", "name", "pos", "ty" ],
+      "type":"object"
+    },
+    "sig": {
+      "additionalProperties":false,
+      "properties": {
+        "owner_end": {"type":"integer"},
+        "owner_start": {"type":"integer"},
+        "path": {"type":"string"},
+        "pos": {"type":"integer"},
+        "slot": {"type":"string"},
+        "ty": {"type":"string"}
+      },
+      "required": ["path", "owner_start", "owner_end", "slot", "pos", "ty" ],
+      "type":"object"
+    },
+    "sink_callee": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "name" ],
+      "type":"object"
+    },
+    "type_owner": {
+      "additionalProperties":false,
+      "properties": {
+        "end": {"type":"integer"},
+        "name": {"type":"string"},
+        "path": {"type":"string"},
+        "start": {"type":"integer"}
+      },
+      "required": ["path", "name", "start", "end" ],
+      "type":"object"
+    }
+  },
+  "$id":"flow_sig_owner_join_types_the_resolved_callee#9d9cced5abd3a78d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

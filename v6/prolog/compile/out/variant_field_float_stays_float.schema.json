@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "reading_peak": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"number"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "reading_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "reading_trough": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"number"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"variant_field_float_stays_float#0cded7b1edb4ac0a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

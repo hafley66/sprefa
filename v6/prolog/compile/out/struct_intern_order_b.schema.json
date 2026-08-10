@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "mark": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/span"}},
+      "required": ["at" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["start", "end" ],
+      "type":"object"
+    }
+  },
+  "$id":"struct_intern_order_b#ecb716f70437306e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

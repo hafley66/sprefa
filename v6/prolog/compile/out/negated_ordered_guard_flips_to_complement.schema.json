@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "row": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "small": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"negated_ordered_guard_flips_to_complement#416482736992e85e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "carried": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"integer"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    },
+    "measure": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"integer"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_safe_integer_boundary_survives_both_doors#d402f97ee6de5eb2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "doubled": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"out": {"type":"integer"}},
+      "required": ["name", "out" ],
+      "type":"object"
+    },
+    "reading": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"integer"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"filter_map_is_a_level_rule#8d3263b5964a89d5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

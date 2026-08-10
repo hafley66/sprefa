@@ -1,0 +1,51 @@
+{
+  "$defs": {
+    "__host_demand_scan_span": {
+      "additionalProperties":false,
+      "properties": {
+        "identity_digest": {"type":"string"},
+        "path": {"type":"string"},
+        "witness_digest": {"type":"string"}
+      },
+      "required": ["identity_digest", "witness_digest", "path" ],
+      "type":"object"
+    },
+    "__host_response_scan_span": {
+      "additionalProperties":false,
+      "properties": {
+        "at": {"$ref":"#/$defs/span"},
+        "ordinal": {"type":"integer"},
+        "path": {"type":"string"},
+        "witness_digest": {"type":"string"}
+      },
+      "required": ["witness_digest", "ordinal", "path", "at" ],
+      "type":"object"
+    },
+    "host_span": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/span"},"path": {"type":"string"}},
+      "required": ["path", "at" ],
+      "type":"object"
+    },
+    "host_start": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"start": {"type":"integer"}},
+      "required": ["path", "start" ],
+      "type":"object"
+    },
+    "source_path": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["end", "start" ],
+      "type":"object"
+    }
+  },
+  "$id":"struct_host_output_schedule_answer_interned#edbffab89e4aa4e9",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

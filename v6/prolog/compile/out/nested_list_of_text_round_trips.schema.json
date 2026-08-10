@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "carry": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "rows": {
+          "items": {"items": {"type":"string"},"type":"array"},
+          "type":"array"
+        }
+      },
+      "required": ["id", "rows" ],
+      "type":"object"
+    },
+    "grid": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "rows": {
+          "items": {"items": {"type":"string"},"type":"array"},
+          "type":"array"
+        }
+      },
+      "required": ["id", "rows" ],
+      "type":"object"
+    }
+  },
+  "$id":"nested_list_of_text_round_trips#e647d69913d76b35",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

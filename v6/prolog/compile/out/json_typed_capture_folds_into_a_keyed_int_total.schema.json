@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "event": {
+      "additionalProperties":false,
+      "properties": {"payload": {}},
+      "required": ["payload" ],
+      "type":"object"
+    },
+    "star_event": {
+      "additionalProperties":false,
+      "properties": {"repo": {"type":"string"},"stars": {"type":"integer"}},
+      "required": ["repo", "stars" ],
+      "type":"object"
+    },
+    "total": {
+      "additionalProperties":false,
+      "properties": {"repo": {"type":"string"},"sum": {"type":"integer"}},
+      "required": ["repo", "sum" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_typed_capture_folds_into_a_keyed_int_total#0e2aa1d24c7626e3",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

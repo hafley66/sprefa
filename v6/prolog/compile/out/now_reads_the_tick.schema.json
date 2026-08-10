@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "ping": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "seen_at": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"tick": {"type":"integer"}},
+      "required": ["name", "tick" ],
+      "type":"object"
+    }
+  },
+  "$id":"now_reads_the_tick#f0f5521831bb6de0",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

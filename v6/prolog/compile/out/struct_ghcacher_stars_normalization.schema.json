@@ -1,0 +1,27 @@
+{
+  "$defs": {
+    "current_body": {
+      "additionalProperties":false,
+      "properties": {"body": {"$ref":"#/$defs/repo_body"},"ep": {"type":"string"}},
+      "required": ["ep", "body" ],
+      "type":"object"
+    },
+    "repo_body": {
+      "additionalProperties":false,
+      "properties": {
+        "full_name": {"type":"string"},
+        "stargazers_count": {"type":"integer"}
+      },
+      "required": ["full_name", "stargazers_count" ],
+      "type":"object"
+    },
+    "stars": {
+      "additionalProperties":false,
+      "properties": {"ep": {"type":"string"},"n": {"type":"integer"}},
+      "required": ["ep", "n" ],
+      "type":"object"
+    }
+  },
+  "$id":"struct_ghcacher_stars_normalization#e789b88c5929d6a5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

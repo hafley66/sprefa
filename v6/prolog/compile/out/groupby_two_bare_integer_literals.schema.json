@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "classified": {
+      "additionalProperties":false,
+      "properties": {
+        "column": {"type":"integer"},
+        "line": {"type":"integer"},
+        "name": {"type":"string"}
+      },
+      "required": ["name", "line", "column" ],
+      "type":"object"
+    },
+    "source": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"groupby_two_bare_integer_literals#5425972230fe7e1f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

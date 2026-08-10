@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "heard": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "heard_count": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    }
+  },
+  "$id":"log_stacks_within_tick_and_across_ticks#105ebe44e984989c",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

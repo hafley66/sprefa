@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "entry": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {}},
+      "required": ["name", "value" ],
+      "type":"object"
+    },
+    "is_object": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_empty_object_pattern_matches_any_object#82ca4760bf111d9e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

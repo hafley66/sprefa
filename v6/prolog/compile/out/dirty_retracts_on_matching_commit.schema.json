@@ -1,0 +1,56 @@
+{
+  "$defs": {
+    "commit_arrival": {
+      "additionalProperties":false,
+      "properties": {
+        "digest": {"type":"string"},
+        "path": {"type":"string"},
+        "rev_id": {"type":"integer"}
+      },
+      "required": ["rev_id", "path", "digest" ],
+      "type":"object"
+    },
+    "dirty": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    },
+    "head": {
+      "additionalProperties":false,
+      "properties": {"repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
+      "required": ["repo_id", "rev_id" ],
+      "type":"object"
+    },
+    "head_move": {
+      "additionalProperties":false,
+      "properties": {"repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
+      "required": ["repo_id", "rev_id" ],
+      "type":"object"
+    },
+    "tree_file": {
+      "additionalProperties":false,
+      "properties": {
+        "digest": {"type":"string"},
+        "path": {"type":"string"},
+        "rev_id": {"type":"integer"}
+      },
+      "required": ["rev_id", "path", "digest" ],
+      "type":"object"
+    },
+    "worktree_edit": {
+      "additionalProperties":false,
+      "properties": {"digest": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "digest" ],
+      "type":"object"
+    },
+    "worktree_file": {
+      "additionalProperties":false,
+      "properties": {"digest": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "digest" ],
+      "type":"object"
+    }
+  },
+  "$id":"dirty_retracts_on_matching_commit#6bcae6f4cda6cd26",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
