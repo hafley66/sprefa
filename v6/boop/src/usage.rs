@@ -4,6 +4,7 @@
 use anyhow::Result;
 
 use crate::ident::{Row, Store};
+use crate::rows::UsageRow;
 
 /// The bucket a `--group-by` asks for. `None` is the totals row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
@@ -92,6 +93,20 @@ const SUMS: &str = "
 impl Store {
     /// Totals, or one row per bucket when `group_by` is given.
     pub fn usage_report(&self, group_by: Option<GroupBy>, filter: &UsageQuery) -> Result<Vec<Row>> {
+        let rows = self.usage_report_rows(group_by, filter)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(serde_json::to_value(row)?);
+        }
+        Ok(out)
+    }
+
+    /// Totals, or one row per bucket, as typed rows.
+    pub fn usage_report_rows(
+        &self,
+        group_by: Option<GroupBy>,
+        filter: &UsageQuery,
+    ) -> Result<Vec<UsageRow>> {
         let (bucket, needs_session) = match group_by {
             Some(group) => {
                 let (expression, needs) = group.expression();
@@ -128,7 +143,30 @@ impl Store {
         if let Some(limit) = filter.limit {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
-        let mut rows = self.rows(&sql, values)?;
+        let mut statement = self.connection().prepare(&sql)?;
+        let base: usize = if group_by.is_some() { 1 } else { 0 };
+        let iter = statement.query_map(rusqlite::params_from_iter(values.iter()), |row| {
+            let bucket = if base == 1 {
+                Some(row.get::<_, String>(0)?)
+            } else {
+                None
+            };
+            Ok(UsageRow {
+                bucket,
+                calls: row.get(base)?,
+                input_tokens: row.get(base + 1)?,
+                output_tokens: row.get(base + 2)?,
+                cache_create_5m_tokens: row.get(base + 3)?,
+                cache_create_1h_tokens: row.get(base + 4)?,
+                cache_read_tokens: row.get(base + 5)?,
+                cost_usd: row.get(base + 6)?,
+                unpriced_calls: row.get(base + 7)?,
+                first_ts: row.get(base + 8)?,
+                last_ts: row.get(base + 9)?,
+                cost_usd_priced_only: None,
+            })
+        })?;
+        let mut rows: Vec<UsageRow> = iter.collect::<Result<_, _>>()?;
         suppress_partial_cost(&mut rows);
         Ok(rows)
     }
@@ -313,17 +351,14 @@ impl Store {
 /// A bucket holding unpriced calls has no total cost, only the cost of the
 /// calls that were priced. Reporting the partial sum as `cost_usd` reads as a
 /// total and undercounts silently.
-fn suppress_partial_cost(rows: &mut [Row]) {
+fn suppress_partial_cost(rows: &mut [UsageRow]) {
     for row in rows.iter_mut() {
-        let unpriced = row["unpriced_calls"].as_i64().unwrap_or(0);
-        if unpriced == 0 {
+        if row.unpriced_calls == 0 {
             continue;
         }
-        let priced = row["cost_usd"].clone();
-        if let Some(object) = row.as_object_mut() {
-            object.insert("cost_usd".into(), serde_json::Value::Null);
-            object.insert("cost_usd_priced_only".into(), priced);
-        }
+        let priced = row.cost_usd;
+        row.cost_usd = None;
+        row.cost_usd_priced_only = priced;
     }
 }
 
@@ -392,7 +427,67 @@ pub fn p90_ceiling(blocks: &[Block]) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{fold_blocks, p90_ceiling, Block};
+    use super::{fold_blocks, p90_ceiling, Block, GroupBy, UsageQuery};
+
+    /// RECEIPT (item 4). The typed usage rows serialize to the JSON the CLI
+    /// prints and carry a bucket when grouped.
+    #[test]
+    fn typed_usage_rows_carry_bucket_and_calls() {
+        use crate::ident::{sync_session, Store};
+        use std::io::Write;
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let db_path =
+            std::env::temp_dir().join(format!("boop_urep_{}_{}.db", std::process::id(), stamp));
+        let log_path =
+            std::env::temp_dir().join(format!("boop_urep_{}_{}.jsonl", std::process::id(), stamp));
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        let mut file = std::fs::File::create(&log_path).unwrap();
+        writeln!(
+            file,
+            r#"{{"type":"assistant","sessionId":"s","timestamp":"2026-08-01T00:00:01.000Z","requestId":"r1","message":{{"id":"m1","model":"m","usage":{{"input_tokens":10,"output_tokens":5}},"content":[{{"type":"text","text":"x"}}]}}}}"#
+        )
+        .unwrap();
+        drop(file);
+        let session = crate::harness::SessionRef {
+            harness: "claude",
+            session_id: "s".to_owned(),
+            nickname: "s".to_owned(),
+            path: log_path.clone(),
+            cwd: None,
+            git_branch: None,
+            modified_ms: 0,
+            size: 0,
+            tmux: None,
+            tmux_socket: None,
+            parent: None,
+        };
+        sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
+
+        let totals = store.usage_report_rows(None, &UsageQuery::default()).unwrap();
+        assert_eq!(totals.len(), 1);
+        assert!(totals[0].bucket.is_none());
+        assert_eq!(totals[0].calls, 1);
+        assert_eq!(totals[0].output_tokens, 5);
+
+        let by_harness = store
+            .usage_report_rows(Some(GroupBy::Harness), &UsageQuery::default())
+            .unwrap();
+        assert_eq!(by_harness.len(), 1);
+        assert_eq!(by_harness[0].bucket.as_deref(), Some("claude"));
+        assert_eq!(by_harness[0].calls, 1);
+
+        let json = serde_json::to_value(&by_harness[0]).unwrap();
+        assert_eq!(json["bucket"], "claude");
+        assert_eq!(json["calls"], 1);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&log_path);
+    }
 
     fn hour(n: i64) -> i64 {
         n * 3_600_000

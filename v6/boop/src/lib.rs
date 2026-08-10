@@ -15,6 +15,7 @@ pub mod identity;
 pub mod proc;
 pub mod query;
 pub mod registry;
+pub mod rows;
 pub mod tail;
 pub mod tmux;
 pub mod usage;
@@ -23,6 +24,9 @@ pub mod worktree;
 pub use ident::{Store, SyncStat};
 pub use query::{FactKind, FactQuery};
 pub use registry::Registry;
+pub use rows::{
+    CommandRow, EdgeRow, FetchRow, SessionRow, StatusRow, TouchRow, TurnRow, UsageRow,
+};
 pub use usage::{GroupBy, UsageQuery};
 
 /// Open the default store at `~/.agent/boop.db`.

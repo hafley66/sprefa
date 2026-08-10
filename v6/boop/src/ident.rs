@@ -557,6 +557,30 @@ impl Store {
         Ok(rows)
     }
 
+    /// Edges as typed rows, with temporal and count evidence.
+    pub fn edge_rows(&self, session: Option<&str>) -> Result<Vec<crate::rows::EdgeRow>> {
+        let sql = "SELECT p.value, c.value, e.value, a.first_ts, a.last_ts, a.n
+                   FROM agent_edge a
+                   JOIN dict_session p ON p.id = a.parent_session_id
+                   JOIN dict_session c ON c.id = a.child_session_id
+                   JOIN dict_edekind e ON e.id = a.edge_kind_id
+                   WHERE (?1 IS NULL OR c.value = ?1 OR p.value = ?1)
+                   ORDER BY p.value, c.value";
+        let mut statement = self.connection.prepare(sql)?;
+        let value: Option<String> = session.map(str::to_owned);
+        let iter = statement.query_map(params![value], |row| {
+            Ok(crate::rows::EdgeRow {
+                parent: row.get(0)?,
+                child: row.get(1)?,
+                edge: row.get(2)?,
+                first_ts: row.get(3)?,
+                last_ts: row.get(4)?,
+                n: row.get(5)?,
+            })
+        })?;
+        Ok(iter.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Record one liveness observation at `ts`. Maintains `agent_live` as the
     /// current-state cache and folds the interval into `agent_live_span`: a
     /// state change closes the open interval and opens a new one; a repeated
