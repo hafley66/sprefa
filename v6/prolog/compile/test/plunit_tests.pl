@@ -4379,6 +4379,31 @@ test(list_flavor_fixture_declaration_permutation_is_byte_deterministic) :-
     term_string(Expanded, Text),
     term_string(Permuted, Text).
 
+% Finding 2 (fixpoint over minted decls): option(list(list(text))) must mint
+% the outer list AND the inner list.  Pre-fix discovery scanned author decls
+% alone, so only the outer was found and the inner `list(text)` element never
+% lowered.
+test(generic_nested_list_mints_inner_and_outer) :-
+    nested_list_decls(Decls),
+    expand_generic_program(prog(Decls, []), prog(Expanded, _)),
+    member(col_type('__gen__list_list_text_735a7cc11c2152ea'/1, id, int),
+           Expanded),
+    member(col_type('__gen__list_text_df210f232c1299bd'/1, id, int), Expanded),
+    \+ member(col_type(_, value, list(text)), Expanded).
+
+test(generic_nested_list_declaration_permutation_is_byte_deterministic) :-
+    nested_list_decls(Decls),
+    expand_generic_program(prog(Decls, []), Expanded),
+    reverse(Decls, Reversed),
+    expand_generic_program(prog(Reversed, []), Permuted),
+    term_string(Expanded, Text),
+    term_string(Permuted, Text).
+
+nested_list_decls(Decls) :-
+    Decls = [ col_type(box/2, id, int),
+              col_type(box/2, entries, option(list(list(text)))),
+              keyed(box/2, [1]) ].
+
 :- end_tests(expansion_order).
 
 % ═══════════════════════════════════════════════════════════════════════════

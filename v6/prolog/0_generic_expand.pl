@@ -22,31 +22,44 @@ expand_generic_in_context(_Context, Program, Expanded) :-
     expand_generic_program(Program, Expanded).
 
 expand_generic_program(prog(Decls0, Rules), prog(Decls, Rules)) :-
-    generic_type_instances(Decls0, Instances),
+    generic_fixpoint(Decls0, Instances, WithMintedDecls),
     validate_generated_name_collisions(Decls0, Rules, Instances),
-    maplist(template_artifacts, Instances, ArtifactLists),
-    append(ArtifactLists, Artifacts),
-    lower_artifacts(Artifacts, GeneratedDecls),
-    replace_generic_types(Decls0, Instances, RewrittenDecls),
-    append(RewrittenDecls, GeneratedDecls, WithGenericDecls),
-    generic_artifact_order(Instances, WithGenericDecls, CanonicalDecls),
+    replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
+    generic_artifact_order(Instances, RewrittenDecls, CanonicalDecls),
     expand_option_decls(CanonicalDecls, Decls).
 
-% Executable comparison arm: templates return the compiler's raw declaration
-% terms.  It is retained as a lab probe; the typed-record path above is wired.
+% Executable comparison arm, written as a second path so the template and
+% replacement logic cannot drift apart from the wired entry above.
 expand_generic_program_raw(prog(Decls0, Rules), prog(Decls, Rules)) :-
-    generic_type_instances(Decls0, Instances),
+    generic_fixpoint(Decls0, Instances, WithMintedDecls),
     validate_generated_name_collisions(Decls0, Rules, Instances),
-    maplist(template_decls_raw, Instances, DeclLists),
-    append(DeclLists, GeneratedDecls),
-    replace_generic_types(Decls0, Instances, RewrittenDecls),
-    append(RewrittenDecls, GeneratedDecls, WithGenericDecls),
-    generic_artifact_order(Instances, WithGenericDecls, CanonicalDecls),
+    replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
+    generic_artifact_order(Instances, RewrittenDecls, CanonicalDecls),
     expand_option_decls(CanonicalDecls, Decls).
 
 % A worklist is represented by the canonical sorted instance list.  The four
 % list constructors are term-door-only lab constructors.  No parser spelling
 % is claimed here.
+
+% Discovery fixes over minted decls (an outer member's value column is itself
+% a list), so each pass mints the not-yet-lowered instances and re-scans.
+generic_fixpoint(SourceDecls, Instances, AllDecls) :-
+    generic_fixpoint_(SourceDecls, [], AllDecls, Instances).
+
+generic_fixpoint_(Decls, MintedSoFar, AllDecls, Instances) :-
+    generic_type_instances(Decls, AllFound),
+    subtract(AllFound, MintedSoFar, NewInstances),
+    maplist(template_artifacts, NewInstances, ArtifactLists),
+    append(ArtifactLists, Artifacts),
+    lower_artifacts(Artifacts, NewDecls),
+    append(MintedSoFar, NewInstances, AllMintedInstances),
+    append(Decls, NewDecls, NextDecls),
+    ( NewInstances == []
+    -> AllDecls = Decls,
+       Instances = AllMintedInstances
+    ; generic_fixpoint_(NextDecls, AllMintedInstances, AllDecls, Instances)
+    ).
+
 generic_type_instances(Decls, Instances) :-
     findall(Type, ( member(col_type(_, _, Type), Decls), generic_type(Type) ),
             Found),
@@ -56,6 +69,7 @@ generic_type_instances(Decls, Instances) :-
             FoundInstances),
     sort(FoundInstances, Instances).
 
+generic_type(list(_)).
 generic_type(list_entity_dense_sequence(_)).
 generic_type(list_interned_set(_)).
 generic_type(list_entity_linked_sequence(_)).
@@ -154,11 +168,6 @@ flavor_ref_arity(refcount, 2).
 flavor_ref_arity(value, 2).
 flavor_ref_arity(link, 2).
 
-template_decls_raw(Type, Decls) :-
-    template_artifacts(Type, Artifacts),
-    lower_artifacts(Artifacts, Decls).
-template_decls_raw(option(_), []).
-
 lower_artifacts([], []).
 lower_artifacts([artifact(decl(Decl)) | Rest], [Decl | Decls]) :-
     lower_artifacts(Rest, Decls).
@@ -226,15 +235,25 @@ replace_generic_types([col_type(Ref, Column, Type0) | Rest], Instances,
 replace_generic_types([Decl | Rest], Instances, [Decl | Rewritten]) :-
     replace_generic_types(Rest, Instances, Rewritten).
 
-replace_generic_type(option(Type0), Instances, option(Type)) :-
+replace_generic_type(option(Type0), Instances, option(Name)) :-
     !,
-    replace_generic_type(Type0, Instances, Type).
-replace_generic_type(Type, Instances, Name) :-
+    replace_option_element(Type0, Instances, Name).
+% A bare list column IS its list entity's id, so the column type lowers to the
+% integer id exactly like every companion `_id` column the flavors already emit.
+replace_generic_type(Type, Instances, int) :-
     list_flavor(Type),
     memberchk(Type, Instances),
-    !,
-    canonical_type_name(Type, Name).
+    !.
 replace_generic_type(Type, _, Type).
+
+% option(list(T)) keeps the entity name so its companion split rel targets the
+% minted list; other generic option elements hand back to the general rewrite.
+replace_option_element(Type0, Instances, Name) :-
+    (   list_flavor(Type0),
+        memberchk(Type0, Instances)
+    ->  canonical_type_name(Type0, Name)
+    ;   replace_generic_type(Type0, Instances, Name)
+    ).
 
 % Readable stem plus a 64-bit SHA-256 prefix.  The digest input is the complete
 % length-prefixed structural encoding.  `validate_generated_name_collisions/3`

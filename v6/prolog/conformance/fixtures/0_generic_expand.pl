@@ -139,3 +139,22 @@ fixture(list_interned_set_dictionary_content_deduplicates,
     [final('__gen__list_interned_set_text_5de2cb6bdb4dd03b__value'/2,
            ['__gen__list_interned_set_text_5de2cb6bdb4dd03b__value'(11, "a")]),
      ticks(2)]).
+
+% FINDING 1 (bare list): a bare `list(text)` column must lower to the new
+% dense+owned+sequence artifacts and round-trip arrivals and retractions.
+fixture(list_bare_column_round_trips,
+    prog([col_type(box/2, id, int),
+          col_type(box/2, items, list(text)),
+          keyed(box/2, [1])], []),
+    [],
+    [[+box(1, 100),
+      +'__gen__list_text_df210f232c1299bd'(100),
+      +'__gen__list_text_df210f232c1299bd__member'(100, 0, "alpha"),
+      +'__gen__list_text_df210f232c1299bd__member'(100, 1, "beta")],
+     [-'__gen__list_text_df210f232c1299bd__member'(100, 1, "beta")]],
+    [final(box/2, [box(1, 100)]),
+     final('__gen__list_text_df210f232c1299bd'/1,
+           ['__gen__list_text_df210f232c1299bd'(100)]),
+     final('__gen__list_text_df210f232c1299bd__member'/3,
+           ['__gen__list_text_df210f232c1299bd__member'(100, 0, "alpha")]),
+     ticks(2)]).
