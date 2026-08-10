@@ -88,14 +88,25 @@ trait Engine {
 async fn open_store() -> (RelStore, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!("perf_{}_{}.sqlite", std::process::id(), rand_tag()));
     let _ = std::fs::remove_file(&path);
-    let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
+    let mut opt = ConnectOptions::new(if sqlite_ram_probe() {
+        "sqlite::memory:".to_string()
+    } else {
+        format!("sqlite://{}?mode=rwc", path.display())
+    });
     opt.max_connections(1).min_connections(1);
     let conn = Database::connect(opt).await.unwrap();
     // Lab hook (H6): page_size must be stamped before the first table is created.
     if let Ok(page_size) = std::env::var("DL_LAB_PAGE_SIZE") {
         conn.execute_unprepared(&format!("PRAGMA page_size={page_size};")).await.unwrap();
     }
-    (RelStore::attach(conn).await.unwrap(), path)
+    let store = RelStore::attach(conn).await.unwrap();
+    if sqlite_ram_probe() {
+        store.conn().execute_unprepared("PRAGMA cache_size=-1048576;").await.unwrap();
+    }
+    (store, path)
+}
+fn sqlite_ram_probe() -> bool {
+    std::env::var("DL_SQLITE_RAM_PROBE").map(|value| value == "1").unwrap_or(false)
 }
 fn rand_tag() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -358,7 +369,8 @@ async fn main() {
         let name = args[1].clone();
         let out = run_engine(&name, g).await.unwrap();
         println!(
-            "RESULT engine={name} count={} out_hash={} in_hash={ih} ms={:.3} stmts={} rust_peak_mb={:.2} sqlite_hw_mb={:.2} rss_mb={:.1} db_mb={:.2}",
+            "RESULT engine={name} storage={} count={} out_hash={} in_hash={ih} ms={:.3} stmts={} rust_peak_mb={:.2} sqlite_hw_mb={:.2} rss_mb={:.1} db_mb={:.2}",
+            if sqlite_ram_probe() { "memory" } else { "file" },
             out.survivors.len(), fingerprint(&out.survivors), out.retract_ms, out.statements, out.rust_peak_mb, out.sqlite_hw_mb, out.peak_rss_mb, out.db_mb
         );
         return;
