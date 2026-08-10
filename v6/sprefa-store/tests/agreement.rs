@@ -129,6 +129,22 @@ async fn count_survivors(g: &MultiGraph) -> Vec<i64> {
     keys
 }
 
+async fn signed_delta_survivors(g: &MultiGraph) -> Vec<i64> {
+    let (store, path) = open_store().await;
+    let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
+    let deps: Vec<(i64, i64, i64, i64)> =
+        g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
+    store.add_rows(&rows).await.unwrap();
+    store.add_deps(&deps).await.unwrap();
+    sprefa_store::cascade::retract_signed_delta(store.conn(), store.ns(), &[(g.seed.0 as i64, g.seed.1)])
+        .await
+        .unwrap();
+    let keys = store.alive_keys().await.unwrap();
+    drop(store);
+    cleanup(&path);
+    keys
+}
+
 async fn count_scc_survivors(g: &MultiGraph) -> Vec<i64> {
     let (store, path) = open_store().await;
     let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
@@ -147,6 +163,7 @@ async fn count_scc_survivors(g: &MultiGraph) -> Vec<i64> {
 async fn assert_agreement(g: &MultiGraph, label: &str) {
     let oracle: Vec<i64> = benchgraph::oracle_survivors(g, g.seed).into_iter().collect();
     let dred = dred_survivors(g).await;
+    let signed = signed_delta_survivors(g).await;
     let edges: Vec<(i64, i64)> = g
         .edges
         .iter()
@@ -156,6 +173,8 @@ async fn assert_agreement(g: &MultiGraph, label: &str) {
     assert_eq!(dred, oracle, "{label}: sqlite-DRed disagreed with the oracle");
     assert_eq!(dd, oracle, "{label}: dd disagreed with the oracle");
     assert_eq!(dred, dd, "{label}: sqlite-DRed and dd disagreed with each other");
+    assert_eq!(signed, oracle, "{label}: signed-delta disagreed with the oracle");
+    assert_eq!(signed, dred, "{label}: signed-delta and sqlite-DRed disagreed with each other");
 }
 
 // ---- DAG matrix: oracle == DRed == dd == counting -----------------------------
@@ -208,4 +227,41 @@ async fn counting_is_wrong_on_a_phantom_cycle() {
     for k in &oracle {
         assert!(count_set.contains(k), "counting dropped a real survivor {k}");
     }
+}
+
+// ---- The cycle trap, isolated: signed-delta must NOT keep a cut cycle alive ----
+// FAIL-FIRST receipt: naive ref-counting keeps a root-anchored cycle alive after
+// the anchor is cut — the members mutually support each other (weight never hits
+// 0, a phantom cycle). The per-round signed-delta path must NOT: aliveness re-
+// derives as the least-fixpoint reachability from the surviving roots, so a back-
+// edge into a member that lost its anchor cannot refresh it. Every case asserts
+// byte-identical survivors against the oracle AND DRed, then proves naive counting
+// would have kept the phantom.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_delta_kills_a_cut_cycle() {
+    // R(0,0) -> A(0,1), and the cycle A -> B(0,2) -> C(0,3) -> A. Cut R, the only
+    // root: the whole cycle has no surviving anchor and must die. A carries support
+    // from R AND the back-edge C->A (weight 2), which is what makes NAIVE counting
+    // keep the phantom — A loses only R's unit and stays at 1.
+    let g = MultiGraph {
+        rows: vec![(0, 0, 1), (0, 1, 2), (0, 2, 1), (0, 3, 1)],
+        edges: vec![(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)],
+        seed: (0, 0),
+        per_tag: [4, 0, 0],
+    };
+    let label = "CUT-CYCLE R->A->B->C->A";
+    let oracle: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed).into_iter().collect();
+    let dred = dred_survivors(&g).await;
+    let signed = signed_delta_survivors(&g).await;
+    let count = count_survivors(&g).await;
+    assert_eq!(dred, oracle, "{label}: DRed must kill the whole cut cycle");
+    assert_eq!(signed, oracle, "{label}: signed-delta must kill the whole cut cycle");
+    assert_eq!(signed, dred, "{label}: signed-delta and DRed must agree on a cut cycle");
+    // Fail-first: naive counting over-keeps the phantom cycle.
+    assert!(
+        count.len() > oracle.len(),
+        "{label}: naive counting must over-keep the phantom cycle: count={} oracle={}",
+        count.len(),
+        oracle.len()
+    );
 }
