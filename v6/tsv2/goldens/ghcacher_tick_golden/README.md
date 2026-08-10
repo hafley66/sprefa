@@ -40,8 +40,24 @@ bash v6/tsv2/goldens/ghcacher_tick_golden/6_gate.sh
 Success is:
 
 ```text
-GHCACHER_CLOCK_GOLDEN_HOLDS ticks=5 final=1
+GHCACHER_CLOCK_GOLDEN_HOLDS ticks=5 final=1 sql={"ticks":5,"statements":698,"adds":22,"dels":8}
 ```
+
+`5_expected.statements.jsonl` is the COUNT leg: `TickStatementLedger` reads the
+store's `stmt_counter` across each tick, so a lowering that turns a set write
+into a per-row write moves a number here even when every tick log line still
+matches. The receipt is written to the path in `TSV2_STMT_RECEIPT`, never to
+stdout, because stdout is byte-diffed against the Prolog oracle, which runs no
+SQL at all.
+
+| tick | statements | adds | dels |
+|---:|---:|---:|---:|
+| 1 | 118 | 7 | 0 |
+| 2 | 107 | 4 | 0 |
+| 3 | 152 | 6 | 6 |
+| 4 | 144 | 4 | 1 |
+| 5 | 177 | 1 | 1 |
+| **total** | **698** | **22** | **8** |
 
 No production blocker is required for this schedule-fed standing gate. A live
 end-to-end variant would need a deterministic served-world adapter for the

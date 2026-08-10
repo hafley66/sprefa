@@ -15,6 +15,7 @@
 
 import { EMPTY, expand, filter, map, type Observable, of } from "rxjs";
 
+import { TickStatementLedger } from "./tickStatements.ts";
 import { TickLogEmitter } from "./ticklog.ts";
 import type { IArrivalBatch, IGenProgram, ISqlSeam, ITickDeltas, ITickFold, ITickLogLine } from "./types.ts";
 
@@ -51,7 +52,7 @@ export const TickFold: ITickFold = {
         if (is_drain_tick && step.drains_used >= drain_cap) {
           throw new Error(`tsv2 drain overflow: ${program.name} exceeded ${drain_cap} drain ticks`);
         }
-        return program.tick(seam, arrivals).pipe(
+        return TickStatementLedger.measure(step.tick_number + 1, program.tick(seam, arrivals)).pipe(
           map(
             (deltas): FoldStep => ({
               tick_number: step.tick_number + 1,

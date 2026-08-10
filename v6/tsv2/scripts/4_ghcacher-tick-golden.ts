@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -7,6 +7,7 @@ import { firstValueFrom, toArray } from "rxjs";
 import { BootRunner } from "../runtime/2_boot.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
+import { TickStatementLedger } from "../runtime/tickStatements.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
 import type {
   IArrivalBatch,
@@ -56,6 +57,17 @@ async function read_final(
   );
 }
 
+/** Written only when TSV2_STMT_RECEIPT names a path, so the golden's stdout
+ *  stays byte-comparable against the prolog oracle, which runs zero SQL. */
+function write_statement_receipt(): void {
+  const receipt_path = process.env.TSV2_STMT_RECEIPT;
+  if (receipt_path === undefined) return;
+  const lines = TickStatementLedger.entries().map((entry) => JSON.stringify(entry));
+  const { tick, statements, adds, dels } = TickStatementLedger.total();
+  lines.push(JSON.stringify({ ticks: tick, statements, adds, dels }));
+  writeFileSync(receipt_path, `${lines.join("\n")}\n`);
+}
+
 async function main(): Promise<void> {
   const [module_file, schedule_file] = process.argv.slice(2);
   if (module_file === undefined || schedule_file === undefined) {
@@ -76,11 +88,13 @@ async function main(): Promise<void> {
   try {
     await firstValueFrom(ScratchStore.boot(seam, loaded.program.ddl));
     await firstValueFrom(BootRunner.run(seam, loaded.program.boot));
+    TickStatementLedger.reset();
     const tick_lines = await firstValueFrom(
       TickFold.run(loaded.program, seam, schedule).pipe(toArray()),
     );
     for (const line of tick_lines) process.stdout.write(`${line}\n`);
     process.stdout.write(`${await read_final(loaded.program, seam)}\n`);
+    write_statement_receipt();
   } finally {
     seam.db.close();
   }
