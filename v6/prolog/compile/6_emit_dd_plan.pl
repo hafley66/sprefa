@@ -79,6 +79,9 @@ json_rule(op(Id, map(Ref), sqlite(_, Statements)),
     atom_string(Id, IdText),
     ref_name(Ref, Head),
     !.
+json_rule(op(_, map(_), sqlite(_, [Statement | _])), _) :-
+    functor(Statement, Functor, _),
+    throw(unsupported_construct(Functor)).
 json_rule(_, none).
 
 json_tick(Rows, JsonRows) :- maplist(json_signed_row, Rows, JsonRows).
@@ -104,11 +107,16 @@ dd_plan_term(plan(Name, prog(_, Rules), _, RelPlans, _, RuleOrder, _, _, _),
     rule_wires(OrderedRules, Wires),
     tick_order(TickOrder).
 
-ordered_rules([], _, []).
+ordered_rules([], Rules, Rules) :-
+    !.
 ordered_rules([Rule | Rest], Rules, [Rule | Ordered]) :-
     !,
-    ordered_rules(Rest, Rules, Ordered).
+    ordered_nonempty_rules(Rest, Rules, Ordered).
 ordered_rules(_, Rules, Rules).
+
+ordered_nonempty_rules([], _, []).
+ordered_nonempty_rules([Rule | Rest], Rules, [Rule | Ordered]) :-
+    ordered_nonempty_rules(Rest, Rules, Ordered).
 
 rel_term(RelPlan, rel(Ref, Columns, Kind)) :-
     relplan_parts(RelPlan, Ref, Kind, Columns, _, _).
@@ -171,29 +179,24 @@ join_arrangement_id(use(Ref, _, _, _), Number, Index, Side, Id) :-
     format(atom(Id), 'arr_~w_~w_~w_~w', [Name, Arity, JoinId, Side]).
 
 join_key_columns(use(LeftRef, LeftArgs, _, _), use(RightRef, RightArgs, _, _),
-                 Rule, RelPlans, LeftKeys, RightKeys) :-
-    rule_head_arguments(Rule, HeadArgs),
-    shared_head_positions(LeftArgs, RightArgs, HeadArgs, LeftPositions, RightPositions),
+                 _Rule, RelPlans, LeftKeys, RightKeys) :-
+    shared_head_positions(LeftArgs, RightArgs, LeftPositions, RightPositions),
     relplan_columns(RelPlans, LeftRef, LeftColumns),
     relplan_columns(RelPlans, RightRef, RightColumns),
     positions_columns(LeftPositions, LeftColumns, LeftKeys),
     positions_columns(RightPositions, RightColumns, RightKeys).
 
-shared_head_positions(LeftArgs, RightArgs, HeadArgs, LeftPositions, RightPositions) :-
+shared_head_positions(LeftArgs, RightArgs, LeftPositions, RightPositions) :-
     findall(LeftPosition-RightPosition,
             ( nth1(LeftPosition, LeftArgs, Argument),
               nth1(RightPosition, RightArgs, OtherArgument),
-              Argument == OtherArgument,
-              member_same_variable(Argument, HeadArgs) ),
+              Argument == OtherArgument ),
             Pairs),
     pairs_positions(Pairs, LeftPositions, RightPositions).
 
 pairs_positions([], [], []).
 pairs_positions([Left-Right | Rest], [Left | Lefts], [Right | Rights]) :-
     pairs_positions(Rest, Lefts, Rights).
-
-member_same_variable(Argument, [Candidate | _]) :- Argument == Candidate, !.
-member_same_variable(Argument, [_ | Rest]) :- member_same_variable(Argument, Rest).
 
 arrangement_for_use(use(Ref, _, _, _), RelPlans, KeyColumns, Id,
                     arr(Id, Ref, KeyColumns, ValueColumns, signed)) :-
@@ -250,10 +253,36 @@ rule_operators(Rules, Lowered, Operators) :-
 
 rule_operators([], _, _, []).
 rule_operators([Rule | Rest], Lowered, Number, Operators) :-
+    reject_mutual_recursion(Rule, [Rule | Rest]),
     rule_operator_terms(Rule, Lowered, Number, Current),
     Next is Number + 1,
     rule_operators(Rest, Lowered, Next, More),
     append(Current, More, Operators).
+
+reject_mutual_recursion(Rule, Rules) :-
+    rule_head_ref(Rule, HeadRef),
+    rule_body_uses(Rule, Uses),
+    (   member(use(HeadRef, _, pos, _), Uses)
+    ->  true
+    ;   member(use(BodyRef, _, pos, _), Uses),
+        BodyRef \== HeadRef,
+        rules_reach_ref(BodyRef, HeadRef, Rules)
+    ->  throw(unsupported_construct(mutual_recursion(HeadRef)))
+    ;   true
+    ).
+
+rules_reach_ref(From, To, Rules) :-
+    rules_reach_ref(From, To, Rules, []).
+
+rules_reach_ref(From, To, Rules, Seen) :-
+    member(Rule, Rules),
+    rule_head_ref(Rule, From),
+    rule_body_uses(Rule, Uses),
+    member(use(Next, _, pos, _), Uses),
+    (   Next == To
+    ;   \+ memberchk(Next, Seen),
+        rules_reach_ref(Next, To, Rules, [From | Seen])
+    ).
 
 rule_operator_terms(Rule, Lowered, Number, Operators) :-
     rule_head_ref(Rule, HeadRef),

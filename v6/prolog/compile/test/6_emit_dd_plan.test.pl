@@ -1,6 +1,11 @@
 :- begin_tests(emit_dd_plan).
 
-:- use_module('../6_emit_dd_plan', [fixture_dd_plan_text/3, fixture_dd_plan_json_text/3]).
+:- use_module('../6_emit_dd_plan', [dd_plan_text/2, fixture_dd_plan_text/3, fixture_dd_plan_json_text/3]).
+:- use_module('../../compile', [program_plan/2, read_fixture_term/4]).
+:- use_module('../../analyze', [body_ref_uses/2]).
+
+:- op(1150, xfx, <-).
+:- op(1150, xfx, <+).
 
 dd_fixture_file(Base, File) :-
     test_dir_fact(Here),
@@ -81,8 +86,92 @@ test(join_inputs_have_keyed_arrangements) :-
     fixture_dd_plan_text(Fixture, float_exact_join_has_no_epsilon, Text),
     text_plan(Text, dd_plan(_, _, arrangements(Arrangements),
                             operators([_, op(_, join(_, _, LeftId, RightId), _)]), _, _)),
-    memberchk(arr(LeftId, left/2, [name], [value], signed), Arrangements),
-    memberchk(arr(RightId, right/2, [name], [value], signed), Arrangements).
+    memberchk(arr(LeftId, left/2, [name,value], [], signed), Arrangements),
+    memberchk(arr(RightId, right/2, [name,value], [], signed), Arrangements).
+
+test(description_join_keys_cover_body_argument_equalities) :-
+    dd_fixture_file('engine_core.pl', EngineFixture),
+    dd_fixture_file('5_value_plane.pl', ValueFixture),
+    forall(member(Fixture-Name,
+                  [ EngineFixture-retraction_only_tick_retracts_level_view,
+                    ValueFixture-float_exact_join_has_no_epsilon,
+                    ValueFixture-float_avg_is_grouped ]),
+           ( fixture_dd_plan_text(Fixture, Name, Text),
+             text_plan(Text, dd_plan(_, rels(Rels), arrangements(Arrangements), _, _, _)),
+             fixture_rules(Fixture, Name, Rules),
+             forall(member(Rule, Rules),
+                    rule_shared_columns_are_arrangement_keys(Rule, Rels, Arrangements)) )).
+
+test(json_rejects_edge_statement_payload,
+     [throws(unsupported_construct(edgestmt))]) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/dd/emit_dd_plan_unsupported_fixture.pl'], Fixture),
+    fixture_dd_plan_json_text(Fixture, emit_dd_plan_edge_rule, _).
+
+test(empty_rule_order_falls_back_to_program_rules) :-
+    Program = prog([], [(copy(Item) <- source(Item))]),
+    program_plan(fixture(empty_rule_order, Program, [], [], [])-[], Plan),
+    Plan = plan(Name, Prog, Types, RelPlans, ArrivalTargets, _RuleOrder, EdgeRules, SubscribedRels, Mode),
+    dd_plan_text(plan(Name, Prog, Types, RelPlans, ArrivalTargets, [], EdgeRules, SubscribedRels, Mode), Text),
+    text_plan(Text, dd_plan(_, _, _, operators(Operators), _, _)),
+    memberchk(op(map_1, map(copy/1), _), Operators).
+
+test(mutual_recursion_is_rejected,
+     [throws(unsupported_construct(mutual_recursion(left/1)))]) :-
+    Program = prog([], [(left(Item) <- source(Item)), (right(Item) <- source(Item))]),
+    program_plan(fixture(mutual_recursion, Program, [], [], [])-[],
+                 plan(Name, prog(Decls, _), Types, RelPlans, ArrivalTargets, _, EdgeRules, SubscribedRels, Mode)),
+    Plan = plan(Name, prog(Decls, [(left(Item) <- right(Item)), (right(Item) <- left(Item))]),
+                Types, RelPlans, ArrivalTargets,
+                [(left(Item) <- right(Item)), (right(Item) <- left(Item))],
+                EdgeRules, SubscribedRels, Mode),
+    dd_plan_text(Plan, _).
+
+fixture_rules(Fixture, Name, Rules) :-
+    read_fixture_term(Fixture, Name, Term, Bindings),
+    program_plan(Term-Bindings, plan(_, prog(_, ProgramRules), _, _, _, RuleOrder, _, _, _)),
+    ordered_fixture_rules(RuleOrder, ProgramRules, Rules).
+
+ordered_fixture_rules([], Rules, Rules) :- !.
+ordered_fixture_rules(Rules, _, Rules).
+
+rule_shared_columns_are_arrangement_keys(Rule, Rels, Arrangements) :-
+    body_ref_uses_from_rule(Rule, Uses),
+    forall(( select(Left, Uses, Rest),
+             member(Right, Rest),
+             shared_use_columns(Left, Right, Rels, LeftColumns, RightColumns),
+             LeftColumns \== [] ),
+           arrangement_pair_has_keys(Left, Right, LeftColumns, RightColumns, Arrangements)).
+
+body_ref_uses_from_rule((_ <- Body), Uses) :- body_ref_uses(Body, Uses).
+body_ref_uses_from_rule((_ <+ Body), Uses) :- body_ref_uses(Body, Uses).
+
+shared_use_columns(use(LeftRef, LeftArgs, pos, _), use(RightRef, RightArgs, pos, _),
+                   Rels, LeftColumns, RightColumns) :-
+    findall(LeftPosition-RightPosition,
+            ( nth1(LeftPosition, LeftArgs, Argument),
+              nth1(RightPosition, RightArgs, OtherArgument),
+              Argument == OtherArgument ),
+            Pairs),
+    pairs_positions(Pairs, LeftPositions, RightPositions),
+    member(rel(LeftRef, AvailableLeftColumns, _), Rels),
+    member(rel(RightRef, AvailableRightColumns, _), Rels),
+    positions_columns(LeftPositions, AvailableLeftColumns, LeftColumns),
+    positions_columns(RightPositions, AvailableRightColumns, RightColumns).
+
+arrangement_pair_has_keys(use(LeftRef, _, _, _), use(RightRef, _, _, _),
+                          LeftColumns, RightColumns, Arrangements) :-
+    member(arr(_, LeftRef, LeftColumns, _, signed), Arrangements),
+    member(arr(_, RightRef, RightColumns, _, signed), Arrangements).
+
+pairs_positions([], [], []).
+pairs_positions([Left-Right | Rest], [Left | Lefts], [Right | Rights]) :-
+    pairs_positions(Rest, Lefts, Rights).
+
+positions_columns([], _, []).
+positions_columns([Position | Rest], Columns, [Column | More]) :-
+    nth1(Position, Columns, Column),
+    positions_columns(Rest, Columns, More).
 
 text_plan(Text, Plan) :-
     atom_string(Atom, Text),
