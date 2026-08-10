@@ -10,7 +10,9 @@ use serde_json::Value;
 use walkdir::WalkDir;
 
 use crate::event::AgentEvent;
-use crate::harness::{Harness, Ingested, ReadChunk, SessionRef};
+use crate::harness::{
+    Capabilities, Harness, Ingested, ReadChunk, SendOutcome, SessionRef, SpawnSpec,
+};
 use crate::ident::{Store, SyncStat, UsageRow};
 use crate::tail;
 
@@ -19,6 +21,69 @@ pub struct Codex;
 impl Harness for Codex {
     fn id(&self) -> &'static str {
         "codex"
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            send_midflight: true,
+            resume: false,
+            spawn: true,
+            subagent_visible: false,
+        }
+    }
+
+    fn preview_command(&self, spec: &SpawnSpec) -> Option<String> {
+        Some(launch_command(spec))
+    }
+
+    fn spawn(&self, spec: &SpawnSpec) -> anyhow::Result<SessionRef> {
+        let session_id = format!("agent-{}", random_hex());
+        let tmux_name = spec
+            .tmux
+            .clone()
+            .unwrap_or_else(|| format!("boop-{session_id}"));
+        let cwd = crate::worktree::prepare_spawn_dir(spec)?;
+        let command = launch_command(spec);
+        crate::tmux::new_detached_session(
+            spec.socket.as_deref(),
+            &tmux_name,
+            &cwd.display().to_string(),
+            &command,
+        )?;
+        Ok(SessionRef {
+            harness: "codex",
+            session_id: session_id.clone(),
+            nickname: session_id,
+            // Codex mints its own rollout id; sync discovers the transcript
+            // under the sessions dir, this handle only anchors the lane.
+            path: codex_sessions_dir().unwrap_or_else(|_| cwd.join(".codex-sessions")),
+            cwd: Some(cwd.display().to_string()),
+            git_branch: Some(spec.branch.clone()),
+            modified_ms: now_ms(),
+            size: 0,
+            tmux: Some(tmux_name),
+            tmux_socket: spec.socket.clone(),
+            parent: None,
+        })
+    }
+
+    fn send(&self, session: &SessionRef, text: &str) -> anyhow::Result<SendOutcome> {
+        match &session.tmux {
+            Some(tmux) => {
+                crate::tmux::send_keys_literal(session.tmux_socket.as_deref(), tmux, text)?;
+                Ok(SendOutcome::Injected)
+            }
+            None => Ok(SendOutcome::QueuedForNextSpawn),
+        }
+    }
+
+    fn stop(&self, session: &SessionRef) -> anyhow::Result<()> {
+        if let Some(tmux) = &session.tmux {
+            if crate::tmux::has_session(session.tmux_socket.as_deref(), tmux)? {
+                crate::tmux::kill_session(session.tmux_socket.as_deref(), tmux)?;
+            }
+        }
+        Ok(())
     }
 
     fn sessions(&self) -> anyhow::Result<Vec<SessionRef>> {
@@ -84,6 +149,51 @@ impl Harness for Codex {
 fn codex_sessions_dir() -> anyhow::Result<PathBuf> {
     let home = dirs::home_dir().context("resolve home directory")?;
     Ok(home.join(".codex").join("sessions"))
+}
+
+/// A model value may carry an `@low|@medium|@high` suffix, lowered to codex's
+/// `model_reasoning_effort` config override.
+fn launch_command(spec: &SpawnSpec) -> String {
+    let mut command = format!("codex {}", shell_quote(&spec.prompt));
+    if let Some(model) = spec.model.as_deref().filter(|value| !value.is_empty()) {
+        let (name, effort) = match model.rsplit_once('@') {
+            Some((name, effort)) if matches!(effort, "low" | "medium" | "high") => {
+                (name, Some(effort))
+            }
+            _ => (model, None),
+        };
+        command.push_str(&format!(" -m {}", shell_quote(name)));
+        if let Some(effort) = effort {
+            command.push_str(&format!(
+                " -c {}",
+                shell_quote(&format!("model_reasoning_effort=\"{effort}\""))
+            ));
+        }
+    }
+    spec.with_on_exit(match &spec.env_stamp {
+        Some(stamp) => format!("{stamp} {command}"),
+        None => command,
+    })
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+fn random_hex() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mixed = (nanos as u64) ^ ((std::process::id() as u64) << 48) ^ (nanos >> 64) as u64;
+    format!("{mixed:016x}")
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// A file whose first line is not `session_meta` is skipped, never guessed
@@ -473,12 +583,184 @@ mod tests {
     }
 
     #[test]
-    fn codex_capabilities_default_to_all_false() {
+    fn codex_capabilities_are_measured() {
         let caps = Codex.capabilities();
-        assert!(!caps.send_midflight);
+        assert!(caps.send_midflight);
         assert!(!caps.resume);
-        assert!(!caps.spawn);
+        assert!(caps.spawn);
         assert!(!caps.subagent_visible);
+    }
+
+    #[test]
+    fn launch_command_passes_model_and_effort_suffix() {
+        let mut spec = spawn_spec(None);
+        spec.model = Some("gpt-5.6-luna@medium".to_owned());
+        let command = super::launch_command(&spec);
+        assert!(command.starts_with("codex 'do the lane'"), "{command}");
+        assert!(command.contains(" -m 'gpt-5.6-luna'"), "{command}");
+        assert!(
+            command.contains(" -c 'model_reasoning_effort=\"medium\"'"),
+            "{command}"
+        );
+    }
+
+    #[test]
+    fn launch_command_leaves_plain_model_alone() {
+        let mut spec = spawn_spec(None);
+        spec.model = Some("gpt-5.6-sol".to_owned());
+        let command = super::launch_command(&spec);
+        assert!(command.ends_with(" -m 'gpt-5.6-sol'"), "{command}");
+        assert!(!command.contains("model_reasoning_effort"), "{command}");
+    }
+
+    #[test]
+    fn launch_command_keeps_at_suffix_outside_effort_names() {
+        let mut spec = spawn_spec(None);
+        spec.model = Some("vendor@custom".to_owned());
+        let command = super::launch_command(&spec);
+        assert!(command.contains(" -m 'vendor@custom'"), "{command}");
+    }
+
+    fn spawn_spec(socket: Option<String>) -> crate::harness::SpawnSpec {
+        crate::harness::SpawnSpec {
+            harness: "codex".to_owned(),
+            branch: "lane-test".to_owned(),
+            base_sha: "0000000000000000000000000000000000000000".to_owned(),
+            main_tree: true,
+            setup: Vec::new(),
+            prompt: "do the lane".to_owned(),
+            resume_session: None,
+            socket,
+            worktree_dir: None,
+            repo: std::env::temp_dir(),
+            env_stamp: None,
+            model: None,
+            on_exit: None,
+            tmux: None,
+        }
+    }
+
+    struct TmuxGuard {
+        socket: String,
+    }
+
+    static NEXT_SOCKET: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    impl TmuxGuard {
+        /// One socket per guard: tests run in parallel and a shared name makes
+        /// each new guard kill its neighbour's server.
+        fn new() -> TmuxGuard {
+            let socket = format!(
+                "boop-test-{}-cdx{}",
+                std::process::id(),
+                NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            );
+            crate::tmux::kill_test_server(&socket);
+            TmuxGuard { socket }
+        }
+    }
+
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            crate::tmux::kill_test_server(&self.socket);
+        }
+    }
+
+    fn has_session_on(guard: &TmuxGuard, name: &str) -> bool {
+        crate::tmux::has_session(Some(&guard.socket), name).unwrap_or(false)
+    }
+
+    /// A throwaway git repo (one seed commit) plus a worktree path; tests
+    /// spawn against it and tear it down.
+    mod temp_repo {
+        use std::process::Command;
+
+        pub struct TempRepo {
+            pub dir: std::path::PathBuf,
+            pub sha: String,
+            pub worktree: std::path::PathBuf,
+        }
+
+        impl TempRepo {
+            pub fn new() -> TempRepo {
+                let dir =
+                    std::env::temp_dir().join(format!("boop-cdx-repo-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&dir);
+                let worktree =
+                    std::env::temp_dir().join(format!("boop-cdx-wt-{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&worktree);
+                Command::new("git")
+                    .arg("init")
+                    .arg("-q")
+                    .arg(&dir)
+                    .status()
+                    .unwrap();
+                let d = dir.display().to_string();
+                Command::new("git")
+                    .args(["-C", &d, "config", "user.email", "t@t"])
+                    .status()
+                    .unwrap();
+                Command::new("git")
+                    .args(["-C", &d, "config", "user.name", "t"])
+                    .status()
+                    .unwrap();
+                std::fs::write(dir.join("seed.txt"), "s").unwrap();
+                Command::new("git")
+                    .args(["-C", &d, "add", "-A"])
+                    .status()
+                    .unwrap();
+                Command::new("git")
+                    .args(["-C", &d, "commit", "-qm", "seed"])
+                    .status()
+                    .unwrap();
+                let sha = String::from_utf8_lossy(
+                    &Command::new("git")
+                        .args(["-C", &d, "rev-parse", "HEAD"])
+                        .output()
+                        .unwrap()
+                        .stdout,
+                )
+                .trim()
+                .to_owned();
+                TempRepo { dir, sha, worktree }
+            }
+        }
+
+        impl Drop for TempRepo {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.dir);
+                let _ = std::fs::remove_dir_all(&self.worktree);
+            }
+        }
+    }
+
+    #[test]
+    fn codex_spawn_returns_handle_and_stop_tears_down() {
+        let guard = TmuxGuard::new();
+        let repo = temp_repo::TempRepo::new();
+        let mut req = spawn_spec(Some(guard.socket.clone()));
+        req.main_tree = false;
+        req.base_sha = repo.sha.clone();
+        req.repo = repo.dir.clone();
+        req.worktree_dir = Some(repo.worktree.clone());
+        req.model = Some("gpt-5.6-luna@medium".to_owned());
+        let codex = Codex;
+        let session = codex.spawn(&req).unwrap();
+        assert!(
+            repo.worktree.join("seed.txt").exists(),
+            "worktree must be created by spawn"
+        );
+        assert_eq!(
+            session
+                .tmux
+                .as_deref()
+                .map(|t| t.starts_with("boop-agent-")),
+            Some(true)
+        );
+        assert_eq!(session.tmux_socket.as_deref(), Some(guard.socket.as_str()));
+        assert!(has_session_on(&guard, session.tmux.as_deref().unwrap()));
+        codex.stop(&session).unwrap();
+        assert!(!has_session_on(&guard, session.tmux.as_deref().unwrap()));
     }
 
     #[test]
