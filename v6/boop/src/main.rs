@@ -53,6 +53,10 @@ refused, and `boop db sync create --rebuild` drops every stored row and
 re-projects every transcript from byte 0 (about 18 s over 1.5 GB here). Nothing
 is wiped without that flag.
 
+SQL: the store is SQLite at ~/.agent/boop.db; `boop db \"<sql>\"` queries it
+  read-only. sqlite3 dot-commands (.schema, .tables) are NOT supported; the
+  passthrough takes plain SQL only.
+
 The pre-split verbs (harnesses, sessions, events, chat, tail, list, measure,
 dispatch, lane, resolve, adopt, sweep, prune, hail, sync, follow) still run as
 hidden aliases for one release. Use `beep` and `db`.";
@@ -76,10 +80,18 @@ enum SubCmd {
         #[command(subcommand)]
         cmd: BeepCmd,
     },
-    /// Read and count what agents did.
+    /// Run raw SQL read-only against the store (the default `db` form), or
+    /// read/count what agents did through a `db` subcommand.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Db {
+        /// The SQL to run against ~/.agent/boop.db.
+        #[arg(value_name = "SQL")]
+        sql: Option<String>,
+        /// Output format for the SQL passthrough.
+        #[arg(long, value_enum)]
+        format: Option<QueryFormat>,
         #[command(subcommand)]
-        cmd: DbCmd,
+        cmd: Option<DbCmd>,
     },
     /// Report the caller's own identity and the rung that resolved it.
     Whoami {
@@ -495,7 +507,15 @@ fn main() -> Result<()> {
         ),
         SubCmd::Prune { mail_dir } => run_prune(mail_dir.as_deref()),
         SubCmd::Beep { cmd } => run_beep(&registry, cmd),
-        SubCmd::Db { cmd } => run_db(&registry, cmd),
+        SubCmd::Db { sql, format, cmd } => match cmd {
+            Some(cmd) => run_db(&registry, cmd),
+            None => match sql {
+                Some(sql) => run_passthrough(&sql, format.unwrap_or_default()),
+                None => anyhow::bail!(
+                    "boop db needs a SQL string or a subcommand; see `boop db --help`"
+                ),
+            },
+        },
         SubCmd::Whoami { json } => run_whoami(json),
     }
 }
@@ -906,7 +926,11 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
     let snapshot = proc::SysinfoSnapshot::capture()?;
     line("lane\tpid\trss_kb\tcpu_pct\tuptime_sec\tchildren");
     for (name, route) in &routes {
-        let pane_pid = pane_pid(route.tmux.as_deref()).unwrap_or(0);
+        let pane_pid = route
+            .tmux
+            .as_deref()
+            .and_then(|target| tmux::pane_pid(None, target))
+            .unwrap_or(0);
         match snapshot.process(pane_pid) {
             Some(info) => {
                 let uptime = info.start_time_secs;
@@ -924,22 +948,6 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
         }
     }
     Ok(())
-}
-
-/// The pid of the shell in the first pane of `session`.
-fn pane_pid(session: Option<&str>) -> Option<u32> {
-    let session = session?;
-    let output = Command::new("tmux")
-        .args(["list-panes", "-t", session, "-F", "#{pane_pid}"])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .next()
-        .and_then(|line| line.trim().parse().ok())
 }
 
 // ---------------------------------------------------------------------------
@@ -1422,11 +1430,13 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
     let hail_mail_dir = mail_dir(args.mail_dir.as_deref())?;
     let on_exit = args.parent.as_ref().map(|parent| {
         format!(
-            "boop hail --to {} --from {} --mail-dir {} --kind result --body \"lane {} done rc=$__rc\"",
+            "boop hail --to {} --from {} --mail-dir {} --kind result --body \"lane {} done rc=$__rc\" ; boop beep lane delete {} --route-only --mail-dir {}",
             shell_quote(parent),
             shell_quote(&args.name),
             shell_quote(&hail_mail_dir.display().to_string()),
-            args.name
+            args.name,
+            shell_quote(&args.name),
+            shell_quote(&hail_mail_dir.display().to_string()),
         )
     });
     let tmux_name = args.tmux.clone().unwrap_or_else(|| args.name.clone());
@@ -1534,14 +1544,19 @@ fn run_adopt(
 
 fn run_prune(mail_dir_arg: Option<&Path>) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
-    let Some(live) = tmux::live_sessions(None) else {
+    if tmux::live_sessions(None).is_none() {
         println!("refusing prune: tmux unreachable, cannot tell live from dead");
         return Ok(());
-    };
+    }
     let routes = bus::read_routes(&dir)?;
     let dead: Vec<String> = routes
         .iter()
-        .filter(|(_, route)| !live.has(route.tmux.as_deref().unwrap_or("")))
+        .filter(|(_, route)| {
+            let Some(target) = route.tmux.as_deref() else {
+                return true;
+            };
+            !tmux::target_alive(None, target)
+        })
         .map(|(name, _)| name.clone())
         .collect();
     let path = dir.join("registry.json");
@@ -1617,7 +1632,10 @@ fn append_ack(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_dispatch_harness;
+    use std::path::PathBuf;
+
+    use super::{resolve_dispatch_harness, run_lane_delete, write_route};
+    use boop::bus::{read_routes, Route};
     use boop::registry::Registry;
 
     /// A named harness that is not registered must be refused, never quietly
@@ -1633,6 +1651,44 @@ mod tests {
         assert!(message.contains("gemini-cli"), "message: {message}");
         assert!(message.contains("claude"), "registered set: {message}");
         assert!(message.contains("opencode"), "registered set: {message}");
+    }
+
+    fn temp_mail_dir() -> PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        std::env::temp_dir().join(format!(
+            "boop_mail_{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
+    /// RECEIPT (Job 3b). A `--route-only` delete drops the lane's registry row
+    /// without touching pane or tmux, so the on-exit epilogue cleans up in-pane.
+    #[test]
+    fn route_only_delete_drops_the_registry_row_without_tmux() {
+        let dir = temp_mail_dir();
+        write_route(
+            &dir,
+            "l",
+            Route {
+                harness: Some("claude".into()),
+                tmux: Some("somesession".into()),
+                cwd: None,
+                model: None,
+                mode: None,
+                session_id: None,
+                source_path: None,
+            },
+        )
+        .unwrap();
+        run_lane_delete(Some(&dir), "l", true).unwrap();
+        let routes = read_routes(&dir).unwrap();
+        assert!(
+            !routes.contains_key("l"),
+            "a finished lane must leave no registry row"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -1758,6 +1814,10 @@ enum LaneCmd {
     /// Stop a lane and forget it, or bulk-delete by state.
     Delete {
         lane: Option<String>,
+        /// Drop only the registry route; never kill the pane. The `--parent`
+        /// on-exit epilogue uses this to clean up while still running inside it.
+        #[arg(long)]
+        route_only: bool,
         #[arg(long)]
         state: Option<String>,
         #[arg(long)]
@@ -1854,12 +1914,16 @@ enum DbCmd {
         #[command(subcommand)]
         cmd: EdgeCmd,
     },
-    /// Tokens and cost. A leaf with --group-by, and a parent of blocks and
-    /// burn-rate; clap needs both attributes to accept the two forms.
+    /// Tokens and cost. A totals report the passthrough powers, and a parent
+    /// of the row computations blocks and burn-rate; clap needs both attributes
+    /// to accept the two forms.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Usage {
         #[command(flatten)]
         args: UsageArgs,
+        /// Print this alias's SQL and exit.
+        #[arg(long)]
+        show_sql: bool,
         #[command(subcommand)]
         cmd: Option<UsageCmd>,
     },
@@ -1890,20 +1954,6 @@ enum DbCmd {
 
 #[derive(clap::Args, Clone, Default)]
 struct UsageArgs {
-    /// Bucket the report; omit for one totals row.
-    #[arg(long, value_enum)]
-    group_by: Option<usage::GroupBy>,
-    /// Fold the session's whole spawn subtree into the numbers.
-    #[arg(long)]
-    rollup_subtree: bool,
-    #[arg(long)]
-    session: Option<String>,
-    #[arg(long)]
-    since: Option<u64>,
-    #[arg(long)]
-    until: Option<u64>,
-    #[arg(long)]
-    limit: Option<u64>,
     #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
     format: QueryFormat,
 }
@@ -2157,10 +2207,11 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
         ),
         LaneCmd::Delete {
             lane,
+            route_only,
             state,
             mail_dir,
         } => match (lane, state) {
-            (Some(lane), _) => run_lane_delete(mail_dir.as_deref(), &lane),
+            (Some(lane), _) => run_lane_delete(mail_dir.as_deref(), &lane, route_only),
             (None, Some(_)) => run_prune(mail_dir.as_deref()),
             (None, None) => {
                 anyhow::bail!("name a lane to delete, or pass --state dead for a bulk delete")
@@ -2264,19 +2315,21 @@ fn run_lane_get(mail_dir_arg: Option<&Path>, lane: &str) -> Result<()> {
     Ok(())
 }
 
-/// Stop one lane and drop its route. Refuses when tmux is unreachable, for the
-/// same reason the bulk delete does: it cannot tell live from dead.
-fn run_lane_delete(mail_dir_arg: Option<&Path>, lane: &str) -> Result<()> {
+/// Stop one lane and drop its route. Refuses when tmux is unreachable. `--route-only`
+/// drops the registry row and never touches the pane, so the on-exit epilogue can run inside it.
+fn run_lane_delete(mail_dir_arg: Option<&Path>, lane: &str, route_only: bool) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
     let routes = bus::read_routes(&dir)?;
     let Some(route) = routes.get(lane) else {
         anyhow::bail!("no registry route for lane `{lane}`")
     };
-    if let Some(session) = route.tmux.as_deref() {
-        match tmux::has_session(None, session) {
-            Ok(true) => tmux::kill_session(None, session)?,
-            Ok(false) => {}
-            Err(error) => anyhow::bail!("tmux unreachable, refusing to delete {lane}: {error}"),
+    if !route_only {
+        if let Some(session) = route.tmux.as_deref() {
+            match tmux::has_session(None, session) {
+                Ok(true) => tmux::kill_session(None, session)?,
+                Ok(false) => {}
+                Err(error) => anyhow::bail!("tmux unreachable, refusing to delete {lane}: {error}"),
+            }
         }
     }
     let path = dir.join("registry.json");
@@ -2318,7 +2371,11 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<
                 continue;
             }
         }
-        let pane_pid = pane_pid(route.tmux.as_deref()).unwrap_or(0);
+        let pane_pid = route
+            .tmux
+            .as_deref()
+            .and_then(|target| tmux::pane_pid(None, target))
+            .unwrap_or(0);
         match snapshot.process(pane_pid) {
             Some(info) => println!(
                 "{}\t{}\t{}\t{:.1}\t{}\t{}",
@@ -2390,8 +2447,12 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
                 emit_edges(&store, session.as_deref(), limit)
             }
         },
-        DbCmd::Usage { args, cmd } => match cmd {
-            None => run_usage(&args),
+        DbCmd::Usage {
+            args,
+            show_sql,
+            cmd,
+        } => match cmd {
+            None => run_usage(&args, show_sql),
             Some(UsageCmd::Blocks {
                 window_hours,
                 active,
@@ -2425,6 +2486,42 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
 
 fn open_store() -> Result<ident::Store> {
     ident::Store::open(ident::Store::default_path()?)
+}
+
+/// `boop db "<sql>": run raw SQL read-only against the store. The open is
+/// SQLITE_OPEN_READONLY by flag, so a write is refused by SQLite itself.
+fn run_passthrough(sql: &str, format: QueryFormat) -> Result<()> {
+    run_passthrough_at(ident::Store::default_path()?, sql, format)
+}
+
+fn run_passthrough_at(path: PathBuf, sql: &str, format: QueryFormat) -> Result<()> {
+    let store = ident::Store::open_readonly(path)?;
+    let (names, rows) = store.passthrough(sql)?;
+    match format {
+        QueryFormat::Ndjson => {
+            for row in &rows {
+                line(&serde_json::to_string(row)?);
+            }
+        }
+        QueryFormat::Text => {
+            line(&names.join("\t"));
+            for row in &rows {
+                let Some(object) = row.as_object() else {
+                    continue;
+                };
+                let cells: Vec<String> = names
+                    .iter()
+                    .map(|name| match object.get(name) {
+                        Some(serde_json::Value::String(text)) => text.clone(),
+                        Some(serde_json::Value::Null) | None => "-".to_owned(),
+                        Some(other) => other.to_string(),
+                    })
+                    .collect();
+                line(&cells.join("\t"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_fact(kind: query::FactKind, cmd: FactCmd) -> Result<()> {
@@ -2526,39 +2623,41 @@ fn run_whoami(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn usage_filter(args: &UsageArgs) -> usage::UsageQuery {
-    usage::UsageQuery {
-        session: args.session.clone(),
-        since: args.since,
-        until: args.until,
-        rollup_subtree: args.rollup_subtree,
-        limit: args.limit,
-    }
+/// The `db usage` alias's report SQL: totals with cost over the whole store.
+/// The passthrough is the engine; `--show-sql` prints this const.
+const USAGE_TOTALS_SQL: &str = "
+SELECT COUNT(*) AS calls,
+       COALESCE(SUM(usage.input_tokens), 0) AS input_tokens,
+       COALESCE(SUM(usage.output_tokens), 0) AS output_tokens,
+       COALESCE(SUM(usage.cache_create_5m_tokens), 0) AS cache_create_5m_tokens,
+       COALESCE(SUM(usage.cache_create_1h_tokens), 0) AS cache_create_1h_tokens,
+       COALESCE(SUM(usage.cache_read_tokens), 0) AS cache_read_tokens,
+       SUM(usage.input_tokens / 1e6 * price.input_per_mtok
+         + usage.output_tokens / 1e6 * price.output_per_mtok
+         + usage.cache_create_5m_tokens / 1e6 * price.cache_write_5m_per_mtok
+         + usage.cache_create_1h_tokens / 1e6 * price.cache_write_1h_per_mtok
+         + usage.cache_read_tokens / 1e6 * price.cache_read_per_mtok) AS cost_usd
+FROM agent_usage AS usage
+LEFT JOIN model_price AS price ON price.model_id = usage.model_id";
+
+fn open_ro_store() -> Result<ident::Store> {
+    ident::Store::open_readonly(ident::Store::default_path()?)
 }
 
-/// `db usage`: one totals row, or one row per bucket. The report names the
-/// models it could not price rather than folding them in as zero.
-fn run_usage(args: &UsageArgs) -> Result<()> {
-    let store = open_store()?;
-    let filter = usage_filter(args);
-    let rows = store.usage_report(args.group_by, &filter)?;
-    emit_json_rows(&rows, args.format);
-    for row in store.unpriced_models(&filter)? {
-        line(
-            &serde_json::json!({
-                "unpriced_model": row["model"],
-                "calls": row["calls"],
-            })
-            .to_string(),
-        );
+/// `db usage`: the totals report, a thin alias over USAGE_TOTALS_SQL. `--show-sql`
+/// prints that const and exits; otherwise it runs through the read-only passthrough.
+fn run_usage(args: &UsageArgs, show_sql: bool) -> Result<()> {
+    if show_sql {
+        line(USAGE_TOTALS_SQL.trim());
+        return Ok(());
     }
-    Ok(())
+    run_passthrough(USAGE_TOTALS_SQL, args.format)
 }
 
 fn run_usage_blocks(args: &UsageArgs, window_hours: u64, active_only: bool) -> Result<()> {
-    let store = open_store()?;
+    let store = open_ro_store()?;
     let window_ms = (window_hours * 3_600_000) as i64;
-    let blocks = store.usage_blocks(window_ms, &usage_filter(args))?;
+    let blocks = store.usage_blocks(window_ms, &usage::UsageQuery::default())?;
     let now = now_ms() as i64;
     let rows: Vec<ident::Row> = blocks
         .iter()
@@ -2583,11 +2682,11 @@ fn run_usage_blocks(args: &UsageArgs, window_hours: u64, active_only: bool) -> R
 }
 
 fn run_usage_burn_rate(args: &UsageArgs, window_minutes: u64) -> Result<()> {
-    let store = open_store()?;
-    let mut filter = usage_filter(args);
-    if filter.since.is_none() {
-        filter.since = Some(now_ms().saturating_sub(window_minutes * 60_000));
-    }
+    let store = open_ro_store()?;
+    let filter = usage::UsageQuery {
+        since: Some(now_ms().saturating_sub(window_minutes * 60_000)),
+        ..Default::default()
+    };
     emit_json_rows(&store.usage_burn_rate(&filter)?, args.format);
     Ok(())
 }

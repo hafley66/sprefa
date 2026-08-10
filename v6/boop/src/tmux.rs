@@ -269,8 +269,18 @@ pub fn session_of_pane(socket: Option<&str>, pane: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
+/// The exact-match target form. `-t name` prefix-matches a sibling session
+/// (`-t boop` matches `boop-shell-v2`); `-t =name` pins to the exact name.
+pub fn exact_target(name: &str) -> String {
+    format!("={name}")
+}
+
 /// Capture a pane's visible region, or the last `lines` rows of its history.
+/// A session-name target must resolve exactly; a pane target passes through.
 pub fn capture_pane(socket: Option<&str>, target: &str, lines: Option<u32>) -> Result<String> {
+    if !target.contains(':') && !has_session(socket, target)? {
+        anyhow::bail!("no such tmux session {target}");
+    }
     let mut builder = Command::new("tmux");
     if let Some(socket) = socket {
         builder.arg("-L").arg(socket);
@@ -323,7 +333,8 @@ impl LiveSessions {
     }
 }
 
-/// One-shot `tmux has-session -t <name>` via `tmux_interface`.
+/// One-shot `tmux has-session -t =<name>`; the exact form so a target never
+/// prefix-matches a sibling lane's session.
 pub fn has_session(socket: Option<&str>, session: &str) -> Result<bool> {
     use tmux_interface::{HasSession, Tmux};
     let builder = Tmux::new();
@@ -332,13 +343,13 @@ pub fn has_session(socket: Option<&str>, session: &str) -> Result<bool> {
         None => builder,
     };
     let status = builder
-        .add_command(HasSession::new().target_session(session))
+        .add_command(HasSession::new().target_session(exact_target(session)))
         .status()
         .context("tmux has-session")?;
     Ok(status.success())
 }
 
-/// One-shot `tmux kill-session -t <name>` via `tmux_interface`.
+/// One-shot `tmux kill-session -t =<name>` via `tmux_interface`.
 pub fn kill_session(socket: Option<&str>, session: &str) -> Result<()> {
     use tmux_interface::{KillSession, Tmux};
     let builder = Tmux::new();
@@ -347,10 +358,51 @@ pub fn kill_session(socket: Option<&str>, session: &str) -> Result<()> {
         None => builder,
     };
     builder
-        .add_command(KillSession::new().target_session(session))
+        .add_command(KillSession::new().target_session(exact_target(session)))
         .output()
         .context("tmux kill-session")?;
     Ok(())
+}
+
+/// The pid of the shell in the first pane of `target`. A session-name target is
+/// gated on exact `has-session =`; a pane target reads that pane directly.
+pub fn pane_pid(socket: Option<&str>, target: &str) -> Option<u32> {
+    if !target.contains(':') && !has_session(socket, target).ok().filter(|alive| *alive)? {
+        return None;
+    }
+    let mut builder = Command::new("tmux");
+    if let Some(socket) = socket {
+        builder.arg("-L").arg(socket);
+    }
+    let output = builder
+        .args(["list-panes", "-t", target, "-F", "#{pane_pid}"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .next()
+        .and_then(|line| line.trim().parse().ok())
+}
+
+/// Whether a route's tmux target is live, judged by a direct per-target probe:
+/// exact `has-session =` for a session name, `list-panes -t =<target>` for a pane.
+pub fn target_alive(socket: Option<&str>, target: &str) -> bool {
+    if !target.contains(':') {
+        return has_session(socket, target).unwrap_or(false);
+    }
+    let mut builder = Command::new("tmux");
+    if let Some(socket) = socket {
+        builder.arg("-L").arg(socket);
+    }
+    let target = exact_target(target);
+    let output = builder
+        .args(["list-panes", "-t", &target, "-F", "#{pane_pid}"])
+        .output()
+        .ok();
+    matches!(output, Some(out) if out.status.success())
 }
 
 /// Send a literal line then Enter into a pane. `-l` types the body literally,
@@ -539,5 +591,58 @@ mod tests {
         let server = TestServer::new();
         server.create_session(&session_name());
         assert!(live_sessions(Some(&server.socket)).is_some());
+    }
+
+    /// RECEIPT (Job 3a). The exact `has-session =` gate pins a session-name
+    /// target, so resolving `x` never reads a sibling `x2`.
+    #[test]
+    fn exact_target_does_not_prefix_match_a_sibling_session() {
+        let server = TestServer::new();
+        server.create_session("x");
+        server.create_session("x2");
+        let pid = super::pane_pid(Some(&server.socket), "x").unwrap();
+        assert_ne!(
+            pid,
+            super::pane_pid(Some(&server.socket), "x2").unwrap(),
+            "two sibling sessions must resolve distinct pids"
+        );
+        let server2 = TestServer::new();
+        server2.create_session("x2");
+        // No session literally named `x`; prefix matching would resolve to x2.
+        // The exact gate must return None instead of touching x2.
+        assert!(
+            super::pane_pid(Some(&server2.socket), "x").is_none(),
+            "resolving `x` must not touch `x2`"
+        );
+        assert!(super::pane_pid(Some(&server2.socket), "x2").is_some());
+    }
+
+    /// RECEIPT (Job 3c). Prune's liveness is a direct per-target probe: a live
+    /// pane target survives, a dead session does not.
+    #[test]
+    fn target_alive_tracks_a_live_pane_and_drops_a_dead_session() {
+        let server = TestServer::new();
+        server.create_session("alive");
+        assert!(
+            super::target_alive(Some(&server.socket), "alive"),
+            "a live session is alive"
+        );
+        assert!(
+            super::target_alive(Some(&server.socket), "alive:0.0"),
+            "a live adopted pane target is alive"
+        );
+        let status = Command::new("tmux")
+            .args(["-L", &server.socket, "kill-session", "-t", "alive"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(
+            !super::target_alive(Some(&server.socket), "alive"),
+            "a dead session must not survive prune"
+        );
+        assert!(
+            !super::target_alive(Some(&server.socket), "alive:0.0"),
+            "a dead session's pane target must not survive prune"
+        );
     }
 }
