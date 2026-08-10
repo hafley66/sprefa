@@ -1626,7 +1626,7 @@ test(catalog_room_rows_do_not_move_the_rel_block) :-
     lower:catalog_decl_rows(catalog_room_ids, [], RelPlans,
                             [rel_path_decl(orchard__north__tree/1,
                                            [orchard, north, tree])],
-                            _, ctx(_, 6, _, _, FinalId)),
+                            _, ctx(modules(_, 6, _), _, _, FinalId)),
     FinalId =:= 11.
 
 % Depth 3, every level declared: each rel row parents at the one above it.
@@ -1654,7 +1654,7 @@ test(catalog_flat_program_ids_unchanged_by_the_nesting_pass) :-
                         rel_spec(b_rel/1, set, [c2], none, [int]) ],
                       RelPlans),
     lower:catalog_decl_rows(catalog_flat, [], RelPlans, [], Rows,
-                            ctx(_, _, _, _, FinalId)),
+                            ctx(_, _, _, FinalId)),
     memberchk(row(7, 6, 0, a_rel, rel, 0, 1, 6, _, _, _), Rows),
     memberchk(row(9, 6, 0, b_rel, rel, 0, 1, 6, _, _, _), Rows),
     FinalId =:= 11.
@@ -6879,10 +6879,9 @@ test(use_item_without_an_alias_still_parses) :-
     string_codes("use \"lib.dl6\".", Codes),
     use_item(use("lib.dl6"), Codes, []).
 
-% FAIL-FIRST PIN (MOD-8): module_hash/2 hashes the basename, not the path, so
-% a/b/c.dl6 and aa/b/c.dl6 mint ONE identity and HMR conflates the two files.
-test(same_basename_different_paths_get_distinct_module_identity,
-     [fixme(mod8_module_hash_ignores_path)]) :-
+% FAIL-FIRST RECEIPT (MOD-8): module_hash hashed the basename, so a/b/c.dl6
+% and aa/b/c.dl6 minted ONE identity and HMR conflated the two files.
+test(same_basename_different_paths_get_distinct_module_identity) :-
     make_use_dir(Dir),
     atomic_list_concat([Dir, '/a/b'], LeftDir),
     atomic_list_concat([Dir, '/aa/b'], RightDir),
@@ -7013,12 +7012,71 @@ test(catalog_carries_a_mount_row_pointing_at_the_mounted_module) :-
     memberchk(row(MountedId, _, _, lib, module, _, _, _, _, _, _), Rows),
     memberchk(row(MountParentId, _, _, main, module, _, _, _, _, _, _), Rows).
 
+% FAIL-FIRST RECEIPT (MOD-2): every rel row carried the ENTRY's module_id, so
+% lib's `tree` read as a rel of main and moved identity per importer.
+test(catalog_attributes_a_used_modules_rel_to_that_module) :-
+    mount_catalog_rows(Rows),
+    memberchk(row(LibId, _, _, lib, module, _, _, _, _, _, _), Rows),
+    memberchk(row(MainId, _, _, main, module, _, _, _, _, _, _), Rows),
+    LibId \== MainId,
+    memberchk(row(_, LibId, _, tree, rel, _, _, LibId, _, _, _), Rows),
+    memberchk(row(_, MainId, _, ripe, rel, _, _, MainId, _, _, _), Rows).
+
+% ── the module graph: module rows and edge rows ─────────────────────────────
+% module(id, name, hash) reads off the kind=module rows; module_edge(consumer,
+% producer, kind) reads parent_id, module_id and kind off the edge rows.
+
+% FAIL-FIRST RECEIPT (MOD-2): a bare `use` minted no row at all, so a program
+% that imports without an alias had an invisible dependency edge.
+test(catalog_carries_a_use_edge_for_a_bare_use) :-
+    use_catalog_rows(Rows),
+    memberchk(row(LibId, _, _, lib, module, _, _, _, _, _, _), Rows),
+    memberchk(row(MainId, _, _, main, module, _, _, _, _, _, _), Rows),
+    memberchk(row(_, MainId, _, lib, use, _, _, LibId, EdgeHId, _, _), Rows),
+    EdgeHId \== ''.
+
+% An alias ADDS the mount edge beside the dependency edge (mount_alias_additive).
+test(catalog_carries_both_edges_for_an_aliased_use) :-
+    mount_catalog_rows(Rows),
+    memberchk(row(LibId, _, _, lib, module, _, _, _, _, _, _), Rows),
+    memberchk(row(MainId, _, _, main, module, _, _, _, _, _, _), Rows),
+    memberchk(row(_, MainId, _, lib, use, _, _, LibId, _, _, _), Rows),
+    memberchk(row(_, MainId, _, orchard, mount, _, _, LibId, _, _, _), Rows).
+
+% Two consumers of ONE file share the module row and its identity, while the
+% two edges carry distinct identity: the resolved position rides the EDGE.
+test(catalog_edges_into_one_module_carry_distinct_identity) :-
+    make_use_fixture(Dir,
+        [ "leaf.dl6" = "rel tree(tree_id:int).\n",
+          "mid.dl6" = "use \"leaf.dl6\".\nrel mid_row(y:int).\n",
+          "main.dl6" = "use \"mid.dl6\".\n\c
+                        use \"leaf.dl6\".\nrel top(z:int).\n" ]),
+    catalog_rows_of(Dir, Rows),
+    memberchk(row(LeafId, _, _, leaf, module, _, _, _, _, _, _), Rows),
+    findall(EdgeHId,
+            member(row(_, _, _, leaf, use, _, _, LeafId, EdgeHId, _, _), Rows),
+            EdgeHIds),
+    length(EdgeHIds, 2),
+    sort(EdgeHIds, Distinct),
+    length(Distinct, 2).
+
+use_catalog_rows(Rows) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\".\n\c
+                        rel ripe(tree_id:int).\n\c
+                        ripe(TreeId) <- tree(TreeId).\n" ]),
+    catalog_rows_of(Dir, Rows).
+
 mount_catalog_rows(Rows) :-
     make_use_fixture(Dir,
         [ "lib.dl6" = "rel tree(tree_id:int).\n",
           "main.dl6" = "use \"lib.dl6\" as orchard.\n\c
                         rel ripe(tree_id:int).\n\c
                         ripe(TreeId) <- orchard.tree(TreeId).\n" ]),
+    catalog_rows_of(Dir, Rows).
+
+catalog_rows_of(Dir, Rows) :-
     use_entry(Dir, 'main.dl6', Entry),
     expand_uses(Entry, [], [], _, Prog, _),
     program_plan(fixture(main, Prog, [], [], [])-[], Plan),

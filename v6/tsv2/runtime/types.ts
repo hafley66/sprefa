@@ -385,6 +385,8 @@ export interface IRelCatalogRow {
     | "primitive"
     | "list"
     | "module"
+    | "use"
+    | "mount"
     | "rel"
     | "column"
     | "delta"

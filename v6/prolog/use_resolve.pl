@@ -6,12 +6,14 @@
             resolve_use_path/3,
             expand_uses/6,
             expand_uses/8,
+            short_hash/2,
             reset_parse_counts/0,
             parse_count/2
           ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+:- use_module(library(crypto)).
 :- use_module(library(filesex)).
 :- use_module('compile/parse_dl', [use_item/3, parse_dl_source/5]).
 :- use_module('0_dot_expand', [declared_path/3]).
@@ -50,15 +52,24 @@ expand_uses(EntryPath, OnStack, Loaded0, Loaded, ProgOut, ModuleTable) :-
 % analyze.pl:column_name_at/4 selects by ==/2, never by name.
 expand_uses(EntryPath, OnStack, Loaded0, Loaded, ProgOut, ModuleTable,
             Bindings, Findings) :-
-    collect_all(EntryPath, OnStack, Loaded0, Loaded, Files, ModuleTable, _Paths),
+    entry_base_dir(EntryPath, BaseDir),
+    collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files,
+                ModuleTable, _Paths),
     merge_files(Files, ProgOut, Bindings, Findings).
+
+% relative_file_name/3 reads a slashless second argument as a FILE and drops
+% its last segment, so the base always carries its trailing slash.
+entry_base_dir(EntryPath, BaseDir) :-
+    canonical_abs(EntryPath, EntryAbs),
+    file_directory_name(EntryAbs, Dir),
+    atom_concat(Dir, '/', BaseDir).
 
 % Loaded threads through the fold, so a diamond's second sight of a file is a
 % cache hit; the cached entry carries the subtree's paths so a MOUNT of an
 % already-loaded file still grafts the same tree.
-collect_children([], _, _, _, Loaded, Loaded, [], [], []).
-collect_children([Spec | Rest], Roots, OnStack, OwnerName, Loaded0, Loaded,
-                 Files, Tables, MountDecls) :-
+collect_children([], _, _, _, _, _, Loaded, Loaded, [], [], []).
+collect_children([Spec | Rest], Roots, BaseDir, OnStack, OwnerName, OwnerHash,
+                 Loaded0, Loaded, Files, Tables, EdgeDecls) :-
     use_spec_parts(Spec, UseText, AliasOrNone),
     (   resolve_use_path(Roots, UseText, AbsPath)
     ->  true
@@ -67,27 +78,39 @@ collect_children([Spec | Rest], Roots, OnStack, OwnerName, Loaded0, Loaded,
     (   memberchk(loaded(AbsPath, CachedPaths), Loaded0)
     ->  FirstFiles = [], FirstTables = [], Loaded1 = Loaded0,
         ChildPaths = CachedPaths
-    ;   collect_all(AbsPath, OnStack, Loaded0, Loaded1, FirstFiles,
+    ;   collect_all(AbsPath, BaseDir, OnStack, Loaded0, Loaded1, FirstFiles,
                     FirstTables, ChildPaths)
     ),
-    mount_decls_for(AliasOrNone, AbsPath, OwnerName, ChildPaths, HereMounts),
-    collect_children(Rest, Roots, OnStack, OwnerName, Loaded1, Loaded,
-                     MoreFiles, MoreTables, MoreMounts),
+    edge_decls_for(AliasOrNone, AbsPath, BaseDir, OwnerName, OwnerHash,
+                   ChildPaths, HereEdges),
+    collect_children(Rest, Roots, BaseDir, OnStack, OwnerName, OwnerHash,
+                     Loaded1, Loaded, MoreFiles, MoreTables, MoreEdges),
     append(FirstFiles, MoreFiles, Files),
     append(FirstTables, MoreTables, Tables),
-    append(HereMounts, MoreMounts, MountDecls).
+    append(HereEdges, MoreEdges, EdgeDecls).
 
 use_spec_parts(use(Text), Text, none).
 use_spec_parts(use(Text, Alias), Text, alias(Alias)).
 
-mount_decls_for(none, _AbsPath, _OwnerName, _ChildPaths, []).
-mount_decls_for(alias(Alias), AbsPath, OwnerName, ChildPaths,
-                [mount_decl(Alias, ChildName, OwnerName, ChildPaths)]) :-
-    module_name(AbsPath, ChildName).
+% The dependency edge is minted for every use; an alias ADDS the mount edge
+% beside it (ruling mount_alias_additive) rather than replacing it.
+edge_decls_for(AliasOrNone, AbsPath, BaseDir, OwnerName, OwnerHash, ChildPaths,
+               EdgeDecls) :-
+    canonical_abs(AbsPath, ChildAbs),
+    module_name(ChildAbs, ChildName),
+    module_hash(BaseDir, ChildAbs, ChildHash),
+    UseEdge = module_edge_decl(OwnerHash, ChildHash, use, ChildName),
+    (   AliasOrNone = alias(Alias)
+    ->  EdgeDecls = [ UseEdge,
+                      module_edge_decl(OwnerHash, ChildHash, mount, Alias),
+                      mount_decl(Alias, ChildName, OwnerName, ChildPaths) ]
+    ;   EdgeDecls = [UseEdge]
+    ).
 
 % One module's whole subtree. The ENTRY parses LAST: parse_dl_source/5 retracts
 % its statement table per call, and the diag channel reads the entry's.
-collect_all(EntryPath, OnStack, Loaded0, Loaded, Files, Tables, SubtreePaths) :-
+collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
+            SubtreePaths) :-
     canonical_abs(EntryPath, EntryAbs),
     (   memberchk(loaded(EntryAbs, _), OnStack)
     ->  on_stack_paths(OnStack, StackPaths),
@@ -100,13 +123,15 @@ collect_all(EntryPath, OnStack, Loaded0, Loaded, Files, Tables, SubtreePaths) :-
     strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes),
     include_roots(EntryPath, Roots),
     module_name(EntryAbs, EntryName),
-    collect_children(UseSpecs, Roots, [loaded(EntryAbs, []) | OnStack],
-                     EntryName, Loaded0, Loaded1, ChildFiles, ChildTables,
-                     MountDecls),
+    module_hash(BaseDir, EntryAbs, EntryHash),
+    collect_children(UseSpecs, Roots, BaseDir, [loaded(EntryAbs, []) | OnStack],
+                     EntryName, EntryHash, Loaded0, Loaded1, ChildFiles,
+                     ChildTables, EdgeDecls),
     parse_dl_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
-    module_hash(EntryName, EntryHash),
-    append(OwnDecls0, [module_decl(EntryName, EntryHash) | MountDecls],
+    rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls),
+    append([OwnDecls0, [module_decl(EntryName, EntryHash)], RelModuleDecls,
+            EdgeDecls],
            OwnDecls),
     append(ChildFiles,
            [file(EntryAbs, OwnDecls, OwnRules, OwnQueries, OwnBindings,
@@ -115,6 +140,13 @@ collect_all(EntryPath, OnStack, Loaded0, Loaded, Files, Tables, SubtreePaths) :-
     append(ChildTables, [ module(EntryAbs, EntryName, EntryHash) ], Tables),
     subtree_paths(Files, SubtreePaths),
     Loaded = [loaded(EntryAbs, SubtreePaths) | Loaded1].
+
+% Read off the file's OWN decls, mounts excluded: a mounted rel keeps the
+% identity of the module that declared it, never the module that grafted it.
+rel_module_decls(OwnDecls, Hash, RelModuleDecls) :-
+    findall(Name, declared_path(OwnDecls, _Segments, Name), Names0),
+    sort(Names0, Names),
+    findall(rel_module_decl(Name, Hash), member(Name, Names), RelModuleDecls).
 
 on_stack_paths(OnStack, Paths) :-
     findall(Path, member(loaded(Path, _), OnStack), Paths).
@@ -241,8 +273,22 @@ module_name(Abs, Name) :-
     ;   Name = Base
     ).
 
-module_hash(Name, Hash) :-
-    crypto_data_hash(Name, Full, [algorithm(sha256)]),
+% Identity is the path relative to the ENTRY's directory, extension dropped:
+% equal basenames stay distinct and an entry hashes exactly its module name.
+module_hash(BaseDir, Abs, Hash) :-
+    relative_file_name(Abs, BaseDir, Relative),
+    module_name(Relative, BaseStem),
+    file_directory_name(Relative, Dir),
+    (   Dir == '.'
+    ->  Stem = BaseStem
+    ;   atomic_list_concat([Dir, '/', BaseStem], Stem)
+    ),
+    short_hash(Stem, Hash).
+
+% SHA-256 truncated to 16 hex characters. The compiler's one hash: module
+% identity, rel h_id and the schema/rule digests all read it.
+short_hash(Text, Hash) :-
+    crypto_data_hash(Text, Full, [algorithm(sha256)]),
     sub_atom(Full, 0, 16, _, Hash),
     !.
 

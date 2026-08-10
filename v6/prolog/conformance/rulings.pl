@@ -653,3 +653,32 @@ ruling(type_ir_three_slot, one_rel_record_col_name_origin_storage, user,
 % named counterexample).
 ruling(annotation_at_curry, at_wrapper_rows_auto_curry, user,
        'user 2026-08-09: "yes for at symbol, it auto curries and can have types itself described in our lang but the currying will be a different concept we may use elsewhere in the lang but we could dip our feet with just @ symbols basically just being like a prolog list that is not checked except for its own at comptime". MVP scope: @ann(args) parses before decls/cols as an unchecked payload row, typed only against the annotation''s own in-language decl at comptime; @f(a)(T) desugars to the 2-arg parens form; currying generalizes later as its own concept.').
+
+% 2026-08-09: mount fork 1, ruled additive. `use "x" as u` is a soft link:
+% bare names splice in alongside the alias, both spellings resolve.
+ruling(mount_alias_additive, alias_soft_link_bare_names_stay, user,
+       'user 2026-08-09: "additive lol allow soft linking/alias assign that is fine". No exclusive mode; an alias adds a path, never hides one.').
+
+% 2026-08-09: mount fork 2, ruled no leak. An inner alias is private to the
+% module that declared it; visibility outward takes an explicit re-export
+% (mainstream convention: rust pub use, es export-from). Priority LOW; the
+% user-stated deliverable is the module graph as rel-to-rel rows for HMR and
+% async loading, reusing existing graph algos, and that ships first.
+ruling(mount_inner_alias_private, inner_alias_no_outward_leak, user,
+       'user 2026-08-09: "no" to mid''s grove being visible from main via mid''s alias; "i just need to be able to input the module graph rel to rel relations for hmr and async loading and re-use as many graph algos as we can". Fix rides a MOD wave, not urgent.').
+
+% 2026-08-10: boop-in-dl6 shape. boop enters dl6 through sh host decls (the
+% existing sh door); TypeScript stays the core engine. Rust emitters are a
+% later arc, and only then does dl6 link boop natively.
+ruling(boop_dl6_sh_door, sh_hosts_now_ts_core_rust_emitters_later, user,
+       'user 2026-08-10: "boop stays as sh code in dl6 for now, ts is the core engine and when we get far enough to factor it into rust emitters, then we can get there and link into our homies". Bridge item 7 (boop base facts to DL6) therefore lands as sh decls calling the boop CLI, never a bespoke native bridge.').
+
+% 2026-08-10: mount fork 3, ruled allow cycles, ESM-shaped. A use cycle is
+% legal; cross-cycle references are lazy soft links, same as an ESM live
+% binding. The only error is an eager read during the load pass: a top-level
+% query (?- is the app''s .subscribe()) that demands a rel whose defining
+% module is still mid-load on the cycle. Lifting the ban replaces the
+% on-stack throw at use_resolve.pl:95 with memo dedup on loaded/2;
+% module_hash needs SCC-as-a-unit hashing. Own arc, after MOD-2 lands.
+ruling(mount_mutual_cycles_lazy, esm_lazy_cycle_eager_subscribe_yells, user,
+       'user 2026-08-10: "i would prefer if we allowed cycles like how js does it, where it does not care if u use something as a reference that is not reachable from module load traversal tick/pass, so if a subscribe happened like a query at top level (i think ?- or whatever it is is effectively .subscribe()) then that would yell at you".').
