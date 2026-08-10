@@ -1745,6 +1745,42 @@ sites but not against new code. **missing** = nothing.
   arity fix alone: all 231 entries land in failures and the script halts 1.
   Any future `plan/N` drift turns this gate red instead of empty.
 
+## 45. A mechanical rename silently disables an optional-field optimization (bench 4.3x + heap abort)
+
+- INCIDENT (found 2026-08-10, entered 2026-08-07 via `4a9b45f7`): dl6
+  `grid_10000` fixpoint 1182ms → 5627ms (parent-vs-culprit rerun 1260 → 5393,
+  4.28x), peak RSS 621MB → 1364MB, and `DL6_BENCH_FULL=1` aborted node's heap
+  on layered/chain (~10M derived rows) — the abort also truncated FACTS.md
+  through bench.sh's `>` redirect. Checksums identical throughout. Undetected
+  for 3 days and ~25 landed PRs; surfaced by a manual bench rerun, named by
+  the dl6-perf-bisect lane in 8 measured steps.
+- RCA, three defects in firing order: (1) `4a9b45f7` (534-file snake_case
+  rename) renamed the runtime reader `seam.unobservedRels` →
+  `unobserved_rels` (runtime/1_incremental.ts) but missed the three lab
+  drivers that SET the key (dl6/bench.ts:220, incbench.ts:19, run.ts:159);
+  lab drivers run under `--experimental-transform-types`, so no typechecker
+  ever saw the dead literal key. (2) The skip's fail-safe direction — an
+  absent `unobserved_rels` never skips — converted the miss into silent full
+  delta bookkeeping: every derived row also written to
+  `__delta_/__frontier_/__new_reachable`, then a 1,069,200-row `GROUP BY`
+  consolidation materialized into JS row-by-row by `boundary_delta`
+  (1_incremental.ts:884), which is the RSS doubling and, at 10M rows, the
+  heap abort. (3) Nothing compares bench numbers: COUNT tests gate statement
+  counts never time, TickStatementLedger records with no comparator,
+  dl6-bench is manual and out-of-CI — so a 4.3x cliff with identical
+  checksums rode 25 green PRs.
+- FIX: snake_case the key in the three lab drivers; bench.sh writes FACTS.md
+  temp-then-move so a crashed run cannot truncate the bank. Receipt: grid
+  5627 → 1173ms, RSS 1364 → 621MB; `DL6_BENCH_FULL=1` completes (layered
+  11721ms, chain 20850ms), all three checksums byte-identical to the
+  2026-08-07 bank.
+- RAIL: missing — the promotion is a budgeted bench cell in the battery
+  (grid fixpoint time + RSS ceilings ratcheted against banked FACTS.md; the
+  bisect's 2500ms threshold proves the cell discriminates: every post-culprit
+  commit measured ≥ 5393ms). Second arm: a `tsc --noEmit` gate over the dl6
+  lab drivers so a seam-literal key drift is a type error instead of a
+  silent default.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -1788,6 +1824,7 @@ sites but not against new code. **missing** = nothing.
 
 | 41 | a malformed host response kills the dl server process instead of landing as a diag | missing | `encodeSurfaceRowByColumns` throws `commit: non-numeric value in rel '<r>' column '<c>'` at v6/dl/src/3_runtime.ts:186, unhandled through applyEdbTxn (:605) and the tick loop (:896), so the listener dies and every later request gets ECONNREFUSED; the load response had already answered `{"loaded":true}`, so the program looks accepted. Triggered by an sh host whose declared output column names do not match its stdout keys: parseHostOutput (v6/dl/src/1_hosts.ts:94-190) falls out of the JSON-lines branch into whitespace-column splitting and shreds every value. Fail-pre-fix receipt = an sh decl whose template emits JSON-lines under one key set while declaring another, asserting the server still answers GET /idb/:rel afterward. Rail = coerce-or-refuse at the encode site (the class-36 encode-site guard precedent, same file) plus a bridge-time check that a JSON-lines host's keys cover its output-only columns, unowned |
 | 42 | interactive-harness lane never fires its on-exit hail (completion signal rides process exit; an interactive TUI idles at its prompt forever) | enforced | incident 2026-08-10: lanes codex-findings + recon-luna finished work at ~00:17 and sat silent 8h with a live pid, live tmux session, unchanged worktree; the parent monitor watched session-exit and so also stayed silent. RCA chain: (1) lane epilogue `; __rc=$?; boop hail ...` is only reachable on harness exit, (2) codex spawned interactive (`codex '<prompt>'`) which never exits, (3) coordinator liveness check used only the process-alive half of the two-check law. Fail-pre-fix: launch_command tests asserted the interactive spelling; flipped to assert the `codex exec` prefix (v6/boop/src/harness/codex.rs tests), and exec exits on completion so the epilogue is reachable. Rail = spawn composes `codex exec` + `--dangerously-bypass-approvals-and-sandbox` (lane = trusted automation, mirrors opencode `--auto`), send_midflight measured false |
+| 45 | recorded-but-uncompared perf trail (bench and ledger without a comparator) | missing | budgeted bench cell in the battery (grid fixpoint time + RSS ceilings vs banked FACTS.md) + `tsc --noEmit` gate over dl6 lab drivers |
 
 ## How a new rail gets born here
 
