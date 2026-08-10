@@ -369,7 +369,11 @@ impl Store {
     }
 
     /// Sessions as typed rows.
-    pub fn session_rows(&self, session: Option<&str>, limit: Option<u64>) -> Result<Vec<SessionRow>> {
+    pub fn session_rows(
+        &self,
+        session: Option<&str>,
+        limit: Option<u64>,
+    ) -> Result<Vec<SessionRow>> {
         let mut sql = String::from(
             "SELECT dict_session.value, agent_session.nickname,
                     dict_harness.value, dict_cwd.value, dict_branch.value,
@@ -594,7 +598,10 @@ mod tests {
         println!("SessionRow receipt: {row:?}");
 
         let turns = store.turn_rows(&TurnQuery::default()).unwrap();
-        assert!(turns.iter().any(|t| t.said == "hello"), "turn text retained");
+        assert!(
+            turns.iter().any(|t| t.said == "hello"),
+            "turn text retained"
+        );
 
         let touches = store.touch_rows(&FactQuery::default()).unwrap();
         assert_eq!(touches.len(), 1);

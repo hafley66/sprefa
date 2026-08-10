@@ -467,7 +467,9 @@ mod tests {
         };
         sync_session(&store, &crate::harness::claude::Claude, &session).unwrap();
 
-        let totals = store.usage_report_rows(None, &UsageQuery::default()).unwrap();
+        let totals = store
+            .usage_report_rows(None, &UsageQuery::default())
+            .unwrap();
         assert_eq!(totals.len(), 1);
         assert!(totals[0].bucket.is_none());
         assert_eq!(totals[0].calls, 1);
