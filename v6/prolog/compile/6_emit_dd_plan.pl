@@ -198,13 +198,15 @@ rule_operators([Rule | Rest], Lowered, Number, Operators) :-
 rule_operator_terms(Rule, Lowered, Number, Operators) :-
     rule_head_ref(Rule, HeadRef),
     rule_body_uses(Rule, Uses),
-    operator_payload(Rule, HeadRef, Uses, Lowered, Payload),
     operator_id(map, Number, MapId),
-    Map = op(MapId, map(HeadRef), Payload),
-    join_operators(Uses, Number, Payload, Joins),
-    filter_operators(Uses, Number, Payload, Filters),
-    reduce_operators(Rule, Number, Payload, Reduces),
-    iterate_operators(HeadRef, Uses, Number, Payload, Iterates),
+    operator_payload(Rule, HeadRef, Uses, Lowered, Sqlite),
+    Map = op(MapId, map(HeadRef), Sqlite),
+    Owner = sqlite(Refs, owner(MapId)),
+    Sqlite = sqlite(Refs, _),
+    join_operators(Uses, Number, Owner, Joins),
+    filter_operators(Uses, Number, Owner, Filters),
+    reduce_operators(Rule, Number, Owner, Reduces),
+    iterate_operators(HeadRef, Uses, Number, Owner, Iterates),
     append([[Map], Joins, Filters, Reduces, Iterates], Operators).
 
 operator_payload(_Rule, HeadRef, Uses,

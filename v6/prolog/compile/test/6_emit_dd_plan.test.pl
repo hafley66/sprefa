@@ -33,7 +33,7 @@ test(every_operator_has_a_wire) :-
              text_plan(Text, dd_plan(_, _, _, operators(Operators), wires(Wires), _)),
              forall(member(op(Id, _, _), Operators), operator_has_wire(Id, Wires)) )).
 
-test(every_operator_carries_sql_payload_for_plan_rels) :-
+test(each_rule_sql_appears_on_its_head_writing_map_once) :-
     dd_fixture_file('engine_core.pl', EngineFixture),
     dd_fixture_file('5_value_plane.pl', ValueFixture),
     forall(member(Fixture-Name,
@@ -43,11 +43,21 @@ test(every_operator_carries_sql_payload_for_plan_rels) :-
            ( fixture_dd_plan_text(Fixture, Name, Text),
              text_plan(Text, dd_plan(_, rels(Rels), _, operators(Operators), _, _)),
              findall(Ref, member(rel(Ref, _, _), Rels), PlanRefs),
-             forall(member(op(_, _, sqlite(PayloadRefs, Statements)), Operators),
+             forall(member(op(MapId, map(_), sqlite(PayloadRefs, Statements)), Operators),
                     ( PayloadRefs \== [],
                       Statements \== [],
                       forall(member(Ref, PayloadRefs), memberchk(Ref, PlanRefs)),
-                      forall(member(Statement, Statements), payload_statement(Statement)) )) )).
+                      forall(member(Statement, Statements), payload_statement(Statement)),
+                      forall(member(Statement, Statements),
+                             ( findall(Id,
+                                       member(op(Id, _, sqlite(_, Statements)), Operators),
+                                       StatementIds),
+                               StatementIds = [MapId] )) )),
+             forall(member(op(Id, Description, sqlite(PayloadRefs, owner(MapId))), Operators),
+                    ( Description \= map(_),
+                      PayloadRefs \== [],
+                      memberchk(op(MapId, map(_), sqlite(PayloadRefs, _)), Operators),
+                      Id \= MapId )) )).
 
 test(join_inputs_have_keyed_arrangements) :-
     dd_fixture_file('5_value_plane.pl', Fixture),

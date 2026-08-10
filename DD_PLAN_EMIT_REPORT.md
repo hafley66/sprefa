@@ -151,3 +151,7 @@ $ emit twice, compare bytes
 byte-deterministic
 EXIT=0
 ```
+
+## Grain verdict
+
+Option B is committed: `map_N` carries the rule SQL bundle and sibling join, filter, reduce, and iterate nodes carry `sqlite(Refs, owner(map_N))`. A payload-walking SQLite runner therefore executes one bundle per map without a per-tick statement-identity set; the pure-RAM kernel continues to ignore the SQLite field. Receipts, option comparison, and the future same-head clause amendment are in `plans/2026-08-10-dd-payload-grain.PLAN.md`; the plain-language diagram is in `plans/2026-08-10-dd-payload-grain.PLAN.visual.human.unga.md`.
