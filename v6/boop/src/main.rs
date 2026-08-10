@@ -267,6 +267,9 @@ enum SubCmd {
         model: Option<String>,
         #[arg(long)]
         mode: Option<String>,
+        /// The lane that summoned this one.
+        #[arg(long)]
+        parent: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -421,6 +424,7 @@ fn main() -> Result<()> {
                 base_sha,
                 branch: None,
                 worktree_dir: None,
+                parent: None,
                 on_exit: None,
             },
         ),
@@ -494,6 +498,7 @@ fn main() -> Result<()> {
             cwd,
             model,
             mode,
+            parent,
             mail_dir,
         } => run_adopt(
             &name,
@@ -503,6 +508,7 @@ fn main() -> Result<()> {
             cwd.as_deref(),
             model.as_deref(),
             mode.as_deref(),
+            parent.as_deref(),
             mail_dir.as_deref(),
         ),
         SubCmd::Prune { mail_dir } => run_prune(mail_dir.as_deref()),
@@ -977,6 +983,8 @@ struct DispatchArgs {
     /// The worktree to create; `None` spawns in `cwd` (`main_tree` decides
     /// whether that's a fast-forward check or a plain directory).
     worktree_dir: Option<PathBuf>,
+    /// The lane that summoned this one; written to the route's `parent`.
+    parent: Option<String>,
     /// Shell appended after the harness command; `lane create --parent`
     /// composes the completion hail here.
     on_exit: Option<String>,
@@ -1050,6 +1058,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         mode: args.mode.clone(),
         session_id: args.session_id.clone(),
         source_path: None,
+        parent: args.parent.clone(),
     };
     write_route(&dir, &args.to, route)?;
     append_message(&dir, &message)?;
@@ -1499,6 +1508,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             base_sha: args.base_sha,
             branch: Some(branch),
             worktree_dir,
+            parent: args.parent.clone(),
             on_exit,
         },
     )
@@ -1521,6 +1531,7 @@ fn run_adopt(
     cwd: Option<&str>,
     model: Option<&str>,
     mode: Option<&str>,
+    parent: Option<&str>,
     mail_dir_arg: Option<&Path>,
 ) -> Result<()> {
     if !tmux::has_session(None, tmux_session)? {
@@ -1536,6 +1547,7 @@ fn run_adopt(
         mode: mode.map(str::to_owned),
         session_id: session_id.map(str::to_owned),
         source_path: None,
+        parent: parent.map(str::to_owned),
     };
     write_route(&dir, name, route)?;
     println!("adopted {name} -> tmux {tmux_session}");
@@ -1597,6 +1609,9 @@ fn route_to_json(route: &Route) -> serde_json::Value {
     }
     if let Some(session_id) = &route.session_id {
         object.insert("sessionId".into(), serde_json::json!(session_id));
+    }
+    if let Some(parent) = &route.parent {
+        object.insert("parent".into(), serde_json::json!(parent));
     }
     serde_json::Value::Object(object)
 }
@@ -1679,6 +1694,7 @@ mod tests {
                 mode: None,
                 session_id: None,
                 source_path: None,
+                parent: None,
             },
         )
         .unwrap();
@@ -1808,6 +1824,9 @@ enum LaneCmd {
         model: Option<String>,
         #[arg(long)]
         mode: Option<String>,
+        /// The lane that summoned this one.
+        #[arg(long)]
+        parent: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -2194,6 +2213,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             cwd,
             model,
             mode,
+            parent,
             mail_dir,
         } => run_adopt(
             &lane,
@@ -2203,6 +2223,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             cwd.as_deref(),
             model.as_deref(),
             mode.as_deref(),
+            parent.as_deref(),
             mail_dir.as_deref(),
         ),
         LaneCmd::Delete {

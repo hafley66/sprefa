@@ -35,6 +35,8 @@ pub struct Route {
     pub mode: Option<String>,
     pub session_id: Option<String>,
     pub source_path: Option<String>,
+    /// The lane that summoned this one; `None` when spawned without `--parent`.
+    pub parent: Option<String>,
 }
 
 /// Read the route map out of the `--mail-dir` registry. Corrupt JSON is an
@@ -79,6 +81,7 @@ fn route_from_value(entry: &Value) -> Route {
             .or_else(|| string_field(object, "session_id")),
         source_path: string_field(object, "sourcePath")
             .or_else(|| string_field(object, "source_path")),
+        parent: string_field(object, "parent"),
     }
 }
 
@@ -92,6 +95,7 @@ impl Route {
             mode: None,
             session_id: None,
             source_path: None,
+            parent: None,
         }
     }
 }
@@ -310,7 +314,20 @@ fn getrandom_bytes(out: &mut [u8]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{fold, injected_line, parse_line, unacked};
+    use super::{fold, injected_line, parse_line, read_routes, unacked};
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "boop_bus_{}_{}_{}",
+            std::process::id(),
+            tag,
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     fn send(id: &str) -> super::Message {
         super::Message {
@@ -368,5 +385,36 @@ mod tests {
             folded[0].to_timestamp.as_deref(),
             Some("2026-01-01T00:00:01.000Z")
         );
+    }
+
+    #[test]
+    fn a_route_round_trips_its_parent_field() {
+        let dir = temp_dir("parent");
+        let path = dir.join("registry.json");
+        std::fs::write(
+            &path,
+            r#"{"child": {"harness": "opencode", "parent": "coordinator"}}"#,
+        )
+        .unwrap();
+        let routes = read_routes(&dir).unwrap();
+        let child = routes.get("child").unwrap();
+        assert_eq!(child.parent.as_deref(), Some("coordinator"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_registry_without_the_parent_field_still_loads() {
+        let dir = temp_dir("noparent");
+        let path = dir.join("registry.json");
+        std::fs::write(
+            &path,
+            r#"{"child": {"harness": "opencode", "tmux": "lane-child"}}"#,
+        )
+        .unwrap();
+        let routes = read_routes(&dir).unwrap();
+        let child = routes.get("child").unwrap();
+        assert_eq!(child.parent, None);
+        assert_eq!(child.harness.as_deref(), Some("opencode"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
