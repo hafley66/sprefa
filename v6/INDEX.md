@@ -84,12 +84,6 @@
 | [prolog/compile/TICK-MODEL.md](prolog/compile/TICK-MODEL.md) | 204 | TICK MODEL: the semiring/grading semantics behind the clock checker |
 | [prolog/compile/test/diag-fix-REPORT.md](prolog/compile/test/diag-fix-REPORT.md) | 138 | dl6 diag channel: audit fix REPORT |
 | [prolog/conformance/FIXTURES.md](prolog/conformance/FIXTURES.md) | 84 | The shared fixture contract (read before promoting a lab) |
-| [prolog/labs/diag_channel/AUDIT/CONTRACT.md](prolog/labs/diag_channel/AUDIT/CONTRACT.md) | 145 | Audit lane: the Prolog work |
-| [prolog/labs/diag_channel/AUDIT/REPORT.md](prolog/labs/diag_channel/AUDIT/REPORT.md) | 189 | prolog audit: REPORT |
-| [prolog/labs/diag_channel/CONTRACT.md](prolog/labs/diag_channel/CONTRACT.md) | 160 | Lane: a machine-readable diagnostic channel for dl6 |
-| [prolog/labs/scc_extract/CONTRACT.md](prolog/labs/scc_extract/CONTRACT.md) | 172 | Lane L5: pluck Tarjan out of clpfd and make it callable |
-| [prolog/labs/scc_extract/REPORT.md](prolog/labs/scc_extract/REPORT.md) | 173 | L5 swi scc extract: REPORT |
-| [prolog/labs/type_matrix/MATRIX.md](prolog/labs/type_matrix/MATRIX.md) | 495 | Type matrix -- generated, do not hand-edit |
 | [skills/mermaid-living-map.md](skills/mermaid-living-map.md) | 94 | Skill: the living-map technique (Mermaid graph as governing doc) |
 | [sprefa-extract/AGENTS.md](sprefa-extract/AGENTS.md) | 66 | sprefa-extract — Agent Guidance |
 | [sprefa-extract/tests/fixtures/deps/README.md](sprefa-extract/tests/fixtures/deps/README.md) | 16 |  |
@@ -1265,95 +1259,6 @@
 61:## Expectations
 69:## Re-grading discipline (AGGREGATE.md 5c)
 79:## Out of scope for fixtures
-```
-
-### prolog/labs/diag_channel/AUDIT/CONTRACT.md
-```
-1:# Audit lane: the Prolog work
-3:## What this is
-12:## Base
-21:## What you own
-33:## Already-confirmed findings, seeded so you do not spend time rediscovering them
-46:## The audit protocol
-48:### 1. Sabotage every test
-65:### 2. Attack the one-source-two-renderers claim
-76:### 3. Check what a SUCCESSFUL compile pays
-84:### 4. Check the position claim honestly
-97:### 5. Couplings and layering
-105:### 6. The scc_extract lane
-117:## What you must NOT do
-125:## Style laws
-132:## REPORT.md format
-```
-
-### prolog/labs/diag_channel/AUDIT/REPORT.md
-```
-1:# prolog audit: REPORT
-3:## Base proof
-8:## Restore proof
-28:## 1. Sabotage table
-44:## 2. The two-renderer property under attack
-62:## 3. Cost on the success path
-75:## 4. Position correctness
-110:## 5. Couplings, state, and failure modes
-132:## 6. scc_extract independent verification
-155:## Ranked findings
-173:## What I could not check
-```
-
-### prolog/labs/diag_channel/CONTRACT.md
-```
-1:# Lane: a machine-readable diagnostic channel for dl6
-3:## What this is for
-15:## Base
-24:## What already exists, read all of it before writing anything
-41:## The hazard that decides the design
-57:## Deliverable
-80:## The rule that makes this beautiful rather than bolted on
-94:## Grading
-113:## The honest number this lane exists to produce
-122:## Scope discipline
-134:## Style laws (repo-wide, enforced)
-147:## REPORT.md format
-```
-
-### prolog/labs/scc_extract/CONTRACT.md
-```
-1:# Lane L5: pluck Tarjan out of clpfd and make it callable
-3:## The finding this lane acts on
-23:## Base
-32:## Ownership
-38:## The exact source to extract
-66:## The hard part, and a receipt so you do not start blind
-98:## Deliverable
-111:## Grading: differential against both existing implementations
-126:## Numbers
-138:## What the report must answer
-146:## Style laws (repo-wide, enforced)
-157:## REPORT.md format
-```
-
-### prolog/labs/scc_extract/REPORT.md
-```
-1:# L5 swi scc extract: REPORT
-3:## Base proof
-8:## The extraction
-29:## The wrapper
-88:## The grid
-112:## Numbers
-135:## Verdict
-165:## What I could not do
-```
-
-### prolog/labs/type_matrix/MATRIX.md
-```
-1:# Type matrix -- generated, do not hand-edit
-7:## Verdict counts
-19:## The two `.dl6` oracle doors
-29:## Per position
-41:## Per declared type
-54:## Per fed value
-69:## Every cell
 ```
 
 ### skills/mermaid-living-map.md

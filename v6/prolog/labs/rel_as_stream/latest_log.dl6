@@ -1,6 +1,0 @@
-rel stream(ordinal: int, payload: text) log keep(all).
-rel poke(tag: text) log keep(all).
-rel sampled(ordinal: int, payload: text) log keep(all).
-rel head_at(ordinal: int) .
-sampled(Ordinal, Payload) <+ poke(_Tag), latest(stream(Ordinal, Payload)).
-head_at(max(Ordinal)) <- stream(Ordinal, _P).

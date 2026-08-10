@@ -1,7 +1,0 @@
-# hole_json.dl6 -- the twin of hole_text.dl6, with the landing column declared
-# `json` instead of `text`. Everything else is byte-identical.
-
-rel doc(body: json).
-rel bound(key: text, value: json).
-
-bound(Key, Value) <- doc(Body), decode(Body, {$Key: Value}).

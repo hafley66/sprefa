@@ -1,7 +1,0 @@
-[
-  [ {"rel":"produce","sign":"add","row":["a"]}, {"rel":"produce","sign":"add","row":["b"]}, {"rel":"produce","sign":"add","row":["c"]} ],
-  [ {"rel":"poll","sign":"add","row":["w1"]}, {"rel":"poll","sign":"add","row":["w2"]} ],
-  [ {"rel":"poll","sign":"add","row":["w1"]} ],
-  [ {"rel":"poll","sign":"add","row":["w2"]} ],
-  [ {"rel":"poll","sign":"add","row":["w1"]} ]
-]

@@ -1,8 +1,0 @@
-# zip and buffer, spelled as ordinary joins and arithmetic over an ordinal.
-rel left_at(ordinal: int, payload: text) log keep(all).
-rel right_at(ordinal: int, payload: text) log keep(all).
-rel zipped(ordinal: int, left: text, right: text) .
-rel bucketed(bucket: int, ordinal: int, payload: text) .
-
-zipped(Ordinal, Left, Right) <- left_at(Ordinal, Left), right_at(Ordinal, Right).
-bucketed(Bucket, Ordinal, Payload) <- left_at(Ordinal, Payload), Bucket := Ordinal / 2.
