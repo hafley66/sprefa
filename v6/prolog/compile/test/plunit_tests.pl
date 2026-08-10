@@ -6879,6 +6879,14 @@ test(use_item_without_an_alias_still_parses) :-
     string_codes("use \"lib.dl6\".", Codes),
     use_item(use("lib.dl6"), Codes, []).
 
+test(use_item_parses_a_public_re_export) :-
+    string_codes("pub use \"lib.dl6\" as orchard.", Codes),
+    use_item(pub_use("lib.dl6", orchard), Codes, []).
+
+test(use_item_parses_an_unaliased_public_re_export) :-
+    string_codes("pub use \"lib.dl6\".", Codes),
+    use_item(pub_use("lib.dl6"), Codes, []).
+
 % FAIL-FIRST RECEIPT (MOD-8): module_hash hashed the basename, so a/b/c.dl6
 % and aa/b/c.dl6 minted ONE identity and HMR conflated the two files.
 test(same_basename_different_paths_get_distinct_module_identity) :-
@@ -7042,6 +7050,25 @@ test(catalog_carries_both_edges_for_an_aliased_use) :-
     memberchk(row(MainId, _, _, main, module, _, _, _, _, _, _), Rows),
     memberchk(row(_, MainId, _, lib, use, _, _, LibId, _, _, _), Rows),
     memberchk(row(_, MainId, _, orchard, mount, _, _, LibId, _, _, _), Rows).
+
+test(catalog_carries_a_public_use_edge_for_a_public_re_export) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "pub use \"lib.dl6\" as orchard.\nrel ripe(tree_id:int).\n" ]),
+    catalog_rows_of(Dir, Rows),
+    memberchk(row(LibId, _, _, lib, module, _, _, _, _, _, _), Rows),
+    memberchk(row(MainId, _, _, main, module, _, _, _, _, _, _), Rows),
+    memberchk(row(_, MainId, _, lib, pub_use, _, _, LibId, EdgeHId, _, _), Rows),
+    EdgeHId \== '',
+    memberchk(row(_, MainId, _, orchard, mount, _, _, LibId, _, _, _), Rows).
+
+test(use_local_name_collision_refuses) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\".\nrel lib(value:int).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    use_unsupported(Entry, unsupported_construct(use_path_collision(lib)), Refused),
+    Refused == refused.
 
 % Two consumers of ONE file share the module row and its identity, while the
 % two edges carry distinct identity: the resolved position rides the EDGE.

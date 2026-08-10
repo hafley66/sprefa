@@ -70,7 +70,7 @@ entry_base_dir(EntryPath, BaseDir) :-
 collect_children([], _, _, _, _, _, Loaded, Loaded, [], [], []).
 collect_children([Spec | Rest], Roots, BaseDir, OnStack, OwnerName, OwnerHash,
                  Loaded0, Loaded, Files, Tables, EdgeDecls) :-
-    use_spec_parts(Spec, UseText, AliasOrNone),
+    use_spec_parts(Spec, UseText, AliasOrNone, Visibility),
     (   resolve_use_path(Roots, UseText, AbsPath)
     ->  true
     ;   throw(use_path_unresolved(UseText, Roots))
@@ -81,7 +81,7 @@ collect_children([Spec | Rest], Roots, BaseDir, OnStack, OwnerName, OwnerHash,
     ;   collect_all(AbsPath, BaseDir, OnStack, Loaded0, Loaded1, FirstFiles,
                     FirstTables, ChildPaths)
     ),
-    edge_decls_for(AliasOrNone, AbsPath, BaseDir, OwnerName, OwnerHash,
+    edge_decls_for(AliasOrNone, Visibility, AbsPath, BaseDir, OwnerName, OwnerHash,
                    ChildPaths, HereEdges),
     collect_children(Rest, Roots, BaseDir, OnStack, OwnerName, OwnerHash,
                      Loaded1, Loaded, MoreFiles, MoreTables, MoreEdges),
@@ -89,23 +89,29 @@ collect_children([Spec | Rest], Roots, BaseDir, OnStack, OwnerName, OwnerHash,
     append(FirstTables, MoreTables, Tables),
     append(HereEdges, MoreEdges, EdgeDecls).
 
-use_spec_parts(use(Text), Text, none).
-use_spec_parts(use(Text, Alias), Text, alias(Alias)).
+use_spec_parts(use(Text), Text, none, private).
+use_spec_parts(use(Text, Alias), Text, alias(Alias), private).
+use_spec_parts(pub_use(Text), Text, none, public).
+use_spec_parts(pub_use(Text, Alias), Text, alias(Alias), public).
 
 % The dependency edge is minted for every use; an alias ADDS the mount edge
 % beside it (ruling mount_alias_additive) rather than replacing it.
-edge_decls_for(AliasOrNone, AbsPath, BaseDir, OwnerName, OwnerHash, ChildPaths,
+edge_decls_for(AliasOrNone, Visibility, AbsPath, BaseDir, OwnerName, OwnerHash, ChildPaths,
                EdgeDecls) :-
     canonical_abs(AbsPath, ChildAbs),
     module_name(ChildAbs, ChildName),
     module_hash(BaseDir, ChildAbs, ChildHash),
-    UseEdge = module_edge_decl(OwnerHash, ChildHash, use, ChildName),
+    edge_kind(Visibility, EdgeKind),
+    UseEdge = module_edge_decl(OwnerHash, ChildHash, EdgeKind, ChildName),
     (   AliasOrNone = alias(Alias)
     ->  EdgeDecls = [ UseEdge,
                       module_edge_decl(OwnerHash, ChildHash, mount, Alias),
                       mount_decl(Alias, ChildName, OwnerName, ChildPaths) ]
     ;   EdgeDecls = [UseEdge]
     ).
+
+edge_kind(private, use).
+edge_kind(public, pub_use).
 
 % One module's whole subtree. The ENTRY parses LAST: parse_dl_source/5 retracts
 % its statement table per call, and the diag channel reads the entry's.
@@ -129,6 +135,7 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
                      ChildTables, EdgeDecls),
     parse_dl_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
+    check_use_local_name_collisions(OwnDecls0, EdgeDecls),
     rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls),
     append([OwnDecls0, [module_decl(EntryName, EntryHash)], RelModuleDecls,
             EdgeDecls],
@@ -140,6 +147,17 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     append(ChildTables, [ module(EntryAbs, EntryName, EntryHash) ], Tables),
     subtree_paths(Files, SubtreePaths),
     Loaded = [loaded(EntryAbs, SubtreePaths) | Loaded1].
+
+check_use_local_name_collisions(OwnDecls, EdgeDecls) :-
+    forall(member(module_edge_decl(_, _, Kind, LocalName), EdgeDecls),
+           check_use_local_name_collision(Kind, LocalName, OwnDecls)).
+
+check_use_local_name_collision(Kind, LocalName, OwnDecls) :-
+    (   memberchk(Kind, [use, pub_use]),
+        declared_path(OwnDecls, _Segments, LocalName)
+    ->  throw(unsupported_construct(use_path_collision(LocalName)))
+    ;   true
+    ).
 
 % Read off the file's OWN decls, mounts excluded: a mounted rel keeps the
 % identity of the module that declared it, never the module that grafted it.
