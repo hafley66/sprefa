@@ -1290,27 +1290,21 @@ fixpoint_ir_text(fixpointir(Storage, Assert, Dred, Revive, Expand), Text) :-
     fixpoint_term_array_text(fixpoint_storage_text, Storage, StorageText),
     maplist(fixpoint_walk_text, [Assert, Dred, Revive, Expand],
             [AssertText, DredText, ReviveText, ExpandText]),
-    format(atom(Text),
-           '{ head: { rel: "~w", columns: ~w, types: ~w }, storage: ~w, assert: ~w, dred: ~w, revive: ~w, expand: ~w }',
-           [HeadName, ColumnsText, TypesText, StorageText, AssertText, DredText,
-            ReviveText, ExpandText]).
+    js_shape([head-shape([rel-quoted(HeadName),columns-ColumnsText,types-TypesText]),storage-StorageText,assert-AssertText,dred-DredText,revive-ReviveText,expand-ExpandText], Text).
 
 % lower.pl:ir_column_class/3. Named keys, so the interning contract adds one
 % without moving anything an executor already reads.
 fixpoint_storage_text(relstorage(ref(Name, Arity), ColumnClasses), Text) :-
     fixpoint_term_array_text(fixpoint_column_class_text, ColumnClasses,
                              ClassesText),
-    format(atom(Text), '{ rel: "~w", arity: ~w, columns: ~w }',
-           [Name, Arity, ClassesText]).
+    js_shape([rel-quoted(Name),arity-Arity,columns-ClassesText], Text).
 
 fixpoint_column_class_text(colclass(Column, Type, StorageClass, Collation,
                                     Encoding), Text) :-
     js_string(Column, ColumnText),
     fixpoint_collation_text(Collation, CollationText),
     fixpoint_encoding_text(Encoding, EncodingText),
-    format(atom(Text),
-           '{ name: ~w, type: "~w", storage: "~w", collation: ~w, encoding: ~w }',
-           [ColumnText, Type, StorageClass, CollationText, EncodingText]).
+    js_shape([name-ColumnText,type-quoted(Type),storage-quoted(StorageClass),collation-CollationText,encoding-EncodingText], Text).
 
 fixpoint_collation_text(none, null) :- !.
 fixpoint_collation_text(Collation, Text) :- js_string(Collation, Text).
@@ -1328,9 +1322,7 @@ fixpoint_walk_text(fixplan(_, _, _, Seeds, Hops, stop(SeedProbe, HopProbe),
     fixpoint_probe_text(SeedProbe, SeedProbeText),
     fixpoint_probe_text(HopProbe, HopProbeText),
     fixpoint_emit_text(Emit, EmitText),
-    format(atom(Text),
-           '{ seeds: ~w, hop: ~w, stop: { seed: ~w, hop: ~w }, emit: ~w }',
-           [SeedsText, HopsText, SeedProbeText, HopProbeText, EmitText]).
+    js_shape([seeds-SeedsText,hop-HopsText,stop-shape([seed-SeedProbeText,hop-HopProbeText]),emit-EmitText], Text).
 
 fixpoint_arm_array_text(Arms, Text) :-
     maplist(fixpoint_arm_text, Arms, ArmTexts),
@@ -1343,7 +1335,7 @@ fixpoint_emit_text(order(Order), Text) :- js_string(Order, Text).
 fixpoint_probe_text(none, null) :- !.
 fixpoint_probe_text(probe(Kind, Target), Text) :-
     fixpoint_probe_target(Target, TargetName),
-    format(atom(Text), '{ kind: "~w", target: "~w" }', [Kind, TargetName]).
+    js_shape([kind-quoted(Kind),target-quoted(TargetName)], Text).
 
 fixpoint_probe_target(ref_count, refCount) :- !.
 fixpoint_probe_target(Target, Target).
@@ -1356,10 +1348,17 @@ fixpoint_arm_text(arm(Sources, Equalities, Filters, Project, SelfIndex),
     fixpoint_term_array_text(fixpoint_filter_text, Filters, FiltersText),
     fixpoint_term_array_text(fixpoint_expr_text, Project, ProjectText),
     fixpoint_self_index_text(SelfIndex, SelfIndexText),
-    format(atom(Text),
-           '{ sources: ~w, equalities: ~w, filters: ~w, project: ~w, selfIndex: ~w }',
-           [SourcesText, EqualitiesText, FiltersText, ProjectText,
-            SelfIndexText]).
+    js_shape([sources-SourcesText,equalities-EqualitiesText,filters-FiltersText,project-ProjectText,selfIndex-SelfIndexText], Text).
+
+js_shape(Fields, Text) :-
+    maplist(js_shape_field, Fields, FieldTexts),
+    atomic_list_concat(FieldTexts, ', ', Joined),
+    format(atom(Text), '{ ~w }', [Joined]).
+
+js_shape_field(Name-Value, Text) :- js_shape_value(Value, ValueText), format(atom(Text), '~w: ~w', [Name, ValueText]).
+js_shape_value(quoted(Value), Text) :- !, js_string(Value, Text).
+js_shape_value(shape(Fields), Text) :- !, js_shape(Fields, Text).
+js_shape_value(Value, Value).
 
 fixpoint_term_array_text(Renderer, Terms, Text) :-
     maplist(Renderer, Terms, Texts),
@@ -1371,42 +1370,36 @@ fixpoint_self_index_text(Index, Index).
 
 fixpoint_source_text(src(Index, Source), Text) :-
     fixpoint_source_kind_text(Source, KindText),
-    format(atom(Text), '{ index: ~w, source: ~w }', [Index, KindText]).
+    js_shape([index-Index,source-KindText], Text).
 
 fixpoint_source_kind_text(rel(ref(Name, Arity)), Text) :- !,
-    format(atom(Text), '{ kind: "rel", rel: "~w", arity: ~w }', [Name, Arity]).
+    js_shape([kind-quoted(rel),rel-quoted(Name),arity-Arity], Text).
 fixpoint_source_kind_text(rel_or_retracted(ref(Name, Arity)), Text) :- !,
-    format(atom(Text), '{ kind: "relOrRetracted", rel: "~w", arity: ~w }',
-           [Name, Arity]).
+    js_shape([kind-quoted(relOrRetracted),rel-quoted(Name),arity-Arity], Text).
 fixpoint_source_kind_text(delta(ref(Name, Arity), Sign, liveness(Liveness)),
                           Text) :- !,
-    format(atom(Text),
-           '{ kind: "delta", rel: "~w", arity: ~w, sign: ~w, liveness: "~w" }',
-           [Name, Arity, Sign, Liveness]).
+    js_shape([kind-quoted(delta),rel-quoted(Name),arity-Arity,sign-Sign,liveness-quoted(Liveness)], Text).
 fixpoint_source_kind_text(wave(Slot), Text) :- !,
-    format(atom(Text), '{ kind: "wave", slot: "~w" }', [Slot]).
-fixpoint_source_kind_text(cone, '{ kind: "cone" }').
+    js_shape([kind-quoted(wave),slot-quoted(Slot)], Text).
+fixpoint_source_kind_text(cone, Text) :- js_shape([kind-quoted(cone)], Text).
 
 fixpoint_equality_text(eq(Left, Right), Text) :-
     fixpoint_expr_text(Left, LeftText),
     fixpoint_expr_text(Right, RightText),
-    format(atom(Text), '{ left: ~w, right: ~w }', [LeftText, RightText]).
+    js_shape([left-LeftText,right-RightText], Text).
 
 fixpoint_filter_text(cmp(Operator, Left, Right), Text) :- !,
     js_string(Operator, OperatorText),
     fixpoint_expr_text(Left, LeftText),
     fixpoint_expr_text(Right, RightText),
-    format(atom(Text), '{ kind: "cmp", op: ~w, left: ~w, right: ~w }',
-           [OperatorText, LeftText, RightText]).
+    js_shape([kind-quoted(cmp),op-OperatorText,left-LeftText,right-RightText], Text).
 fixpoint_filter_text(eq_lit(Left, Literal), Text) :-
     fixpoint_expr_text(Left, LeftText),
     fixpoint_expr_text(Literal, LiteralText),
-    format(atom(Text), '{ kind: "eqLit", left: ~w, right: ~w }',
-           [LeftText, LiteralText]).
+    js_shape([kind-quoted(eqLit),left-LeftText,right-LiteralText], Text).
 
 fixpoint_expr_text(col(Index, Ordinal), Text) :- !,
-    format(atom(Text), '{ kind: "col", index: ~w, ordinal: ~w }',
-           [Index, Ordinal]).
+    js_shape([kind-quoted(col),index-Index,ordinal-Ordinal], Text).
 fixpoint_expr_text(lit(Literal), Text) :- !,
     fixpoint_literal_text(Literal, Text).
 % `type` is compile_expr/4's result type: `/` over two ints is SQLite integer
@@ -1415,20 +1408,17 @@ fixpoint_expr_text(arith(Operator, Left, Right, Type), Text) :- !,
     js_string(Operator, OperatorText),
     fixpoint_expr_text(Left, LeftText),
     fixpoint_expr_text(Right, RightText),
-    format(atom(Text),
-           '{ kind: "arith", op: ~w, type: "~w", left: ~w, right: ~w }',
-           [OperatorText, Type, LeftText, RightText]).
+    js_shape([kind-quoted(arith),op-OperatorText,type-quoted(Type),left-LeftText,right-RightText], Text).
 fixpoint_expr_text(concat(Parts), Text) :-
     fixpoint_term_array_text(fixpoint_expr_text, Parts, PartsText),
-    format(atom(Text), '{ kind: "concat", parts: ~w }', [PartsText]).
+    js_shape([kind-quoted(concat),parts-PartsText], Text).
 
 fixpoint_literal_text(text(Value), Text) :- !,
     js_string(Value, ValueText),
-    format(atom(Text), '{ kind: "lit", type: "text", value: ~w }', [ValueText]).
+    js_shape([kind-quoted(lit),type-quoted(text),value-ValueText], Text).
 fixpoint_literal_text(Literal, Text) :-
     Literal =.. [TypeName, Value],
-    format(atom(Text), '{ kind: "lit", type: "~w", value: ~w }',
-           [TypeName, Value]).
+    js_shape([kind-quoted(lit),type-quoted(TypeName),value-Value], Text).
 
 % The group-scoped aggregate plan (lower.pl level_aggregate_sql/4): clear the
 % scope, seed it from this tick's staged deltas, delete the scoped groups
