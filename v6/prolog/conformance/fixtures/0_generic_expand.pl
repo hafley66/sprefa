@@ -119,3 +119,23 @@ fixture(list_entity_linked_sequence_end_to_end,
      final('__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link'/2,
            ['__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link'(22, 21)]),
      ticks(3)]).
+
+% FINDING 3 (dictionary law): the interned-set value dictionary keys on its
+% natural `value` column, so two arrivals carrying the same content collapse to
+% one dictionary row.  Pre-fix the value table was keyed on the surrogate id
+% alone and both rows survived, losing content identity.
+fixture(list_interned_set_dictionary_content_deduplicates,
+    prog([col_type(interned_parent/2, id, int),
+          col_type(interned_parent/2, entries,
+                   option(list_interned_set(text))),
+          keyed(interned_parent/2, [1])], []),
+    [],
+    [[+interned_parent(1), +interned_parent__entries(1, 200),
+      +'__gen__list_interned_set_text_5de2cb6bdb4dd03b'(200),
+      +'__gen__list_interned_set_text_5de2cb6bdb4dd03b__value'(10, "a"),
+      +'__gen__list_interned_set_text_5de2cb6bdb4dd03b__member'(200, 10)],
+     [+'__gen__list_interned_set_text_5de2cb6bdb4dd03b__value'(11, "a"),
+      +'__gen__list_interned_set_text_5de2cb6bdb4dd03b__member'(200, 11)]],
+    [final('__gen__list_interned_set_text_5de2cb6bdb4dd03b__value'/2,
+           ['__gen__list_interned_set_text_5de2cb6bdb4dd03b__value'(11, "a")]),
+     ticks(2)]).

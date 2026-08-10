@@ -123,7 +123,7 @@ list_flavor_artifacts(list_interned_set(Element), Artifacts) :-
                   artifact(decl(keyed(Entity, [1]))),
                   artifact(decl(col_type(Value, id, int))),
                   artifact(decl(col_type(Value, value, Element))),
-                  artifact(decl(keyed(Value, [1]))),
+                  artifact(decl(keyed(Value, [2]))),
                   artifact(decl(col_type(Member, content_id, int))),
                   artifact(decl(col_type(Member, value_id, int))),
                   artifact(decl(keyed(Member, [1, 2]))) ].
