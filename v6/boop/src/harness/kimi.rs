@@ -58,16 +58,9 @@ impl Harness for Kimi {
         }
         let mut turn = store.begin_walk(&session.session_id)?;
         let mut stat = SyncStat::default();
-        let mut pending_message_id: Option<String> = None;
+        let mut turn_tokens = TurnTokens::default();
         for line in &result.lines {
-            project_line(
-                store,
-                session,
-                line,
-                &mut turn,
-                &mut stat,
-                &mut pending_message_id,
-            )?;
+            project_line(store, session, line, &mut turn, &mut stat, &mut turn_tokens)?;
         }
         Ok(Ingested {
             stat,
@@ -276,13 +269,23 @@ fn append_message_text(content: Option<&Value>) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Running totals for one turn's `usage.record` snapshots.
+#[derive(Default)]
+struct TurnTokens {
+    turn: u64,
+    input: i64,
+    output: i64,
+    cache_write: i64,
+    cached: i64,
+}
+
 fn project_line(
     store: &Store,
     session: &SessionRef,
     line: &tail::CompleteLine,
     turn: &mut u64,
     stat: &mut SyncStat,
-    pending_message_id: &mut Option<String>,
+    turn_tokens: &mut TurnTokens,
 ) -> anyhow::Result<()> {
     let value: Value = match serde_json::from_slice(&line.bytes) {
         Ok(value) => value,
@@ -319,23 +322,6 @@ fn project_line(
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_owned();
-        let message_id = pending_message_id
-            .take()
-            .unwrap_or_else(|| line.start.to_string());
-        let usage_row = UsageRow {
-            ts,
-            message_id: &message_id,
-            request_id: "",
-            model: &model,
-            service_tier: None,
-            input_tokens: count("inputOther"),
-            output_tokens: count("output"),
-            cache_create_5m_tokens: count("inputCacheCreation"),
-            cache_create_1h_tokens: 0,
-            cache_read_tokens: count("inputCacheRead"),
-            is_sidechain: session.parent.is_some(),
-            cost_usd_recorded: None,
-        };
         let attach_turn = if *turn == 0 {
             *turn += 1;
             let inserted = store.write_turn(&sid, *turn, ts, "assistant", "")?;
@@ -343,6 +329,31 @@ fn project_line(
             *turn
         } else {
             *turn
+        };
+        if turn_tokens.turn != attach_turn {
+            *turn_tokens = TurnTokens {
+                turn: attach_turn,
+                ..TurnTokens::default()
+            };
+        }
+        turn_tokens.input += count("inputOther");
+        turn_tokens.output += count("output");
+        turn_tokens.cache_write += count("inputCacheCreation");
+        turn_tokens.cached += count("inputCacheRead");
+        let message_id = format!("{sid}#t{attach_turn}");
+        let usage_row = UsageRow {
+            ts,
+            message_id: &message_id,
+            request_id: "",
+            model: &model,
+            service_tier: None,
+            input_tokens: turn_tokens.input,
+            output_tokens: turn_tokens.output,
+            cache_create_5m_tokens: turn_tokens.cache_write,
+            cache_create_1h_tokens: 0,
+            cache_read_tokens: turn_tokens.cached,
+            is_sidechain: session.parent.is_some(),
+            cost_usd_recorded: None,
         };
         let (is_new, changed) = store.write_usage(&sid, attach_turn, &usage_row)?;
         if changed {
@@ -394,12 +405,6 @@ fn project_line(
                 event.get("args"),
             )?;
         }
-        "step.end" => {
-            *pending_message_id = event
-                .get("messageId")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-        }
         _ => {}
     }
     Ok(())
@@ -412,6 +417,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::harness::{Harness, SessionRef};
+    use crate::Store;
 
     use super::{sessions_in, Kimi};
 
@@ -499,6 +505,49 @@ mod tests {
             .unwrap();
         assert_eq!(chunk.events.len(), 1);
         assert_eq!(chunk.skipped, 1);
+    }
+
+    /// Fail-first receipt: pre-fix, repeated `usage.record` on one attach_turn
+    /// INSERTed twice (distinct ids), colliding on the (session_id, turn) key.
+    #[test]
+    fn same_turn_usage_records_sum_into_one_usage_row() {
+        let db_path = temp_path("jn4db");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        let path = temp_path("jn4");
+        write_lines(
+            &path,
+            &[
+                r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"hello"}]},"time":1}"#,
+                r#"{"type":"usage.record","model":"kimi-k2","usage":{"inputOther":100,"output":10,"inputCacheRead":40,"inputCacheCreation":5},"time":2}"#,
+                r#"{"type":"usage.record","model":"kimi-k2","usage":{"inputOther":50,"output":5,"inputCacheRead":0,"inputCacheCreation":8},"time":3}"#,
+                r#"{"type":"usage.record","model":"kimi-k2","usage":{"inputOther":10,"output":1,"inputCacheRead":10,"inputCacheCreation":3},"time":4}"#,
+            ],
+        );
+        let metadata = path.metadata().unwrap();
+        let kimi = Kimi;
+        let ingested = kimi
+            .ingest(&store, &session_for(&path, metadata.len()), 0)
+            .unwrap();
+        assert_eq!(ingested.stat.usage_written, 1);
+        assert_eq!(ingested.stat.usage_updated, 2);
+        drop(store);
+        let connection = rusqlite::Connection::open(&db_path).unwrap();
+        let (row_count, input_tokens, output_tokens, cache_read_tokens): (i64, i64, i64, i64) =
+            connection
+                .query_row(
+                    "SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens),
+                       SUM(cache_read_tokens) FROM agent_usage",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+        assert_eq!(row_count, 1);
+        assert_eq!(input_tokens, 160);
+        assert_eq!(output_tokens, 16);
+        assert_eq!(cache_read_tokens, 50);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
