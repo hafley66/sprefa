@@ -482,15 +482,32 @@ impl Store {
         Ok(offset as u64)
     }
 
-    /// Record a spawn edge between two known sessions.
+    /// Record a spawn edge between two known sessions, stamped at the current
+    /// wall clock.
     pub fn add_edge(&self, parent: &str, child: &str, kind: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.add_edge_at(parent, child, kind, now)
+    }
+
+    /// Record an edge observation at an explicit timestamp. The first sighting
+    /// sets `first_ts`; every repeat bumps `last_ts` and `n`, so one structural
+    /// spawn stays one row while repeated communication across that edge is
+    /// counted, not collapsed.
+    pub fn add_edge_at(&self, parent: &str, child: &str, kind: &str, ts: u64) -> Result<()> {
         let parent_id = self.session_id(parent)?;
         let child_id = self.session_id(child)?;
         let kind_id = self.intern("dict_edekind", kind)?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO agent_edge (parent_session_id, child_session_id, edge_kind_id)
-             VALUES (?1, ?2, ?3)",
-            params![parent_id, child_id, kind_id],
+            "INSERT INTO agent_edge
+               (parent_session_id, child_session_id, edge_kind_id, first_ts, last_ts, n)
+             VALUES (?1, ?2, ?3, ?4, ?4, 1)
+             ON CONFLICT(parent_session_id, child_session_id, edge_kind_id) DO UPDATE SET
+               last_ts = excluded.last_ts,
+               n = agent_edge.n + 1",
+            params![parent_id, child_id, kind_id, ts as i64],
         )?;
         Ok(())
     }
@@ -498,29 +515,26 @@ impl Store {
     /// Query spawn edges, joined back to the TEXT query surface. `session`
     /// filters to edges touching that session id; none means all edges.
     pub fn query_edges(&self, session: Option<&str>) -> Result<Vec<Row>> {
-        let mut sql = String::from(
-            "SELECT p.value AS parent, c.value AS child, e.value AS edge
-             FROM agent_edge a
-             JOIN dict_session p ON p.id = a.parent_session_id
-             JOIN dict_session c ON c.id = a.child_session_id
-             JOIN dict_edekind e ON e.id = a.edge_kind_id
-             WHERE 1=1",
-        );
-        if session.is_some() {
-            sql.push_str(" AND (c.value = ?1 OR p.value = ?1)");
-        }
-        sql.push_str(" ORDER BY p.value, c.value");
-        let mut statement = self.connection.prepare(&sql)?;
-        let params: Vec<rusqlite::types::Value> = session
-            .map(|value| vec![value.to_string().into()])
-            .unwrap_or_default();
+        let sql = "SELECT p.value AS parent, c.value AS child, e.value AS edge,
+                          a.first_ts, a.last_ts, a.n
+                   FROM agent_edge a
+                   JOIN dict_session p ON p.id = a.parent_session_id
+                   JOIN dict_session c ON c.id = a.child_session_id
+                   JOIN dict_edekind e ON e.id = a.edge_kind_id
+                   WHERE (?1 IS NULL OR c.value = ?1 OR p.value = ?1)
+                   ORDER BY p.value, c.value";
+        let mut statement = self.connection.prepare(sql)?;
+        let value: Option<String> = session.map(str::to_owned);
         let mut rows = Vec::new();
-        let iter = statement.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+        let iter = statement.query_map(params![value], |row| {
             Ok(serde_json::json!({
                 "kind": "agent_edge",
                 "parent": row.get::<_, String>(0)?,
                 "child": row.get::<_, String>(1)?,
                 "edge": row.get::<_, String>(2)?,
+                "first_ts": row.get::<_, Option<i64>>(3)?,
+                "last_ts": row.get::<_, Option<i64>>(4)?,
+                "n": row.get::<_, i64>(5)?,
             }))
         })?;
         for row in iter {
@@ -1104,6 +1118,9 @@ CREATE TABLE IF NOT EXISTS agent_edge (
   edge_kind_id INTEGER NOT NULL,
   agent_type_id INTEGER,
   model_id INTEGER,
+  first_ts INTEGER,
+  last_ts INTEGER,
+  n INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (parent_session_id, child_session_id, edge_kind_id)
 ) WITHOUT ROWID;
 
@@ -1572,6 +1589,34 @@ mod tests {
         let a = store.intern("dict_path", "/tmp/a.rs");
         let b = store.intern("dict_path", "/tmp/a.rs");
         assert_eq!(a.unwrap(), b.unwrap());
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (item 6). Repeated hails across one edge are counted, never
+    /// collapsed, while a distinct kind stays its own row.
+    #[test]
+    fn repeated_hails_accumulate_on_one_edge() {
+        let db_path = temp_path("edgedb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        store.add_edge_at("coord", "worker", "spawned", 90).unwrap();
+        store.add_edge_at("coord", "worker", "hail", 100).unwrap();
+        store.add_edge_at("coord", "worker", "hail", 110).unwrap();
+        store.add_edge_at("coord", "worker", "hail", 130).unwrap();
+
+        let edges = store.query_edges(None).unwrap();
+        let hail = edges.iter().find(|edge| edge["edge"] == "hail").unwrap();
+        assert_eq!(hail["n"], 3, "three hails counted on one edge");
+        assert_eq!(hail["first_ts"], 100, "first sighting sticks");
+        assert_eq!(hail["last_ts"], 130, "each sighting bumps the last");
+        assert!(
+            hail["last_ts"].as_i64().unwrap() > hail["first_ts"].as_i64().unwrap(),
+            "repeat spans time"
+        );
+        let spawned = edges.iter().find(|edge| edge["edge"] == "spawned").unwrap();
+        assert_eq!(spawned["n"], 1, "one structural spawn stays one");
+        assert_eq!(edges.len(), 2, "two distinct edge kinds, one hail row each");
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
