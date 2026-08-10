@@ -3,6 +3,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, env, fs, process};
 
+mod kernel;
+
 #[derive(Deserialize)]
 struct Plan {
     ddl: Vec<String>,
@@ -11,6 +13,8 @@ struct Plan {
     initial: Vec<Row>,
     schedule: Vec<Vec<SignedRow>>,
     tick_order: Vec<String>,
+    #[serde(default)]
+    operators: Vec<kernel::Operator>,
 }
 
 #[derive(Deserialize)]
@@ -50,8 +54,13 @@ fn main() {
     });
     let input = fs::read_to_string(path).unwrap_or_else(|error| fail(error));
     let plan: Plan = serde_json::from_str(&input).unwrap_or_else(|error| fail(error));
-    let conn = Connection::open_in_memory().unwrap_or_else(|error| fail(error));
-    run(&conn, &plan).unwrap_or_else(|error| fail(error));
+    if plan.operators.is_empty() {
+        let conn = Connection::open_in_memory().unwrap_or_else(|error| fail(error));
+        run(&conn, &plan).unwrap_or_else(|error| fail(error));
+    } else {
+        kernel::run(&plan.rels, &plan.initial, &plan.schedule, &plan.operators)
+            .unwrap_or_else(|error| fail(error));
+    }
 }
 
 fn fail(error: impl std::fmt::Display) -> ! {
