@@ -531,6 +531,29 @@ export interface ITickFold {
   run(program: IGenProgram, seam: ISqlSeam, schedule: readonly IArrivalBatch[], drain_cap?: number): Observable<ITickLogLine>;
 }
 
+/** `statements` = the store's `stmt_counter` delta across one tick;
+ *  `adds`/`dels` = that tick's boundary delta rows summed over every rel. */
+export interface ITickStatementCount {
+  readonly tick: number;
+  readonly statements: number;
+  readonly adds: number;
+  readonly dels: number;
+}
+
+export interface ITickStatementLedger {
+  /** The opening reading is taken on SUBSCRIBE, not at build time, so the
+   *  span covers exactly the statements that tick runs. */
+  measure(tick: number, deltas: Observable<ITickDeltas>): Observable<ITickDeltas>;
+  /** Drop recorded ticks and the running total. Leaves the store's global
+   *  counter alone; only what this ledger owns is cleared. */
+  reset(): void;
+  /** The most recent ticks, oldest first, capped so a served process cannot
+   *  grow this without bound. `total()` stays exact past that cap. */
+  entries(): readonly ITickStatementCount[];
+  /** Every measured tick summed, `tick` carrying the measured tick count. */
+  total(): ITickStatementCount;
+}
+
 export interface ITickLogEmitter {
   /** Format `deltas` for `tick` into the canonical envelope line: rel names
    *  ascending, only nonempty rels, rows sorted by their JSON text, no
