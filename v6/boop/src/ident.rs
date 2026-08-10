@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::harness::SessionRef;
 
@@ -21,8 +21,10 @@ pub struct Store {
 
 /// Bumped whenever stored rows mean something different. 2 = dense per-session
 /// turn ordinals and per-transcript cursors. 3 = token usage. 4 = rate table.
-/// 5 = agent_fetch covers searches, not only url fetches.
-pub const SCHEMA_VERSION: i64 = 5;
+/// 5 = agent_fetch covers searches, not only url fetches. 6 = agent_live_span
+/// records historical liveness, agent_touch carries canonical verbs, and
+/// agent_edge carries temporal evidence.
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// A row returned to the CLI, joined back from ids to the TEXT the query
 /// surface exposes.
@@ -543,6 +545,121 @@ impl Store {
         Ok(rows)
     }
 
+    /// Record one liveness observation at `ts`. Maintains `agent_live` as the
+    /// current-state cache and folds the interval into `agent_live_span`: a
+    /// state change closes the open interval and opens a new one; a repeated
+    /// identical observation extends and inserts nothing.
+    pub fn record_status(
+        &self,
+        session: &str,
+        ts: u64,
+        status: &str,
+        pid: Option<i64>,
+        tmux_pane: Option<&str>,
+    ) -> Result<()> {
+        let sid = self.session_id(session)?;
+        let status_id = self.intern("dict_status", status)?;
+        let pane_id = match tmux_pane {
+            Some(pane) => Some(self.intern("dict_pane", pane)?),
+            None => None,
+        };
+        self.connection.execute(
+            "INSERT INTO agent_live (session_id, pid, tmux_pane_id, status_id)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(session_id) DO UPDATE SET
+               pid = excluded.pid,
+               tmux_pane_id = excluded.tmux_pane_id,
+               status_id = excluded.status_id",
+            params![sid, pid, pane_id, status_id],
+        )?;
+        let open: Option<(i64, i64, Option<i64>, Option<i64>)> = self
+            .connection
+            .query_row(
+                "SELECT from_ts, status_id, pid, tmux_pane_id FROM agent_live_span
+                 WHERE session_id = ?1 AND to_ts IS NULL
+                 ORDER BY from_ts DESC LIMIT 1",
+                params![sid],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        let unchanged = open
+            .as_ref()
+            .map(|(_, st, pg, pn)| *st == status_id && *pg == pid && *pn == pane_id)
+            .unwrap_or(false);
+        if unchanged {
+            return Ok(());
+        }
+        if let Some((from_ts, _, _, _)) = open {
+            self.connection.execute(
+                "UPDATE agent_live_span SET to_ts = ?2
+                 WHERE session_id = ?1 AND from_ts = ?3",
+                params![sid, ts as i64, from_ts],
+            )?;
+        }
+        self.connection.execute(
+            "INSERT INTO agent_live_span (session_id, from_ts, to_ts, status_id, pid, tmux_pane_id)
+             VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+            params![sid, ts as i64, status_id, pid, pane_id],
+        )?;
+        Ok(())
+    }
+
+    /// Every liveness interval for one session (or all when `session` is
+    /// `None`), joined back to the TEXT status surface.
+    pub fn live_span(&self, session: Option<&str>) -> Result<Vec<Row>> {
+        let sql = "SELECT dict_session.value, d.value AS status,
+                          s.from_ts, s.to_ts, s.pid, p.value AS tmux_pane
+                   FROM agent_live_span s
+                   JOIN dict_session ON dict_session.id = s.session_id
+                   JOIN dict_status d ON d.id = s.status_id
+                   LEFT JOIN dict_pane p ON p.id = s.tmux_pane_id
+                   WHERE (?1 IS NULL OR dict_session.value = ?1)
+                   ORDER BY dict_session.value, s.from_ts";
+        let mut statement = self.connection.prepare(sql)?;
+        let filter: Option<String> = session.map(str::to_owned);
+        let iter = statement.query_map(params![filter], |row| {
+            Ok(serde_json::json!({
+                "session": row.get::<_, String>(0)?,
+                "status": row.get::<_, String>(1)?,
+                "from_ts": row.get::<_, i64>(2)?,
+                "to_ts": row.get::<_, Option<i64>>(3)?,
+                "pid": row.get::<_, Option<i64>>(4)?,
+                "tmux_pane": row.get::<_, Option<String>>(5)?,
+            }))
+        })?;
+        let mut rows = Vec::new();
+        for row in iter {
+            rows.push(row?);
+        }
+        Ok(rows)
+    }
+
+    /// The interval active at a point in time, using the half-open rule
+    /// `from_ts <= T AND (to_ts IS NULL OR to_ts > T)`.
+    pub fn query_live_at(&self, at_ts: u64) -> Result<Vec<Row>> {
+        let sql = "SELECT dict_session.value, d.value AS status, s.from_ts, s.to_ts, s.pid
+                   FROM agent_live_span s
+                   JOIN dict_session ON dict_session.id = s.session_id
+                   JOIN dict_status d ON d.id = s.status_id
+                   WHERE s.from_ts <= ?1 AND (s.to_ts IS NULL OR s.to_ts > ?1)
+                   ORDER BY dict_session.value";
+        let mut statement = self.connection.prepare(sql)?;
+        let iter = statement.query_map(params![at_ts as i64], |row| {
+            Ok(serde_json::json!({
+                "session": row.get::<_, String>(0)?,
+                "status": row.get::<_, String>(1)?,
+                "from_ts": row.get::<_, i64>(2)?,
+                "to_ts": row.get::<_, Option<i64>>(3)?,
+                "pid": row.get::<_, Option<i64>>(4)?,
+            }))
+        })?;
+        let mut rows = Vec::new();
+        for row in iter {
+            rows.push(row?);
+        }
+        Ok(rows)
+    }
+
     /// Table row counts, for receipts.
     pub fn counts(&self) -> Result<serde_json::Map<String, serde_json::Value>> {
         let mut out = serde_json::Map::new();
@@ -1024,6 +1141,7 @@ CREATE TABLE IF NOT EXISTS dict_pr (id INTEGER PRIMARY KEY, value TEXT NOT NULL 
 CREATE TABLE IF NOT EXISTS dict_edekind (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_agenttype (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_status (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS dict_pane (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_model (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_service_tier (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_price_source (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
@@ -1163,6 +1281,21 @@ CREATE TABLE IF NOT EXISTS agent_live (
   tmux_pane_id INTEGER,
   status_id INTEGER
 );
+
+-- Historical liveness: [from_ts, to_ts) intervals, open when to_ts IS NULL,
+-- folded from observations so a state change closes an interval and repeated
+-- identical observations extend nothing.
+CREATE TABLE IF NOT EXISTS agent_live_span (
+  session_id INTEGER NOT NULL,
+  from_ts INTEGER NOT NULL,
+  to_ts INTEGER,
+  status_id INTEGER NOT NULL,
+  pid INTEGER,
+  tmux_pane_id INTEGER,
+  PRIMARY KEY (session_id, from_ts)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_live_span_open ON agent_live_span(session_id, to_ts);
 
 CREATE TABLE IF NOT EXISTS sync_cursor (
   session_id INTEGER NOT NULL,
@@ -1617,6 +1750,50 @@ mod tests {
         let spawned = edges.iter().find(|edge| edge["edge"] == "spawned").unwrap();
         assert_eq!(spawned["n"], 1, "one structural spawn stays one");
         assert_eq!(edges.len(), 2, "two distinct edge kinds, one hail row each");
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (item 2). Observations fold into [from_ts, to_ts) intervals:
+    /// a state change closes the open interval, a repeated identical one
+    /// extends nothing, and a historical point query uses the open-rule.
+    #[test]
+    fn liveness_intervals_fold_adjacent_and_ignore_repeats() {
+        let db_path = temp_path("livdb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        store.record_status("s1", 100, "live", None, None).unwrap();
+        store.record_status("s1", 110, "live", None, None).unwrap();
+        store.record_status("s1", 200, "idle", None, None).unwrap();
+        store.record_status("s1", 300, "live", None, None).unwrap();
+
+        let spans = store.live_span(Some("s1")).unwrap();
+        assert_eq!(spans.len(), 3, "a repeat never inserts a row");
+        assert_eq!(spans[0]["from_ts"], 100);
+        assert_eq!(spans[0]["to_ts"], 200, "state change closes the interval");
+        assert_eq!(spans[1]["from_ts"], 200);
+        assert_eq!(spans[1]["to_ts"], 300);
+        assert_eq!(spans[2]["from_ts"], 300);
+        assert_eq!(spans[2]["to_ts"], serde_json::Value::Null, "open interval");
+
+        let at_150 = store.query_live_at(150).unwrap();
+        assert_eq!(at_150.len(), 1);
+        assert_eq!(at_150[0]["status"], "live");
+        let at_250 = store.query_live_at(250).unwrap();
+        assert_eq!(at_250[0]["status"], "idle");
+        let at_350 = store.query_live_at(350).unwrap();
+        assert_eq!(at_350[0]["status"], "live", "open interval covers the present");
+
+        let current: String = store
+            .connection
+            .query_row(
+                "SELECT d.value FROM agent_live a JOIN dict_status d ON d.id = a.status_id
+                 WHERE a.session_id = (SELECT id FROM dict_session WHERE value = 's1')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, "live", "agent_live stays the current-state cache");
         drop(store);
         let _ = std::fs::remove_file(&db_path);
     }
