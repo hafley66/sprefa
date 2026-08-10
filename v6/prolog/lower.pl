@@ -1047,114 +1047,69 @@ catalog_level_plane_rows(RelPlans, [Stmt | Rest], RelIdMap, Modules,
 catalog_one_level_stmt_planes(HeadRef, RelId, RelHId, ModuleId, Columns,
                               ColumnTypes, RefCountSql, AggregateSql,
                               Id0, Rows, IdFinal) :-
-    length(Columns, HeadCount),
     (   RefCountSql \== none
     ->  ref_count_table_name(HeadRef, RefCountTable),
         arrival_scratch_table_name(HeadRef, NewTable),
-        catalog_refcount_pair(ModuleId, RelId, RelHId, RefCountTable,
-                              NewTable, HeadCount, Id0, RefRows, IdAfterRef),
+        RefPairs = [refcount-RefCountTable, refcount_staging-NewTable],
         (   RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _,
                                       ExpandPlan, DredPlan, _, _),
             ExpandPlan = expandplan(_, _, _, _, _, _, _)
         ->  expand_table_name(HeadRef, a, TableA),
             expand_table_name(HeadRef, b, TableB),
-            catalog_expand_pair(ModuleId, RelId, RelHId, TableA,
-                                TableB, Columns, ColumnTypes, IdAfterRef,
-                                ExpRows, IdAfterExp),
+            ExpandPairs = [expand-TableA, expand-TableB],
             (   DredPlan == none
-            ->  DredRows = [], IdAfterDred = IdAfterExp
+            ->  DredPairs = []
             ;   dred_ping_table_name(HeadRef, PingTable),
                 dred_pong_table_name(HeadRef, PongTable),
                 dred_cone_table_name(HeadRef, ConeTable),
-                catalog_dred_trio(ModuleId, RelId, RelHId, PingTable,
-                                  PongTable, ConeTable, Columns, ColumnTypes,
-                                  IdAfterExp, DredRows, IdAfterDred)
+                DredPairs = [dred-PingTable, dred-PongTable, dred-ConeTable]
             )
-        ;   ExpRows = [], DredRows = [], IdAfterDred = IdAfterRef
+        ;   ExpandPairs = [], DredPairs = []
         )
-    ;   RefRows = [], ExpRows = [], DredRows = [], IdAfterDred = Id0
+    ;   RefPairs = [], ExpandPairs = [], DredPairs = []
     ),
+    append([RefPairs, ExpandPairs, DredPairs], HeadPairs),
+    catalog_level_family_rows(HeadPairs, Columns, ColumnTypes, ModuleId,
+                              RelId, RelHId, Id0, HeadRows, IdAfterHead),
     aggregate_scope_table_name(HeadRef, ScopeTable),
     (   AggregateSql = aggsql(ScopeColumns, ScopeTypes, _, _, _, _, _)
-    ->  catalog_scope_row(ModuleId, RelId, RelHId, ScopeTable, ScopeColumns,
-                          ScopeTypes, IdAfterDred, ScopeRows, IdAfterScope),
-        AvgRows = [], IdFinal = IdAfterScope
+    ->  ScopePairs = [scope-ScopeTable]
     ;   AggregateSql = avgsql(ScopeColumns, ScopeTypes, _, _, _, _, _)
-    ->  catalog_scope_row(ModuleId, RelId, RelHId, ScopeTable, ScopeColumns,
-                          ScopeTypes, IdAfterDred, ScopeRows, IdAfterScope),
-        avg_accumulator_table_name(HeadRef, AccTable),
-        catalog_avg_row(ModuleId, RelId, RelHId, AccTable, ScopeColumns,
-                        _ScopeTypes, IdAfterScope, AvgRows, IdFinal)
-    ;   ScopeRows = [], AvgRows = [], IdFinal = IdAfterDred
+    ->  avg_accumulator_table_name(HeadRef, AccTable),
+        ScopePairs = [scope-ScopeTable, avg_accumulator-AccTable]
+    ;   ScopePairs = [], ScopeColumns = [], ScopeTypes = []
     ),
-    append([RefRows, ExpRows, DredRows, ScopeRows, AvgRows], Rows).
+    catalog_level_family_rows(ScopePairs, ScopeColumns, ScopeTypes, ModuleId,
+                              RelId, RelHId, IdAfterHead, ScopeRows, IdFinal),
+    append(HeadRows, ScopeRows, Rows).
 
-% A refcount head table and its staging scratch are both created by
-% ref_count_head_ddl/4; each is the head's columns plus __refcount.
-catalog_refcount_pair(ModuleId, RelId, RelHId, RefCountTable, NewTable,
-                      HeadCount, Id0, [RefRow, NewRow], Id2) :-
-    RefArity is HeadCount + 1,
-    rel_h_id(RelHId, RefCountTable, RefArity, RefHId),
-    rel_h_id(RelHId, NewTable, RefArity, NewHId),
-    RefRow = row(Id0, RelId, 0, RefCountTable, refcount, 0, RefArity,
-                 ModuleId, RefHId, '', ''),
+% catalog_level_family(Kind, ExtraArity, SchemaSource): the row shape each
+% level-plane family mints, ExtraArity counting columns past the source list.
+catalog_level_family(refcount,         1, none).
+catalog_level_family(refcount_staging, 1, none).
+catalog_level_family(expand,           0, hashed).
+catalog_level_family(dred,             0, hashed).
+catalog_level_family(scope,            0, hashed).
+catalog_level_family(avg_accumulator,  2, none).
+
+% Kind-Table pairs in mint order; ids stride one per pair, so the emission
+% order here IS the id order the DDL mint sites walk.
+catalog_level_family_rows([], _Columns, _ColumnTypes, _ModuleId, _RelId,
+                          _RelHId, Id, [], Id).
+catalog_level_family_rows([Kind-Table | Rest], Columns, ColumnTypes, ModuleId,
+                          RelId, RelHId, Id0, [Row | More], IdFinal) :-
+    catalog_level_family(Kind, ExtraArity, SchemaSource),
+    length(Columns, ColumnCount),
+    Arity is ColumnCount + ExtraArity,
+    rel_h_id(RelHId, Table, Arity, HId),
+    (   SchemaSource == hashed
+    ->  schema_hash(Columns, ColumnTypes, none, Schema)
+    ;   Schema = ''
+    ),
+    Row = row(Id0, RelId, 0, Table, Kind, 0, Arity, ModuleId, HId, Schema, ''),
     Id1 is Id0 + 1,
-    NewRow = row(Id1, RelId, 0, NewTable, refcount_staging, 0, RefArity,
-                 ModuleId, NewHId, '', ''),
-    Id2 is Id1 + 1.
-
-% Both expand tables carry the head's own columns.
-catalog_expand_pair(ModuleId, RelId, RelHId, TableA, TableB, Columns,
-                    ColumnTypes, Id0, [RowA, RowB], Id2) :-
-    length(Columns, Arity),
-    rel_h_id(RelHId, TableA, Arity, HIdA),
-    rel_h_id(RelHId, TableB, Arity, HIdB),
-    schema_hash(Columns, ColumnTypes, none, Schema),
-    RowA = row(Id0, RelId, 0, TableA, expand, 0, Arity, ModuleId, HIdA,
-               Schema, ''),
-    Id1 is Id0 + 1,
-    RowB = row(Id1, RelId, 0, TableB, expand, 0, Arity, ModuleId, HIdB,
-               Schema, ''),
-    Id2 is Id1 + 1.
-
-% The three dred tables carry the head's own columns.
-catalog_dred_trio(ModuleId, RelId, RelHId, PingTable, PongTable, ConeTable,
-                  Columns, ColumnTypes, Id0, [RowPing, RowPong, RowCone],
-                  Id3) :-
-    length(Columns, Arity),
-    rel_h_id(RelHId, PingTable, Arity, PingHId),
-    rel_h_id(RelHId, PongTable, Arity, PongHId),
-    rel_h_id(RelHId, ConeTable, Arity, ConeHId),
-    schema_hash(Columns, ColumnTypes, none, Schema),
-    RowPing = row(Id0, RelId, 0, PingTable, dred, 0, Arity, ModuleId,
-                  PingHId, Schema, ''),
-    Id1 is Id0 + 1,
-    RowPong = row(Id1, RelId, 0, PongTable, dred, 0, Arity, ModuleId,
-                  PongHId, Schema, ''),
-    Id2 is Id1 + 1,
-    RowCone = row(Id2, RelId, 0, ConeTable, dred, 0, Arity, ModuleId,
-                  ConeHId, Schema, ''),
-    Id3 is Id2 + 1.
-
-% The scope table's columns are the aggregate's group columns.
-catalog_scope_row(ModuleId, RelId, RelHId, ScopeTable, ScopeColumns,
-                  ScopeTypes, Id0, [Row], Id1) :-
-    length(ScopeColumns, Arity),
-    rel_h_id(RelHId, ScopeTable, Arity, ScopeHId),
-    schema_hash(ScopeColumns, ScopeTypes, none, Schema),
-    Row = row(Id0, RelId, 0, ScopeTable, scope, 0, Arity, ModuleId,
-              ScopeHId, Schema, ''),
-    Id1 is Id0 + 1.
-
-% The avg accumulator is the scope columns plus __sum and __count.
-catalog_avg_row(ModuleId, RelId, RelHId, AccTable, ScopeColumns, _ScopeTypes,
-                Id0, [Row], Id1) :-
-    length(ScopeColumns, ScopeArity),
-    AccArity is ScopeArity + 2,
-    rel_h_id(RelHId, AccTable, AccArity, AccHId),
-    Row = row(Id0, RelId, 0, AccTable, avg_accumulator, 0, AccArity,
-              ModuleId, AccHId, '', ''),
-    Id1 is Id0 + 1.
+    catalog_level_family_rows(Rest, Columns, ColumnTypes, ModuleId, RelId,
+                              RelHId, Id1, More, IdFinal).
 
 % ── host and bind port rows ───────────────────────────────────────────────
 % A sh_decl is an effect: it mints a port row (the demand rel in type_id, the
