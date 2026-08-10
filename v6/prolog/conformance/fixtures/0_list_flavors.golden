@@ -1,0 +1,13 @@
+list_flavor_names([
+  '__gen__list_text_df210f232c1299bd',
+  '__gen__list_entity_dense_sequence_text_42382f22da23f5c6',
+  '__gen__list_interned_set_text_5de2cb6bdb4dd03b',
+  '__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35'
+]).
+
+fixture_ticks([
+  generic_expansion_end_to_end-5,
+  list_entity_dense_sequence_end_to_end-3,
+  list_interned_set_end_to_end-3,
+  list_entity_linked_sequence_end_to_end-3
+]).

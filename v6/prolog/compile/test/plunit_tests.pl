@@ -41,6 +41,9 @@
                 relplan_origins/2 ]).
 :- use_module('../../0_dot_expand', [ expand_dot_in_context/3 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
+:- use_module('../../0_generic_expand',
+              [ expand_generic_program/2, expand_generic_program_raw/2,
+                canonical_type_name/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../0_ast_expand',
               [ expand_ast_program/2,
@@ -107,6 +110,7 @@
 :- ensure_loaded('diag.test.pl').
 :- ensure_loaded('2_subscribe.plt').
 :- ensure_loaded('6_emit_dd_plan.test.pl').
+:- ensure_loaded('../../conformance/fixtures/0_generic_expand.pl').
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
@@ -1306,7 +1310,7 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-41, refcount-313, refcount_staging-313,
+    Counts = [scope-41, refcount-320, refcount_staging-320,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
@@ -4327,6 +4331,53 @@ test(driver_expands_enum_and_match_together) :-
     expand_program(Program, prog(Decls, Rules), _),
     \+ member(enum_decl(_, _), Decls),
     \+ member(match(_, _), Rules).
+
+% One fixture exercises both template vocabularies.  The raw arm is a lab
+% comparison only; the pipeline keeps the typed-artifact arm.
+test(generic_template_vocabularies_expand_the_e2e_fixture_identically) :-
+    fixture(generic_expansion_end_to_end, Program, _, _, _),
+    expand_generic_program(Program, Typed),
+    expand_generic_program_raw(Program, Raw),
+    Typed == Raw.
+
+% The declaration permutation receipt uses the full e2e program rather than a
+% miniature standin.  Rules remain in source order; generated and author
+% declarations enter enum expansion in canonical term order.
+test(generic_e2e_declaration_permutation_is_byte_deterministic) :-
+    fixture(generic_expansion_end_to_end, prog(Decls, Rules), _, _, _),
+    expand_program(prog(Decls, Rules), Expanded, _),
+    reverse(Decls, Reversed),
+    expand_program(prog(Reversed, Rules), Permuted, _),
+    term_string(Expanded, Text),
+    term_string(Permuted, Text).
+
+test(generic_minted_name_collision_is_named) :-
+    canonical_type_name(list(text), Name),
+    Program = prog([ col_type(Name/2, id, int),
+                     col_type(box/2, id, int),
+                     col_type(box/2, entries, option(list(text))),
+                     keyed(box/2, [1]) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(generic_generated_name_collision(Name)).
+
+test(list_flavor_names_are_distinct_and_fixed) :-
+    Types = [ list(text),
+              list_entity_dense_sequence(text),
+              list_interned_set(text),
+              list_entity_linked_sequence(text) ],
+    maplist(canonical_type_name, Types,
+            [ '__gen__list_text_df210f232c1299bd',
+              '__gen__list_entity_dense_sequence_text_42382f22da23f5c6',
+              '__gen__list_interned_set_text_5de2cb6bdb4dd03b',
+              '__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35' ]).
+
+test(list_flavor_fixture_declaration_permutation_is_byte_deterministic) :-
+    fixture(list_entity_dense_sequence_end_to_end, prog(Decls, Rules), _, _, _),
+    expand_program(prog(Decls, Rules), Expanded, _),
+    reverse(Decls, Reversed),
+    expand_program(prog(Reversed, Rules), Permuted, _),
+    term_string(Expanded, Text),
+    term_string(Permuted, Text).
 
 :- end_tests(expansion_order).
 
