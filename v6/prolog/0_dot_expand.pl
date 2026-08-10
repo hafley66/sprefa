@@ -49,7 +49,10 @@
 %                         payload keeps every segment.
 
 :- module(dot_expand,
-          [ expand_dot_in_context/3 ]).
+          [ expand_dot_in_context/3,
+            % use_resolve.pl reads a mounted subtree's paths off the same
+            % projection the scope tree is built from.
+            declared_path/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -145,13 +148,31 @@ rel_path_parts(Term, [Receiver | Rest], Args) :-
 decl_scope_tree(Decls, Root) :-
     findall(Segments-Name, declared_path(Decls, Segments, Name), Paths0),
     sort(Paths0, Paths),
+    check_path_collisions(Paths),
     foldl(insert_path, Paths, node(file, none, []), Root).
+
+% One path spelling two rels is a silent last-writer-wins in insert_path/3, so
+% a mount landing on a name the file already declares is refused instead.
+check_path_collisions([]).
+check_path_collisions([_-_]).
+check_path_collisions([SegmentsA-NameA, SegmentsB-NameB | Rest]) :-
+    (   SegmentsA == SegmentsB,
+        NameA \== NameB
+    ->  throw(unsupported_construct(
+                  mount_path_collision(SegmentsA, NameA, NameB)))
+    ;   check_path_collisions([SegmentsB-NameB | Rest])
+    ).
 
 declared_path(Decls, Segments, Name) :-
     member(rel_path_decl(Name/_, Segments), Decls).
 declared_path(Decls, [Name], Name) :-
     declared_flat_name(Decls, Name),
     \+ member(rel_path_decl(Name/_, _), Decls).
+% The mount graft. The mounted module's rel keeps its own flat NAME, so a
+% reference through the alias resolves by identity and mints no new rel.
+declared_path(Decls, [Alias | Segments], Name) :-
+    member(mount_decl(Alias, _Mounted, _Owner, Paths), Decls),
+    member(Segments-Name, Paths).
 
 declared_flat_name(Decls, Name) :- member(col_type(Name/_, _, _), Decls).
 declared_flat_name(Decls, Name) :- member(kind(Name/_, _), Decls).

@@ -5,6 +5,7 @@
           [ include_roots/2,
             resolve_use_path/3,
             expand_uses/6,
+            expand_uses/8,
             reset_parse_counts/0,
             parse_count/2
           ]).
@@ -12,7 +13,8 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(filesex)).
-:- use_module('compile/parse_dl', [use_item/3, parse_dl/4]).
+:- use_module('compile/parse_dl', [use_item/3, parse_dl_source/5]).
+:- use_module('0_dot_expand', [declared_path/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -41,56 +43,112 @@ resolve_use_path(Roots, UseText, AbsPath) :-
 %! expand_uses(+EntryPath, +OnStack, +Loaded0, -Loaded, -Prog, -ModuleTable) is det.
 %  Spliced leaf-first; a canonical path already in Loaded0 is never re-parsed.
 expand_uses(EntryPath, OnStack, Loaded0, Loaded, ProgOut, ModuleTable) :-
-    collect_all(EntryPath, OnStack, Loaded0, Loaded, Pairs, ModuleTable),
-    merge_pairs(Pairs, ProgOut).
+    expand_uses(EntryPath, OnStack, Loaded0, Loaded, ProgOut, ModuleTable,
+                _Bindings, _Findings).
+
+% Concatenating two files' Bindings is safe because
+% analyze.pl:column_name_at/4 selects by ==/2, never by name.
+expand_uses(EntryPath, OnStack, Loaded0, Loaded, ProgOut, ModuleTable,
+            Bindings, Findings) :-
+    collect_all(EntryPath, OnStack, Loaded0, Loaded, Files, ModuleTable, _Paths),
+    merge_files(Files, ProgOut, Bindings, Findings).
 
 % Loaded threads through the fold, so a diamond's second sight of a file is a
-% cache hit; each child contributes the pairs and table of its whole subtree.
-collect_children([], _, _, Loaded, Loaded, [], []).
-collect_children([UseText | Rest], Roots, OnStack, Loaded0, Loaded,
-                 Pairs, Tables) :-
+% cache hit; the cached entry carries the subtree's paths so a MOUNT of an
+% already-loaded file still grafts the same tree.
+collect_children([], _, _, _, Loaded, Loaded, [], [], []).
+collect_children([Spec | Rest], Roots, OnStack, OwnerName, Loaded0, Loaded,
+                 Files, Tables, MountDecls) :-
+    use_spec_parts(Spec, UseText, AliasOrNone),
     (   resolve_use_path(Roots, UseText, AbsPath)
     ->  true
     ;   throw(use_path_unresolved(UseText, Roots))
     ),
-    (   memberchk(AbsPath, Loaded0)
-    ->  FirstPairs = [], FirstTables = [], Loaded1 = Loaded0
-    ;   collect_all(AbsPath, OnStack, Loaded0, Loaded1, FirstPairs, FirstTables)
+    (   memberchk(loaded(AbsPath, CachedPaths), Loaded0)
+    ->  FirstFiles = [], FirstTables = [], Loaded1 = Loaded0,
+        ChildPaths = CachedPaths
+    ;   collect_all(AbsPath, OnStack, Loaded0, Loaded1, FirstFiles,
+                    FirstTables, ChildPaths)
     ),
-    collect_children(Rest, Roots, OnStack, Loaded1, Loaded, MorePairs, MoreTables),
-    append(FirstPairs, MorePairs, Pairs),
-    append(FirstTables, MoreTables, Tables).
+    mount_decls_for(AliasOrNone, AbsPath, OwnerName, ChildPaths, HereMounts),
+    collect_children(Rest, Roots, OnStack, OwnerName, Loaded1, Loaded,
+                     MoreFiles, MoreTables, MoreMounts),
+    append(FirstFiles, MoreFiles, Files),
+    append(FirstTables, MoreTables, Tables),
+    append(HereMounts, MoreMounts, MountDecls).
 
-% One module's whole subtree: resolve its own imports, splice leaf-first, and
-% thread its canonical path into Loaded.
-collect_all(EntryPath, OnStack, Loaded0, Loaded, Pairs, Tables) :-
+use_spec_parts(use(Text), Text, none).
+use_spec_parts(use(Text, Alias), Text, alias(Alias)).
+
+mount_decls_for(none, _AbsPath, _OwnerName, _ChildPaths, []).
+mount_decls_for(alias(Alias), AbsPath, OwnerName, ChildPaths,
+                [mount_decl(Alias, ChildName, OwnerName, ChildPaths)]) :-
+    module_name(AbsPath, ChildName).
+
+% One module's whole subtree. The ENTRY parses LAST: parse_dl_source/5 retracts
+% its statement table per call, and the diag channel reads the entry's.
+collect_all(EntryPath, OnStack, Loaded0, Loaded, Files, Tables, SubtreePaths) :-
     canonical_abs(EntryPath, EntryAbs),
-    (   memberchk(EntryAbs, OnStack)
-    ->  (   OnStack = [EntryAbs | _]
+    (   memberchk(loaded(EntryAbs, _), OnStack)
+    ->  on_stack_paths(OnStack, StackPaths),
+        (   StackPaths = [EntryAbs | _]
         ->  throw(use_cycle([EntryAbs]))
-        ;   throw(use_cycle([EntryAbs | OnStack]))
+        ;   throw(use_cycle([EntryAbs | StackPaths]))
         )
     ;   true
     ),
-    strip_entry(EntryPath, EntryAbs, UseTexts, prog(OwnDecls0, OwnRules0)),
+    strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes),
     include_roots(EntryPath, Roots),
-    collect_children(UseTexts, Roots, [EntryAbs | OnStack], Loaded0, Loaded1,
-                     ChildPairs, ChildTables),
-    append(ChildPairs, [(EntryAbs, prog(OwnDecls0, OwnRules0))], Pairs),
     module_name(EntryAbs, EntryName),
+    collect_children(UseSpecs, Roots, [loaded(EntryAbs, []) | OnStack],
+                     EntryName, Loaded0, Loaded1, ChildFiles, ChildTables,
+                     MountDecls),
+    parse_dl_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
+    prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
     module_hash(EntryName, EntryHash),
+    append(OwnDecls0, [module_decl(EntryName, EntryHash) | MountDecls],
+           OwnDecls),
+    append(ChildFiles,
+           [file(EntryAbs, OwnDecls, OwnRules, OwnQueries, OwnBindings,
+                 OwnFindings)],
+           Files),
     append(ChildTables, [ module(EntryAbs, EntryName, EntryHash) ], Tables),
-    Loaded = [EntryAbs | Loaded1].
+    subtree_paths(Files, SubtreePaths),
+    Loaded = [loaded(EntryAbs, SubtreePaths) | Loaded1].
+
+on_stack_paths(OnStack, Paths) :-
+    findall(Path, member(loaded(Path, _), OnStack), Paths).
+
+% parse_dl_source/5 picks prog/2 or program/3 per FILE; the merge re-picks it
+% over the whole spliced program by the same test.
+prog_parts(prog(Decls, Rules), Decls, Rules, []).
+prog_parts(program(Decls, Rules, Queries), Decls, Rules, Queries).
+
+merged_prog(Decls, Rules, Queries, Prog) :-
+    (   Queries == [],
+        \+ member(sh_decl(_, _, _, _), Decls),
+        \+ member(bind_decl(_, _), Decls)
+    ->  Prog = prog(Decls, Rules)
+    ;   Prog = program(Decls, Rules, Queries)
+    ).
+
+% The graft's raw material: every path the subtree declares, mounts included,
+% read off the CONCATENATED decls (sort/2 collapses what merge_col would).
+subtree_paths(Files, SubtreePaths) :-
+    findall(Decl,
+            ( member(file(_, Decls, _, _, _, _), Files), member(Decl, Decls) ),
+            AllDecls),
+    findall(Segments-Name, declared_path(AllDecls, Segments, Name), Paths0),
+    sort(Paths0, SubtreePaths).
 
 % The parse counter is what a re-parsing loader trips; end-state equality on a
 % diamond looks identical whether the shared file was read once or twice.
-strip_entry(EntryPath, EntryAbs, UseTexts, prog(OwnDecls, OwnRules)) :-
+strip_entry(EntryPath, EntryAbs, UseSpecs, CoreCodes) :-
     read_file_to_codes(EntryPath, Codes, []),
     bump_parse_count(EntryAbs),
     split_codes_lines(Codes, Lines),
-    strip_use_lines(Lines, UseTexts, CoreLines),
-    flatten(CoreLines, CoreCodes),
-    parse_dl(CoreCodes, prog(OwnDecls, OwnRules), _, _).
+    strip_use_lines(Lines, UseSpecs, CoreLines),
+    flatten(CoreLines, CoreCodes).
 
 %! split_codes_lines(+Codes, -Lines) is det.
 %  Every line keeps its own newline, so flatten/2 rebuilds the original bytes.
@@ -117,13 +175,13 @@ parts_to_lines([Part | Rest], Lines) :-
 % A stripped `use` line leaves its newline behind, so every line number the
 % parser reports for the remainder still matches the file on disk.
 strip_use_lines([], [], []).
-strip_use_lines([Line | Rest], [Text | UseTexts], [[0'\n] | CoreLines]) :-
-    use_item(use(Text), Line, After),
+strip_use_lines([Line | Rest], [Spec | UseSpecs], [[0'\n] | CoreLines]) :-
+    use_item(Spec, Line, After),
     ws_only(After),
     !,
-    strip_use_lines(Rest, UseTexts, CoreLines).
-strip_use_lines([Line | Rest], UseTexts, [Line | CoreLines]) :-
-    strip_use_lines(Rest, UseTexts, CoreLines).
+    strip_use_lines(Rest, UseSpecs, CoreLines).
+strip_use_lines([Line | Rest], UseSpecs, [Line | CoreLines]) :-
+    strip_use_lines(Rest, UseSpecs, CoreLines).
 
 % code_type(_, space) already covers newline and carriage return.
 ws_only([]).
@@ -133,24 +191,29 @@ ws_only([Code | Rest]) :-
 
 % col_type/3 dedupes by (Ref, Column): an equal type keeps one, a conflict
 % hard-errors naming both paths. Every other decl and rule keeps load order.
-merge_pairs(Pairs, prog(Decls, Rules)) :-
-    pairs_attr_decls(Pairs, AttrDecls),
+merge_files(Files, Prog, Bindings, Findings) :-
+    files_attr_decls(Files, AttrDecls),
     merge_col(AttrDecls, [], Decls),
-    pairs_rules(Pairs, Rules).
+    files_field(3, Files, Rules),
+    files_field(4, Files, Queries),
+    files_field(5, Files, Bindings),
+    files_field(6, Files, Findings),
+    merged_prog(Decls, Rules, Queries, Prog).
 
-pairs_attr_decls([], []).
-pairs_attr_decls([(Path, prog(D, _)) | Rest], Attr) :-
+files_attr_decls([], []).
+files_attr_decls([file(Path, D, _, _, _, _) | Rest], Attr) :-
     attr_decls(D, Path, AttrHere),
-    pairs_attr_decls(Rest, More),
+    files_attr_decls(Rest, More),
     append(AttrHere, More, Attr).
 
 attr_decls([], _, []).
 attr_decls([Decl | Rest], Path, [Path-Decl | More]) :- attr_decls(Rest, Path, More).
 
-pairs_rules([], []).
-pairs_rules([(_, prog(_, R)) | Rest], RulesList) :-
-    pairs_rules(Rest, More),
-    append(R, More, RulesList).
+files_field(_, [], []).
+files_field(Position, [File | Rest], List) :-
+    arg(Position, File, Here),
+    files_field(Position, Rest, More),
+    append(Here, More, List).
 
 merge_col([], Accum, Decls) :-
     strip_paths(Accum, DeclsRev),

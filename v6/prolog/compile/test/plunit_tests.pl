@@ -27,6 +27,7 @@
                 intern_write_sql/4,
                 catalog_ddl_contract/2,
                 catalog_rows/4,
+                catalog_decl_rows/6,
                 catalog_all_rows/10,
                 plan_rule_level_statements/2,
                 program_text_intern_plan/3,
@@ -37,6 +38,7 @@
                 relplan_columns/3, relplan_column_types/3, relplan_of/3,
                 relplan_declared/2, relplan_declared_types/3,
                 relplan_origins/2 ]).
+:- use_module('../../0_dot_expand', [ expand_dot_in_context/3 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../0_ast_expand',
@@ -6748,7 +6750,9 @@ test(use_one_sibling_splices_before_own) :-
           "main.dl6" = "use \"lib.dl6\".\nrel main(z:int).\nmain(1).\n" ]),
     use_entry(Dir, 'main.dl6', Entry),
     expand_uses(Entry, [], [], _, prog(Decls, _), Table),
-    append([col_type(lib/1, k, int), col_type(main/1, z, int)], _, Decls),
+    nth0(LibAt, Decls, col_type(lib/1, k, int)),
+    nth0(MainAt, Decls, col_type(main/1, z, int)),
+    LibAt < MainAt,
     maplist(arg(1), Table, Paths),
     length(Paths, 2).
 
@@ -6857,6 +6861,171 @@ test(stripped_use_lines_keep_the_remainder_on_its_own_file_line) :-
     Line == 3.
 
 :- end_tests(use_module_system).
+
+% ═══ the mount door: `use "path" as alias.` ═════════════════════════════════
+% The alias is a COMPILE-TIME lookup path grafted onto the resolver's scope
+% chain; the mount itself reaches the catalog as a row, so a reader of the
+% database can see which module was mounted where without re-reading source.
+
+:- begin_tests(mount_door).
+
+% FAIL-FIRST RECEIPT: before the alias surface landed, use_item/3 stopped at
+% the space after the path and this call failed on the leftover ` as orchard`.
+test(use_item_parses_an_alias) :-
+    string_codes("use \"lib.dl6\" as orchard.", Codes),
+    use_item(use("lib.dl6", orchard), Codes, []).
+
+test(use_item_without_an_alias_still_parses) :-
+    string_codes("use \"lib.dl6\".", Codes),
+    use_item(use("lib.dl6"), Codes, []).
+
+% FAIL-FIRST PIN (MOD-8): module_hash/2 hashes the basename, not the path, so
+% a/b/c.dl6 and aa/b/c.dl6 mint ONE identity and HMR conflates the two files.
+test(same_basename_different_paths_get_distinct_module_identity,
+     [fixme(mod8_module_hash_ignores_path)]) :-
+    make_use_dir(Dir),
+    atomic_list_concat([Dir, '/a/b'], LeftDir),
+    atomic_list_concat([Dir, '/aa/b'], RightDir),
+    make_directory_path(LeftDir),
+    make_directory_path(RightDir),
+    write_use_file(Dir, 'a/b/c.dl6' = "rel tree(tree_id:int).\n"),
+    write_use_file(Dir, 'aa/b/c.dl6' = "rel plot(plot_id:int).\n"),
+    write_use_file(Dir, 'main.dl6' =
+        "use \"a/b/c.dl6\" as left.\nuse \"aa/b/c.dl6\" as right.\nrel top(z:int).\n"),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, _, ModuleTable),
+    findall(Hash, member(module(_, c, Hash), ModuleTable), BasenameHashes),
+    length(BasenameHashes, 2),
+    sort(BasenameHashes, DistinctHashes),
+    length(DistinctHashes, 2).
+
+% `as` is a whole-word match, so a path followed by an identifier that merely
+% starts with `as` is not an alias clause.
+test(use_item_alias_word_is_whole) :-
+    string_codes("use \"lib.dl6\" aside.", Codes),
+    \+ use_item(_, Codes, []).
+
+% FAIL-FIRST RECEIPT: with no mount decl emitted, the memberchk below unified
+% mount_decl(orchard, lib, _) against nothing and the test failed on the
+% first goal rather than reporting an empty Decls list.
+test(mount_emits_a_mount_decl_naming_the_module) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\" as orchard.\nrel top(z:int).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, prog(Decls, _), _),
+    memberchk(mount_decl(orchard, lib, main, Paths), Decls),
+    memberchk([tree]-tree, Paths).
+
+% The mounted subtree keeps the target's OWN dotted paths, alias-prefixed.
+test(mount_paths_carry_the_targets_dotted_tree) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel grove.tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\" as orchard.\nrel top(z:int).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, prog(Decls, _), _),
+    memberchk(mount_decl(orchard, lib, main, Paths), Decls),
+    memberchk([grove, tree]-grove__tree, Paths).
+
+% A mount of a mount: the inner alias survives one level out, so a two-hop
+% path reaches the leaf.
+test(mount_of_a_mount_nests_the_aliases) :-
+    make_use_fixture(Dir,
+        [ "leaf.dl6" = "rel tree(tree_id:int).\n",
+          "mid.dl6" = "use \"leaf.dl6\" as grove.\nrel mid(y:int).\n",
+          "main.dl6" = "use \"mid.dl6\" as orchard.\nrel top(z:int).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, prog(Decls, _), _),
+    memberchk(mount_decl(orchard, mid, main, Paths), Decls),
+    memberchk([grove, tree]-tree, Paths).
+
+% THE POINT OF THE ARC: a dotted reference under the alias resolves to the
+% mounted module's own flat rel name, by identity, at compile time.
+% dl:  use "lib.dl6" as orchard.  ...  ripe(TreeId) <- orchard.tree(TreeId).
+% rx:  the emitted body subscribes to tree$ -- the alias is zero runtime rows.
+test(mounted_path_resolves_to_the_targets_flat_rel) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\" as orchard.\n\c
+                        rel ripe(tree_id:int).\n\c
+                        ripe(TreeId) <- orchard.tree(TreeId).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, Prog, _),
+    expand_dot_in_context([], Prog, prog(_, Rules)),
+    memberchk((ripe(_) <- tree(_)), Rules).
+
+% An alias that collides with a path the mounting file already declares is a
+% silent last-writer-wins in the scope tree, so it is refused instead.
+test(mount_alias_colliding_with_a_local_path_refuses) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\" as orchard.\n\c
+                        rel orchard.tree(picked:int).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, Prog, _),
+    catch(expand_dot_in_context([], Prog, _), Error, true),
+    Error == unsupported_construct(
+                 mount_path_collision([orchard, tree], orchard__tree, tree)).
+
+% FAIL-FIRST RECEIPT: compile_dl6/2 called parse_dl_file/4 directly, so a
+% `use` line reached the statement parser and this threw a parse error at
+% line 1 rather than compiling the spliced program.
+test(compile_dl6_splices_a_used_sibling) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\".\n\c
+                        rel ripe(tree_id:int).\n\c
+                        ripe(TreeId) <- tree(TreeId).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/main.ts'], OutFile),
+    compile_dl6(Entry, OutFile),
+    exists_file(OutFile).
+
+test(compile_dl6_compiles_a_mounted_path) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\" as orchard.\n\c
+                        rel ripe(tree_id:int).\n\c
+                        ripe(TreeId) <- orchard.tree(TreeId).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/main.ts'], OutFile),
+    compile_dl6(Entry, OutFile),
+    read_file_to_string(OutFile, Text, []),
+    sub_string(Text, _, _, _, "tree").
+
+% ── the mount reaches the catalog as data ───────────────────────────────────
+
+% One module row per FILE, so two files keep distinct module identity even
+% though they lower to one program.
+test(catalog_carries_one_module_row_per_file) :-
+    mount_catalog_rows(Rows),
+    findall(Name, member(row(_, _, _, Name, module, _, _, _, _, _, _), Rows),
+            ModuleNames),
+    msort(ModuleNames, Sorted),
+    Sorted == [lib, main].
+
+% The mount row's local_name is the ALIAS and its module_id is the MOUNTED
+% module's row id, so the graft is readable straight off the catalog.
+test(catalog_carries_a_mount_row_pointing_at_the_mounted_module) :-
+    mount_catalog_rows(Rows),
+    memberchk(row(_, MountParentId, _, orchard, mount, _, _, MountedId,
+                  _, _, _), Rows),
+    memberchk(row(MountedId, _, _, lib, module, _, _, _, _, _, _), Rows),
+    memberchk(row(MountParentId, _, _, main, module, _, _, _, _, _, _), Rows).
+
+mount_catalog_rows(Rows) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\" as orchard.\n\c
+                        rel ripe(tree_id:int).\n\c
+                        ripe(TreeId) <- orchard.tree(TreeId).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, Prog, _),
+    program_plan(fixture(main, Prog, [], [], [])-[], Plan),
+    Plan = plan(_, prog(Decls, Rules), _, RelPlans, _, _, _, _, _),
+    catalog_decl_rows(main, Rules, RelPlans, Decls, Rows, _).
+
+:- end_tests(mount_door).
 
 % ═══ the interned-storage rail ══════════════════════════════════════════════
 % The fifth "a door has a sibling that bypasses it" incident of the interning
