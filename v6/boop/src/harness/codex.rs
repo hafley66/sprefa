@@ -47,8 +47,8 @@ impl Harness for Codex {
         })
     }
 
-    /// `token_count` snapshots carry no per-call id; `message_id` below uses
-    /// the line's byte offset, so re-syncing a range dedups but never merges.
+    /// `token_count` snapshots carry no per-call id; a turn's snapshots sum
+    /// into one row keyed `{session}#t{turn}` (dict_request is global).
     fn ingest(&self, store: &Store, session: &SessionRef, from: u64) -> anyhow::Result<Ingested> {
         let mut file = File::open(&session.path)
             .with_context(|| format!("open transcript {}", session.path.display()))?;
@@ -62,6 +62,7 @@ impl Harness for Codex {
         let mut turn = store.begin_walk(&session.session_id)?;
         let mut stat = SyncStat::default();
         let mut current_model = String::from("unknown");
+        let mut turn_tokens = TurnTokens::default();
         for line in &result.lines {
             project_line(
                 store,
@@ -70,6 +71,7 @@ impl Harness for Codex {
                 &mut turn,
                 &mut stat,
                 &mut current_model,
+                &mut turn_tokens,
             )?;
         }
         Ok(Ingested {
@@ -271,6 +273,16 @@ fn message_text(payload: &serde_json::Map<String, Value>) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Running totals for one turn's `token_count` snapshots.
+#[derive(Default)]
+struct TurnTokens {
+    turn: u64,
+    input: i64,
+    output: i64,
+    cache_write: i64,
+    cached: i64,
+}
+
 fn project_line(
     store: &Store,
     session: &SessionRef,
@@ -278,6 +290,7 @@ fn project_line(
     turn: &mut u64,
     stat: &mut SyncStat,
     current_model: &mut String,
+    turn_tokens: &mut TurnTokens,
 ) -> anyhow::Result<()> {
     let value: Value = match serde_json::from_slice(&line.bytes) {
         Ok(value) => value,
@@ -369,21 +382,6 @@ fn project_line(
             let cached = count("cached_input_tokens");
             let cache_write = count("cache_write_input_tokens");
             let input_tokens = (count("input_tokens") - cached - cache_write).max(0);
-            let message_id = line.start.to_string();
-            let usage = UsageRow {
-                ts,
-                message_id: &message_id,
-                request_id: "",
-                model: current_model.as_str(),
-                service_tier: None,
-                input_tokens,
-                output_tokens: count("output_tokens"),
-                cache_create_5m_tokens: cache_write,
-                cache_create_1h_tokens: 0,
-                cache_read_tokens: cached,
-                is_sidechain: session.parent.is_some(),
-                cost_usd_recorded: None,
-            };
             let attach_turn = if *turn == 0 {
                 *turn += 1;
                 let inserted = store.write_turn(&sid, *turn, ts, "assistant", "")?;
@@ -391,6 +389,31 @@ fn project_line(
                 *turn
             } else {
                 *turn
+            };
+            if turn_tokens.turn != attach_turn {
+                *turn_tokens = TurnTokens {
+                    turn: attach_turn,
+                    ..TurnTokens::default()
+                };
+            }
+            turn_tokens.input += input_tokens;
+            turn_tokens.output += count("output_tokens");
+            turn_tokens.cache_write += cache_write;
+            turn_tokens.cached += cached;
+            let message_id = format!("{sid}#t{attach_turn}");
+            let usage = UsageRow {
+                ts,
+                message_id: &message_id,
+                request_id: "",
+                model: current_model.as_str(),
+                service_tier: None,
+                input_tokens: turn_tokens.input,
+                output_tokens: turn_tokens.output,
+                cache_create_5m_tokens: turn_tokens.cache_write,
+                cache_create_1h_tokens: 0,
+                cache_read_tokens: turn_tokens.cached,
+                is_sidechain: session.parent.is_some(),
+                cost_usd_recorded: None,
             };
             let (is_new, changed) = store.write_usage(&sid, attach_turn, &usage)?;
             if changed {
@@ -413,6 +436,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::harness::{claude, Harness, SessionRef};
+    use crate::Store;
 
     use super::{sessions_in, Codex};
 
@@ -476,6 +500,49 @@ mod tests {
         assert_eq!(chunk.skipped, 0);
         assert_eq!(chunk.events[0].record_type, "message");
         assert_eq!(chunk.events[1].record_type, "token_count");
+    }
+
+    /// Fail-first receipt: pre-fix, same-turn `token_count` snapshots each
+    /// INSERTed and collided on the agent_usage (session_id, turn) key.
+    #[test]
+    fn same_turn_token_counts_sum_into_one_usage_row() {
+        let db_path = temp_path("jn4db");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        let path = temp_path("jn4");
+        write_lines(
+            &path,
+            &[
+                r#"{"timestamp":"2026-08-09T17:20:05.152Z","type":"response_item","payload":{"type":"message","id":"msg_1","role":"user","content":[{"type":"input_text","text":"hello"}]}}"#,
+                r#"{"timestamp":"2026-08-09T17:20:06.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":10}}}}"#,
+                r#"{"timestamp":"2026-08-09T17:20:07.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":50,"cached_input_tokens":0,"output_tokens":5}}}}"#,
+                r#"{"timestamp":"2026-08-09T17:20:08.000Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"cached_input_tokens":10,"output_tokens":1}}}}"#,
+            ],
+        );
+        let metadata = path.metadata().unwrap();
+        let codex = Codex;
+        let ingested = codex
+            .ingest(&store, &session_for(&path, metadata.len()), 0)
+            .unwrap();
+        assert_eq!(ingested.stat.usage_written, 1);
+        assert_eq!(ingested.stat.usage_updated, 2);
+        drop(store);
+        let connection = rusqlite::Connection::open(&db_path).unwrap();
+        let (row_count, input_tokens, output_tokens, cache_read_tokens): (i64, i64, i64, i64) =
+            connection
+                .query_row(
+                    "SELECT COUNT(*), SUM(input_tokens), SUM(output_tokens),
+                       SUM(cache_read_tokens) FROM agent_usage",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                )
+                .unwrap();
+        assert_eq!(row_count, 1);
+        assert_eq!(input_tokens, 110);
+        assert_eq!(output_tokens, 16);
+        assert_eq!(cache_read_tokens, 50);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
