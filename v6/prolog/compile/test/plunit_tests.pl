@@ -106,6 +106,7 @@
 % The diag channel's plunit receipts live with the module in labs/.
 :- ensure_loaded('diag.test.pl').
 :- ensure_loaded('2_subscribe.plt').
+:- ensure_loaded('6_emit_dd_plan.test.pl').
 
 % Resolved relative to this file's own load-time directory (mirrors
 % sweep.pl's compile_dir/1 pattern -- prolog_load_context/2 only answers
