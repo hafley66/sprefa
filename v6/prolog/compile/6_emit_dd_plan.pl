@@ -34,13 +34,13 @@ dd_plan_text(Plan, Text) :-
                                        fullstop(true), nl(true)])).
 
 dd_plan_term(plan(Name, prog(_, Rules), _, RelPlans, _, RuleOrder, _, _, _),
-             lowered(Name, _, _, _, _, _, RelPlans, _),
+             Lowered,
              dd_plan(Name, rels(Rels), arrangements(Arrangements),
                      operators(Operators), wires(Wires), tick_order(TickOrder))) :-
     maplist(rel_term, RelPlans, Rels),
     ordered_rules(RuleOrder, Rules, OrderedRules),
     arrangement_terms(RelPlans, OrderedRules, Arrangements),
-    rule_operators(OrderedRules, Operators),
+    rule_operators(OrderedRules, Lowered, Operators),
     rule_wires(OrderedRules, Wires),
     tick_order(TickOrder).
 
@@ -185,55 +185,76 @@ argument_position(Argument, [_ | Rest], Position) :-
 rule_head_arguments((Head <- _), Arguments) :- Head =.. [_ | Arguments].
 rule_head_arguments((Head <+ _), Arguments) :- Head =.. [_ | Arguments].
 
-rule_operators(Rules, Operators) :-
-    rule_operators(Rules, 1, Operators).
+rule_operators(Rules, Lowered, Operators) :-
+    rule_operators(Rules, Lowered, 1, Operators).
 
-rule_operators([], _, []).
-rule_operators([Rule | Rest], Number, Operators) :-
-    rule_operator_terms(Rule, Number, Current),
+rule_operators([], _, _, []).
+rule_operators([Rule | Rest], Lowered, Number, Operators) :-
+    rule_operator_terms(Rule, Lowered, Number, Current),
     Next is Number + 1,
-    rule_operators(Rest, Next, More),
+    rule_operators(Rest, Lowered, Next, More),
     append(Current, More, Operators).
 
-rule_operator_terms(Rule, Number, Operators) :-
+rule_operator_terms(Rule, Lowered, Number, Operators) :-
     rule_head_ref(Rule, HeadRef),
     rule_body_uses(Rule, Uses),
+    operator_payload(Rule, HeadRef, Uses, Lowered, Payload),
     operator_id(map, Number, MapId),
-    Map = op(MapId, map(HeadRef)),
-    join_operators(Uses, Number, Joins),
-    filter_operators(Uses, Number, Filters),
-    reduce_operators(Rule, Number, Reduces),
-    iterate_operators(HeadRef, Uses, Number, Iterates),
+    Map = op(MapId, map(HeadRef), Payload),
+    join_operators(Uses, Number, Payload, Joins),
+    filter_operators(Uses, Number, Payload, Filters),
+    reduce_operators(Rule, Number, Payload, Reduces),
+    iterate_operators(HeadRef, Uses, Number, Payload, Iterates),
     append([[Map], Joins, Filters, Reduces, Iterates], Operators).
+
+operator_payload(_Rule, HeadRef, Uses,
+                 lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
+                 sqlite(Refs, Statements)) :-
+    operator_refs(HeadRef, Uses, Refs),
+    (   findall(Statement,
+                ( member(Statement, EdgeStatements),
+                  Statement = edgestmt(HeadRef, _, _, _, _, _, _, _, _) ),
+                Statements),
+        Statements \== []
+    ->  true
+    ;   findall(Statement,
+                ( member(Statement, LevelStatements),
+                  Statement = levelstmt(HeadRef, _, _, _, _, _, _) ),
+                Statements)
+    ).
+
+operator_refs(HeadRef, Uses, Refs) :-
+    findall(Ref, member(use(Ref, _, _, _), Uses), UseRefs),
+    sort([HeadRef | UseRefs], Refs).
 
 rule_body_uses((_ <- Body), Uses) :- body_ref_uses(Body, Uses).
 rule_body_uses((_ <+ Body), Uses) :- body_ref_uses(Body, Uses).
 
-join_operators(Uses, Number, Operators) :-
+join_operators(Uses, Number, Payload, Operators) :-
     include(positive_use, Uses, PositiveUses),
-    join_operator_terms(PositiveUses, Number, 1, Operators).
+    join_operator_terms(PositiveUses, Number, 1, Payload, Operators).
 
 positive_use(use(_, _, pos, _)).
 
-join_operator_terms([_], _, _, []) :- !.
-join_operator_terms([], _, _, []) :- !.
-join_operator_terms([LeftUse | [RightUse | Rest]], Number, Index,
-                    [op(Id, join(Left, Right, LeftArrangement, RightArrangement)) | More]) :-
+join_operator_terms([_], _, _, _, []) :- !.
+join_operator_terms([], _, _, _, []) :- !.
+join_operator_terms([LeftUse | [RightUse | Rest]], Number, Index, Payload,
+                    [op(Id, join(Left, Right, LeftArrangement, RightArrangement), Payload) | More]) :-
     LeftUse = use(Left, _, _, _),
     RightUse = use(Right, _, _, _),
     operator_id(join, Number-Index, Id),
     join_arrangement_id(LeftUse, Number, Index, left, LeftArrangement),
     join_arrangement_id(RightUse, Number, Index, right, RightArrangement),
     Next is Index + 1,
-    join_operator_terms([use(Right, [], pos, unmarked) | Rest], Number, Next, More).
+    join_operator_terms([use(Right, [], pos, unmarked) | Rest], Number, Next, Payload, More).
 
-filter_operators(Uses, Number, Operators) :-
-    findall(op(Id, filter(Ref)),
+filter_operators(Uses, Number, Payload, Operators) :-
+    findall(op(Id, filter(Ref), Payload),
             ( nth1(Index, Uses, use(Ref, _, neg, _)),
               operator_id(filter, Number-Index, Id) ),
             Operators).
 
-reduce_operators(Rule, Number, [op(Id, reduce(Arrangement))]) :-
+reduce_operators(Rule, Number, Payload, [op(Id, reduce(Arrangement), Payload)]) :-
     rule_is_aggregate(Rule),
     !,
     operator_id(reduce, Number, Id),
@@ -242,13 +263,13 @@ reduce_operators(Rule, Number, [op(Id, reduce(Arrangement))]) :-
     Use = use(Ref, _, _, _),
     Ref = Name/Arity,
     format(atom(Arrangement), 'arr_~w_~w_~w', [Name, Arity, Id]).
-reduce_operators(_, _, []).
+reduce_operators(_, _, _, []).
 
-iterate_operators(HeadRef, Uses, Number, [op(Id, iterate(HeadRef))]) :-
+iterate_operators(HeadRef, Uses, Number, Payload, [op(Id, iterate(HeadRef), Payload)]) :-
     member(use(HeadRef, _, pos, _), Uses),
     !,
     operator_id(iterate, Number, Id).
-iterate_operators(_, _, _, []).
+iterate_operators(_, _, _, _, []).
 
 operator_id(Kind, Number, Id) :-
     number_atom(Number, Suffix),
@@ -271,14 +292,14 @@ rule_wires([Rule | Rest], Number, Wires) :-
 
 rule_wires_for_operators(Rule, Uses, Number, HeadRef, Wires) :-
     include(positive_use, Uses, PositiveUses),
-    filter_operators(Uses, Number, FilterOperators),
-    reduce_operators(Rule, Number, ReduceOperators),
-    iterate_operators(HeadRef, Uses, Number, IterateOperators),
+    filter_operators(Uses, Number, none, FilterOperators),
+    reduce_operators(Rule, Number, none, ReduceOperators),
+    iterate_operators(HeadRef, Uses, Number, none, IterateOperators),
     operator_id(map, Number, MapId),
-    join_operators(PositiveUses, Number, JoinOperators),
-    append([FilterOperators, ReduceOperators, IterateOperators, [op(MapId, map(HeadRef))]],
+    join_operators(PositiveUses, Number, none, JoinOperators),
+    append([FilterOperators, ReduceOperators, IterateOperators, [op(MapId, map(HeadRef), none)]],
            TailOperators),
-    TailOperators = [op(FirstTailId, _) | _],
+    TailOperators = [op(FirstTailId, _, _) | _],
     wire_operator_inputs(PositiveUses, JoinOperators, FirstTailId, InputWires),
     operator_chain_wires(TailOperators, HeadRef, TailWires),
     negative_filter_wires(Uses, FilterOperators, NegativeWires),
@@ -287,24 +308,24 @@ rule_wires_for_operators(Rule, Uses, Number, HeadRef, Wires) :-
 wire_operator_inputs([use(Ref, _, _, _)], [], FirstTailId,
                      [wire(Ref, FirstTailId, delta)]) :- !.
 wire_operator_inputs([use(Left, _, _, _), use(Right, _, _, _) | Rest],
-                     [op(JoinId, _) | JoinOperators], FirstTailId,
+                     [op(JoinId, _, _) | JoinOperators], FirstTailId,
                      [wire(Left, JoinId, delta), wire(Right, JoinId, delta) | More]) :-
     wire_join_inputs(Rest, JoinId, JoinOperators, FirstTailId, More).
 wire_operator_inputs([], [], _, []).
 
 wire_join_inputs([], JoinId, [], FirstTailId, [wire(JoinId, FirstTailId, delta)]).
 wire_join_inputs([use(Ref, _, _, _) | Rest], PreviousJoinId,
-                 [op(JoinId, _) | JoinOperators], FirstTailId,
+                 [op(JoinId, _, _) | JoinOperators], FirstTailId,
                  [wire(PreviousJoinId, JoinId, delta), wire(Ref, JoinId, delta) | More]) :-
     wire_join_inputs(Rest, JoinId, JoinOperators, FirstTailId, More).
 
-operator_chain_wires([op(Id, _)], HeadRef, [wire(Id, HeadRef, delta)]).
-operator_chain_wires([op(Id, _) | [op(NextId, _) | Rest]], HeadRef,
+operator_chain_wires([op(Id, _, _)], HeadRef, [wire(Id, HeadRef, delta)]).
+operator_chain_wires([op(Id, _, _) | [op(NextId, _, _) | Rest]], HeadRef,
                      [wire(Id, NextId, delta) | More]) :-
-    operator_chain_wires([op(NextId, _) | Rest], HeadRef, More).
+    operator_chain_wires([op(NextId, _, _) | Rest], HeadRef, More).
 
 negative_filter_wires(_, [], []).
-negative_filter_wires(Uses, [op(FilterId, _) | _], Wires) :-
+negative_filter_wires(Uses, [op(FilterId, _, _) | _], Wires) :-
     findall(wire(Ref, FilterId, delta), member(use(Ref, _, neg, _), Uses), Wires).
 
 tick_order([ phase(absorb_arrivals), phase(index_delta),

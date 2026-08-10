@@ -31,13 +31,29 @@ test(every_operator_has_a_wire) :-
     forall(member(Name, [float_exact_join_has_no_epsilon, float_avg_is_grouped]),
            ( fixture_dd_plan_text(Fixture, Name, Text),
              text_plan(Text, dd_plan(_, _, _, operators(Operators), wires(Wires), _)),
-             forall(member(op(Id, _), Operators), operator_has_wire(Id, Wires)) )).
+             forall(member(op(Id, _, _), Operators), operator_has_wire(Id, Wires)) )).
+
+test(every_operator_carries_sql_payload_for_plan_rels) :-
+    dd_fixture_file('engine_core.pl', EngineFixture),
+    dd_fixture_file('5_value_plane.pl', ValueFixture),
+    forall(member(Fixture-Name,
+                  [ EngineFixture-retraction_only_tick_retracts_level_view,
+                    ValueFixture-float_exact_join_has_no_epsilon,
+                    ValueFixture-float_avg_is_grouped ]),
+           ( fixture_dd_plan_text(Fixture, Name, Text),
+             text_plan(Text, dd_plan(_, rels(Rels), _, operators(Operators), _, _)),
+             findall(Ref, member(rel(Ref, _, _), Rels), PlanRefs),
+             forall(member(op(_, _, sqlite(PayloadRefs, Statements)), Operators),
+                    ( PayloadRefs \== [],
+                      Statements \== [],
+                      forall(member(Ref, PayloadRefs), memberchk(Ref, PlanRefs)),
+                      forall(member(Statement, Statements), payload_statement(Statement)) )) )).
 
 test(join_inputs_have_keyed_arrangements) :-
     dd_fixture_file('5_value_plane.pl', Fixture),
     fixture_dd_plan_text(Fixture, float_exact_join_has_no_epsilon, Text),
     text_plan(Text, dd_plan(_, _, arrangements(Arrangements),
-                            operators([_, op(_, join(_, _, LeftId, RightId))]), _, _)),
+                            operators([_, op(_, join(_, _, LeftId, RightId), _)]), _, _)),
     memberchk(arr(LeftId, left/2, [name], [value], signed), Arrangements),
     memberchk(arr(RightId, right/2, [name], [value], signed), Arrangements).
 
@@ -47,5 +63,8 @@ text_plan(Text, Plan) :-
 
 operator_has_wire(Id, Wires) :- memberchk(wire(Id, _, _), Wires), !.
 operator_has_wire(Id, Wires) :- memberchk(wire(_, Id, _), Wires).
+
+payload_statement(edgestmt(_, _, _, _, _, _, _, _, _)).
+payload_statement(levelstmt(_, _, _, _, _, _, _)).
 
 :- end_tests(emit_dd_plan).
