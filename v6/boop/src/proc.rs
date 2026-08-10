@@ -33,6 +33,9 @@ pub trait ProcReader {
     /// Direct children of `pid`, by pid.
     fn children(&self, pid: u32) -> Vec<u32>;
 
+    /// Every descendant of `pid`, all depths, in discovery order.
+    fn descendants(&self, pid: u32) -> Vec<u32>;
+
     /// Total descendants of `pid` (all depths).
     fn descendent_count(&self, pid: u32) -> usize;
 }
@@ -83,17 +86,21 @@ impl ProcReader for SysinfoSnapshot {
             .collect()
     }
 
-    fn descendent_count(&self, pid: u32) -> usize {
-        let mut count = 0usize;
+    fn descendants(&self, pid: u32) -> Vec<u32> {
+        let mut out = Vec::new();
         let mut stack: Vec<u32> = self.children(pid);
         let mut visited = std::collections::HashSet::new();
         while let Some(current) = stack.pop() {
-            if !visited.insert(current) || count >= MAX_DESCENDANTS {
+            if !visited.insert(current) || out.len() >= MAX_DESCENDANTS {
                 continue;
             }
-            count += 1;
+            out.push(current);
             stack.extend(self.children(current));
         }
-        count
+        out
+    }
+
+    fn descendent_count(&self, pid: u32) -> usize {
+        self.descendants(pid).len()
     }
 }
