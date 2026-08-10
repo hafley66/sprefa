@@ -1,0 +1,13 @@
+{
+  "machine": "Darwin 24.6.1 (arm64) · rustc 1.97.0-nightly 2026-05-18 · cargo 1.97.0-nightly · date 2026-08-10T18:35:51Z",
+  "case_agreement": {
+    "grid_10000":  { "edges": 3960,  "derived": 1069200, "checksum": "9d7239568960d6a8" },
+    "layered_10000": { "edges": 9984,  "derived": 9951396, "checksum": "addcf85b5162b9da" },
+    "chain_10000": { "edges": 7743,  "derived": 9996213, "checksum": "df09b2f409f8b9a8" }
+  },
+  "best_variant_per_case": {
+    "grid_10000":    { "variant": "tuned_wave", "fixpoint_ms": 1065, "peak_rss_kb": 16560,  "derived": 1069200, "checksum": "9d7239568960d6a8" },
+    "layered_10000": { "variant": "tuned_range", "fixpoint_ms": 10254, "peak_rss_kb": 309760, "derived": 9951396, "checksum": "addcf85b5162b9da" },
+    "chain_10000":   { "variant": "tuned_range", "fixpoint_ms": 11224, "peak_rss_kb": 304928, "derived": 9996213, "checksum": "df09b2f409f8b9a8" }
+  }
+}
