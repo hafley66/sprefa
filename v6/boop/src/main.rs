@@ -1874,12 +1874,16 @@ enum DbCmd {
         #[command(subcommand)]
         cmd: EdgeCmd,
     },
-    /// Tokens and cost. A leaf with --group-by, and a parent of blocks and
-    /// burn-rate; clap needs both attributes to accept the two forms.
+    /// Tokens and cost. A totals report the passthrough powers, and a parent
+    /// of the row computations blocks and burn-rate; clap needs both attributes
+    /// to accept the two forms.
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Usage {
         #[command(flatten)]
         args: UsageArgs,
+        /// Print this alias's SQL and exit.
+        #[arg(long)]
+        show_sql: bool,
         #[command(subcommand)]
         cmd: Option<UsageCmd>,
     },
@@ -1910,20 +1914,6 @@ enum DbCmd {
 
 #[derive(clap::Args, Clone, Default)]
 struct UsageArgs {
-    /// Bucket the report; omit for one totals row.
-    #[arg(long, value_enum)]
-    group_by: Option<usage::GroupBy>,
-    /// Fold the session's whole spawn subtree into the numbers.
-    #[arg(long)]
-    rollup_subtree: bool,
-    #[arg(long)]
-    session: Option<String>,
-    #[arg(long)]
-    since: Option<u64>,
-    #[arg(long)]
-    until: Option<u64>,
-    #[arg(long)]
-    limit: Option<u64>,
     #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
     format: QueryFormat,
 }
@@ -2410,8 +2400,12 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
                 emit_edges(&store, session.as_deref(), limit)
             }
         },
-        DbCmd::Usage { args, cmd } => match cmd {
-            None => run_usage(&args),
+        DbCmd::Usage {
+            args,
+            show_sql,
+            cmd,
+        } => match cmd {
+            None => run_usage(&args, show_sql),
             Some(UsageCmd::Blocks {
                 window_hours,
                 active,
@@ -2582,39 +2576,41 @@ fn run_whoami(json: bool) -> Result<()> {
     Ok(())
 }
 
-fn usage_filter(args: &UsageArgs) -> usage::UsageQuery {
-    usage::UsageQuery {
-        session: args.session.clone(),
-        since: args.since,
-        until: args.until,
-        rollup_subtree: args.rollup_subtree,
-        limit: args.limit,
-    }
+/// The `db usage` alias's report SQL: totals with cost over the whole store.
+/// The passthrough is the engine; `--show-sql` prints this const.
+const USAGE_TOTALS_SQL: &str = "
+SELECT COUNT(*) AS calls,
+       COALESCE(SUM(usage.input_tokens), 0) AS input_tokens,
+       COALESCE(SUM(usage.output_tokens), 0) AS output_tokens,
+       COALESCE(SUM(usage.cache_create_5m_tokens), 0) AS cache_create_5m_tokens,
+       COALESCE(SUM(usage.cache_create_1h_tokens), 0) AS cache_create_1h_tokens,
+       COALESCE(SUM(usage.cache_read_tokens), 0) AS cache_read_tokens,
+       SUM(usage.input_tokens / 1e6 * price.input_per_mtok
+         + usage.output_tokens / 1e6 * price.output_per_mtok
+         + usage.cache_create_5m_tokens / 1e6 * price.cache_write_5m_per_mtok
+         + usage.cache_create_1h_tokens / 1e6 * price.cache_write_1h_per_mtok
+         + usage.cache_read_tokens / 1e6 * price.cache_read_per_mtok) AS cost_usd
+FROM agent_usage AS usage
+LEFT JOIN model_price AS price ON price.model_id = usage.model_id";
+
+fn open_ro_store() -> Result<ident::Store> {
+    ident::Store::open_readonly(ident::Store::default_path()?)
 }
 
-/// `db usage`: one totals row, or one row per bucket. The report names the
-/// models it could not price rather than folding them in as zero.
-fn run_usage(args: &UsageArgs) -> Result<()> {
-    let store = open_store()?;
-    let filter = usage_filter(args);
-    let rows = store.usage_report(args.group_by, &filter)?;
-    emit_json_rows(&rows, args.format);
-    for row in store.unpriced_models(&filter)? {
-        line(
-            &serde_json::json!({
-                "unpriced_model": row["model"],
-                "calls": row["calls"],
-            })
-            .to_string(),
-        );
+/// `db usage`: the totals report, a thin alias over USAGE_TOTALS_SQL. `--show-sql`
+/// prints that const and exits; otherwise it runs through the read-only passthrough.
+fn run_usage(args: &UsageArgs, show_sql: bool) -> Result<()> {
+    if show_sql {
+        line(USAGE_TOTALS_SQL.trim());
+        return Ok(());
     }
-    Ok(())
+    run_passthrough(USAGE_TOTALS_SQL, args.format)
 }
 
 fn run_usage_blocks(args: &UsageArgs, window_hours: u64, active_only: bool) -> Result<()> {
-    let store = open_store()?;
+    let store = open_ro_store()?;
     let window_ms = (window_hours * 3_600_000) as i64;
-    let blocks = store.usage_blocks(window_ms, &usage_filter(args))?;
+    let blocks = store.usage_blocks(window_ms, &usage::UsageQuery::default())?;
     let now = now_ms() as i64;
     let rows: Vec<ident::Row> = blocks
         .iter()
@@ -2639,11 +2635,11 @@ fn run_usage_blocks(args: &UsageArgs, window_hours: u64, active_only: bool) -> R
 }
 
 fn run_usage_burn_rate(args: &UsageArgs, window_minutes: u64) -> Result<()> {
-    let store = open_store()?;
-    let mut filter = usage_filter(args);
-    if filter.since.is_none() {
-        filter.since = Some(now_ms().saturating_sub(window_minutes * 60_000));
-    }
+    let store = open_ro_store()?;
+    let filter = usage::UsageQuery {
+        since: Some(now_ms().saturating_sub(window_minutes * 60_000)),
+        ..Default::default()
+    };
     emit_json_rows(&store.usage_burn_rate(&filter)?, args.format);
     Ok(())
 }
