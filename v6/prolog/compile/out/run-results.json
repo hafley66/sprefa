@@ -1127,6 +1127,13 @@
     "final_detail": ""
   },
   {
+    "name": "paren_in_literal_inside_wrapper",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_array_spread_fans_out_correlated_siblings",
     "bucket": "identical",
     "detail": "",

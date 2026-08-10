@@ -332,3 +332,14 @@ fixture(quote_in_literal_doubles_the_escape,
   [ person('Ada'), person('O''Brien') ],
   [],
   [ final(selected/1, [ selected('O''Brien') ]) ]).
+
+% A close paren inside a string literal that sits inside a wrapper call
+% (`not`, `latest`, `pre`, `decode`, `regexp`, ...). The text door reads the
+% wrapper's argument text as balanced-paren codes, so the paren must be
+% invisible to that walk; the same literal outside a wrapper always parsed.
+fixture(paren_in_literal_inside_wrapper,
+  prog([], [ (orphan(Source) <- link(Source, _Target),
+                                not(link(Source, 'z)z'))) ]),
+  [ link(alice, bob), link(carol, 'z)z') ],
+  [],
+  [ final(orphan/1, [ orphan(alice) ]) ]).

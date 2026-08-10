@@ -1501,6 +1501,12 @@ balanced_parens(S0, Inner, S) :-
     balanced_parens_(S0, 0, [], RevInner, S),
     reverse(RevInner, Inner).
 
+% A quoted literal's bytes pass through without touching Depth; both quote
+% characters and both escape forms follow quoted_chars/4.
+balanced_parens_([Quote | Rest], Depth, Acc, Out, S) :-
+    quote_code(Quote), !,
+    balanced_parens_quoted(Quote, Rest, [Quote | Acc], Acc1, S1),
+    balanced_parens_(S1, Depth, Acc1, Out, S).
 balanced_parens_([0'( | Rest], Depth, Acc, Out, S) :- !,
     Depth1 is Depth + 1, balanced_parens_(Rest, Depth1, [0'( | Acc], Out, S).
 balanced_parens_([0') | Rest], 0, Acc, Acc, Rest) :- !.
@@ -1508,6 +1514,19 @@ balanced_parens_([0') | Rest], Depth, Acc, Out, S) :- !,
     Depth1 is Depth - 1, balanced_parens_(Rest, Depth1, [0') | Acc], Out, S).
 balanced_parens_([C | Rest], Depth, Acc, Out, S) :- !,
     balanced_parens_(Rest, Depth, [C | Acc], Out, S).
+
+quote_code(0'").
+quote_code(0'\').
+
+% An unterminated literal runs off the end and fails, like an unbalanced paren,
+% so keyword_call/4 falls through to the next body_item clause.
+balanced_parens_quoted(Quote, [Quote, Quote | Rest], Acc, Out, S) :- !,
+    balanced_parens_quoted(Quote, Rest, [Quote, Quote | Acc], Out, S).
+balanced_parens_quoted(Quote, [Quote | Rest], Acc, [Quote | Acc], Rest) :- !.
+balanced_parens_quoted(Quote, [0'\\, Esc | Rest], Acc, Out, S) :- !,
+    balanced_parens_quoted(Quote, Rest, [Esc, 0'\\ | Acc], Out, S).
+balanced_parens_quoted(Quote, [Code | Rest], Acc, Out, S) :-
+    balanced_parens_quoted(Quote, Rest, [Code | Acc], Out, S).
 
 parse_full(Goal, Codes) :-
     call(Goal, Codes, Left),
