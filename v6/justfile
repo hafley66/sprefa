@@ -29,7 +29,7 @@ v6 := justfile_directory()
 capped := justfile_directory() + "/tools/run-capped.sh"
 
 default:
-	@just --list
+    @just --list
 
 # ── prolog side ──
 
@@ -37,38 +37,38 @@ default:
 # exits 1 on any fail since the grader-exit gate landed)
 # budget: measured 0.2s, default 300s (CONFORMANCE_BUDGET_S)
 conformance:
-	cd {{v6}}/prolog/conformance && {{capped}} "${CONFORMANCE_BUDGET_S:-300}" swipl -q -l go.pl -g go -g halt
+    cd {{ v6 }}/prolog/conformance && {{ capped }} "${CONFORMANCE_BUDGET_S:-300}" swipl -q -l go.pl -g go -g halt
 
 # parse -> print -> reparse identity over all fixtures + real .dl files
 roundtrip:
-	cd {{v6}}/prolog/compile && bash scripts/roundtrip.sh
+    cd {{ v6 }}/prolog/compile && bash scripts/roundtrip.sh
 
 # term door vs .dl6 text door, byte-identical emitted modules (expect: 196/196/0)
 text-door:
-	cd {{v6}}/prolog && bash compile/scripts/text_door_receipt.sh
+    cd {{ v6 }}/prolog && bash compile/scripts/text_door_receipt.sh
 
 # compiler unit tests (expect: 269/269 and growing)
 # budget: measured 40.8s, default 600s (PLUNIT_BUDGET_S)
 plunit:
-	cd {{v6}}/prolog/compile && {{capped}} "${PLUNIT_BUDGET_S:-600}" swipl -q -l test/plunit_tests.pl -g run_tests -g halt
+    cd {{ v6 }}/prolog/compile && {{ capped }} "${PLUNIT_BUDGET_S:-600}" swipl -q -l test/plunit_tests.pl -g run_tests -g halt
 
 # scip + diet_scip extractor families smoke: real scip-typescript index
 # through the served engine (SCIP FAMILIES HOLD). budget: measured 9s,
 # default 600s (SCIP_FAMILIES_BUDGET_S)
 scip-families:
-	cd {{v6}}/tsv2 && {{capped}} "${SCIP_FAMILIES_BUDGET_S:-600}" bash scripts/scip-families.sh
+    cd {{ v6 }}/tsv2 && {{ capped }} "${SCIP_FAMILIES_BUDGET_S:-600}" bash scripts/scip-families.sh
 
 # architecture claims machine-check + atlas re-emit
 # budget: measured 0.9s, default 300s (ARCH_BUDGET_S)
 arch:
-	{{capped}} "${ARCH_BUDGET_S:-300}" swipl -q -l {{v6}}/prolog/ARCH.pl -g go -g halt
+    {{ capped }} "${ARCH_BUDGET_S:-300}" swipl -q -l {{ v6 }}/prolog/ARCH.pl -g go -g halt
 
 # read-only organization gate: parse errors, duplicate modules, undefined
 # predicates, private cross-module calls, redefinitions, void declarations,
 # trivial fails, format errors. Ratcheted against
 # prolog/tools/prolog-lint-baseline.txt; unused exports are advisory output.
 prolog-lint:
-	cd {{v6}}/prolog && bash tools/prolog-lint.sh
+    cd {{ v6 }}/prolog && bash tools/prolog-lint.sh
 
 # ratcheted compiler-cost gate: SWI inference counts per pinned .dl6 program
 # per phase, against scripts/compile-speed-baseline.tsv. Inferences because
@@ -77,10 +77,10 @@ prolog-lint:
 # Wall ms printed informationally, never gated.
 # (expect: COMPILE_SPEED programs=4 phases=24 regressions=0 improvements=0 OK)
 compile-speed:
-	cd {{v6}}/prolog/compile && bash scripts/1_compile_speed.sh
+    cd {{ v6 }}/prolog/compile && bash scripts/1_compile_speed.sh
 
 compile-profile program:
-	program_name="{{program}}"; program_name="${program_name#program=}"; profile_scratch="$(mktemp -d "${TMPDIR:-/tmp}/sprefa-compile-profile.XXXXXX")"; trap 'rm -rf "$profile_scratch"' EXIT; cd {{v6}}/prolog/compile && {{capped}} 120 swipl -q -l ../6_profile.pl -g "compile_profile:execution_profile_dl6('{{v6}}/dl/fixtures/$program_name.dl6','$profile_scratch/$program_name.ts')" -g halt
+    program_name="{{ program }}"; program_name="${program_name#program=}"; profile_scratch="$(mktemp -d "${TMPDIR:-/tmp}/sprefa-compile-profile.XXXXXX")"; trap 'rm -rf "$profile_scratch"' EXIT; cd {{ v6 }}/prolog/compile && {{ capped }} 120 swipl -q -l ../6_profile.pl -g "compile_profile:execution_profile_dl6('{{ v6 }}/dl/fixtures/$program_name.dl6','$profile_scratch/$program_name.ts')" -g halt
 
 # ── tsv2 (prolog compiles TO TypeScript) ──
 
@@ -92,22 +92,22 @@ compile-profile program:
 # gate here that is not a bucket count (expect: restated=0 on a no-op re-run).
 # Informational; MANIFEST_DIFF_STRICT=1 makes a restatement fail the recipe.
 sweep:
-	cd {{v6}}/tsv2 && bash scripts/sweep.sh
+    cd {{ v6 }}/tsv2 && bash scripts/sweep.sh
 
 # the bop CLI's own receipts (exit-code contract 0/2/1, the located refusal's
 # file:line, and inventory parity); convenience slice -- these also run inside
 # tsv2-test (expect: 15 pass)
 # budget: measured 2.6s, default 300s (BOP_TEST_BUDGET_S)
 bop-test:
-	cd {{v6}}/tsv2 && {{capped}} "${BOP_TEST_BUDGET_S:-300}" node --test --experimental-transform-types tests/bopCheck.test.ts tests/bopRun.test.ts tests/bopLoadQuery.test.ts tests/bopCommandInventory.test.ts
+    cd {{ v6 }}/tsv2 && {{ capped }} "${BOP_TEST_BUDGET_S:-300}" node --test --experimental-transform-types tests/bopCheck.test.ts tests/bopRun.test.ts tests/bopLoadQuery.test.ts tests/bopCommandInventory.test.ts
 
 # tsv2 runtime + served-engine tests (expect: 127 pass / 1 skip, and growing)
 tsv2-test:
-	cd {{v6}}/tsv2 && npm test
+    cd {{ v6 }}/tsv2 && npm test
 
 # generated files import only the named runtime seams (class-34 law)
 import-gate:
-	cd {{v6}}/tsv2 && bash scripts/check-imports.sh
+    cd {{ v6 }}/tsv2 && bash scripts/check-imports.sh
 
 # the TypeScript compiler over tsv2 (runtime, serve, cli, gen_emitted, tests).
 # `npm test` runs node --experimental-transform-types, which STRIPS types and
@@ -119,41 +119,41 @@ import-gate:
 # budget: measured 0.6s, default 600s -- looser than the wall suggests because
 # a cold `npx` may fetch before it compiles (TYPECHECK_BUDGET_S)
 typecheck:
-	cd {{v6}}/tsv2 && {{capped}} "${TYPECHECK_BUDGET_S:-600}" npx tsgo --noEmit -p tsconfig.json
+    cd {{ v6 }}/tsv2 && {{ capped }} "${TYPECHECK_BUDGET_S:-600}" npx tsgo --noEmit -p tsconfig.json
 
 # ── TS apps ──
 
 # the v6 dl app suite (expect: 97 tests, 1 soak skip)
 dl-test:
-	cd {{v6}}/dl && npm test
+    cd {{ v6 }}/dl && npm test
 
 # js store port suite
 store-test:
-	cd {{v6}}/sprefa-store/js && npm test
+    cd {{ v6 }}/sprefa-store/js && npm test
 
 # THE END GOAL, executable: kill -9 mid-delay, reboot, value lands exactly once
 endurance:
-	bash {{v6}}/dl/scripts/goal-endurance.sh
+    bash {{ v6 }}/dl/scripts/goal-endurance.sh
 
 # long-running server leak gate: one process, repeated swaps/commits/SSE teardown
 leak-soak:
-	bash {{v6}}/dl/scripts/leak-soak.sh
+    bash {{ v6 }}/dl/scripts/leak-soak.sh
 
 # the SERVED TSV2 engine's own end goal: kill -9 mid-nap, restart, answered
 # witnesses never refire (runtime-bridge arc receipt 5)
 serve-endurance:
-	cd {{v6}}/tsv2 && bash scripts/endurance.sh
+    cd {{ v6 }}/tsv2 && bash scripts/endurance.sh
 
 # the served tsv2 engine's leak gate: 20 program swaps, handles/timers/SSE flat
 serve-leak-soak:
-	cd {{v6}}/tsv2 && bash scripts/leak-soak.sh
+    cd {{ v6 }}/tsv2 && bash scripts/leak-soak.sh
 
 # the golden plan's PHASE 4 LSP EXIT RECEIPT: v5's own `dl --lsp --diag-db`
 # reading a live tsv2-served diag_v5 table -- zero new LSP code, real stdio
 # JSON-RPC against the real v5 binary, appear + retract proven engine-side
 # and LSP-side (expect: LSP DIAGS HOLDS, exit 0)
 lsp-diags:
-	cd {{v6}}/tsv2 && bash scripts/lsp-diags.sh
+    cd {{ v6 }}/tsv2 && bash scripts/lsp-diags.sh
 
 # THE ALPHA'S HEADLINE RECEIPT: v5's own examples/callgraph-ast.dl and the v6
 # port of it, both over one pinned corpus, diffed rel by rel with every row of
@@ -161,21 +161,21 @@ lsp-diags:
 # unclassified, exit 0; builds target/release/dl and the release extractor on
 # first run, seconds after)
 flagship:
-	cd {{v6}}/tsv2 && bash scripts/flagship-callgraph.sh
+    cd {{ v6 }}/tsv2 && bash scripts/flagship-callgraph.sh
 
 # the golden plan's PHASE 2 EXIT RECEIPT: an sg-rail-class diag rail end to end
 # on real file edits -- watcher, extractor, retraction, and kill -9 mid-extraction
 # (expect: EXTRACTION LIVE HOLDS, 8 phases, exit 0; builds the release extractor
 # on first run via cargo build --release --features cli)
 extraction-live:
-	cd {{v6}}/tsv2 && bash scripts/extraction-live.sh
+    cd {{ v6 }}/tsv2 && bash scripts/extraction-live.sh
 
 # Standing comment-node production rails: compile every rail, grade each
 # technique against a fresh live extraction feed, then run the pinned v5/v6
 # parity comparison for comment_node and arch_node.
 comment-rails:
-	bash {{v6}}/tsv2/scripts/comment-rails.sh
-	bash {{v6}}/tsv2/scripts/comment-parity.sh
+    bash {{ v6 }}/tsv2/scripts/comment-rails.sh
+    bash {{ v6 }}/tsv2/scripts/comment-parity.sh
 
 # the file-set feed against THIS repo: files = git ls-files exactly, zero
 # node_modules rows, files_at reports git's own blob oids; then the REPO-SCOPED
@@ -183,15 +183,15 @@ comment-rails:
 # is not the server's cwd, with its worktree edited after the commit so the two
 # hosts must disagree on the same path
 # (expect: FILES HOSTS HOLD, 7 PASS lines, exit 0; needs a populated
-#  node_modules)
+# node_modules)
 files:
-	cd {{v6}}/tsv2 && bash scripts/files.sh
+    cd {{ v6 }}/tsv2 && bash scripts/files.sh
 
 # sustained assert/retract churn on one served program; process memory,
 # sqlite page count, and statements/tick must all stay flat post-warmup
 # (expect: MEMORY SOAK HOLDS, exit 0; TSV2_SOAK_LONG=1 for an overnight run)
 memory-soak:
-	cd {{v6}}/tsv2 && bash scripts/memory-soak.sh
+    cd {{ v6 }}/tsv2 && bash scripts/memory-soak.sh
 
 # THE COMPOSITION RECEIPT: one program (dl/fixtures/golden-flex.dl6) exercising
 # every live registry construct, graded six ways -- coverage gate (a new registry
@@ -201,7 +201,7 @@ memory-soak:
 # and the served HTTP e2e leg with a live subprocess host
 # (expect: GOLDEN FLEX HOLDS, exit 0; ~30s)
 golden-flex:
-	bash {{v6}}/tsv2/scripts/golden-flex.sh
+    bash {{ v6 }}/tsv2/scripts/golden-flex.sh
 
 # THE SYSTEM DESCRIBING ITSELF: v6/dl/fixtures/self-map.dl6 reads registry.pl's
 # surface/5, 1_expansion.pl's expansion_phase/3, ARCH.pl's task/3 and its OWN
@@ -213,7 +213,7 @@ golden-flex:
 # which is what the staleness gate diffs.
 # (expect: SELF MAP HOLDS, diagrams=4, exit 0; ~20s, spawns 4 swipl one-shots)
 self-map:
-	bash {{v6}}/tsv2/scripts/self-map.sh
+    bash {{ v6 }}/tsv2/scripts/self-map.sh
 
 # v6/GETTING-STARTED.md, EXECUTED. Every marked block on that page is replayed
 # in one persistent shell (so the backgrounded `bop serve` and the exports
@@ -224,18 +224,18 @@ self-map:
 # stranger's first thirty minutes.
 # (expect: GETTING STARTED HOLDS: 24 blocks replayed, exit 0; ~16s)
 getting-started:
-	bash {{v6}}/tsv2/scripts/getting-started.sh
+    bash {{ v6 }}/tsv2/scripts/getting-started.sh
 
 # exactly one terminal subscription per app (dl/src and tsv2/serve)
 one-subscribe:
-	bash {{v6}}/tools/one-subscribe.sh
+    bash {{ v6 }}/tools/one-subscribe.sh
 
 # the plane audit, both doors (plan §8): compile catalog-audit-rail, serve it,
 # post the probe arrival, and demand zero findings -- no interned column lacks
 # its decode view and no decode view lacks its interned column.
 # (expect: CATALOG AUDIT HOLDS, exit 0)
 catalog-audit:
-	bash {{v6}}/tsv2/scripts/catalog-audit-rail.sh
+    bash {{ v6 }}/tsv2/scripts/catalog-audit-rail.sh
 
 # stopping-point program #1 on the keyed clock/etag feedback shape: one hermetic
 # five-tick schedule replayed through BOTH the oracle and the emitted runtime,
@@ -245,7 +245,7 @@ catalog-audit:
 # replaces its raw host row and produces no public delta
 # (expect: GHCACHER_CLOCK_GOLDEN_HOLDS ticks=5 final=1, exit 0)
 ghcacher-golden:
-	bash {{v6}}/tsv2/goldens/ghcacher_tick_golden/6_gate.sh
+    bash {{ v6 }}/tsv2/goldens/ghcacher_tick_golden/6_gate.sh
 
 # STOPPING-POINT PROGRAM #7: the RTK Query example corpus through the extraction
 # spine. Four ast-grep patterns batch through ONE in-tree extractor process per
@@ -269,7 +269,7 @@ ghcacher-golden:
 # existing ones.
 # (expect: exit 0, five ticks, responseRows [9,6], 2 processes, 2 demands)
 rtkq-golden:
-	bash {{v6}}/tsv2/scripts/6_rtkq-extraction-golden.sh
+    bash {{ v6 }}/tsv2/scripts/6_rtkq-extraction-golden.sh
 
 # STOPPING-POINT PROGRAM #5: the multirepo dep/repo/rev crawl, both engines over
 # one pinned four-repo corpus. v5 runs examples/version-skew.dl byte-unmodified
@@ -277,9 +277,9 @@ rtkq-golden:
 # same repos with the repo set posted as EDB rows. Every differing row is
 # bucketed with a proof read from the corpus go.mod bytes.
 # (expect: MULTIREPO CRAWL GRADED: 4/4 rels byte-identical, 1 named gap
-#  (dep_ver = min/max over text refused), 0 unclassified, exit 0)
+# (dep_ver = min/max over text refused), 0 unclassified, exit 0)
 multirepo-golden:
-	bash {{v6}}/tsv2/goldens/multirepo_crawl/2_gate.sh
+    bash {{ v6 }}/tsv2/goldens/multirepo_crawl/2_gate.sh
 
 # STOPPING-POINT PROGRAM #3: git pre-commit --changed, the biome-style
 # recent-change-lines gating, spelled as ordinary rules. "Which files are NEW
@@ -299,7 +299,7 @@ multirepo-golden:
 # battery; this recipe is that wiring.
 # (expect: GIT-FACT DIAGS RAIL HOLDS, exit 0; ~20s, one ephemeral server)
 precommit-changed:
-	bash {{v6}}/tsv2/scripts/v5-git-diags.sh
+    bash {{ v6 }}/tsv2/scripts/v5-git-diags.sh
 
 # STOPPING-POINT PROGRAM #8 at scale: the watch bind's own cost and correctness
 # curve. Duplicate path notifications, edits, identical re-saves and deletes are
@@ -315,10 +315,10 @@ precommit-changed:
 # budget: measured 0.7s at 100/1000 files, default 900s -- loose because the
 # file counts are arguments and a bigger run is the point (WATCH_SCALE_BUDGET_S)
 watch-scale:
-	cd {{v6}}/tsv2 && {{capped}} "${WATCH_SCALE_BUDGET_S:-900}" env NODE_NO_WARNINGS=1 \
-	  node --experimental-transform-types \
-	  scripts/5_file-watch-scale.ts --files 100,1000 --events-per-file 3 \
-	  --edit-ratio 0.25 --delete-ratio 0.10 --identical-resave-ratio 0.25
+    cd {{ v6 }}/tsv2 && {{ capped }} "${WATCH_SCALE_BUDGET_S:-900}" env NODE_NO_WARNINGS=1 \
+      node --experimental-transform-types \
+      scripts/5_file-watch-scale.ts --files 100,1000 --events-per-file 3 \
+      --edit-ratio 0.25 --delete-ratio 0.10 --identical-resave-ratio 0.25
 
 # the v5 surface inventory: every built-in rel, operator and function v5's
 # examples/*.dl corpus actually uses, ranked by how many files name it, each
@@ -328,7 +328,7 @@ watch-scale:
 # commit the table only when the movement is the point.
 # (expect: V5 PARITY TABLE SEEDED, exit 0)
 v5-parity:
-	bash {{v6}}/tsv2/scripts/v5-parity.sh
+    bash {{ v6 }}/tsv2/scripts/v5-parity.sh
 
 # checked-in gen_emitted modules with no fixture row (door-handwritten.ts)
 # regenerated + diffed against their .dl6 source; target/release/dl and
@@ -336,7 +336,7 @@ v5-parity:
 # newer than the built binary -- both classes went silently stale before
 # (expect: STALENESS_GATE_OK, exit 0)
 staleness-gate:
-	bash {{v6}}/tools/staleness-gate.sh
+    bash {{ v6 }}/tools/staleness-gate.sh
 
 # throughput floor at scale: s2 / 10k arrivals through the tsv2 emitter.
 # statements-per-tick set is gated EXACTLY and must be the same at 10k and 1k
@@ -347,43 +347,43 @@ staleness-gate:
 # goldens/scale-floor-history.jsonl so the curve exists over time.
 # (expect: SCALE_FLOOR s2 rows=10000 stmts/tick=[37,41] flat-vs-1000 ... OK)
 scale-floor:
-	cd {{v6}}/tsv2 && bash scripts/7_scale-floor.sh
+    cd {{ v6 }}/tsv2 && bash scripts/7_scale-floor.sh
 
 # ── benches ──
 
 # core dl6 bench; writes labs/exec_shootout/dl6/FACTS.md, whose header states the env knobs
 # (expect: grid_10000 derived=1069200 checksum=9d7239568960d6a8)
 dl6-bench:
-	bash {{v6}}/labs/exec_shootout/dl6/bench.sh
+    bash {{ v6 }}/labs/exec_shootout/dl6/bench.sh
 
 # dl6 perf budget gate (failure-modes rail-gap 45): grid bench + ceiling check
 # from dl6/budget.json; exit 2 on any breach. Ceilings ratchet DOWN only.
 dl6-budget:
-	bash {{v6}}/labs/exec_shootout/dl6/budget-check.sh
+    bash {{ v6 }}/labs/exec_shootout/dl6/budget-check.sh
 
 # same bench, then regenerates plans/2026-08-06-dl6-live.d2 and its svg from FACTS.json
 # (expect: dl6-bench: rendered .../2026-08-06-dl6-live.svg)
 dl6-doc:
-	DL6_BENCH_UNBATCH=1 DL6_BENCH_DOC=1 bash {{v6}}/labs/exec_shootout/dl6/bench.sh
+    DL6_BENCH_UNBATCH=1 DL6_BENCH_DOC=1 bash {{ v6 }}/labs/exec_shootout/dl6/bench.sh
 
 # full dl6 bench: adds layered_10000 + chain_10000 (~35s more than dl6-bench)
 # (expect: chain_10000 derived=9996213 checksum=df09b2f409f8b9a8)
 dl6-bench-full:
-	DL6_BENCH_FULL=1 bash {{v6}}/labs/exec_shootout/dl6/bench.sh
+    DL6_BENCH_FULL=1 bash {{ v6 }}/labs/exec_shootout/dl6/bench.sh
 
 # retraction maintenance bench (DRed in-place vs refCount recompute), grid 45x45
 # numbers banked in labs/exec_shootout/dl6/FACTS.dredland.md
 dl6-dred-bench:
-	cd {{v6}}/labs/exec_shootout/dl6 && bash bench.sh && node --experimental-transform-types incbench.ts "$PWD/.compiled/reachability.ts" 45
+    cd {{ v6 }}/labs/exec_shootout/dl6 && bash bench.sh && node --experimental-transform-types incbench.ts "$PWD/.compiled/reachability.ts" 45
 
 # rust execution-strategy shootout (interp/rxgraph/mono), chain/grid/layered at 10k/100k/1M
 # standings: labs/exec_shootout/STANDINGS.md (expect: chain 10k mono fp rows/sec ~7e7)
 shootout work_dir="/tmp/sprefa-shootout":
-	cd {{v6}}/labs/exec_shootout && cargo build --release --manifest-path harness/Cargo.toml && cargo build --release --manifest-path interp/Cargo.toml && cargo build --release --manifest-path rxgraph/Cargo.toml && cargo build --release --manifest-path mono/Cargo.toml && mkdir -p {{work_dir}} && ./harness/target/release/harness --engines interp/target/release/interp,rxgraph/target/release/rxgraph,mono/target/release/mono --scales 10000,100000,1000000 --measure-builds --work {{work_dir}}
+    cd {{ v6 }}/labs/exec_shootout && cargo build --release --manifest-path harness/Cargo.toml && cargo build --release --manifest-path interp/Cargo.toml && cargo build --release --manifest-path rxgraph/Cargo.toml && cargo build --release --manifest-path mono/Cargo.toml && mkdir -p {{ work_dir }} && ./harness/target/release/harness --engines interp/target/release/interp,rxgraph/target/release/rxgraph,mono/target/release/mono --scales 10000,100000,1000000 --measure-builds --work {{ work_dir }}
 
 # the house scale-test rig (engines/*.sh emit a shared CSV protocol)
 bench:
-	cd {{v6}}/sprefa-store/bench && bash run.sh
+    cd {{ v6 }}/sprefa-store/bench && bash run.sh
 
 # the language-agnostic CLI bench: one contract any engine implementation can
 # satisfy, tick-log byte-diff against a referee, standings over the real
@@ -395,9 +395,52 @@ bench:
 #  s1/10k, s1/100k, s2/10k, s2/100k and s3/1k, where the swipl REFERENCE engine
 #  exceeds its budget; they grade only while `just sweep`'s artifacts record
 #  corpus-wide oracle agreement, and go no_reference + exit 1 otherwise.
-#  ~5 min, half of it the swipl budgets running out.)
+# ~5 min, half of it the swipl budgets running out.)
 bench-cli:
-	cd {{v6}}/bench-cli && bash bench.sh
+    cd {{ v6 }}/bench-cli && bash bench.sh
+
+# ── the consolidated perf battery ──
+#
+# ONE command that runs every perf bench in the repo, reusing each bench's own
+# recipe (just shootout / dl6-bench-full / ...) rather than restating its
+# command line. Row-by-row documentation of every bench lives at
+# v6/labs/BENCHMARKS.md (TOC + purpose + history + budget per bench).
+#
+# Every leg:
+#   * echoes a ~ten-word purpose header (also printed by lab/BENCHMARKS.md);
+#   * runs under a named run-capped budget (failure-modes class 38) so a hung
+#     bench is killed with exit 124, never waited on;
+#   * prints its own wall time.
+# A failing leg does NOT abort the battery: it is echoed with its exit status
+# and the batch continues, so a broken bench is reported and not silently
+# dropped or commented out.
+#
+# The store rig is the one bench with two depths. Its full scale ladder
+# (SCALES=2x200..14x80000 + the 9-cell TSV2/V1 ladders) runs past 3 min, so
+# perf-all drives the rig at its SMALLEST scale and the full ladder lives at
+# `just perf-all-deep` (set RIG_SCALES=full to switch). Budget defaults below
+# were set against the measured wall on the dev machine when perf-all landed;
+# each is deliberately loose (this batch costs minutes, so a tight multiple
+# would be measuring machine load rather than the work).
+perf-all:
+	@echo "=== ATLAS: every leg below is documented at v6/labs/BENCHMARKS.md ==="
+	@echo "=== shootout: in-RAM rust engines, fixpoint derived rows/sec ==="
+	@{ start=$(date +%s); if {{ capped }} "${PERF_SHOOTOUT_S:-3600}" just --justfile {{ v6 }}/justfile shootout; then st=0; else st=$?; fi; end=$(date +%s); echo "==> shootout wall $((end-start))s (exit $st)"; }
+	@echo "=== dl6-bench-full: emitted prolog runtime, grid/layered/chain build ==="
+	@{ start=$(date +%s); if {{ capped }} "${PERF_DL6_FULL_S:-3600}" just --justfile {{ v6 }}/justfile dl6-bench-full; then st=0; else st=$?; fi; end=$(date +%s); echo "==> dl6-bench-full wall $((end-start))s (exit $st)"; }
+	@echo "=== dl6-dred-bench: in-place DRed vs refCount, incremental ticks ==="
+	@{ start=$(date +%s); if {{ capped }} "${PERF_DRED_S:-3600}" just --justfile {{ v6 }}/justfile dl6-dred-bench; then st=0; else st=$?; fi; end=$(date +%s); echo "==> dl6-dred-bench wall $((end-start))s (exit $st)"; }
+	@echo "=== dl6-budget: budget cell, grid fixpoint time + RSS ceilings ==="
+	@{ start=$(date +%s); if {{ capped }} "${PERF_BUDGET_S:-3600}" just --justfile {{ v6 }}/justfile dl6-budget; then st=0; else st=$?; fi; end=$(date +%s); echo "==> dl6-budget wall $((end-start))s (exit $st)"; }
+	@echo "=== store-rig: hermetic engines, retract (small scale; perf-all-deep = full ladder) ==="
+	@{ start=$(date +%s); if [ "${RIG_SCALES:-small}" = "full" ]; then {{ capped }} "${PERF_RIG_S:-7200}" just --justfile {{ v6 }}/justfile bench; else {{ capped }} "${PERF_RIG_S:-3600}" env SCALES="2x200" TSV2_SCALES="1x1000" V1_SCALES="1x1000" just --justfile {{ v6 }}/justfile bench; fi; st=$?; end=$(date +%s); echo "==> store-rig wall $((end-start))s (exit $st)"; }
+	@echo "=== profile_dred: single cycle-safe retract, per-phase flame numbers ==="
+	@{ start=$(date +%s); if {{ capped }} "${PERF_PROFILE_S:-3600}" bash -c 'cd {{ v6 }}/sprefa-store && cargo run --quiet --release --example profile_dred'; then st=0; else st=$?; fi; end=$(date +%s); echo "==> profile_dred wall $((end-start))s (exit $st)"; }
+
+# perf-all, but the store rig runs its FULL scale ladder (all engines over the
+# SCALES=2x200..14x80000 default plus the 9-cell TSV2/V1 ladders); minutes longer.
+perf-all-deep:
+	RIG_SCALES=full just --justfile {{ v6 }}/justfile perf-all
 
 # ── batteries ──
 
@@ -410,7 +453,7 @@ green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test im
 # verdicts, one ordered PASS/FAIL table.
 # (expect: GREEN ALL HOLDS: 31 legs, exit 0; ~177s vs ~254s one at a time)
 green-all:
-	bash {{v6}}/tools/green-parallel.sh
+    bash {{ v6 }}/tools/green-parallel.sh
 
 # the original one-leg-at-a-time chain, kept for bisecting a parallel-only red
 green-all-serial: green dl6-budget endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
