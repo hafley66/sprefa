@@ -419,7 +419,7 @@ column_type_at_decl(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
        % witness in one is not a conflict. Running the cross-check anyway made
        % `entry(second, 4)` in a json column read as decl_type_conflicts_
        % witness(entry/2, 2, json, int), refusing a legal document.
-       ; ( Storage == json ; Storage = list(_) )
+       ; ( Storage == json ; Storage = json_list(_) )
        -> Type = Storage
        % Ruling type_gate_widening: a NUMERIC literal of the other numeric kind
        % is not a contradiction at one column, because affinity settles it --
@@ -821,9 +821,9 @@ merge_type(ref(Type), ref(Type), ref(Type)) :- !.
 merge_type(json, none, json) :- !.
 merge_type(none, json, json) :- !.
 merge_type(json, json, json) :- !.
-merge_type(list(X), none, list(X)) :- !.
-merge_type(none, list(X), list(X)) :- !.
-merge_type(list(X), list(X), list(X)) :- !.
+merge_type(json_list(X), none, json_list(X)) :- !.
+merge_type(none, json_list(X), json_list(X)) :- !.
+merge_type(json_list(X), json_list(X), json_list(X)) :- !.
 merge_type(Left, Right, _) :-
     ( Left = ref(_) ; Right = ref(_) ), !,
     throw(unsupported_construct(column_ref_type_conflict(Left, Right))).

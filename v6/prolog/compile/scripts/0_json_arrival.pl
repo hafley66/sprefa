@@ -33,7 +33,7 @@ schedule_value(Context, Rel, Type, Value, Term) :-
     ).
 
 json_arrival_type(json).
-json_arrival_type(list(_)).
+json_arrival_type(json_list(_)).
 
 structured_arrival_value(Type, Value) :-
     Type \== none,

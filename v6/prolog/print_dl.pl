@@ -311,9 +311,9 @@ print_host_column(col(Name, Type), Text) :-
     print_column_type(Type, TypeText),
     format(atom(Text), "~w: ~w", [Name, TypeText]).
 
-% The retained internal term stays list(T); only the text-door rendering spells
-% it json_list(T) (hard rename, no alias).
-print_column_type(list(Element), Text) :-
+% The retained internal term is json_list(T); the text door renders it with the
+% same spelling.
+print_column_type(json_list(Element), Text) :-
     !,
     print_column_type(Element, InnerText),
     format(atom(Text), "json_list(~w)", [InnerText]).

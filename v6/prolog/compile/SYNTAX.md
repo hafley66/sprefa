@@ -256,7 +256,7 @@ declared struct becomes a dictionary join, a `json` column becomes json1 SQL.
 | `$(Var)` as a VALUE | `$name` | alias for the bare variable (text door) | same ruling |
 | `'**'` as a KEY | `**` | descent at any depth, root included | `descent_depth_cap = uncapped` |
 | quoted key | `{'name': v}` / `{"name": v}` | literal label, never a hole | `string_quote = both_parse` |
-| `list(T)` | `tags: list(text)` | typed view over the json array carrier | `list_spelling = list_of_type` |
+| `json_list(T)` | `tags: json_list(text)` | typed view over the json array carrier | `list_spelling = list_of_type` |
 | `Var : Type` as a VALUE | `{stars: Stars: int}` | typed capture: bind AND require the json type | `decl_column_spelling`, one level down |
 | tagged brace | `Tag{...}` / `_{...}` | `unsupported_construct(tagged_brace_reserved(Tag))` | reserved |
 

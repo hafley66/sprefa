@@ -1192,7 +1192,7 @@ catalog_one_rel_storage(Mode, [ColumnName | RestColumns], ColumnTypes,
     Rows = [StorageRow | RestRows].
 
 %! catalog_rows(+ModuleName, +Rules, +RelPlans, -Rows) is det.
-%   The relplan carries each column's full type, ref(_) and list(_) included.
+%   The relplan carries each column's full type, ref(_) and json_list(_) included.
 %   The decl half only; the plane half is appended by catalog_all_rows/10.
 catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
     catalog_decl_rows(ModuleName, Rules, RelPlans, [], AllRows, _).
@@ -1314,7 +1314,7 @@ catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
     NextId is Id + 1,
     catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0, 0, 0, '', '', '') | Acc], Rows).
 
-% Distinct list(Element) column types, in first-appearance order, inner before
+% Distinct json_list(Element) column types, in first-appearance order, inner before
 % outer so a nested list's own row id exists before the outer row references it.
 catalog_list_types(RelPlans, OrderedTypes) :-
     findall(ListType,
@@ -1329,9 +1329,9 @@ catalog_list_types(RelPlans, OrderedTypes) :-
     keysort(Keyed, Sorted),
     pairs_values(Sorted, OrderedTypes).
 
-% Every list(...) type a column is or nests, inner-most last in the tail, so
-% nested list/list(text) reaches the catalog as its own row before the column.
-list_subtypes(list(Element), [list(Element) | More]) :- list_subtypes(Element, More).
+% Every json_list(...) type a column is or nests, inner-most last in the tail, so
+% nested json_list/json_list(text) reaches the catalog as its own row before the column.
+list_subtypes(json_list(Element), [json_list(Element) | More]) :- list_subtypes(Element, More).
 list_subtypes(_, []).
 
 distinct_order([], _, []).
@@ -1341,24 +1341,24 @@ distinct_order([X | Rest], Seen0, Out) :-
     ;  distinct_order(Rest, [X | Seen0], OutTail), Out = [X | OutTail]
     ).
 
-list_type_depth(list(Inner), Depth) :- !, list_type_depth(Inner, InnerDepth), Depth is InnerDepth + 1.
+list_type_depth(json_list(Inner), Depth) :- !, list_type_depth(Inner, InnerDepth), Depth is InnerDepth + 1.
 list_type_depth(_, 0).
 
 % A list row's type_id is the ELEMENT's id: a nested list resolves through the
 % already-built list id map, anything else through the primitive table.
 catalog_list_rows([], ListIdMap, _Id, [], ListIdMap).
 catalog_list_rows([ListType | Rest], ListIdMap0, Id, [Row | MoreRows], ListIdMap) :-
-    ListType = list(Element),
+    ListType = json_list(Element),
     list_element_type_id(Element, ListIdMap0, ElementId),
     format(atom(LocalName), '~w', [ListType]),
     NextId is Id + 1,
-    Row = row(Id, 0, 0, LocalName, list, ElementId, 0, 0, '', '', ''),
+    Row = row(Id, 0, 0, LocalName, json_list, ElementId, 0, 0, '', '', ''),
     catalog_list_rows(Rest, [ListType-Id | ListIdMap0], NextId, MoreRows, ListIdMap).
 
 list_row_id(ListIdMap, ListType, Id) :- memberchk(ListType-Id, ListIdMap).
 
-list_element_type_id(list(Inner), ListIdMap, TypeId) :- !,
-    list_row_id(ListIdMap, list(Inner), TypeId).
+list_element_type_id(json_list(Inner), ListIdMap, TypeId) :- !,
+    list_row_id(ListIdMap, json_list(Inner), TypeId).
 list_element_type_id(Element, _ListIdMap, TypeId) :-
     catalog_type_id(Element, TypeId).
 
@@ -1506,16 +1506,16 @@ catalog_column_rows([ColumnName | RestColumns], ColumnTypes,
     ColumnRow = row(Id0, RelId, Ordinal, ColumnName, column, TypeId, 0, ModuleId,
                     ColumnHId, '', '').
 
-% ref(_) and list(_) reach here already resolved by column_storage/3, so the
+% ref(_) and json_list(_) reach here already resolved by column_storage/3, so the
 % relplan column type is the authority; nothing needs the declaration again.
-catalog_column_type_id(list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
-    list_row_id(ListIdMap, list(Element), TypeId).
+catalog_column_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
+    list_row_id(ListIdMap, json_list(Element), TypeId).
 catalog_column_type_id(ref(Name), RelIdMap, _ListIdMap, TypeId) :- !,
     rel_row_id(RelIdMap, Name, TypeId).
 catalog_column_type_id(ColumnType, _RelIdMap, _ListIdMap, TypeId) :-
     catalog_type_id(ColumnType, TypeId).
 
-% ref(_) and list(_) are resolved upstream, to a target rel id and a synthetic
+% ref(_) and json_list(_) are resolved upstream, to a target rel id and a synthetic
 % row id; any other boundary resolves to 0.
 catalog_type_id(text, 1) :- !.
 catalog_type_id(int, 2) :- !.
@@ -1994,7 +1994,7 @@ column_def(_, QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT
 % A list column stores the same TEXT json carrier as a json column, and adds
 % the array-ness CHECK the storage kind now survives to emit. The ARRAY-ness
 % predicate is verified on both SQLite builds this repo runs.
-column_def(_, QuotedColumn, list(_), Def) :- !,
+column_def(_, QuotedColumn, json_list(_), Def) :- !,
     format(atom(Def),
            '~w TEXT NOT NULL CHECK (json_valid(~w) AND json_type(~w) = \'array\')',
            [QuotedColumn, QuotedColumn, QuotedColumn]).
@@ -2531,7 +2531,7 @@ json_decode_goal(RelPlans, BodyGoals, decode(Source, _)) :-
     nth1(Position, Args, Argument),
     Argument == Source,
     ( nth1(Position, ColumnTypes, json)
-    ; nth1(Position, ColumnTypes, list(_))
+    ; nth1(Position, ColumnTypes, json_list(_))
     ),
     !.
 
@@ -4139,7 +4139,7 @@ ir_column_storage(_, bool, bool, integer, direct) :- !.
 ir_column_storage(_, int, int, integer, direct) :- !.
 ir_column_storage(_, float, float, real, direct) :- !.
 ir_column_storage(_, json, json, text, direct) :- !.
-ir_column_storage(_, list(_), list, text, direct) :- !.
+ir_column_storage(_, json_list(_), list, text, direct) :- !.
 % An interned text column reports storage `integer`; without the encoding slot
 % the pair {type: text, storage: integer} is uninterpretable to an executor.
 ir_column_storage(Mode, text, text, integer, dict(Dictionary)) :-
@@ -4612,7 +4612,7 @@ compile_json_decodes([decode(Source, Pattern) | Rest], Index0, Index,
     ->  true
     ;   throw(unsupported_construct(decode_source_not_bound(Source)))
     ),
-    (   ( SourceType == json ; SourceType = list(_) )
+    (   ( SourceType == json ; SourceType = json_list(_) )
     ->  true
     ;   throw(unsupported_construct(decode_source_not_struct(decode(Source, Pattern))))
     ),
@@ -4989,7 +4989,7 @@ aggregate_select_expr(_, agg(Kind, _), _, _, _) :-
 
 json_group_array_value_sql(json, ValueSql, AggregateValueSql) :- !,
     format(atom(AggregateValueSql), 'json(~w)', [ValueSql]).
-json_group_array_value_sql(list(_), ValueSql, AggregateValueSql) :- !,
+json_group_array_value_sql(json_list(_), ValueSql, AggregateValueSql) :- !,
     format(atom(AggregateValueSql), 'json(~w)', [ValueSql]).
 json_group_array_value_sql(_, ValueSql, ValueSql).
 
@@ -5402,7 +5402,7 @@ canonical_column_expr(Column, json, QuotedColumn) :-
     quote_ident(Column, QuotedColumn).
 % A list column's stored text is its own array text, rendered as-is like a
 % json column's.
-canonical_column_expr(Column, list(_), QuotedColumn) :-
+canonical_column_expr(Column, json_list(_), QuotedColumn) :-
     !,
     quote_ident(Column, QuotedColumn).
 % THE GUARD TESTS FOR THE TAGGED TERM, not merely for an object. `json_valid`
@@ -5494,7 +5494,7 @@ boot_column_slot(Mode, Decls, Types, ColumnType, Value, slot_desc(Slot, Params),
         % binds the rendered text rather than the raw braces term. Same
         % canonicalizer, same reason as the arrival seam. A list column is the
         % same carrier, so it binds the rendered array text the same way.
-        ( ColumnType == json ; ColumnType = list(_) )
+        ( ColumnType == json ; ColumnType = json_list(_) )
     ->  canonical_json_text(Value, Text),
         Slot = '?', Params = [Text], Statements = []
     ;   Slot = '?', Params = [Value], Statements = []

@@ -270,11 +270,11 @@ fixture(head_column_int_widens_into_float,
   [],
   [ final(scaled/1, [ scaled(4) ]) ]).
 
-% Class 7c: the wall reads STORAGE, not spelling. `list(text)` and `json` are
+% Class 7c: the wall reads STORAGE, not spelling. `json_list(text)` and `json` are
 % one column kind, so a value moving between them is not a mix and the rule
 % loads.
 fixture(head_column_list_and_json_share_storage,
-  prog([ col_type(source/1, items, list(text)),
+  prog([ col_type(source/1, items, json_list(text)),
          col_type(copied/1, items, json) ],
        [ (copied(Items) <- source(Items)) ]),
   [ source([a, b]) ],

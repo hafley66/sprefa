@@ -150,7 +150,7 @@ fixture(json_empty_object_pattern_matches_any_object,
   [],
   [ final(is_object/1, [ is_object(first), is_object(third) ]) ]).
 
-% ruling list_spelling = list_of_type. `list(text)` is a TYPED VIEW over the
+% ruling list_spelling = list_of_type. `json_list(text)` is a TYPED VIEW over the
 % json carrier: one column in one row holds the whole array, and the array
 % fans out into rows when a rule queries it. The lab graded the alternatives
 % (cons cells, indexed rows) on five axes and measured one 1000-element list
@@ -158,7 +158,7 @@ fixture(json_empty_object_pattern_matches_any_object,
 % rendering byte-identically.
 fixture(list_column_fans_out_through_spread,
   prog([col_type(repo/2, name, text),
-        col_type(repo/2, tags, list(text)),
+        col_type(repo/2, tags, json_list(text)),
         col_type(repo_tag/2, name, text),
         col_type(repo_tag/2, tag, text)],
        [ (repo_tag(Name, Tag) <- repo(Name, Tags), decode(Tags, spread(Tag))) ]),
