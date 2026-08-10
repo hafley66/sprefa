@@ -2,7 +2,9 @@
 :- module(emit_dd_plan,
           [ emit_dd_plan/2,
             dd_plan_text/2,
-            fixture_dd_plan_text/3
+            fixture_dd_plan_text/3,
+            fixture_dd_plan_json_text/3,
+            emit_fixture_dd_plan_json/3
           ]).
 
 :- op(1150, xfx, <-).
@@ -14,11 +16,28 @@
                               aggregate_head_template/2]).
 :- use_module('../0_rel_record', [relplan_parts/6, relplan_columns/3]).
 :- use_module('../lower', [lower_program/2]).
+:- use_module(library(http/json), [json_write_dict/3]).
 
 fixture_dd_plan_text(FixtureFile, Name, Text) :-
     once(( read_fixture_term(FixtureFile, Name, Term, Bindings),
            program_plan(Term-Bindings, Plan),
            dd_plan_text(Plan, Text) )).
+
+emit_fixture_dd_plan_json(FixtureFile, Name, Path) :-
+    fixture_dd_plan_json_text(FixtureFile, Name, Text),
+    setup_call_cleanup(open(Path, write, Stream),
+                       format(Stream, '~s', [Text]),
+                       close(Stream)).
+
+fixture_dd_plan_json_text(FixtureFile, Name, Text) :-
+    once(( read_fixture_term(FixtureFile, Name,
+                             fixture(Name, Program, Initial, Schedule, Expected), Bindings),
+           program_plan(fixture(Name, Program, Initial, Schedule, Expected)-Bindings, Plan),
+           lower_program(Plan, Lowered),
+           dd_plan_term(Plan, Lowered, DdPlan),
+           dd_plan_json_dict(Name, Lowered, DdPlan, Initial, Schedule, Dict),
+           with_output_to(string(Text),
+                          ( json_write_dict(current_output, Dict, [width(0)]), nl )) )).
 
 emit_dd_plan(Plan, Path) :-
     dd_plan_text(Plan, Text),
@@ -32,6 +51,47 @@ dd_plan_text(Plan, Text) :-
     with_output_to(string(Text),
                    write_term(DdPlan, [quoted(true), numbervars(true),
                                        fullstop(true), nl(true)])).
+
+dd_plan_json_dict(Name,
+                  lowered(_, Ddl, _, _, _LevelStatements, DeltaStatements, _, _),
+                  dd_plan(_, rels(Rels), _, operators(Operators), _, tick_order(TickOrder)),
+                  Initial, Schedule,
+                  _{name:NameText, ddl:Ddl, rels:JsonRels, rules:Rules,
+                    initial:JsonInitial, schedule:JsonSchedule, tick_order:JsonTickOrder}) :-
+    atom_string(Name, NameText),
+    maplist(json_rel(DeltaStatements), Rels, JsonRels),
+    maplist(json_rule, Operators, Rules0),
+    exclude(=(none), Rules0, Rules),
+    maplist(json_row, Initial, JsonInitial),
+    maplist(json_tick, Schedule, JsonSchedule),
+    maplist(json_phase, TickOrder, JsonTickOrder).
+
+json_phase(phase(Phase), Text) :- atom_string(Phase, Text).
+
+json_rel(DeltaStatements, rel(Ref, Columns, _),
+         _{name:Name, columns:Columns, select_all:SelectAll}) :-
+    ref_name(Ref, Name),
+    member(deltastmt(Ref, SelectAll, _, _, _), DeltaStatements).
+
+json_rule(op(Id, map(Ref), sqlite(_, Statements)),
+          _{id:IdText, head:Head, delete:Delete, inserts:Inserts}) :-
+    member(levelstmt(Ref, Delete, Inserts, _, _, _, _), Statements),
+    atom_string(Id, IdText),
+    ref_name(Ref, Head),
+    !.
+json_rule(_, none).
+
+json_tick(Rows, JsonRows) :- maplist(json_signed_row, Rows, JsonRows).
+
+json_signed_row(+Row, Dict) :- json_row(Row, RowDict), put_dict(sign, RowDict, 1, Dict).
+json_signed_row(-Row, Dict) :- json_row(Row, RowDict), put_dict(sign, RowDict, -1, Dict).
+
+json_row(Row, _{rel:Name, values:Args}) :-
+    Row =.. [Functor | Args],
+    functor(Row, Functor, Arity),
+    format(atom(Name), '~w/~w', [Functor, Arity]).
+
+ref_name(Functor/Arity, Name) :- format(atom(Name), '~w/~w', [Functor, Arity]).
 
 dd_plan_term(plan(Name, prog(_, Rules), _, RelPlans, _, RuleOrder, _, _, _),
              Lowered,

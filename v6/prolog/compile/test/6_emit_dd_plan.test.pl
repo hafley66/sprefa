@@ -1,6 +1,6 @@
 :- begin_tests(emit_dd_plan).
 
-:- use_module('../6_emit_dd_plan', [fixture_dd_plan_text/3]).
+:- use_module('../6_emit_dd_plan', [fixture_dd_plan_text/3, fixture_dd_plan_json_text/3]).
 
 dd_fixture_file(Base, File) :-
     test_dir_fact(Here),
@@ -9,6 +9,11 @@ dd_fixture_file(Base, File) :-
 dd_golden(Name, Text) :-
     test_dir_fact(Here),
     atomic_list_concat([Here, '/dd/', Name, '.dd.pl'], Path),
+    read_file_to_string(Path, Text, []).
+
+dd_json_golden(Name, Text) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/dd/', Name, '.dd.json'], Path),
     read_file_to_string(Path, Text, []).
 
 test(retraction_only_tick_retracts_level_view) :-
@@ -25,6 +30,18 @@ test(float_avg_is_grouped) :-
     dd_fixture_file('5_value_plane.pl', Fixture),
     fixture_dd_plan_text(Fixture, float_avg_is_grouped, Text),
     dd_golden(float_avg_is_grouped, Text).
+
+test(json_twins_are_deterministic) :-
+    dd_fixture_file('engine_core.pl', EngineFixture),
+    dd_fixture_file('5_value_plane.pl', ValueFixture),
+    forall(member(Fixture-Name,
+                  [ EngineFixture-retraction_only_tick_retracts_level_view,
+                    ValueFixture-float_exact_join_has_no_epsilon,
+                    ValueFixture-float_avg_is_grouped ]),
+           ( fixture_dd_plan_json_text(Fixture, Name, First),
+             fixture_dd_plan_json_text(Fixture, Name, Second),
+             First == Second,
+             dd_json_golden(Name, First) )).
 
 test(every_operator_has_a_wire) :-
     dd_fixture_file('5_value_plane.pl', Fixture),
