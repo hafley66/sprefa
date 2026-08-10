@@ -1,0 +1,157 @@
+{
+  "$defs": {
+    "__gen__list_text_df210f232c1299bd": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__gen__list_text_df210f232c1299bd__member": {
+      "additionalProperties":false,
+      "properties": {
+        "idx": {"type":"integer"},
+        "list_id": {"type":"integer"},
+        "value": {"type":"string"}
+      },
+      "required": ["idx", "list_id", "value" ],
+      "type":"object"
+    },
+    "__opt_int_none": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__opt_int_some": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"integer"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "__opt_int_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "__opt_text_none": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__opt_text_some": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"string"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "__opt_text_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "author_audit": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "bucket": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "bucket__entries": {
+      "additionalProperties":false,
+      "properties": {
+        "__gen__list_text_df210f232c1299bd_id": {"type":"integer"},
+        "bucket_id": {"type":"integer"}
+      },
+      "required": ["bucket_id", "__gen__list_text_df210f232c1299bd_id" ],
+      "type":"object"
+    },
+    "metric": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"integer"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "metric_copy": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"integer"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "person": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["id", "name" ],
+      "type":"object"
+    },
+    "priority_high": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "priority_low": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "priority_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "review": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "review__reviewer": {
+      "additionalProperties":false,
+      "properties": {"person_id": {"type":"integer"},"review_id": {"type":"integer"}},
+      "required": ["review_id", "person_id" ],
+      "type":"object"
+    },
+    "seen_bucket": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"list_id": {"type":"integer"}},
+      "required": ["id", "list_id" ],
+      "type":"object"
+    },
+    "seen_review": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["id", "name" ],
+      "type":"object"
+    },
+    "seen_ticket": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "ticket": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"title": {"type":"integer"}},
+      "required": ["id", "title" ],
+      "type":"object"
+    },
+    "ticket_copy": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"title": {"type":"integer"}},
+      "required": ["id", "title" ],
+      "type":"object"
+    }
+  },
+  "$id":"generic_expansion_end_to_end#af741739fcc39708",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -702,3 +702,21 @@ ruling(export_signifier_pub, pub_use_rust_spelling, user,
 % parameters), not a separate macro layer.
 ruling(at_not_macro_escape, curry_lists_quarantined_generics_comptime_parens, user,
        'user 2026-08-10: "i dont want @ to be something we make as exclusion to language like rust and vec! for arity sake, but currying and lists are to be quarantined for initial use for the reason that we want symmetric rhs types, our generics will be comptime parens".').
+
+% 2026-08-10: list generic surface. Named constructors ship as the lab built
+% them; an options grammar for list flavors is deferred. list(T) is the bare
+% constructor, distinct from the three named flavors.
+ruling(list_surface_named_constructors, named_constructors_options_deferred, user,
+       'user 2026-08-10: "D4 = C, named constructors as the lab built them, NO options grammar now".').
+
+% 2026-08-10: bare list(T) default combo. A bare list(T) column lowers to the
+% relational dense+owned+sequence flavor: one list entity plus its member
+% table, referenced by the entity id column.
+ruling(list_bare_default_dense_owned_sequence, bare_list_is_dense_owned_sequence, user,
+       'user 2026-08-10: "Bare list(T) = relational dense+owned+sequence (the lab''s default combo)".').
+
+% 2026-08-10: list flavor set v1. Four constructors ship: list(T),
+% list_entity_dense_sequence(T), list_interned_set(T), list_entity_linked_sequence(T).
+% json_list(T) is the inline-JSON spelling and does not collide with list(T).
+ruling(list_flavor_set_v1, four_lab_constructors, user,
+       'user 2026-08-10: "Ship the lab''s four constructors: list(T), list_entity_dense_sequence(T), list_interned_set(T), list_entity_linked_sequence(T)". json_list(T) is the inline-JSON term at every layer (main 1d0e294a).').

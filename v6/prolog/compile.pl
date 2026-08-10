@@ -43,6 +43,7 @@
 :- use_module('0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
 :- use_module('0_rel_record', [rel_cols/4]).
+:- use_module('0_generic_expand', [generated_generic_name/1]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -269,7 +270,8 @@ reserved_namespace_violation(Decls, Rules, Name) :-
     ;   member(Name/_, RuleRefs),
         reserved_namespace_name(Name),
         \+ compiler_owned_contract(Name),
-        \+ option_enum_generated_name(Name)
+        \+ option_enum_generated_name(Name),
+        \+ generated_generic_name(Name)
     ),
     !.
 

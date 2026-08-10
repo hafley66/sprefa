@@ -159,12 +159,31 @@ grade_one(File, Name, Term, Bindings, OutDir, Status) :-
     format(atom(SweepTermOut), '~w/~w.sweep.ts', [OutDir, Name]),
     catch(quiet(compile_fixture(Name, File, SweepTermOut)), TermDoorError, true),
     ( var(TermDoorError)
-    -> grade_text_door(Name, Term, Bindings, OutDir, Status)
+    -> ( term_door_only_fixture(Term)
+         -> Status = skipped
+         ;  grade_text_door(Name, Term, Bindings, OutDir, Status)
+       )
     ; classify_term_door_error(Name, TermDoorError, Status)
     ).
 
 classify_term_door_error(_Name, unsupported_construct(_), skipped) :- !.
 classify_term_door_error(Name, Error, failure(Name, Error)).
+
+% The list-flavor constructors are term-door-only (no surface spelling; the
+% json_list rename removed bare `list`), so their .dl6 render cannot re-parse.
+term_door_only_fixture(fixture(_, prog(Decls, _), _, _, _)) :-
+    term_door_only_in(Decls).
+term_door_only_fixture(fixture(_, program(Decls, _, _), _, _, _)) :-
+    term_door_only_in(Decls).
+
+term_door_only_in(Decls) :-
+    member(col_type(_, _, Type), Decls),
+    term_door_only_type(Type).
+term_door_only_type(list(_)).
+term_door_only_type(list_entity_dense_sequence(_)).
+term_door_only_type(list_interned_set(_)).
+term_door_only_type(list_entity_linked_sequence(_)).
+term_door_only_type(option(T)) :- term_door_only_type(T).
 
 % The TermOut reference build below is deliberately re-compiled with EMPTY
 % Initial/Schedule ([], []) -- same as the original text_door_receipt.pl --
