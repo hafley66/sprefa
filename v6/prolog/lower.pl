@@ -851,37 +851,38 @@ catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
 % lowering did not create. That is the whole point of this step.
 catalog_plane_rows(Mode, _ModuleName, RelPlans, DepartureRefs, PreRefs,
                    Types, RuleLevelStatements, Decls,
-                   ctx(ModuleHash, ModuleId, RelIdMap, _ListIdMap, StartId),
+                   ctx(Modules, RelIdMap, _ListIdMap, StartId),
                    PlaneRows) :-
     catalog_rel_plane_rows(Mode, RelPlans, DepartureRefs, PreRefs, RelIdMap,
-                           ModuleHash, ModuleId, StartId, RelPlaneRows,
+                           Modules, StartId, RelPlaneRows,
                            IdAfterRel),
-    dict_plane_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash, ModuleId,
+    dict_plane_rows(Mode, RelPlans, Types, RelIdMap, Modules,
                     IdAfterRel, DictRows, IdAfterDict),
     catalog_level_plane_rows(RelPlans, RuleLevelStatements, RelIdMap,
-                             ModuleHash, ModuleId, IdAfterDict, LevelRows,
+                             Modules, IdAfterDict, LevelRows,
                              IdAfterLevel),
-    catalog_port_plane_rows(Decls, RelIdMap, ModuleHash, ModuleId,
+    catalog_port_plane_rows(Decls, RelIdMap, Modules,
                             IdAfterLevel, PortRows, IdAfterPort),
-    catalog_storage_rows(Mode, RelPlans, RelIdMap, ModuleHash, ModuleId,
+    catalog_storage_rows(Mode, RelPlans, RelIdMap, Modules,
                          IdAfterPort, StorageRows, _IdAfterStorage),
     append([RelPlaneRows, DictRows, LevelRows, PortRows, StorageRows],
            PlaneRows).
 
 % ── per-rel planes ─────────────────────────────────────────────────────────
 catalog_rel_plane_rows(_Mode, [], _DepartureRefs, _PreRefs, _RelIdMap,
-                       _ModuleHash, _ModuleId, Id, [], Id).
+                       _Modules, Id, [], Id).
 catalog_rel_plane_rows(Mode, [RelPlan | Rest], DepartureRefs, PreRefs,
-                       RelIdMap, ModuleHash, ModuleId, Id0, Rows, IdFinal) :-
+                       RelIdMap, Modules, Id0, Rows, IdFinal) :-
     relplan_parts(RelPlan, Ref, _Kind, Columns, _KeyOrNone, ColumnTypes),
     Ref = Name/RelArity,
     rel_row_id(RelIdMap, Name, RelId),
-    rel_h_id(ModuleHash, Name, RelArity, RelHId),
+    rel_module(Modules, Name, RelHash, RelModuleId),
+    rel_h_id(RelHash, Name, RelArity, RelHId),
     catalog_one_rel_planes(Mode, Ref, Columns, ColumnTypes, RelId, RelHId,
-                           ModuleId, DepartureRefs, PreRefs, Id0,
+                           RelModuleId, DepartureRefs, PreRefs, Id0,
                            ThisRows, Id1),
     catalog_rel_plane_rows(Mode, Rest, DepartureRefs, PreRefs, RelIdMap,
-                           ModuleHash, ModuleId, Id1, RestRows, IdFinal),
+                           Modules, Id1, RestRows, IdFinal),
     append(ThisRows, RestRows, Rows).
 
 % The always-on frontier family, the departure frontier where listened, the
@@ -976,8 +977,9 @@ catalog_view_plane_rows(Mode, Name, Columns, ColumnTypes, RelId, RelHId,
     ).
 
 % ── dictionary planes (per module) ─────────────────────────────────────────
-dict_plane_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash, ModuleId, Id0,
+dict_plane_rows(Mode, RelPlans, Types, RelIdMap, Modules, Id0,
                 Rows, IdFinal) :-
+    Modules = modules(ModuleHash, ModuleId, _),
     (   catalog_has_interned_column(Mode, RelPlans)
     ->  rel_h_id(ModuleHash, '__str', 2, StrHId),
         StrRow = row(Id0, ModuleId, 0, '__str', dictionary, 0, 2, ModuleId,
@@ -986,8 +988,8 @@ dict_plane_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash, ModuleId, Id0,
         StrRows = [StrRow]
     ;   StrRows = [], IdAfterStr = Id0
     ),
-    catalog_ref_dict_rows(Mode, RelPlans, Types, RelIdMap, ModuleHash,
-                          ModuleId, IdAfterStr, RefRows, IdFinal),
+    catalog_ref_dict_rows(Mode, RelPlans, Types, RelIdMap, Modules,
+                          IdAfterStr, RefRows, IdFinal),
     append(StrRows, RefRows, Rows).
 
 catalog_has_interned_column(Mode, RelPlans) :-
@@ -997,26 +999,26 @@ catalog_has_interned_column(Mode, RelPlans) :-
 
 % __ref_<Type> exists once per declared struct type, mirroring the rel_ddl/6
 % set-arm that creates the reference view.
-catalog_ref_dict_rows(_Mode, [], _Types, _RelIdMap, _ModuleHash, _ModuleId,
-                      Id, [], Id).
+catalog_ref_dict_rows(_Mode, [], _Types, _RelIdMap, _Modules, Id, [], Id).
 catalog_ref_dict_rows(Mode, [RelPlan | Rest],
-                      Types, RelIdMap, ModuleHash, ModuleId, Id0, Rows,
+                      Types, RelIdMap, Modules, Id0, Rows,
                       IdFinal) :-
     relplan_parts(RelPlan, Name/_, _, Columns, _, ColumnTypes),
     (   declared_type_name(Types, Name)
     ->  rel_row_id(RelIdMap, Name, RelId),
+        rel_module(Modules, Name, RelHash, RelModuleId),
         length(Columns, ColumnCount),
         RefCount is ColumnCount + 2,
         format(atom(RefTable), '__ref_~w', [Name]),
-        rel_h_id(ModuleHash, RefTable, RefCount, RefHId),
+        rel_h_id(RelHash, RefTable, RefCount, RefHId),
         schema_hash(Columns, ColumnTypes, none, RefSchema),
-        RefRow = row(Id0, ModuleId, 0, RefTable, dictionary, RelId, RefCount,
-                     ModuleId, RefHId, RefSchema, ''),
+        RefRow = row(Id0, RelModuleId, 0, RefTable, dictionary, RelId,
+                     RefCount, RelModuleId, RefHId, RefSchema, ''),
         Id1 is Id0 + 1,
         RefRows = [RefRow]
     ;   RefRows = [], Id1 = Id0
     ),
-    catalog_ref_dict_rows(Mode, Rest, Types, RelIdMap, ModuleHash, ModuleId,
+    catalog_ref_dict_rows(Mode, Rest, Types, RelIdMap, Modules,
                           Id1, RestRows, IdFinal),
     append(RefRows, RestRows, Rows).
 
@@ -1025,20 +1027,20 @@ catalog_ref_dict_rows(Mode, [RelPlan | Rest],
 % recursive-recursion expand/dred waves) and the aggregate family (scope, avg
 % accumulator). Existence mirrors ref_count_ddl/2 and aggregate_scope_ddl/2
 % clause for clause, keyed off the levelstmt's RefCountSql and AggregateSql.
-catalog_level_plane_rows(_RelPlans, [], _RelIdMap, _ModuleHash, _ModuleId,
-                         Id, [], Id).
-catalog_level_plane_rows(RelPlans, [Stmt | Rest], RelIdMap, ModuleHash,
-                         ModuleId, Id0, Rows, IdFinal) :-
+catalog_level_plane_rows(_RelPlans, [], _RelIdMap, _Modules, Id, [], Id).
+catalog_level_plane_rows(RelPlans, [Stmt | Rest], RelIdMap, Modules,
+                         Id0, Rows, IdFinal) :-
     Stmt = levelstmt(HeadRef, _, _, _, RefCountSql, AggregateSql, _),
     HeadRef = Name/RelArity,
     rel_row_id(RelIdMap, Name, RelId),
-    rel_h_id(ModuleHash, Name, RelArity, RelHId),
+    rel_module(Modules, Name, RelHash, RelModuleId),
+    rel_h_id(RelHash, Name, RelArity, RelHId),
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
-    catalog_one_level_stmt_planes(HeadRef, RelId, RelHId, ModuleId, Columns,
+    catalog_one_level_stmt_planes(HeadRef, RelId, RelHId, RelModuleId, Columns,
                                   ColumnTypes, RefCountSql, AggregateSql,
                                   Id0, ThisRows, Id1),
-    catalog_level_plane_rows(RelPlans, Rest, RelIdMap, ModuleHash, ModuleId,
+    catalog_level_plane_rows(RelPlans, Rest, RelIdMap, Modules,
                              Id1, RestRows, IdFinal),
     append(ThisRows, RestRows, Rows).
 
@@ -1159,9 +1161,10 @@ catalog_avg_row(ModuleId, RelId, RelHId, AccTable, ScopeColumns, _ScopeTypes,
 % declared INPUT count as arity) plus a port_response child (the response rel,
 % the declared OUTPUT count). A bind_decl mints a port row with NO response
 % child (effect-ness only from a bind at link time), its own rel in type_id.
-catalog_port_plane_rows([], _RelIdMap, _ModuleHash, _ModuleId, Id, [], Id).
-catalog_port_plane_rows([Decl | Rest], RelIdMap, ModuleHash, ModuleId,
+catalog_port_plane_rows([], _RelIdMap, _Modules, Id, [], Id).
+catalog_port_plane_rows([Decl | Rest], RelIdMap, Modules,
                         Id0, Rows, IdFinal) :-
+    Modules = modules(ModuleHash, ModuleId, _),
     (   Decl = sh_decl(Name, Inputs, Outputs, template(_)),
         atom_concat('__host_demand_', Name, DemandName),
         atom_concat('__host_response_', Name, ResponseName)
@@ -1189,7 +1192,7 @@ catalog_port_plane_rows([Decl | Rest], RelIdMap, ModuleHash, ModuleId,
         ThisRows = [BindRow]
     ;   ThisRows = [], Id2 = Id0
     ),
-    catalog_port_plane_rows(Rest, RelIdMap, ModuleHash, ModuleId, Id2,
+    catalog_port_plane_rows(Rest, RelIdMap, Modules, Id2,
                             RestRows, IdFinal),
     append(ThisRows, RestRows, Rows).
 
@@ -1198,15 +1201,16 @@ catalog_port_plane_rows([Decl | Rest], RelIdMap, ModuleHash, ModuleId,
 % is interned (interned_column/2), else raw_characters. The column j of a rel
 % whose rel row is at id R sits at R+j (catalog_column_rows/9's positional id
 % assignment), so the storage row parents on that column row's own id.
-catalog_storage_rows(_Mode, [], _RelIdMap, _ModuleHash, _ModuleId, Id, [], Id).
-catalog_storage_rows(Mode, [RelPlan | Rest], RelIdMap, ModuleHash, ModuleId,
+catalog_storage_rows(_Mode, [], _RelIdMap, _Modules, Id, [], Id).
+catalog_storage_rows(Mode, [RelPlan | Rest], RelIdMap, Modules,
                      Id0, Rows, IdFinal) :-
     relplan_parts(RelPlan, Name/RelArity, _, Columns, _, ColumnTypes),
     rel_row_id(RelIdMap, Name, RelId),
-    rel_h_id(ModuleHash, Name, RelArity, RelHId),
+    rel_module(Modules, Name, RelHash, RelModuleId),
+    rel_h_id(RelHash, Name, RelArity, RelHId),
     catalog_one_rel_storage(Mode, Columns, ColumnTypes, RelHId, RelId, 1,
-                            ModuleId, Id0, RelStorage, IdAfterRel),
-    catalog_storage_rows(Mode, Rest, RelIdMap, ModuleHash, ModuleId,
+                            RelModuleId, Id0, RelStorage, IdAfterRel),
+    catalog_storage_rows(Mode, Rest, RelIdMap, Modules,
                          IdAfterRel, RestRows, IdFinal),
     append(RelStorage, RestRows, Rows).
 
@@ -1255,36 +1259,72 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     ModuleId is ListStartId + ListCount,
     ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash, '', ''),
     SpliceStartId is ModuleId + 1,
-    catalog_spliced_module_rows(Decls, ModuleName, SpliceStartId,
-                                SplicedRows, ModuleIdMap0, FirstRelId),
+    catalog_spliced_module_rows(Decls, ModuleHash, SpliceStartId,
+                                SplicedRows, SplicedModules, FirstRelId),
+    Modules0 = [mod(ModuleName, ModuleHash, ModuleId) | SplicedModules],
+    module_id_by_hash(Modules0, HashIdMap),
+    module_id_by_name(Modules0, NameIdMap),
+    rel_module_map(Decls, HashIdMap, RelModuleMap),
+    Modules = modules(ModuleHash, ModuleId, RelModuleMap),
     catalog_rel_id_map(RelPlans, FirstRelId, [], RelIdMap),
     catalog_rel_block_end(RelPlans, FirstRelId, RelBlockEnd),
     catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, RelBlockEnd,
                       NestMap, RoomRows, IdAfterRooms),
-    catalog_mount_rows(Decls, [ModuleName-ModuleId | ModuleIdMap0],
-                       IdAfterRooms, MountRows, FinalId),
-    catalog_rel_rows(RelPlans, BodiesMap, ModuleId, ModuleHash, RelIdMap,
+    catalog_mount_rows(Decls, NameIdMap, IdAfterRooms, MountRows, FinalId),
+    catalog_rel_rows(RelPlans, BodiesMap, Modules, RelIdMap,
                      ListIdMap, NestMap, FirstRelId, _, RelRows),
     append([PrimitiveRows, ListRowRows, [ModuleRow], SplicedRows, RelRows,
             RoomRows, MountRows],
            AllRows),
-    Context = ctx(ModuleHash, ModuleId, RelIdMap, ListIdMap, FinalId).
+    Context = ctx(Modules, RelIdMap, ListIdMap, FinalId).
 
-% One module row per FILE. The entry's row is minted above from ModuleName, so
-% a single-file program mints nothing here and its byte layout does not move.
-catalog_spliced_module_rows(Decls, ModuleName, Id0, Rows, ModuleIdMap, IdEnd) :-
+% One module row per FILE. The entry's row is minted above, so a single-file
+% program mints nothing here and its byte layout does not move.
+catalog_spliced_module_rows(Decls, ModuleHash, Id0, Rows, SplicedModules,
+                            IdEnd) :-
     findall(Name-Hash,
-            ( member(module_decl(Name, Hash), Decls), Name \== ModuleName ),
+            ( member(module_decl(Name, Hash), Decls), Hash \== ModuleHash ),
             Spliced0),
     sort(Spliced0, Spliced),
-    spliced_module_rows(Spliced, Id0, Rows, ModuleIdMap, IdEnd).
+    spliced_module_rows(Spliced, Id0, Rows, SplicedModules, IdEnd).
 
 spliced_module_rows([], Id, [], [], Id).
 spliced_module_rows([Name-Hash | Rest], Id0, [Row | More],
-                    [Name-Id0 | MoreMap], IdEnd) :-
+                    [mod(Name, Hash, Id0) | MoreModules], IdEnd) :-
     Row = row(Id0, 0, 0, Name, module, 0, 0, Id0, Hash, '', ''),
     Id1 is Id0 + 1,
-    spliced_module_rows(Rest, Id1, More, MoreMap, IdEnd).
+    spliced_module_rows(Rest, Id1, More, MoreModules, IdEnd).
+
+module_id_by_hash(Modules, Map) :-
+    findall(Hash-Id, member(mod(_, Hash, Id), Modules), Map).
+
+module_id_by_name(Modules, Map) :-
+    findall(Name-Id, member(mod(Name, _, Id), Modules), Map).
+
+% Decls carry the used files first, so a rel both a used module and the entry
+% declare keys under the module that declared it first.
+rel_module_map(Decls, HashIdMap, RelModuleMap) :-
+    findall(Name-mod(Hash, Id),
+            ( member(rel_module_decl(Name, Hash), Decls),
+              memberchk(Hash-Id, HashIdMap) ),
+            Pairs),
+    first_per_key(Pairs, [], RelModuleMap).
+
+first_per_key([], Acc, Map) :- reverse(Acc, Map).
+first_per_key([Name-Module | Rest], Acc, Map) :-
+    (   memberchk(Name-_, Acc)
+    ->  first_per_key(Rest, Acc, Map)
+    ;   first_per_key(Rest, [Name-Module | Acc], Map)
+    ).
+
+% A rel keys under the module that DECLARED it; an undeclared rel, and every
+% rel of a single-file program, keys under the entry.
+rel_module(modules(ModuleHash, ModuleId, RelModuleMap), Name, RelHash,
+           RelModuleId) :-
+    (   memberchk(Name-mod(Hash, Id), RelModuleMap)
+    ->  RelHash = Hash, RelModuleId = Id
+    ;   RelHash = ModuleHash, RelModuleId = ModuleId
+    ).
 
 % local_name is the ALIAS, parent_id the mounting module's row, module_id the
 % MOUNTED module's row: the graft, readable without re-reading source.
@@ -1382,22 +1422,23 @@ catalog_rel_block_end([RelPlan | Rest], Id0, Id) :-
     Id1 is Id0 + 1 + RelArity,
     catalog_rel_block_end(Rest, Id1, Id).
 
-catalog_rel_rows([], _BodiesMap, _ModuleId, _ModuleHash, _RelIdMap, _ListIdMap,
+catalog_rel_rows([], _BodiesMap, _Modules, _RelIdMap, _ListIdMap,
                  _NestMap, Id, Id, []).
-catalog_rel_rows([RelPlan | Rest], BodiesMap, ModuleId, ModuleHash, RelIdMap,
+catalog_rel_rows([RelPlan | Rest], BodiesMap, Modules, RelIdMap,
                  ListIdMap, NestMap, Id0, FinalId, Rows) :-
     relplan_parts(RelPlan, Name/RelArity, _Kind, Columns, KeyOrNone, ColumnTypes),
-    rel_h_id(ModuleHash, Name, RelArity, RelHId),
+    rel_module(Modules, Name, RelHash, RelModuleId),
+    rel_h_id(RelHash, Name, RelArity, RelHId),
     schema_hash(Columns, ColumnTypes, KeyOrNone, HSchema),
     rule_hash(BodiesMap, Name/RelArity, HRule),
-    catalog_rel_scope(NestMap, ModuleId, Name, ParentId, LocalName),
-    RelRow = row(Id0, ParentId, 0, LocalName, rel, 0, RelArity, ModuleId,
+    catalog_rel_scope(NestMap, RelModuleId, Name, ParentId, LocalName),
+    RelRow = row(Id0, ParentId, 0, LocalName, rel, 0, RelArity, RelModuleId,
                  RelHId, HSchema, HRule),
     IdAfterRel is Id0 + 1,
     catalog_column_rows(Columns, ColumnTypes,
-                        RelIdMap, ListIdMap, ModuleId, RelHId, Id0, 1,
+                        RelIdMap, ListIdMap, RelModuleId, RelHId, Id0, 1,
                         IdAfterRel, IdAfterColumns, ColumnRows),
-    catalog_rel_rows(Rest, BodiesMap, ModuleId, ModuleHash, RelIdMap, ListIdMap,
+    catalog_rel_rows(Rest, BodiesMap, Modules, RelIdMap, ListIdMap,
                      NestMap, IdAfterColumns, FinalId, RestRows),
     append([RelRow | ColumnRows], RestRows, Rows).
 

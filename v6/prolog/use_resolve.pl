@@ -118,7 +118,9 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     parse_dl_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
     module_hash(BaseDir, EntryAbs, EntryHash),
-    append(OwnDecls0, [module_decl(EntryName, EntryHash) | MountDecls],
+    rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls),
+    append([OwnDecls0, [module_decl(EntryName, EntryHash)], RelModuleDecls,
+            MountDecls],
            OwnDecls),
     append(ChildFiles,
            [file(EntryAbs, OwnDecls, OwnRules, OwnQueries, OwnBindings,
@@ -127,6 +129,13 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     append(ChildTables, [ module(EntryAbs, EntryName, EntryHash) ], Tables),
     subtree_paths(Files, SubtreePaths),
     Loaded = [loaded(EntryAbs, SubtreePaths) | Loaded1].
+
+% Read off the file's OWN decls, mounts excluded: a mounted rel keeps the
+% identity of the module that declared it, never the module that grafted it.
+rel_module_decls(OwnDecls, Hash, RelModuleDecls) :-
+    findall(Name, declared_path(OwnDecls, _Segments, Name), Names0),
+    sort(Names0, Names),
+    findall(rel_module_decl(Name, Hash), member(Name, Names), RelModuleDecls).
 
 on_stack_paths(OnStack, Paths) :-
     findall(Path, member(loaded(Path, _), OnStack), Paths).

@@ -1626,7 +1626,7 @@ test(catalog_room_rows_do_not_move_the_rel_block) :-
     lower:catalog_decl_rows(catalog_room_ids, [], RelPlans,
                             [rel_path_decl(orchard__north__tree/1,
                                            [orchard, north, tree])],
-                            _, ctx(_, 6, _, _, FinalId)),
+                            _, ctx(modules(_, 6, _), _, _, FinalId)),
     FinalId =:= 11.
 
 % Depth 3, every level declared: each rel row parents at the one above it.
@@ -1654,7 +1654,7 @@ test(catalog_flat_program_ids_unchanged_by_the_nesting_pass) :-
                         rel_spec(b_rel/1, set, [c2], none, [int]) ],
                       RelPlans),
     lower:catalog_decl_rows(catalog_flat, [], RelPlans, [], Rows,
-                            ctx(_, _, _, _, FinalId)),
+                            ctx(_, _, _, FinalId)),
     memberchk(row(7, 6, 0, a_rel, rel, 0, 1, 6, _, _, _), Rows),
     memberchk(row(9, 6, 0, b_rel, rel, 0, 1, 6, _, _, _), Rows),
     FinalId =:= 11.
@@ -7011,6 +7011,16 @@ test(catalog_carries_a_mount_row_pointing_at_the_mounted_module) :-
                   _, _, _), Rows),
     memberchk(row(MountedId, _, _, lib, module, _, _, _, _, _, _), Rows),
     memberchk(row(MountParentId, _, _, main, module, _, _, _, _, _, _), Rows).
+
+% FAIL-FIRST RECEIPT (MOD-2): every rel row carried the ENTRY's module_id, so
+% lib's `tree` read as a rel of main and moved identity per importer.
+test(catalog_attributes_a_used_modules_rel_to_that_module) :-
+    mount_catalog_rows(Rows),
+    memberchk(row(LibId, _, _, lib, module, _, _, _, _, _, _), Rows),
+    memberchk(row(MainId, _, _, main, module, _, _, _, _, _, _), Rows),
+    LibId \== MainId,
+    memberchk(row(_, LibId, _, tree, rel, _, _, LibId, _, _, _), Rows),
+    memberchk(row(_, MainId, _, ripe, rel, _, _, MainId, _, _, _), Rows).
 
 mount_catalog_rows(Rows) :-
     make_use_fixture(Dir,
