@@ -77,7 +77,7 @@
 :- use_module(library(apply)).
 :- use_module(registry,
               [ surface/5, body_surface_for_term/6,
-                wrapper_lower_role/3, host_input_roles/3 ]).
+                wrapper_lower_role/3, host_input_roles/3, expression/5 ]).
 :- use_module('../0_cst_query',
               [ parse_cst_query/2, ts_query_capture_names/2 ]).
 
@@ -1716,45 +1716,51 @@ host_or_relation_item(Name, Values, Item, Vars0, Vars, S0, S) :-
     S = S0,
     Item =.. [Name | Values].
 
-% ═══ expressions : add/sub over mul/div/mod over parenthesized/atomic
-% factors. Arithmetic (+,-,*,/,mod) is entirely EXT -- dl.langium's ArgTerm
-% has no expression grammar at all (ArgTerm := Var | Literal | Wildcard,
-% dl.langium:150-151) -- so this whole layer only fires when parsing dialect
-% A text or the arithmetic-bearing conformance fixtures' printed form. ══════
+% ═══ expressions : one left-associative tier per registry.pl expression/5
+% PrintPrecedence, loosest outermost, over parenthesized/atomic factors ═════
 
-expr(E, Vars0, Vars, S0, S) :- add_expr(E, Vars0, Vars, S0, S).
+expr(E, Vars0, Vars, S0, S) :-
+    arithmetic_tiers(Tiers),
+    tier_expr(Tiers, E, Vars0, Vars, S0, S).
 
-add_expr(E, Vars0, Vars, S0, S) :-
-    mul_expr(E0, Vars0, Vars1, S0, S1),
-    add_expr_rest(E0, E, Vars1, Vars, S1, S).
+arithmetic_tiers(Tiers) :-
+    findall(Precedence, expression(_/2, arithmetic, Precedence, _, _),
+            Precedences),
+    sort(Precedences, Tiers).
 
-add_expr_rest(Acc, E, Vars0, Vars, S0, S) :-
+% Declaration order inside a tier is the try order, the same longest-first
+% discipline registered_infix_op/4 keysorts for.
+tier_operators(Precedence, Operators) :-
+    findall(NegLength-Operator,
+            ( expression(Operator/2, arithmetic, Precedence, _, _),
+              atom_length(Operator, Length),
+              NegLength is -Length
+            ),
+            Candidates),
+    keysort(Candidates, Ordered),
+    findall(Operator, member(_-Operator, Ordered), Operators).
+
+tier_expr([], E, Vars0, Vars, S0, S) :-
+    factor(E, Vars0, Vars, S0, S).
+tier_expr([Precedence | Tighter], E, Vars0, Vars, S0, S) :-
+    tier_expr(Tighter, Acc, Vars0, Vars1, S0, S1),
+    tier_operators(Precedence, Operators),
+    tier_expr_rest(Operators, Tighter, Acc, E, Vars1, Vars, S1, S).
+
+tier_expr_rest(Operators, Tighter, Acc, E, Vars0, Vars, S0, S) :-
     ws0(S0, S1),
-    ( lit_dcg(`+`, S1, S2)
-    -> ws0(S2, S3), mul_expr(Rhs, Vars0, Vars1, S3, S4),
-       add_expr_rest(Acc + Rhs, E, Vars1, Vars, S4, S)
-    ; lit_dcg(`-`, S1, S2)
-    -> ws0(S2, S3), mul_expr(Rhs, Vars0, Vars1, S3, S4),
-       add_expr_rest(Acc - Rhs, E, Vars1, Vars, S4, S)
+    ( tier_operator(Operators, Operator, S1, S2)
+    -> ws0(S2, S3), tier_expr(Tighter, Rhs, Vars0, Vars1, S3, S4),
+       Next =.. [Operator, Acc, Rhs],
+       tier_expr_rest(Operators, Tighter, Next, E, Vars1, Vars, S4, S)
     ; E = Acc, Vars = Vars0, S = S0
     ).
 
-mul_expr(E, Vars0, Vars, S0, S) :-
-    factor(E0, Vars0, Vars1, S0, S1),
-    mul_expr_rest(E0, E, Vars1, Vars, S1, S).
-
-mul_expr_rest(Acc, E, Vars0, Vars, S0, S) :-
-    ws0(S0, S1),
-    ( lit_dcg(`*`, S1, S2)
-    -> ws0(S2, S3), factor(Rhs, Vars0, Vars1, S3, S4),
-       mul_expr_rest(Acc * Rhs, E, Vars1, Vars, S4, S)
-    ; lit_dcg(`/`, S1, S2)
-    -> ws0(S2, S3), factor(Rhs, Vars0, Vars1, S3, S4),
-       mul_expr_rest(Acc / Rhs, E, Vars1, Vars, S4, S)
-    ; word(`mod`, S1, S2)
-    -> ws0(S2, S3), factor(Rhs, Vars0, Vars1, S3, S4),
-       mul_expr_rest(Acc mod Rhs, E, Vars1, Vars, S4, S)
-    ; E = Acc, Vars = Vars0, S = S0
+tier_operator([Operator | Rest], Matched, S0, S) :-
+    atom_codes(Operator, Codes),
+    ( operator_codes(Codes, S0, S1)
+    -> Matched = Operator, S = S1
+    ; tier_operator(Rest, Matched, S0, S)
     ).
 
 % factor: parenthesized expr | integer | quoted atom | string | braces |
