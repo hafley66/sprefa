@@ -35,7 +35,7 @@ fixture_dd_plan_json_text(FixtureFile, Name, Text) :-
            program_plan(fixture(Name, Program, Initial, Schedule, Expected)-Bindings, Plan),
            lower_program(Plan, Lowered),
            dd_plan_term(Plan, Lowered, DdPlan),
-           dd_plan_json_dict(Name, Lowered, DdPlan, Initial, Schedule, Dict),
+           dd_plan_json_dict(Plan, Lowered, DdPlan, Initial, Schedule, Dict),
            with_output_to(string(Text),
                           ( json_write_dict(current_output, Dict, [width(0)]), nl )) )).
 
@@ -52,19 +52,31 @@ dd_plan_text(Plan, Text) :-
                    write_term(DdPlan, [quoted(true), numbervars(true),
                                        fullstop(true), nl(true)])).
 
-dd_plan_json_dict(Name,
+dd_plan_json_dict(Plan,
                   lowered(_, Ddl, _, _, _LevelStatements, DeltaStatements, _, _),
-                  dd_plan(_, rels(Rels), _, operators(Operators), _, tick_order(TickOrder)),
+                  dd_plan(Name, rels(Rels), arrangements(Arrangements),
+                          operators(Operators), wires(Wires), tick_order(TickOrder)),
                   Initial, Schedule,
-                  _{name:NameText, ddl:Ddl, rels:JsonRels, rules:Rules,
-                    initial:JsonInitial, schedule:JsonSchedule, tick_order:JsonTickOrder}) :-
+                  _{name:NameText, ddl:Ddl, rels:JsonRels,
+                    arrangements:JsonArrangements, rules:Rules,
+                    operators:JsonOperators, wires:JsonWires,
+                    initial:JsonInitial, schedule:JsonSchedule,
+                    tick_order:JsonTickOrder}) :-
     atom_string(Name, NameText),
+    ordered_rules_for_json(Plan, OrderedRules),
     maplist(json_rel(DeltaStatements), Rels, JsonRels),
+    maplist(json_arrangement, Arrangements, JsonArrangements),
     maplist(json_rule, Operators, Rules0),
     exclude(=(none), Rules0, Rules),
+    maplist(json_operator(OrderedRules, Arrangements, Operators),
+            Operators, JsonOperators),
+    maplist(json_wire, Wires, JsonWires),
     maplist(json_row, Initial, JsonInitial),
     maplist(json_tick, Schedule, JsonSchedule),
     maplist(json_phase, TickOrder, JsonTickOrder).
+ordered_rules_for_json(plan(_, prog(_, ProgramRules), _, _, _, RuleOrder, _, _, _),
+                       OrderedRules) :-
+    ordered_rules(RuleOrder, ProgramRules, OrderedRules).
 
 json_phase(phase(Phase), Text) :- atom_string(Phase, Text).
 
@@ -73,16 +85,132 @@ json_rel(DeltaStatements, rel(Ref, Columns, _),
     ref_name(Ref, Name),
     member(deltastmt(Ref, SelectAll, _, _, _), DeltaStatements).
 
+json_arrangement(arr(Id, Ref, KeyColumns, ValueColumns, signed),
+                 _{id:Id, rel:Name, key_columns:KeyColumns,
+                   value_columns:ValueColumns}) :-
+    ref_name(Ref, Name).
+
+json_wire(wire(From, To, Delta),
+          _{from:FromText, to:ToText, kind:DeltaText}) :-
+    node_string(From, FromText),
+    node_string(To, ToText),
+    atom_string(Delta, DeltaText).
+
+node_string(Node, String) :-
+    (   compound(Node)
+    ->  ref_name(Node, String)
+    ;   atom_string(Node, String)
+    ).
+
+% B1-replay projection: map-owned level rules only, the exact shape the
+% dd-runner consumes (id/head/delete/inserts); non-map/edge maps are excluded.
 json_rule(op(Id, map(Ref), sqlite(_, Statements)),
           _{id:IdText, head:Head, delete:Delete, inserts:Inserts}) :-
     member(levelstmt(Ref, Delete, Inserts, _, _, _, _), Statements),
     atom_string(Id, IdText),
     ref_name(Ref, Head),
     !.
-json_rule(op(_, map(_), sqlite(_, [Statement | _])), _) :-
-    functor(Statement, Functor, _),
-    throw(unsupported_construct(Functor)).
 json_rule(_, none).
+
+% Full operator description for the kernel twin: kind, writes-head, input refs,
+% edge/level classification, and per-kind details (join keys, reduce aggregate).
+json_operator(_OrderedRules, _Arrangements, _Operators,
+              op(Id, map(Ref), sqlite(Refs, Statements)), Dict) :-
+    atom_string(Id, IdText),
+    ref_name(Ref, Head),
+    subtract(Refs, [Ref], Removed),
+    ref_name_list(Removed, InputRefs),
+    (   member(levelstmt(Ref, Delete, Inserts, _, _, _, _), Statements)
+    ->  Dict = _{id:IdText, kind:map, head:Head, refs:InputRefs,
+                 classification:level, delete:Delete, inserts:Inserts}
+    ;   member(edgestmt(Ref, TriggerRef, HeadColumns, KeyColumns,
+                        ProjectSql, WriteSql, DeltaProjectSql,
+                        TriggerKind, _EdgeInterns), Statements),
+        ref_name(TriggerRef, Trigger),
+        Dict = _{id:IdText, kind:map, head:Head, refs:InputRefs,
+                 classification:edge, trigger:Trigger,
+                 head_columns:HeadColumns, key_columns:KeyColumns,
+                 project_sql:ProjectSql, write_sql:WriteSql,
+                 delta_project_sql:DeltaProjectSql, trigger_kind:TriggerKind}
+    ).
+json_operator(_OrderedRules, Arrangements, Operators,
+              op(Id, join(Left, Right, LeftArr, RightArr), sqlite(_Refs, Payload)),
+              Dict) :-
+    atom_string(Id, IdText),
+    operator_owner_meta(Payload, Operators, HeadRef, Classification),
+    ref_name(HeadRef, Head),
+    ref_name(Left, LeftName),
+    ref_name(Right, RightName),
+    arrangement_dict(Arrangements, LeftArr, LeftDict),
+    arrangement_dict(Arrangements, RightArr, RightDict),
+    Dict = _{id:IdText, kind:join, head:Head,
+             refs:[LeftName, RightName],
+             arrangement:[LeftArr, RightArr],
+             join_keys:_{left:LeftDict, right:RightDict},
+             constraints:_{left:LeftDict, right:RightDict},
+             classification:Classification}.
+json_operator(OrderedRules, Arrangements, Operators,
+              op(Id, reduce(Arrangement), sqlite(Refs, Payload)), Dict) :-
+    atom_string(Id, IdText),
+    operator_owner_meta(Payload, Operators, HeadRef, Classification),
+    ref_name(HeadRef, Head),
+    subtract(Refs, [HeadRef], Scoped),
+    ref_name_list(Scoped, InputRefs),
+    reduce_arrangement_dict(Arrangements, Arrangement, GroupCols, ValueCols),
+    reduce_aggregate(Id, OrderedRules, AggregateKinds),
+    Dict = _{id:IdText, kind:reduce, head:Head, refs:InputRefs,
+             arrangement:Arrangement,
+             aggregate:_{kind:AggregateKinds, group:GroupCols, value:ValueCols},
+             classification:Classification}.
+json_operator(_OrderedRules, _Arrangements, Operators,
+              op(Id, filter(Ref), sqlite(_Refs, Payload)), Dict) :-
+    atom_string(Id, IdText),
+    operator_owner_meta(Payload, Operators, HeadRef, Classification),
+    ref_name(HeadRef, Head),
+    ref_name(Ref, Filtered),
+    Dict = _{id:IdText, kind:filter, head:Head, refs:[Filtered],
+             classification:Classification}.
+json_operator(_OrderedRules, _Arrangements, Operators,
+              op(Id, iterate(Ref), sqlite(_Refs, Payload)), Dict) :-
+    atom_string(Id, IdText),
+    operator_owner_meta(Payload, Operators, HeadRef, Classification),
+    ref_name(HeadRef, Head),
+    ref_name(Ref, Iterated),
+    Dict = _{id:IdText, kind:iterate, head:Head, refs:[Iterated],
+             classification:Classification}.
+
+operator_owner_meta(owner(MapId), Operators, HeadRef, Classification) :-
+    member(op(MapId, map(HeadRef), sqlite(_, OwnerStatements)), Operators),
+    statement_classification(OwnerStatements, Classification).
+
+statement_classification(Statements, level) :-
+    member(levelstmt(_, _, _, _, _, _, _), Statements), !.
+statement_classification(Statements, edge) :-
+    member(edgestmt(_, _, _, _, _, _, _, _, _), Statements).
+
+arrangement_dict(Arrangements, ArrId,
+                 _{id:ArrId, rel:Name, key_columns:KeyColumns,
+                   value_columns:ValueColumns}) :-
+    member(arr(ArrId, Ref, KeyColumns, ValueColumns, signed), Arrangements),
+    ref_name(Ref, Name).
+
+reduce_arrangement_dict(Arrangements, ArrId, GroupCols, ValueCols) :-
+    member(arr(ArrId, _Ref, GroupCols, ValueCols, signed), Arrangements).
+
+reduce_aggregate(ReduceId, OrderedRules, Kinds) :-
+    reduce_number(ReduceId, Number),
+    nth1(Number, OrderedRules, Rule),
+    aggregate_head_template_from_rule(Rule, Template),
+    aggregate_kinds(Template, Kinds).
+
+reduce_number(ReduceId, Number) :-
+    atom_string(ReduceId, String),
+    string_concat("reduce_", NumberString, String),
+    number_string(Number, NumberString).
+
+aggregate_kinds([], []).
+aggregate_kinds([agg(Kind, _) | Rest], [Kind | Kinds]) :- aggregate_kinds(Rest, Kinds).
+aggregate_kinds([plain(_) | Rest], Kinds) :- aggregate_kinds(Rest, Kinds).
 
 json_tick(Rows, JsonRows) :- maplist(json_signed_row, Rows, JsonRows).
 
@@ -95,6 +223,8 @@ json_row(Row, _{rel:Name, values:Args}) :-
     format(atom(Name), '~w/~w', [Functor, Arity]).
 
 ref_name(Functor/Arity, Name) :- format(atom(Name), '~w/~w', [Functor, Arity]).
+
+ref_name_list(Refs, Names) :- maplist(ref_name, Refs, Names).
 
 dd_plan_term(plan(Name, prog(_, Rules), _, RelPlans, _, RuleOrder, _, _, _),
              Lowered,
