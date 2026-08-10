@@ -383,7 +383,7 @@ export interface IRelCatalogRow {
   readonly local_name: string;
   readonly kind:
     | "primitive"
-    | "list"
+    | "json_list"
     | "module"
     | "use"
     | "mount"

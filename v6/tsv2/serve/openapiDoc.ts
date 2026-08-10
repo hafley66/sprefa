@@ -61,7 +61,7 @@ function schemaForTypeId(rows: readonly IRelCatalogRow[], byId: ReadonlyMap<numb
   switch (target.kind) {
     case "primitive":
       return primitiveSchema(target.local_name);
-    case "list":
+    case "json_list":
       return { type: "array", items: schemaForTypeId(rows, byId, target.type_id) };
     case "rel":
       return { $ref: `#/components/schemas/${relPath(target, byId)}` };
