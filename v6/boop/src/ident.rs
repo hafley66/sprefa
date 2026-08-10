@@ -385,14 +385,26 @@ impl Store {
         Ok(out)
     }
 
-    fn add_touch(&self, session: &str, turn: u64, ts: u64, path: &str, verb: &str) -> Result<()> {
+    fn add_touch(
+        &self,
+        session: &str,
+        turn: u64,
+        ts: u64,
+        path: &str,
+        verb: &str,
+        raw_verb: &str,
+    ) -> Result<()> {
         let sid = self.session_id(session)?;
         let path_id = self.intern("dict_path", path)?;
+        // verb_id is the canonical lowercase spelling; raw_verb_id keeps the
+        // harness's own casing on disk so a consumer never re-normalizes.
         let verb_id = self.intern("dict_verb", verb)?;
+        let raw_verb_id = self.intern("dict_verb", raw_verb)?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO agent_touch (session_id, turn, ts, path_id, verb_id)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![sid, turn as i64, ts as i64, path_id, verb_id],
+            "INSERT OR IGNORE INTO agent_touch
+               (session_id, turn, ts, path_id, verb_id, raw_verb_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![sid, turn as i64, ts as i64, path_id, verb_id, raw_verb_id],
         )?;
         Ok(())
     }
@@ -1071,14 +1083,18 @@ fn emit_tool_fact(
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned)
     };
-    match name.to_ascii_lowercase().as_str() {
+    // The canonical verb is this lane's one normalization site: every adapter
+    // funnels through write_tool_fact, so lowercasing happens here and nowhere
+    // per-adapter. `name` stays the raw spelling stored alongside it.
+    let verb = name.to_ascii_lowercase();
+    match verb.as_str() {
         "read" | "write" | "edit" | "list" | "glob" | "multiedit" | "grep" => {
             let path = field("file_path")
                 .or_else(|| field("filePath"))
                 .or_else(|| field("pattern"))
                 .or_else(|| field("path"));
             if let Some(path) = path {
-                store.add_touch(session, turn, ts, &path, name)?;
+                store.add_touch(session, turn, ts, &path, &verb, name)?;
             }
         }
         "bash" => {
@@ -1180,6 +1196,7 @@ CREATE TABLE IF NOT EXISTS agent_touch (
   ts INTEGER,
   path_id INTEGER NOT NULL,
   verb_id INTEGER NOT NULL,
+  raw_verb_id INTEGER,
   PRIMARY KEY (session_id, turn, path_id, verb_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_touch_pathid ON agent_touch(path_id);
@@ -1796,5 +1813,71 @@ mod tests {
         assert_eq!(current, "live", "agent_live stays the current-state cache");
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (item 10). Harnesses emit verbs in different casing; the
+    /// shared projection lowers once, so a canonical `verb` collides while the
+    /// `raw_verb` spelling survives per adapter.
+    #[test]
+    fn mixed_case_verbs_land_one_canonical_with_raw_retained() {
+        let db_path = temp_path("verbdb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+
+        let lines_path = temp_path("verblog");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&lines_path)
+            .unwrap();
+        writeln!(file, r#"{{"type":"assistant","sessionId":"ses-1","timestamp":"2026-08-01T00:00:01.000Z","gitBranch":"main","message":{{"content":[{{"type":"tool_use","name":"Read","input":{{"file_path":"/tmp/a.rs"}}}},{{"type":"tool_use","name":"Write","input":{{"file_path":"/tmp/b.rs"}}}}]}}}}"#).unwrap();
+        drop(file);
+        sync_session(&store, &crate::harness::claude::Claude, &session_for(&lines_path)).unwrap();
+
+        // A second adapter (opencode/codex path) funnels through the same
+        // canonical write site with lowercase verbs.
+        store
+            .write_tool_fact(
+                "oc-1",
+                1,
+                1000,
+                "read",
+                Some(&serde_json::json!({"file_path": "/tmp/a.rs"})),
+            )
+            .unwrap();
+
+        // The canonical verb (verb_id) is lowercase for every spelling.
+        let verb_sql = "SELECT json_group_array(value) FROM (
+                          SELECT DISTINCT dv.value
+                          FROM agent_touch t JOIN dict_verb dv ON dv.id = t.verb_id
+                          ORDER BY dv.value)";
+        let verbs: String = store
+            .connection
+            .query_row(verb_sql, [], |row| row.get(0))
+            .unwrap();
+        assert!(verbs.contains("\"read\"") && verbs.contains("\"write\""), "{verbs}");
+        assert!(!verbs.contains("\"Read\""), "canonical verb is lowercase: {verbs}");
+
+        // The raw spelling (raw_verb_id) retains the harness casing.
+        let raw_sql = "SELECT COUNT(*) FROM agent_touch t
+                       JOIN dict_verb dv ON dv.id = t.raw_verb_id
+                       WHERE dv.value = 'Read'";
+        let raw_read: i64 = store.connection.query_row(raw_sql, [], |row| row.get(0)).unwrap();
+        assert_eq!(raw_read, 1, "the claude 'Read' raw spelling survives");
+        let raw_lower: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM agent_touch t
+                 JOIN dict_verb dv ON dv.id = t.raw_verb_id
+                 WHERE dv.value = 'read'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw_lower, 1, "the opencode 'read' raw spelling survives");
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&lines_path);
     }
 }
