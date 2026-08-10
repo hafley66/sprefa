@@ -1,9 +1,0 @@
-[
-  [ {"rel":"clock","sign":"add","row":[1]} ],
-  [ {"rel":"request","sign":"add","row":["slowreq"]}, {"rel":"request","sign":"add","row":["fastreq"]} ],
-  [ {"rel":"clock","sign":"add","row":[2]} ],
-  [ {"rel":"response","sign":"add","row":["fastreq"]} ],
-  [ {"rel":"clock","sign":"add","row":[3]} ],
-  [ {"rel":"clock","sign":"add","row":[4]} ],
-  [ {"rel":"clock","sign":"add","row":[5]} ]
-]

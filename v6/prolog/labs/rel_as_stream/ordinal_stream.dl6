@@ -1,9 +1,0 @@
-# rel-as-stream probe: log rel + surface ordinal, written the way a user types it.
-rel event(name: text, payload: text) log keep(all).
-rel cursor(name: text, at: int) key(1).
-rel stream(name: text, ordinal: int, payload: text) log keep(all).
-
-cursor(Name, 1) <+ event(Name, _), not(cursor(Name, _At)).
-cursor(Name, Next) <+ event(Name, _), pre(cursor(Name, At)), Next := At + 1.
-stream(Name, 1, Payload) <+ event(Name, Payload), not(cursor(Name, _At)).
-stream(Name, Next, Payload) <+ event(Name, Payload), pre(cursor(Name, At)), Next := At + 1.

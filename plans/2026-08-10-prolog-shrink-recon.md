@@ -42,7 +42,7 @@ pure dedup (opus, high confidence) up to 1.5-3k lines of data-table rewrites
 |---|---|---|
 | v6/prolog/labs/** | 4,635 | zero loaders: `grep -rn "use_module.*labs" --include=*.pl v6/prolog` empty; justfile refs point at v6/labs/, a DIFFERENT dir (opus) |
 | v6/prolog/src/emit_ts.pl | 239 | marked superseded at ARCH.pl:195 (opus) |
-| v6/prolog/src/checks.pl | 42 | marked superseded at ARCH.pl:700 (opus) |
+| v6/prolog/src/checks.pl | 42 | CORRECTED 2026-08-10: the claimed ARCH.pl:700 superseded marker does not exist, and examples/ghcacher.pl:20 loads it live — NOT dead, kept (flash re-verify caught the false receipt; deletion executed without it) |
 
 Labs-die-on-landing law says these should already be gone. Gate: battery
 green after `git rm`, nothing else.
