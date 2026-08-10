@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "source": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "tallied": {
+      "additionalProperties":false,
+      "properties": {
+        "column": {"type":"integer"},
+        "line": {"type":"integer"},
+        "total": {"type":"integer"}
+      },
+      "required": ["line", "column", "total" ],
+      "type":"object"
+    }
+  },
+  "$id":"groupby_aggregate_two_bare_integer_literals#be29d65e655d5e98",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

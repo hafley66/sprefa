@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "line": {
+      "additionalProperties":false,
+      "properties": {
+        "_name": {"type":"string"},
+        "_stream_id": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["_stream_id", "path", "_name" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    }
+  },
+  "$id":"log_deltas_follow_arrival_order#cb3a342a1f7cdd06",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

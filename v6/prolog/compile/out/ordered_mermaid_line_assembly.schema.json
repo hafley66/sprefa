@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "mermaid_line": {
+      "additionalProperties":false,
+      "properties": {
+        "file_name": {"type":"string"},
+        "line_ordinal": {"type":"integer"},
+        "line_text": {"type":"string"}
+      },
+      "required": ["file_name", "line_ordinal", "line_text" ],
+      "type":"object"
+    },
+    "mermaid_text": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"file_name": {"type":"string"}},
+      "required": ["file_name", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"ordered_mermaid_line_assembly#cce7a366b13d6f25",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

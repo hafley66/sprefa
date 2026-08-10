@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "numbered": {
+      "additionalProperties":false,
+      "properties": {"number": {"type":"integer"}},
+      "required": ["number" ],
+      "type":"object"
+    },
+    "resp": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_array_spread_skips_non_matching_elements#a3d6c380a7680a14",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

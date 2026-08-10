@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "child": {
+      "additionalProperties":false,
+      "properties": {"group": {"type":"string"},"payload": {}},
+      "required": ["group", "payload" ],
+      "type":"object"
+    },
+    "nested": {
+      "additionalProperties":false,
+      "properties": {"col2": {},"group": {"type":"string"}},
+      "required": ["group", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"ordered_json_group_array_nested_json#b2c8a01b4b3babf1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

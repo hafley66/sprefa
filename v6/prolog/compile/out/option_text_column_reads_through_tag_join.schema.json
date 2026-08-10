@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "__opt_text_none": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__opt_text_some": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"string"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "__opt_text_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "email_state": {
+      "additionalProperties":false,
+      "properties": {"state": {"type":"string"},"user_id": {"type":"integer"}},
+      "required": ["user_id", "state" ],
+      "type":"object"
+    },
+    "user_profile": {
+      "additionalProperties":false,
+      "properties": {"email": {"type":"integer"},"user_id": {"type":"integer"}},
+      "required": ["user_id", "email" ],
+      "type":"object"
+    }
+  },
+  "$id":"option_text_column_reads_through_tag_join#00284df9626fda0d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

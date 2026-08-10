@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "batch": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"payloads": {"items": {},"type":"array"}},
+      "required": ["id", "payloads" ],
+      "type":"object"
+    },
+    "carry": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"payloads": {"items": {},"type":"array"}},
+      "required": ["id", "payloads" ],
+      "type":"object"
+    }
+  },
+  "$id":"list_of_json_documents_round_trips#6bea3cdfbaaa8c99",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

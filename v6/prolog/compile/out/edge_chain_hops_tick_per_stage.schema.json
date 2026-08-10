@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "source_ev": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "stage_one": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "stage_two": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    }
+  },
+  "$id":"edge_chain_hops_tick_per_stage#a091b04ef1031ed5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

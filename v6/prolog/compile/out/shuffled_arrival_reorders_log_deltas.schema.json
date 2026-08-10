@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "line": {
+      "additionalProperties":false,
+      "properties": {
+        "_name": {"type":"string"},
+        "_stream_id": {"type":"integer"},
+        "path": {"type":"string"}
+      },
+      "required": ["_stream_id", "path", "_name" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    }
+  },
+  "$id":"shuffled_arrival_reorders_log_deltas#cd187e0eb77c5c6e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

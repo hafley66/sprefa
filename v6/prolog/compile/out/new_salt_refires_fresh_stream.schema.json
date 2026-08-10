@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "demand": {
+      "additionalProperties":false,
+      "properties": {"args": {"type":"string"},"salt": {"type":"string"}},
+      "required": ["args", "salt" ],
+      "type":"object"
+    },
+    "watch_request": {
+      "additionalProperties":false,
+      "properties": {
+        "args": {"type":"string"},
+        "col1": {"type":"string"},
+        "salt": {"type":"string"}
+      },
+      "required": ["col1", "args", "salt" ],
+      "type":"object"
+    }
+  },
+  "$id":"new_salt_refires_fresh_stream#3fcd2740e5f8754a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "derived": {
+      "additionalProperties":false,
+      "properties": {"seen_value": {"type":"string"}},
+      "required": ["seen_value" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"string"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"arrival_dup_batch_partial_ignore#79f49c130bf50ef5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

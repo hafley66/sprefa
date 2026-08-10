@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "pair": {
+      "additionalProperties":false,
+      "properties": {"left": {"type":"integer"},"right": {"type":"integer"}},
+      "required": ["left", "right" ],
+      "type":"object"
+    },
+    "source_a": {
+      "additionalProperties":false,
+      "properties": {"left": {"type":"integer"}},
+      "required": ["left" ],
+      "type":"object"
+    },
+    "source_b": {
+      "additionalProperties":false,
+      "properties": {"right": {"type":"integer"}},
+      "required": ["right" ],
+      "type":"object"
+    }
+  },
+  "$id":"conjunction_level_control_for_combine#ee5c687d21753259",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

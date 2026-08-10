@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "event": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"}},
+      "required": ["col1" ],
+      "type":"object"
+    }
+  },
+  "$id":"retention_count_prunes_oldest#526b393d8812d0e0",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

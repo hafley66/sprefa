@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "finding": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/span"},"path": {"type":"string"}},
+      "required": ["path", "at" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["start", "end" ],
+      "type":"object"
+    },
+    "touched": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    }
+  },
+  "$id":"struct_column_renders_canonical_json#c322a70d6efca208",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

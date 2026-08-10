@@ -1,0 +1,26 @@
+{
+  "$defs": {
+    "division_input": {
+      "additionalProperties":false,
+      "properties": {
+        "denominator": {"type":"integer"},
+        "label": {"type":"string"},
+        "numerator": {"type":"integer"}
+      },
+      "required": ["label", "numerator", "denominator" ],
+      "type":"object"
+    },
+    "probe": {
+      "additionalProperties":false,
+      "properties": {
+        "label": {"type":"string"},
+        "quotient": {"type":"integer"},
+        "remainder": {"type":"integer"}
+      },
+      "required": ["label", "quotient", "remainder" ],
+      "type":"object"
+    }
+  },
+  "$id":"division_truncates_toward_zero_mod_follows_divisor_sign#14a2af794179fbf0",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

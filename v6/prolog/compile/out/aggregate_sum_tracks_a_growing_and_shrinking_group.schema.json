@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "budget": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"integer"},"team": {"type":"string"}},
+      "required": ["team", "col2" ],
+      "type":"object"
+    },
+    "spend": {
+      "additionalProperties":false,
+      "properties": {
+        "_item": {"type":"string"},
+        "cost": {"type":"integer"},
+        "team": {"type":"string"}
+      },
+      "required": ["team", "_item", "cost" ],
+      "type":"object"
+    }
+  },
+  "$id":"aggregate_sum_tracks_a_growing_and_shrinking_group#9b008e9e31b7ae34",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "event": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"}},
+      "required": ["col1" ],
+      "type":"object"
+    }
+  },
+  "$id":"retention_prune_is_a_visible_minus#5f6983bf2e15dff5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "latest": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "set_value": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"lww_fold_follows_arrival_order#794bc1cc2ebc417f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

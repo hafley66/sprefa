@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "finding": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/span"}},
+      "required": ["at" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["start", "end" ],
+      "type":"object"
+    },
+    "span_seen": {
+      "additionalProperties":false,
+      "properties": {"end": {"type":"integer"},"start": {"type":"integer"}},
+      "required": ["start", "end" ],
+      "type":"object"
+    }
+  },
+  "$id":"relation_reference_target_and_parent_share_tick#191f680e4e561c33",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

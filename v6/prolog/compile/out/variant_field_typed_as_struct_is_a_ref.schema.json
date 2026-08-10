@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "holder": {
+      "additionalProperties":false,
+      "properties": {"item": {"$ref":"#/$defs/span"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "loc_elsewhere": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"note": {"type":"string"}},
+      "required": ["id", "note" ],
+      "type":"object"
+    },
+    "loc_here": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/span"},"id": {"type":"integer"}},
+      "required": ["id", "at" ],
+      "type":"object"
+    },
+    "loc_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {"hi": {"type":"integer"},"lo": {"type":"integer"}},
+      "required": ["lo", "hi" ],
+      "type":"object"
+    }
+  },
+  "$id":"variant_field_typed_as_struct_is_a_ref#a85c19b5964d3537",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

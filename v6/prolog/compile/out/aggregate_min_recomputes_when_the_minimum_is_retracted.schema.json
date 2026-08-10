@@ -1,0 +1,23 @@
+{
+  "$defs": {
+    "star_row": {
+      "additionalProperties":false,
+      "properties": {"repo": {"type":"string"},"stars": {"type":"integer"}},
+      "required": ["repo", "stars" ],
+      "type":"object"
+    },
+    "stat": {
+      "additionalProperties":false,
+      "properties": {
+        "col2": {"type":"integer"},
+        "col3": {"type":"integer"},
+        "col4": {"type":"integer"},
+        "repo": {"type":"string"}
+      },
+      "required": ["repo", "col2", "col3", "col4" ],
+      "type":"object"
+    }
+  },
+  "$id":"aggregate_min_recomputes_when_the_minimum_is_retracted#8c10fd0c6d9d3e15",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

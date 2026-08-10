@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "eprintln_hit": {
+      "additionalProperties":false,
+      "properties": {"line_number": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "line_number" ],
+      "type":"object"
+    },
+    "message": {
+      "additionalProperties":false,
+      "properties": {
+        "line_number": {"type":"integer"},
+        "path": {"type":"string"},
+        "text": {"type":"string"}
+      },
+      "required": ["path", "line_number", "text" ],
+      "type":"object"
+    }
+  },
+  "$id":"interpolation_desugars_to_concat#75138e448441efaa",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

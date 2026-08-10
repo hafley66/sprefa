@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "sample": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"number"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"float_shortest_round_trip_wire#e9e391a6d100076c",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

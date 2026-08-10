@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "path": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"}},
+      "required": ["path" ],
+      "type":"object"
+    },
+    "trimmed": {
+      "additionalProperties":false,
+      "properties": {"out": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "out" ],
+      "type":"object"
+    }
+  },
+  "$id":"rtrim_strips_trailing_chars#3ea6b71e0462f468",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

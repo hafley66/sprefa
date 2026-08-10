@@ -1,0 +1,45 @@
+{
+  "$defs": {
+    "dispatch_leg": {
+      "additionalProperties":false,
+      "properties": {
+        "dispatch_id": {"type":"integer"},
+        "kilos": {"type":"integer"},
+        "leg_id": {"type":"integer"},
+        "previous_leg": {"type":"integer"}
+      },
+      "required": ["leg_id", "dispatch_id", "previous_leg", "kilos" ],
+      "type":"object"
+    },
+    "leg_total": {
+      "additionalProperties":false,
+      "properties": {
+        "dispatch_id": {"type":"integer"},
+        "kilos": {"type":"integer"},
+        "leg_id": {"type":"integer"}
+      },
+      "required": ["leg_id", "dispatch_id", "kilos" ],
+      "type":"object"
+    },
+    "ping": {
+      "additionalProperties":false,
+      "properties": {"partition": {"type":"string"}},
+      "required": ["partition" ],
+      "type":"object"
+    },
+    "ping_ordinal": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"integer"},"partition": {"type":"string"}},
+      "required": ["partition", "col2" ],
+      "type":"object"
+    },
+    "seq_ping_ordinal_2": {
+      "additionalProperties":false,
+      "properties": {"at": {"type":"integer"},"partition": {"type":"string"}},
+      "required": ["partition", "at" ],
+      "type":"object"
+    }
+  },
+  "$id":"ordered_program_level_fold_reaches_three_links#fc0e7144a2541959",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

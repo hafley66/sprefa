@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "ev": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "fired": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"log_rel_identical_arrival_is_two_occurrences#ddbb4d25a9f1db3f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

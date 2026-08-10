@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "counter": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"next": {"type":"integer"}},
+      "required": ["name", "next" ],
+      "type":"object"
+    },
+    "increment": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"log_driver_fold_needs_no_id_column#d9a16829b8a7f289",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

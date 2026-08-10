@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "callee_set_size": {
+      "additionalProperties":false,
+      "properties": {"left": {"type":"string"},"left_size": {"type":"integer"}},
+      "required": ["left", "left_size" ],
+      "type":"object"
+    },
+    "jaccard": {
+      "additionalProperties":false,
+      "properties": {
+        "col3": {"type":"integer"},
+        "left": {"type":"string"},
+        "right": {"type":"string"}
+      },
+      "required": ["left", "right", "col3" ],
+      "type":"object"
+    },
+    "shared_count": {
+      "additionalProperties":false,
+      "properties": {
+        "left": {"type":"string"},
+        "right": {"type":"string"},
+        "shared": {"type":"integer"}
+      },
+      "required": ["left", "right", "shared" ],
+      "type":"object"
+    },
+    "union_size": {
+      "additionalProperties":false,
+      "properties": {
+        "left": {"type":"string"},
+        "right": {"type":"string"},
+        "union": {"type":"integer"}
+      },
+      "required": ["left", "right", "union" ],
+      "type":"object"
+    }
+  },
+  "$id":"comparison_filters_rows#9ebc89783623719b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

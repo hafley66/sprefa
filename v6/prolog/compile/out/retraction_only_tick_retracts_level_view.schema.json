@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "mirror": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "source_row": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    }
+  },
+  "$id":"retraction_only_tick_retracts_level_view#8da993888edddcbd",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

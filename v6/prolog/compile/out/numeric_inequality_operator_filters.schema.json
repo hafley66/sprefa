@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "kept": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "row": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"numeric_inequality_operator_filters#7ff0cb66e9e3bb64",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

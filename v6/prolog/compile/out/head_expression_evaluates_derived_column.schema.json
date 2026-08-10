@@ -1,0 +1,32 @@
+{
+  "$defs": {
+    "callee_set_size": {
+      "additionalProperties":false,
+      "properties": {"left": {"type":"string"},"left_size": {"type":"integer"}},
+      "required": ["left", "left_size" ],
+      "type":"object"
+    },
+    "shared_count": {
+      "additionalProperties":false,
+      "properties": {
+        "left": {"type":"string"},
+        "right": {"type":"string"},
+        "shared": {"type":"integer"}
+      },
+      "required": ["left", "right", "shared" ],
+      "type":"object"
+    },
+    "union_size": {
+      "additionalProperties":false,
+      "properties": {
+        "col3": {"type":"integer"},
+        "left": {"type":"string"},
+        "right": {"type":"string"}
+      },
+      "required": ["left", "right", "col3" ],
+      "type":"object"
+    }
+  },
+  "$id":"head_expression_evaluates_derived_column#3c943195def90a46",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

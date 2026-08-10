@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "pair": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"integer"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    },
+    "raw_doc": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_empty_string_key_round_trips#1a0ed85904cf5e44",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

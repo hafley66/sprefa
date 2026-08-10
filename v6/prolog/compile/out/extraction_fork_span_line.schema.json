@@ -1,0 +1,59 @@
+{
+  "$defs": {
+    "__host_demand_span_scan": {
+      "additionalProperties":false,
+      "properties": {
+        "file_digest": {"type":"string"},
+        "identity_digest": {"type":"string"},
+        "query_digest": {"type":"string"},
+        "witness_digest": {"type":"string"}
+      },
+      "required": ["identity_digest", "witness_digest", "file_digest", "query_digest" ],
+      "type":"object"
+    },
+    "__host_response_span_scan": {
+      "additionalProperties":false,
+      "properties": {
+        "file_digest": {"type":"string"},
+        "line": {"type":"integer"},
+        "ordinal": {"type":"integer"},
+        "query_digest": {"type":"string"},
+        "text": {"type":"string"},
+        "witness_digest": {"type":"string"}
+      },
+      "required": [
+        "witness_digest",
+        "ordinal",
+        "file_digest",
+        "query_digest",
+        "line",
+        "text"
+      ],
+      "type":"object"
+    },
+    "file": {
+      "additionalProperties":false,
+      "properties": {"file": {"type":"string"},"file_digest": {"type":"string"}},
+      "required": ["file", "file_digest" ],
+      "type":"object"
+    },
+    "query_value": {
+      "additionalProperties":false,
+      "properties": {"query_digest": {"type":"string"}},
+      "required": ["query_digest" ],
+      "type":"object"
+    },
+    "span_line": {
+      "additionalProperties":false,
+      "properties": {
+        "file": {"type":"string"},
+        "line": {"type":"integer"},
+        "text": {"type":"string"}
+      },
+      "required": ["file", "line", "text" ],
+      "type":"object"
+    }
+  },
+  "$id":"extraction_fork_span_line#712874d04c6115e1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "current_value": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "update_value": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"keyed_edge_head_still_replaces#e5b6be9a20b3e7ab",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,50 @@
+{
+  "$defs": {
+    "demand_rev": {
+      "additionalProperties":false,
+      "properties": {"dep_repo_id": {"type":"integer"},"ref_text": {"type":"string"}},
+      "required": ["dep_repo_id", "ref_text" ],
+      "type":"object"
+    },
+    "pin_want": {
+      "additionalProperties":false,
+      "properties": {
+        "col1": {"type":"integer"},
+        "dep_repo_id": {"type":"integer"},
+        "ref_text": {"type":"string"}
+      },
+      "required": ["col1", "dep_repo_id", "ref_text" ],
+      "type":"object"
+    },
+    "rev_fill": {
+      "additionalProperties":false,
+      "properties": {
+        "ahead": {"type":"integer"},
+        "behind": {"type":"integer"},
+        "dep_repo_id": {"type":"integer"},
+        "ref_text": {"type":"string"}
+      },
+      "required": ["dep_repo_id", "ref_text", "behind", "ahead" ],
+      "type":"object"
+    },
+    "rev_status": {
+      "additionalProperties":false,
+      "properties": {
+        "ahead": {"type":"integer"},
+        "behind": {"type":"integer"},
+        "dep_repo_id": {"type":"integer"},
+        "ref_text": {"type":"string"}
+      },
+      "required": ["dep_repo_id", "ref_text", "behind", "ahead" ],
+      "type":"object"
+    },
+    "stale_pin": {
+      "additionalProperties":false,
+      "properties": {"dep_repo_id": {"type":"integer"},"ref_text": {"type":"string"}},
+      "required": ["dep_repo_id", "ref_text" ],
+      "type":"object"
+    }
+  },
+  "$id":"two_pins_dedup_to_one_demand_row#9dc2ee585759c173",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

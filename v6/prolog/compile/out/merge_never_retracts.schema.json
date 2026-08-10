@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "event_a": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "event_b": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    },
+    "out": {
+      "additionalProperties":false,
+      "properties": {"item": {"type":"string"}},
+      "required": ["item" ],
+      "type":"object"
+    }
+  },
+  "$id":"merge_never_retracts#086a58027b140e58",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "append_line": {
+      "additionalProperties":false,
+      "properties": {"channel": {"type":"string"},"piece": {"type":"string"}},
+      "required": ["channel", "piece" ],
+      "type":"object"
+    },
+    "log_text": {
+      "additionalProperties":false,
+      "properties": {"channel": {"type":"string"},"next": {"type":"string"}},
+      "required": ["channel", "next" ],
+      "type":"object"
+    }
+  },
+  "$id":"concat_fold_follows_arrival_order#9e5fa2c6e7aa35bf",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

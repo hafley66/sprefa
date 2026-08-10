@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "journal": {
+      "additionalProperties":false,
+      "properties": {"payload": {"type":"string"}},
+      "required": ["payload" ],
+      "type":"object"
+    },
+    "ping": {
+      "additionalProperties":false,
+      "properties": {"payload": {"type":"string"}},
+      "required": ["payload" ],
+      "type":"object"
+    }
+  },
+  "$id":"retention_single_arm_still_prunes#6a8539992089bf98",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

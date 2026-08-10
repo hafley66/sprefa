@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "key_seen": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "raw_doc": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_nfc_and_nfd_keys_stay_distinct#b9ba55fc0c951c2b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,39 @@
+{
+  "$defs": {
+    "call": {
+      "additionalProperties":false,
+      "properties": {"callee": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "callee" ],
+      "type":"object"
+    },
+    "calls": {
+      "additionalProperties":false,
+      "properties": {"callee": {"type":"string"},"caller": {"type":"string"}},
+      "required": ["caller", "callee" ],
+      "type":"object"
+    },
+    "def": {
+      "additionalProperties":false,
+      "properties": {
+        "kind": {"type":"string"},
+        "name": {"type":"string"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "name", "kind" ],
+      "type":"object"
+    },
+    "node_fact": {
+      "additionalProperties":false,
+      "properties": {
+        "kind": {"type":"string"},
+        "name": {"type":"string"},
+        "path": {"type":"string"},
+        "record": {"type":"string"}
+      },
+      "required": ["path", "record", "kind", "name" ],
+      "type":"object"
+    }
+  },
+  "$id":"callgraph_derivation_over_extraction#7790409de92ee063",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

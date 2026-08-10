@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "fpath": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "loc": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/fpath"},"line": {"type":"integer"}},
+      "required": ["at", "line" ],
+      "type":"object"
+    },
+    "raw": {
+      "additionalProperties":false,
+      "properties": {"line": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "line" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/fpath"}},
+      "required": ["at" ],
+      "type":"object"
+    }
+  },
+  "$id":"relation_ref_column_fed_by_ref_variable_accepted#88f6ec7b5df09eb6",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

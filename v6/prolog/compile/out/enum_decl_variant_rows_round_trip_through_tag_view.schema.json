@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "body_page": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"view": {"type":"integer"}},
+      "required": ["id", "view" ],
+      "type":"object"
+    },
+    "body_redirect": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"to": {"type":"string"}},
+      "required": ["id", "to" ],
+      "type":"object"
+    },
+    "body_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"enum_decl_variant_rows_round_trip_through_tag_view#d1419278b4c318bf",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

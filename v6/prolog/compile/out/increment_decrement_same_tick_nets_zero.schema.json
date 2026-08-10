@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "counter": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"next": {"type":"integer"}},
+      "required": ["name", "next" ],
+      "type":"object"
+    },
+    "decrement": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "col2" ],
+      "type":"object"
+    },
+    "increment": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"increment_decrement_same_tick_nets_zero#34dbcb4493266cda",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

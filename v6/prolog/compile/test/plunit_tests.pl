@@ -16,6 +16,7 @@
 :- use_module('../../compile',
               [ read_fixture_term/4, program_plan/2, program_plan/3,
                 compile_dl6/2, default_intern_mode/1,
+                dl6_seeded_form/3,
                 compiler_owned_contract/1 ]).
 :- use_module('../../0_unsupported_messages',
               [ unsupported_inventory/1, unsupported_message_clause_count/1 ]).
@@ -53,7 +54,7 @@
 % on.
 :- use_module('../../compile/parse_dl', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
 :- use_module('../../use_resolve',
-              [ expand_uses/6, include_roots/2, resolve_use_path/3,
+              [ expand_uses/6, expand_uses/8, include_roots/2, resolve_use_path/3,
                 reset_parse_counts/0, parse_count/2 ]).
 :- use_module('../../0_cst_query', [ parse_cst_query/2 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
@@ -75,6 +76,8 @@
                 incremental_program_safe/4, reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
 :- use_module('../../lower', [ boot_statements/7 ]).
+:- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3 ]).
+:- use_module('../../compile/5_emit_openapi', [ openapi_text/3 ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
 % the oracle/compiler split, because the review's central claim is that
@@ -7339,3 +7342,51 @@ test(list_of_relation_refs_keeps_its_unsupported) :-
     Thrown == unsupported_construct(list_of_relation_refs(span)).
 
 :- end_tests(list_element_widening).
+
+:- begin_tests(schema_emit).
+
+% The compile/text-door pipeline that feeds an emitter, shared by both tests.
+% The rows come from lower:catalog_decl_rows/6 -- the same rows the sweep
+% feeds the schema emitter -- never from re-parsing the fixture source.
+schema_emit_rows(RelPath, Name, Rows) :- once((
+    test_dir_fact(Dir),
+    atomic_list_concat([Dir, '/../dl_view/', RelPath], File),
+    expand_uses(File, [], [], _, Sugared, _, Bindings, _),
+    dl6_seeded_form(Sugared, Initial, Prog),
+    default_intern_mode(Mode),
+    program_plan(fixture(Name, Prog, Initial, [], [])-Bindings, [intern(Mode)], Plan),
+    Plan = plan(_, prog(Decls, Rules), _, RelPlans, _, _, _, _, _),
+    lower:catalog_decl_rows(Name, Rules, RelPlans, Decls, Rows, _)
+)).
+
+read_emit_fixture(Path, Text) :-
+    setup_call_cleanup(open(Path, read, Stream),
+                       read_string(Stream, _, Text),
+                       close(Stream)).
+
+% The JSON Schema emitter's *_text/1 output is byte-identical to the checked-in
+% fixture (the generated-artifact staleness class the .ts/.schedule.json sweep
+% artifacts already gate). A named type (span) is a $ref edge; int/text map by
+% the pin table.
+test(schema_text_matches_checked_in_fixture) :-
+    schema_emit_rows('struct_column_renders_canonical_json.dl6',
+                     struct_column_renders_canonical_json, Rows),
+    test_dir_fact(Dir),
+    atomic_list_concat([Dir, '/emit/schema/struct_column_renders_canonical_json.schema.json'], Path),
+    jsonschema_text(struct_column_renders_canonical_json, Rows, Text),
+    read_emit_fixture(Path, CheckedIn),
+    Text == CheckedIn, !.
+
+% The OpenAPI emitter reuses the same rel shapes (components.schemas) with the
+% OpenAPI ref prefix, and carries the served engine's real route list with the
+% `{rel}` path dialect.
+test(openapi_text_matches_checked_in_fixture) :-
+    schema_emit_rows('struct_column_renders_canonical_json.dl6',
+                     struct_column_renders_canonical_json, Rows),
+    test_dir_fact(Dir),
+    atomic_list_concat([Dir, '/emit/openapi/struct_column_renders_canonical_json.openapi.json'], Path),
+    openapi_text(struct_column_renders_canonical_json, Rows, Text),
+    read_emit_fixture(Path, CheckedIn),
+    Text == CheckedIn, !.
+
+:- end_tests(schema_emit).

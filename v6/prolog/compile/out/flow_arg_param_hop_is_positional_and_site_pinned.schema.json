@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "df_arg": {
+      "additionalProperties":false,
+      "properties": {
+        "arg": {"type":"string"},
+        "arg_end": {"type":"integer"},
+        "call_end": {"type":"integer"},
+        "call_start": {"type":"integer"},
+        "caller_path": {"type":"string"},
+        "pos": {"type":"integer"}
+      },
+      "required": ["caller_path", "call_start", "call_end", "pos", "arg", "arg_end" ],
+      "type":"object"
+    },
+    "df_param": {
+      "additionalProperties":false,
+      "properties": {
+        "callee_path": {"type":"string"},
+        "param": {"type":"string"},
+        "param_end": {"type":"integer"},
+        "pos": {"type":"integer"}
+      },
+      "required": ["callee_path", "param", "pos", "param_end" ],
+      "type":"object"
+    },
+    "flow_edge": {
+      "additionalProperties":false,
+      "properties": {"from": {"type":"string"},"to": {"type":"string"}},
+      "required": ["from", "to" ],
+      "type":"object"
+    },
+    "resolved_call_edge": {
+      "additionalProperties":false,
+      "properties": {
+        "call_end": {"type":"integer"},
+        "call_start": {"type":"integer"},
+        "callee_name": {"type":"string"},
+        "callee_path": {"type":"string"},
+        "caller_path": {"type":"string"}
+      },
+      "required": ["caller_path", "call_start", "call_end", "callee_path", "callee_name" ],
+      "type":"object"
+    }
+  },
+  "$id":"flow_arg_param_hop_is_positional_and_site_pinned#e9f302d3f1ead613",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

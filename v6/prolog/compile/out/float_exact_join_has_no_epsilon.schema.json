@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "left": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"number"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    },
+    "matched": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "right": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"number"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"float_exact_join_has_no_epsilon#e41b3bef7956ef36",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

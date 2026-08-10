@@ -1,0 +1,30 @@
+# Redocly CLI config for validating the emitter's OpenAPI 3.1 fixture
+# (test/emit/openapi/*.openapi.json). `recommended` stays on; it carries the
+# structural `spec` rules that decide whether the emitted document is a valid
+# OpenAPI 3.1 document at all.
+#
+# Exactly three rules are turned off, each with a reason:
+#
+#   security-defined  the served engine binds 127.0.0.1 and has no auth of any
+#                     kind today (serve/4_http.ts: no header is read on any
+#                     branch). Emitting a securitySchemes block to satisfy a
+#                     linter would put a claim in the spec the server does not
+#                     implement.
+#
+#   info-license      the repo has no license file to point at yet.
+#
+#   no-unused-components  components.schemas are the loaded PROGRAM's rel
+#                     shapes -- the whole point of this lane -- but the
+#                     operations' response/request bodies are a later card
+#                     (constraints arrive via @ rows), so no operation
+#                     currently references a schema. Firing these as errors
+#                     would make the program's own emitted shapes the lint
+#                     failure. The shapes are emitted for consumers, not yet
+#                     wired into the minimal response objects.
+extends:
+  - recommended
+
+rules:
+  security-defined: off
+  info-license: off
+  no-unused-components: off

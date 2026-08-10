@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "harvest": {
+      "additionalProperties":false,
+      "properties": {"picked": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "picked" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {},
+      "required": [],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {"picked": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "picked" ],
+      "type":"object"
+    }
+  },
+  "$id":"module_path_in_head_resolves_and_contributes#c191090caf985d6f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "probe_in": {
+      "additionalProperties":false,
+      "properties": {"probe_value": {"type":"integer"}},
+      "required": ["probe_value" ],
+      "type":"object"
+    },
+    "probe_out": {
+      "additionalProperties":false,
+      "properties": {"probe_value": {"type":"integer"}},
+      "required": ["probe_value" ],
+      "type":"object"
+    }
+  },
+  "$id":"arrival_affinity_rewrite_keeps_delta#fc386691f1a8b2ee",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

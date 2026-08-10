@@ -11,8 +11,9 @@
 :- use_module(library(apply)).
 :- use_module(library(filesex)).
 :- use_module(compile, [ program_plan/3, default_intern_mode/1 ]).
-:- use_module(lower, [ lower_program/2, boot_statements/7 ]).
+:- use_module(lower, [ lower_program/2, boot_statements/7, catalog_decl_rows/6 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
+:- use_module('compile/4_emit_jsonschema', [ jsonschema_text/3 ]).
 :- use_module('conformance/body', [ rel_ref/2 ]).
 :- use_module('0_rel_record', [ relplan_column_types/3 ]).
 :- use_module('0_type_plane',
@@ -87,7 +88,9 @@ sweep(Options) :-
 clear_stale_compiled_outputs(OutDir) :-
     directory_files(OutDir, Entries),
     forall(( member(Entry, Entries),
-             ( sub_atom(Entry, _, 3, 0, '.ts') ; sub_atom(Entry, _, 14, 0, '.schedule.json') )
+             ( sub_atom(Entry, _, 3, 0, '.ts')
+             ; sub_atom(Entry, _, 14, 0, '.schedule.json')
+             ; sub_atom(Entry, _, 11, 0, '.schema.json') )
            ),
            ( atomic_list_concat([OutDir, '/', Entry], Path), delete_file(Path) )).
 
@@ -102,7 +105,7 @@ sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason
         ( program_plan(Term-Bindings, Options, Plan),
           lower_program(Plan, Lowered),
           Term = fixture(Name, _Prog, Initial, Schedule, _Expectations),
-          Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
+          Plan = plan(_, prog(Decls, Rules), Types, RelPlans, _, _, _, _, Mode),
           Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
           boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, BootStatements),
           call(emit_ts:emit_program, Name, Plan, Lowered, BootStatements, Text),
@@ -112,6 +115,17 @@ sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason
           schedule_json(Types, RelPlans, Schedule, ScheduleJson),
           format(atom(SchedulePath), '~w/~w.schedule.json', [OutDir, Name]),
           setup_call_cleanup(open(SchedulePath, write, ScheduleStream), format(ScheduleStream, "~w", [ScheduleJson]), close(ScheduleStream)),
+          (   catch( ( catalog_decl_rows(Name, Rules, RelPlans, Decls,
+                                        SchemaRows, _),
+                       jsonschema_text(Name, SchemaRows, SchemaText) ),
+                     _SchemaError,
+                     fail )
+          ->  format(atom(SchemaPath), '~w/~w.schema.json', [OutDir, Name]),
+              setup_call_cleanup(open(SchemaPath, write, SchemaStream),
+                                 format(SchemaStream, "~s", [SchemaText]),
+                                 close(SchemaStream))
+          ;   true
+          ),
           Bucket = compiled, Reason = none
         ),
         Error,

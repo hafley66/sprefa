@@ -1,0 +1,27 @@
+{
+  "$defs": {
+    "dispatch_leg": {
+      "additionalProperties":false,
+      "properties": {
+        "dispatch_id": {"type":"integer"},
+        "kilos": {"type":"integer"},
+        "leg_id": {"type":"integer"},
+        "previous_leg": {"type":"integer"}
+      },
+      "required": ["leg_id", "dispatch_id", "previous_leg", "kilos" ],
+      "type":"object"
+    },
+    "leg_total": {
+      "additionalProperties":false,
+      "properties": {
+        "dispatch_id": {"type":"integer"},
+        "kilos": {"type":"integer"},
+        "leg_id": {"type":"integer"}
+      },
+      "required": ["leg_id", "dispatch_id", "kilos" ],
+      "type":"object"
+    }
+  },
+  "$id":"unordered_program_level_fold_reaches_three_links#b17979b7e55e5568",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

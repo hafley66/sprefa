@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "combined": {
+      "additionalProperties":false,
+      "properties": {"value_a": {"type":"string"},"value_b": {"type":"string"}},
+      "required": ["value_a", "value_b" ],
+      "type":"object"
+    },
+    "result_a": {
+      "additionalProperties":false,
+      "properties": {"value_a": {"type":"string"}},
+      "required": ["value_a" ],
+      "type":"object"
+    },
+    "result_b": {
+      "additionalProperties":false,
+      "properties": {"value_b": {"type":"string"}},
+      "required": ["value_b" ],
+      "type":"object"
+    }
+  },
+  "$id":"fork_join_is_a_conjunctive_body#78d058f9f151d2a0",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

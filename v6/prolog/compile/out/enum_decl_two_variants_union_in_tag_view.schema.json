@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "result_error": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"message": {"type":"string"}},
+      "required": ["id", "message" ],
+      "type":"object"
+    },
+    "result_ok": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"string"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "result_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"enum_decl_two_variants_union_in_tag_view#f518f044d7d5f35e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

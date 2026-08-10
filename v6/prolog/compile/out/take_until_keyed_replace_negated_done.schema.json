@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "demanded": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"},"endpoint": {"type":"string"}},
+      "required": ["col1", "endpoint" ],
+      "type":"object"
+    },
+    "fetch_result": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"endpoint": {"type":"string"}},
+      "required": ["endpoint", "col2" ],
+      "type":"object"
+    },
+    "live_fetch": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"}},
+      "required": ["endpoint" ],
+      "type":"object"
+    },
+    "open_fetch": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"}},
+      "required": ["endpoint" ],
+      "type":"object"
+    },
+    "phase": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"endpoint": {"type":"string"}},
+      "required": ["endpoint", "col2" ],
+      "type":"object"
+    },
+    "poll_due": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"}},
+      "required": ["endpoint" ],
+      "type":"object"
+    },
+    "scope_done": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"}},
+      "required": ["endpoint" ],
+      "type":"object"
+    }
+  },
+  "$id":"take_until_keyed_replace_negated_done#40b9bbb365dfcca2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

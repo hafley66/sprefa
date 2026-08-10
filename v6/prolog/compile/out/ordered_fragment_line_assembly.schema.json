@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "fragment_line": {
+      "additionalProperties":false,
+      "properties": {
+        "fragment_name": {"type":"string"},
+        "line_ordinal": {"type":"integer"},
+        "line_text": {"type":"string"}
+      },
+      "required": ["fragment_name", "line_ordinal", "line_text" ],
+      "type":"object"
+    },
+    "fragment_text": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"fragment_name": {"type":"string"}},
+      "required": ["fragment_name", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"ordered_fragment_line_assembly#f4e748c63acec664",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "typed_input": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"typed_int_without_literal_witness#ee04d17fe681d371",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

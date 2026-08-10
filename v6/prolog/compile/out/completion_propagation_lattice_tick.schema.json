@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "closed_inner": {
+      "additionalProperties":false,
+      "properties": {"inner_id": {"type":"string"},"outer_id": {"type":"string"}},
+      "required": ["outer_id", "inner_id" ],
+      "type":"object"
+    },
+    "closed_outer": {
+      "additionalProperties":false,
+      "properties": {"outer_id": {"type":"string"}},
+      "required": ["outer_id" ],
+      "type":"object"
+    },
+    "end_a_signal": {
+      "additionalProperties":false,
+      "properties": {"outer_id": {"type":"string"}},
+      "required": ["outer_id" ],
+      "type":"object"
+    },
+    "end_b_signal": {
+      "additionalProperties":false,
+      "properties": {"outer_id": {"type":"string"}},
+      "required": ["outer_id" ],
+      "type":"object"
+    },
+    "end_c_signal": {
+      "additionalProperties":false,
+      "properties": {"inner_id": {"type":"string"}},
+      "required": ["inner_id" ],
+      "type":"object"
+    },
+    "live_inner": {
+      "additionalProperties":false,
+      "properties": {"inner_id": {"type":"string"},"outer_id": {"type":"string"}},
+      "required": ["outer_id", "inner_id" ],
+      "type":"object"
+    },
+    "live_outer": {
+      "additionalProperties":false,
+      "properties": {"outer_id": {"type":"string"}},
+      "required": ["outer_id" ],
+      "type":"object"
+    },
+    "open_inner": {
+      "additionalProperties":false,
+      "properties": {"inner_id": {"type":"string"},"outer_id": {"type":"string"}},
+      "required": ["outer_id", "inner_id" ],
+      "type":"object"
+    },
+    "open_outer": {
+      "additionalProperties":false,
+      "properties": {"outer_id": {"type":"string"}},
+      "required": ["outer_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"completion_propagation_lattice_tick#722b0f0664e29ac4",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

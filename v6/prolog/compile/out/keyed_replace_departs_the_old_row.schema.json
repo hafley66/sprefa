@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "from_poll": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "latest": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {"type":"string"}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "replaced_value": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"old_value": {"type":"string"}},
+      "required": ["key", "old_value" ],
+      "type":"object"
+    }
+  },
+  "$id":"keyed_replace_departs_the_old_row#ec3c2be9d41764a8",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

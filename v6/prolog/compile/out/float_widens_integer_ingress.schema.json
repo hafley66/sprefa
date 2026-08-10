@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "score": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"number"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"float_widens_integer_ingress#bfdaafe79be1f4eb",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

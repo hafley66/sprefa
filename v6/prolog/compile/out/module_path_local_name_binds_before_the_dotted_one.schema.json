@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "local_pick": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {},
+      "required": [],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    },
+    "path_pick": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    },
+    "tree": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"module_path_local_name_binds_before_the_dotted_one#63a424b21a04e1b0",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

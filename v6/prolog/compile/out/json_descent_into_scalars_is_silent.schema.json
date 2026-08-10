@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "doc": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    },
+    "found": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"string"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_descent_into_scalars_is_silent#e58441083d7f780d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

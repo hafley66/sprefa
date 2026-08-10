@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "labelled": {
+      "additionalProperties":false,
+      "properties": {"label": {"type":"string"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "label" ],
+      "type":"object"
+    },
+    "name": {
+      "additionalProperties":false,
+      "properties": {"label": {"type":"string"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "label" ],
+      "type":"object"
+    },
+    "ping": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"coalesce_in_edge_body_samples#8395ea03f8e6859a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

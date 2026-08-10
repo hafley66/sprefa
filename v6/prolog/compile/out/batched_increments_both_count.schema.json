@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "counter": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"next": {"type":"integer"}},
+      "required": ["name", "next" ],
+      "type":"object"
+    },
+    "increment": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"batched_increments_both_count#0debb196edf83dd1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

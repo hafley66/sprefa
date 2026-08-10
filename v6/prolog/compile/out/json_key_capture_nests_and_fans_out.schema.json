@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "operation": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"string"},
+        "method": {"type":"string"},
+        "path": {"type":"string"}
+      },
+      "required": ["path", "method", "id" ],
+      "type":"object"
+    },
+    "spec": {
+      "additionalProperties":false,
+      "properties": {"body": {}},
+      "required": ["body" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_key_capture_nests_and_fans_out#e81662b8c8d8c43b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

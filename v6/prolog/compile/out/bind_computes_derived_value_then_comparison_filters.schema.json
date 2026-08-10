@@ -1,0 +1,28 @@
+{
+  "$defs": {
+    "bump": {
+      "additionalProperties":false,
+      "properties": {"extra": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["name", "extra" ],
+      "type":"object"
+    },
+    "over_budget": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"sum": {"type":"integer"}},
+      "required": ["name", "sum" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {
+        "base": {"type":"integer"},
+        "col3": {"type":"string"},
+        "name": {"type":"string"}
+      },
+      "required": ["name", "base", "col3" ],
+      "type":"object"
+    }
+  },
+  "$id":"bind_computes_derived_value_then_comparison_filters#dd17997a17f2419d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "maybe_text_none": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "maybe_text_some": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"string"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "maybe_text_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"enum_nullary_variant_boots_and_tags#8d83369066f68aab",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

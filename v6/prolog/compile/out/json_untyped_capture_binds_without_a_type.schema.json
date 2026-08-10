@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "event": {
+      "additionalProperties":false,
+      "properties": {"payload": {}},
+      "required": ["payload" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"string"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_untyped_capture_binds_without_a_type#7c11ffae6e27178f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

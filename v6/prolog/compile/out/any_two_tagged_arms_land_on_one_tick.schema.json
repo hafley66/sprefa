@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "dispatch_ack": {
+      "additionalProperties":false,
+      "properties": {"dispatch_id": {"type":"integer"}},
+      "required": ["dispatch_id" ],
+      "type":"object"
+    },
+    "dispatch_note": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"dispatch_id": {"type":"integer"}},
+      "required": ["dispatch_id", "col2" ],
+      "type":"object"
+    },
+    "dispatch_seal": {
+      "additionalProperties":false,
+      "properties": {"sealed_id": {"type":"integer"}},
+      "required": ["sealed_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"any_two_tagged_arms_land_on_one_tick#38d1f206b71f7e30",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,39 @@
+{
+  "$defs": {
+    "fetch_result_error": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"},"status": {"type":"integer"}},
+      "required": ["endpoint", "status" ],
+      "type":"object"
+    },
+    "fetch_result_fresh": {
+      "additionalProperties":false,
+      "properties": {
+        "body": {"type":"string"},
+        "endpoint": {"type":"string"},
+        "tag": {"type":"string"}
+      },
+      "required": ["endpoint", "tag", "body" ],
+      "type":"object"
+    },
+    "fetch_result_unchanged": {
+      "additionalProperties":false,
+      "properties": {"endpoint": {"type":"string"}},
+      "required": ["endpoint" ],
+      "type":"object"
+    },
+    "resp_raw": {
+      "additionalProperties":false,
+      "properties": {
+        "body": {"type":"string"},
+        "endpoint": {"type":"string"},
+        "status": {"type":"integer"},
+        "tag": {"type":"string"}
+      },
+      "required": ["endpoint", "status", "tag", "body" ],
+      "type":"object"
+    }
+  },
+  "$id":"match_classify_response#606b8bfac88dfedd",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

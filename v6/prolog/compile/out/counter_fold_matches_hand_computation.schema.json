@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "counter": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"next": {"type":"integer"}},
+      "required": ["name", "next" ],
+      "type":"object"
+    },
+    "decrement": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "col2" ],
+      "type":"object"
+    },
+    "hot": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "increment": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"counter_fold_matches_hand_computation#d81798e7265b73f8",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

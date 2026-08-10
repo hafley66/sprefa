@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "heavy": {
+      "additionalProperties":false,
+      "properties": {"kilos": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "kilos" ],
+      "type":"object"
+    },
+    "pick": {
+      "additionalProperties":false,
+      "properties": {"kilos": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "kilos" ],
+      "type":"object"
+    },
+    "report": {
+      "additionalProperties":false,
+      "properties": {"kilos": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "kilos" ],
+      "type":"object"
+    },
+    "tree": {
+      "additionalProperties":false,
+      "properties": {"tree_id": {"type":"integer"}},
+      "required": ["tree_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"coalesce_over_derived_source#57a6ccec71804e95",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

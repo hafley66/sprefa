@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "__opt_text_none": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__opt_text_some": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"string"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "__opt_text_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "labelled": {
+      "additionalProperties":false,
+      "properties": {"state": {"type":"string"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "state" ],
+      "type":"object"
+    },
+    "orchard": {
+      "additionalProperties":false,
+      "properties": {},
+      "required": [],
+      "type":"object"
+    },
+    "orchard.tree": {
+      "additionalProperties":false,
+      "properties": {"label": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "label" ],
+      "type":"object"
+    }
+  },
+  "$id":"module_path_and_option_column_coexist#6f609fbf5e15e582",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

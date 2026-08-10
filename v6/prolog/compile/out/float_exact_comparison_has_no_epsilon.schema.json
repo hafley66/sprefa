@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "exact": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "score": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"number"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"float_exact_comparison_has_no_epsilon#ac2114b90a1beb2b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

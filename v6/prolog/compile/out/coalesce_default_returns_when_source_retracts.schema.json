@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "latest_commit": {
+      "additionalProperties":false,
+      "properties": {"commit": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "commit" ],
+      "type":"object"
+    },
+    "repo": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "repo_latest": {
+      "additionalProperties":false,
+      "properties": {"commit": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "commit" ],
+      "type":"object"
+    }
+  },
+  "$id":"coalesce_default_returns_when_source_retracts#b169454397b25cbc",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

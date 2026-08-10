@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "event": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"}},
+      "required": ["col1" ],
+      "type":"object"
+    }
+  },
+  "$id":"log_retraction_rejected#9a362457c1521a98",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

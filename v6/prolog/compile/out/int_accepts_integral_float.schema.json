@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "measure": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"int_accepts_integral_float#c92d584d75d9b7d3",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

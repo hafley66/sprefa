@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "distinct": {
+      "additionalProperties":false,
+      "properties": {"left": {"type":"string"},"right": {"type":"string"}},
+      "required": ["left", "right" ],
+      "type":"object"
+    },
+    "pair": {
+      "additionalProperties":false,
+      "properties": {"left": {"type":"string"},"right": {"type":"string"}},
+      "required": ["left", "right" ],
+      "type":"object"
+    }
+  },
+  "$id":"negated_identity_guard_flips_to_complement#66d6c46f461fc543",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "counted": {
+      "additionalProperties":false,
+      "properties": {"repo": {"type":"string"},"stars": {"type":"integer"}},
+      "required": ["repo", "stars" ],
+      "type":"object"
+    },
+    "event": {
+      "additionalProperties":false,
+      "properties": {"payload": {}},
+      "required": ["payload" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_typed_capture_filters_a_wrong_typed_value#cc5e84bbff5cfebb",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

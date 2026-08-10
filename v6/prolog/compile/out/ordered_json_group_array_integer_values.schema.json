@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "integer_sorted": {
+      "additionalProperties":false,
+      "properties": {"col2": {},"group": {"type":"string"}},
+      "required": ["group", "col2" ],
+      "type":"object"
+    },
+    "item": {
+      "additionalProperties":false,
+      "properties": {"group": {"type":"string"},"value": {"type":"integer"}},
+      "required": ["group", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"ordered_json_group_array_integer_values#36064bd188c9d507",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

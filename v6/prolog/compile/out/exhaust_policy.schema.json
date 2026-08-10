@@ -1,0 +1,54 @@
+{
+  "$defs": {
+    "close_request": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"tab_id": {"type":"string"}},
+      "required": ["session_id", "tab_id" ],
+      "type":"object"
+    },
+    "closed": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"tab_id": {"type":"string"}},
+      "required": ["session_id", "tab_id" ],
+      "type":"object"
+    },
+    "demanded": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"},"session_id": {"type":"string"}},
+      "required": ["col1", "session_id" ],
+      "type":"object"
+    },
+    "live_tab": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"tab_id": {"type":"string"}},
+      "required": ["session_id", "tab_id" ],
+      "type":"object"
+    },
+    "open_request": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"tab_id": {"type":"string"}},
+      "required": ["session_id", "tab_id" ],
+      "type":"object"
+    },
+    "open_tab": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"tab_id": {"type":"string"}},
+      "required": ["session_id", "tab_id" ],
+      "type":"object"
+    },
+    "tab_row": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"tab_id": {"type":"string"}},
+      "required": ["tab_id", "body" ],
+      "type":"object"
+    },
+    "tab_view": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"tab_id": {"type":"string"}},
+      "required": ["tab_id", "body" ],
+      "type":"object"
+    }
+  },
+  "$id":"exhaust_policy#fd16c619ea2c5573",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

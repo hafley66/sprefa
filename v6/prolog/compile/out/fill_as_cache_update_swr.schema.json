@@ -1,0 +1,36 @@
+{
+  "$defs": {
+    "cache_row": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"target": {"type":"string"}},
+      "required": ["target", "body" ],
+      "type":"object"
+    },
+    "demanded": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"target": {"type":"string"}},
+      "required": ["target", "session_id" ],
+      "type":"object"
+    },
+    "feed_view": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"target": {"type":"string"}},
+      "required": ["target", "body" ],
+      "type":"object"
+    },
+    "fill_arrived": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"target": {"type":"string"}},
+      "required": ["target", "body" ],
+      "type":"object"
+    },
+    "open_feed": {
+      "additionalProperties":false,
+      "properties": {"session_id": {"type":"string"},"target": {"type":"string"}},
+      "required": ["session_id", "target" ],
+      "type":"object"
+    }
+  },
+  "$id":"fill_as_cache_update_swr#f01df8dd28018a7b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

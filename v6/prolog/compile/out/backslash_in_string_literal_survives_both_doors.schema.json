@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "hit": {
+      "additionalProperties":false,
+      "properties": {"text_value": {"type":"string"}},
+      "required": ["text_value" ],
+      "type":"object"
+    },
+    "raw": {
+      "additionalProperties":false,
+      "properties": {"text_value": {"type":"string"}},
+      "required": ["text_value" ],
+      "type":"object"
+    }
+  },
+  "$id":"backslash_in_string_literal_survives_both_doors#d516877244cf59b2",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

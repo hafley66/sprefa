@@ -1,0 +1,22 @@
+{
+  "$defs": {
+    "measure": {
+      "additionalProperties":false,
+      "properties": {
+        "fraction": {"type":"number"},
+        "name": {"type":"string"},
+        "whole": {"type":"integer"}
+      },
+      "required": ["name", "whole", "fraction" ],
+      "type":"object"
+    },
+    "total": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"value": {"type":"number"}},
+      "required": ["name", "value" ],
+      "type":"object"
+    }
+  },
+  "$id":"int_float_arithmetic_keeps_real_result#cdccc2907df2bf8b",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

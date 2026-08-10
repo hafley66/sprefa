@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "coord": {
+      "additionalProperties":false,
+      "properties": {
+        "end": {"type":"integer"},
+        "path_name": {"type":"string"},
+        "start": {"type":"integer"}
+      },
+      "required": ["path_name", "start", "end" ],
+      "type":"object"
+    },
+    "file": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/fpath"},"repo": {"$ref":"#/$defs/repo"}},
+      "required": ["repo", "at" ],
+      "type":"object"
+    },
+    "fpath": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "raw": {
+      "additionalProperties":false,
+      "properties": {
+        "end": {"type":"integer"},
+        "path_name": {"type":"string"},
+        "repo_name": {"type":"string"},
+        "start": {"type":"integer"}
+      },
+      "required": ["repo_name", "path_name", "start", "end" ],
+      "type":"object"
+    },
+    "repo": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "span": {
+      "additionalProperties":false,
+      "properties": {
+        "end": {"type":"integer"},
+        "file": {"$ref":"#/$defs/file"},
+        "start": {"type":"integer"}
+      },
+      "required": ["file", "start", "end" ],
+      "type":"object"
+    }
+  },
+  "$id":"relation_depth2_many_rows_share_one_leaf#e19612ddf6b0335c",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,48 @@
+{
+  "$defs": {
+    "eprintln_count": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "col2" ],
+      "type":"object"
+    },
+    "eprintln_counted": {
+      "additionalProperties":false,
+      "properties": {"line_no": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "line_no" ],
+      "type":"object"
+    },
+    "eprintln_hit": {
+      "additionalProperties":false,
+      "properties": {"line_no": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "line_no" ],
+      "type":"object"
+    },
+    "eprintln_waived": {
+      "additionalProperties":false,
+      "properties": {"line_no": {"type":"integer"},"path": {"type":"string"}},
+      "required": ["path", "line_no" ],
+      "type":"object"
+    },
+    "eprintln_waiver_line": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"waiver_line": {"type":"integer"}},
+      "required": ["path", "waiver_line" ],
+      "type":"object"
+    },
+    "waiver_block_comment": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"waiver_line": {"type":"string"}},
+      "required": ["path", "waiver_line" ],
+      "type":"object"
+    },
+    "waiver_trailing_comment": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"waiver_line": {"type":"integer"}},
+      "required": ["path", "waiver_line" ],
+      "type":"object"
+    }
+  },
+  "$id":"over_baseline_count_row#8b2367650d2505a7",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

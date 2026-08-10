@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "payload_blob": {
+      "additionalProperties":false,
+      "properties": {"data": {},"id": {"type":"integer"}},
+      "required": ["id", "data" ],
+      "type":"object"
+    },
+    "payload_none": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "payload_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"variant_field_typed_as_json_stays_json#d5e932f7d499dba1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
