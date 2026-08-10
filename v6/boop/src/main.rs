@@ -1672,9 +1672,12 @@ enum BeepCmd {
         #[command(subcommand)]
         cmd: MessageCmd,
     },
-    /// pid, rss, cpu, uptime, child count per lane.
+    /// pid, rss, cpu, uptime, child count per live lane.
     Ps {
         lane: Option<String>,
+        /// Include dead routes (no live process behind the pane).
+        #[arg(long)]
+        all: bool,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -2087,7 +2090,11 @@ fn run_beep(registry: &Registry, cmd: BeepCmd) -> Result<()> {
                 max_age_days,
             ),
         },
-        BeepCmd::Ps { lane, mail_dir } => run_ps(mail_dir.as_deref(), lane.as_deref()),
+        BeepCmd::Ps {
+            lane,
+            all,
+            mail_dir,
+        } => run_ps(mail_dir.as_deref(), lane.as_deref(), all),
     }
 }
 
@@ -2300,7 +2307,7 @@ fn run_lane_pane(
 }
 
 /// `beep ps`, optionally narrowed to one lane.
-fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>) -> Result<()> {
+fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
     let routes = bus::read_routes(&dir)?;
     let snapshot = proc::SysinfoSnapshot::capture()?;
@@ -2322,7 +2329,11 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>) -> Result<()> {
                 info.start_time_secs,
                 snapshot.descendent_count(pane_pid),
             ),
-            None => println!("{}\t{}\t-\t-\t-\t-", name, pane_pid),
+            // A dead route prints only when asked for by name or --all.
+            None if all || lane.is_some() => {
+                println!("{}\t{}\t-\t-\t-\t-", name, pane_pid);
+            }
+            None => {}
         }
     }
     Ok(())

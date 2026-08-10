@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::harness::SessionRef;
 
@@ -21,8 +21,10 @@ pub struct Store {
 
 /// Bumped whenever stored rows mean something different. 2 = dense per-session
 /// turn ordinals and per-transcript cursors. 3 = token usage. 4 = rate table.
-/// 5 = agent_fetch covers searches, not only url fetches.
-pub const SCHEMA_VERSION: i64 = 5;
+/// 5 = agent_fetch covers searches, not only url fetches. 6 = agent_live_span
+/// records historical liveness, agent_touch carries canonical verbs, and
+/// agent_edge carries temporal evidence.
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// A row returned to the CLI, joined back from ids to the TEXT the query
 /// surface exposes.
@@ -383,14 +385,26 @@ impl Store {
         Ok(out)
     }
 
-    fn add_touch(&self, session: &str, turn: u64, ts: u64, path: &str, verb: &str) -> Result<()> {
+    fn add_touch(
+        &self,
+        session: &str,
+        turn: u64,
+        ts: u64,
+        path: &str,
+        verb: &str,
+        raw_verb: &str,
+    ) -> Result<()> {
         let sid = self.session_id(session)?;
         let path_id = self.intern("dict_path", path)?;
+        // verb_id is the canonical lowercase spelling; raw_verb_id keeps the
+        // harness's own casing on disk so a consumer never re-normalizes.
         let verb_id = self.intern("dict_verb", verb)?;
+        let raw_verb_id = self.intern("dict_verb", raw_verb)?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO agent_touch (session_id, turn, ts, path_id, verb_id)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![sid, turn as i64, ts as i64, path_id, verb_id],
+            "INSERT OR IGNORE INTO agent_touch
+               (session_id, turn, ts, path_id, verb_id, raw_verb_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![sid, turn as i64, ts as i64, path_id, verb_id, raw_verb_id],
         )?;
         Ok(())
     }
@@ -482,15 +496,32 @@ impl Store {
         Ok(offset as u64)
     }
 
-    /// Record a spawn edge between two known sessions.
+    /// Record a spawn edge between two known sessions, stamped at the current
+    /// wall clock.
     pub fn add_edge(&self, parent: &str, child: &str, kind: &str) -> Result<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        self.add_edge_at(parent, child, kind, now)
+    }
+
+    /// Record an edge observation at an explicit timestamp. The first sighting
+    /// sets `first_ts`; every repeat bumps `last_ts` and `n`, so one structural
+    /// spawn stays one row while repeated communication across that edge is
+    /// counted, not collapsed.
+    pub fn add_edge_at(&self, parent: &str, child: &str, kind: &str, ts: u64) -> Result<()> {
         let parent_id = self.session_id(parent)?;
         let child_id = self.session_id(child)?;
         let kind_id = self.intern("dict_edekind", kind)?;
         self.connection.execute(
-            "INSERT OR IGNORE INTO agent_edge (parent_session_id, child_session_id, edge_kind_id)
-             VALUES (?1, ?2, ?3)",
-            params![parent_id, child_id, kind_id],
+            "INSERT INTO agent_edge
+               (parent_session_id, child_session_id, edge_kind_id, first_ts, last_ts, n)
+             VALUES (?1, ?2, ?3, ?4, ?4, 1)
+             ON CONFLICT(parent_session_id, child_session_id, edge_kind_id) DO UPDATE SET
+               last_ts = excluded.last_ts,
+               n = agent_edge.n + 1",
+            params![parent_id, child_id, kind_id, ts as i64],
         )?;
         Ok(())
     }
@@ -498,31 +529,167 @@ impl Store {
     /// Query spawn edges, joined back to the TEXT query surface. `session`
     /// filters to edges touching that session id; none means all edges.
     pub fn query_edges(&self, session: Option<&str>) -> Result<Vec<Row>> {
-        let mut sql = String::from(
-            "SELECT p.value AS parent, c.value AS child, e.value AS edge
-             FROM agent_edge a
-             JOIN dict_session p ON p.id = a.parent_session_id
-             JOIN dict_session c ON c.id = a.child_session_id
-             JOIN dict_edekind e ON e.id = a.edge_kind_id
-             WHERE 1=1",
-        );
-        if session.is_some() {
-            sql.push_str(" AND (c.value = ?1 OR p.value = ?1)");
-        }
-        sql.push_str(" ORDER BY p.value, c.value");
-        let mut statement = self.connection.prepare(&sql)?;
-        let params: Vec<rusqlite::types::Value> = session
-            .map(|value| vec![value.to_string().into()])
-            .unwrap_or_default();
+        let sql = "SELECT p.value AS parent, c.value AS child, e.value AS edge,
+                          a.first_ts, a.last_ts, a.n
+                   FROM agent_edge a
+                   JOIN dict_session p ON p.id = a.parent_session_id
+                   JOIN dict_session c ON c.id = a.child_session_id
+                   JOIN dict_edekind e ON e.id = a.edge_kind_id
+                   WHERE (?1 IS NULL OR c.value = ?1 OR p.value = ?1)
+                   ORDER BY p.value, c.value";
+        let mut statement = self.connection.prepare(sql)?;
+        let value: Option<String> = session.map(str::to_owned);
         let mut rows = Vec::new();
-        let iter = statement.query_map(rusqlite::params_from_iter(params.iter()), |row| {
+        let iter = statement.query_map(params![value], |row| {
             Ok(serde_json::json!({
                 "kind": "agent_edge",
                 "parent": row.get::<_, String>(0)?,
                 "child": row.get::<_, String>(1)?,
                 "edge": row.get::<_, String>(2)?,
+                "first_ts": row.get::<_, Option<i64>>(3)?,
+                "last_ts": row.get::<_, Option<i64>>(4)?,
+                "n": row.get::<_, i64>(5)?,
             }))
         })?;
+        for row in iter {
+            rows.push(row?);
+        }
+        Ok(rows)
+    }
+
+    /// Edges as typed rows, with temporal and count evidence.
+    pub fn edge_rows(&self, session: Option<&str>) -> Result<Vec<crate::rows::EdgeRow>> {
+        let sql = "SELECT p.value, c.value, e.value, a.first_ts, a.last_ts, a.n
+                   FROM agent_edge a
+                   JOIN dict_session p ON p.id = a.parent_session_id
+                   JOIN dict_session c ON c.id = a.child_session_id
+                   JOIN dict_edekind e ON e.id = a.edge_kind_id
+                   WHERE (?1 IS NULL OR c.value = ?1 OR p.value = ?1)
+                   ORDER BY p.value, c.value";
+        let mut statement = self.connection.prepare(sql)?;
+        let value: Option<String> = session.map(str::to_owned);
+        let iter = statement.query_map(params![value], |row| {
+            Ok(crate::rows::EdgeRow {
+                parent: row.get(0)?,
+                child: row.get(1)?,
+                edge: row.get(2)?,
+                first_ts: row.get(3)?,
+                last_ts: row.get(4)?,
+                n: row.get(5)?,
+            })
+        })?;
+        Ok(iter.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Record one liveness observation at `ts`. Maintains `agent_live` as the
+    /// current-state cache and folds the interval into `agent_live_span`: a
+    /// state change closes the open interval and opens a new one; a repeated
+    /// identical observation extends and inserts nothing.
+    pub fn record_status(
+        &self,
+        session: &str,
+        ts: u64,
+        status: &str,
+        pid: Option<i64>,
+        tmux_pane: Option<&str>,
+    ) -> Result<()> {
+        let sid = self.session_id(session)?;
+        let status_id = self.intern("dict_status", status)?;
+        let pane_id = match tmux_pane {
+            Some(pane) => Some(self.intern("dict_pane", pane)?),
+            None => None,
+        };
+        self.connection.execute(
+            "INSERT INTO agent_live (session_id, pid, tmux_pane_id, status_id)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(session_id) DO UPDATE SET
+               pid = excluded.pid,
+               tmux_pane_id = excluded.tmux_pane_id,
+               status_id = excluded.status_id",
+            params![sid, pid, pane_id, status_id],
+        )?;
+        let open: Option<(i64, i64, Option<i64>, Option<i64>)> = self
+            .connection
+            .query_row(
+                "SELECT from_ts, status_id, pid, tmux_pane_id FROM agent_live_span
+                 WHERE session_id = ?1 AND to_ts IS NULL
+                 ORDER BY from_ts DESC LIMIT 1",
+                params![sid],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        let unchanged = open
+            .as_ref()
+            .map(|(_, st, pg, pn)| *st == status_id && *pg == pid && *pn == pane_id)
+            .unwrap_or(false);
+        if unchanged {
+            return Ok(());
+        }
+        if let Some((from_ts, _, _, _)) = open {
+            self.connection.execute(
+                "UPDATE agent_live_span SET to_ts = ?2
+                 WHERE session_id = ?1 AND from_ts = ?3",
+                params![sid, ts as i64, from_ts],
+            )?;
+        }
+        self.connection.execute(
+            "INSERT INTO agent_live_span (session_id, from_ts, to_ts, status_id, pid, tmux_pane_id)
+             VALUES (?1, ?2, NULL, ?3, ?4, ?5)",
+            params![sid, ts as i64, status_id, pid, pane_id],
+        )?;
+        Ok(())
+    }
+
+    /// Every liveness interval for one session (or all when `session` is
+    /// `None`), joined back to the TEXT status surface.
+    pub fn live_span(&self, session: Option<&str>) -> Result<Vec<Row>> {
+        let sql = "SELECT dict_session.value, d.value AS status,
+                          s.from_ts, s.to_ts, s.pid, p.value AS tmux_pane
+                   FROM agent_live_span s
+                   JOIN dict_session ON dict_session.id = s.session_id
+                   JOIN dict_status d ON d.id = s.status_id
+                   LEFT JOIN dict_pane p ON p.id = s.tmux_pane_id
+                   WHERE (?1 IS NULL OR dict_session.value = ?1)
+                   ORDER BY dict_session.value, s.from_ts";
+        let mut statement = self.connection.prepare(sql)?;
+        let filter: Option<String> = session.map(str::to_owned);
+        let iter = statement.query_map(params![filter], |row| {
+            Ok(serde_json::json!({
+                "session": row.get::<_, String>(0)?,
+                "status": row.get::<_, String>(1)?,
+                "from_ts": row.get::<_, i64>(2)?,
+                "to_ts": row.get::<_, Option<i64>>(3)?,
+                "pid": row.get::<_, Option<i64>>(4)?,
+                "tmux_pane": row.get::<_, Option<String>>(5)?,
+            }))
+        })?;
+        let mut rows = Vec::new();
+        for row in iter {
+            rows.push(row?);
+        }
+        Ok(rows)
+    }
+
+    /// The interval active at a point in time, using the half-open rule
+    /// `from_ts <= T AND (to_ts IS NULL OR to_ts > T)`.
+    pub fn query_live_at(&self, at_ts: u64) -> Result<Vec<Row>> {
+        let sql = "SELECT dict_session.value, d.value AS status, s.from_ts, s.to_ts, s.pid
+                   FROM agent_live_span s
+                   JOIN dict_session ON dict_session.id = s.session_id
+                   JOIN dict_status d ON d.id = s.status_id
+                   WHERE s.from_ts <= ?1 AND (s.to_ts IS NULL OR s.to_ts > ?1)
+                   ORDER BY dict_session.value";
+        let mut statement = self.connection.prepare(sql)?;
+        let iter = statement.query_map(params![at_ts as i64], |row| {
+            Ok(serde_json::json!({
+                "session": row.get::<_, String>(0)?,
+                "status": row.get::<_, String>(1)?,
+                "from_ts": row.get::<_, i64>(2)?,
+                "to_ts": row.get::<_, Option<i64>>(3)?,
+                "pid": row.get::<_, Option<i64>>(4)?,
+            }))
+        })?;
+        let mut rows = Vec::new();
         for row in iter {
             rows.push(row?);
         }
@@ -940,14 +1107,18 @@ fn emit_tool_fact(
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned)
     };
-    match name.to_ascii_lowercase().as_str() {
+    // The canonical verb is this lane's one normalization site: every adapter
+    // funnels through write_tool_fact, so lowercasing happens here and nowhere
+    // per-adapter. `name` stays the raw spelling stored alongside it.
+    let verb = name.to_ascii_lowercase();
+    match verb.as_str() {
         "read" | "write" | "edit" | "list" | "glob" | "multiedit" | "grep" => {
             let path = field("file_path")
                 .or_else(|| field("filePath"))
                 .or_else(|| field("pattern"))
                 .or_else(|| field("path"));
             if let Some(path) = path {
-                store.add_touch(session, turn, ts, &path, name)?;
+                store.add_touch(session, turn, ts, &path, &verb, name)?;
             }
         }
         "bash" => {
@@ -1010,6 +1181,7 @@ CREATE TABLE IF NOT EXISTS dict_pr (id INTEGER PRIMARY KEY, value TEXT NOT NULL 
 CREATE TABLE IF NOT EXISTS dict_edekind (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_agenttype (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_status (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS dict_pane (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_model (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_service_tier (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
 CREATE TABLE IF NOT EXISTS dict_price_source (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
@@ -1048,6 +1220,7 @@ CREATE TABLE IF NOT EXISTS agent_touch (
   ts INTEGER,
   path_id INTEGER NOT NULL,
   verb_id INTEGER NOT NULL,
+  raw_verb_id INTEGER,
   PRIMARY KEY (session_id, turn, path_id, verb_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS idx_touch_pathid ON agent_touch(path_id);
@@ -1104,6 +1277,9 @@ CREATE TABLE IF NOT EXISTS agent_edge (
   edge_kind_id INTEGER NOT NULL,
   agent_type_id INTEGER,
   model_id INTEGER,
+  first_ts INTEGER,
+  last_ts INTEGER,
+  n INTEGER NOT NULL DEFAULT 1,
   PRIMARY KEY (parent_session_id, child_session_id, edge_kind_id)
 ) WITHOUT ROWID;
 
@@ -1146,6 +1322,21 @@ CREATE TABLE IF NOT EXISTS agent_live (
   tmux_pane_id INTEGER,
   status_id INTEGER
 );
+
+-- Historical liveness: [from_ts, to_ts) intervals, open when to_ts IS NULL,
+-- folded from observations so a state change closes an interval and repeated
+-- identical observations extend nothing.
+CREATE TABLE IF NOT EXISTS agent_live_span (
+  session_id INTEGER NOT NULL,
+  from_ts INTEGER NOT NULL,
+  to_ts INTEGER,
+  status_id INTEGER NOT NULL,
+  pid INTEGER,
+  tmux_pane_id INTEGER,
+  PRIMARY KEY (session_id, from_ts)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_live_span_open ON agent_live_span(session_id, to_ts);
 
 CREATE TABLE IF NOT EXISTS sync_cursor (
   session_id INTEGER NOT NULL,
@@ -1574,5 +1765,193 @@ mod tests {
         assert_eq!(a.unwrap(), b.unwrap());
         drop(store);
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (item 6). Repeated hails across one edge are counted, never
+    /// collapsed, while a distinct kind stays its own row.
+    #[test]
+    fn repeated_hails_accumulate_on_one_edge() {
+        let db_path = temp_path("edgedb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        store.add_edge_at("coord", "worker", "spawned", 90).unwrap();
+        store.add_edge_at("coord", "worker", "hail", 100).unwrap();
+        store.add_edge_at("coord", "worker", "hail", 110).unwrap();
+        store.add_edge_at("coord", "worker", "hail", 130).unwrap();
+
+        let edges = store.query_edges(None).unwrap();
+        let hail = edges.iter().find(|edge| edge["edge"] == "hail").unwrap();
+        assert_eq!(hail["n"], 3, "three hails counted on one edge");
+        assert_eq!(hail["first_ts"], 100, "first sighting sticks");
+        assert_eq!(hail["last_ts"], 130, "each sighting bumps the last");
+        assert!(
+            hail["last_ts"].as_i64().unwrap() > hail["first_ts"].as_i64().unwrap(),
+            "repeat spans time"
+        );
+        let spawned = edges.iter().find(|edge| edge["edge"] == "spawned").unwrap();
+        assert_eq!(spawned["n"], 1, "one structural spawn stays one");
+        assert_eq!(edges.len(), 2, "two distinct edge kinds, one hail row each");
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (item 2). Observations fold into [from_ts, to_ts) intervals:
+    /// a state change closes the open interval, a repeated identical one
+    /// extends nothing, and a historical point query uses the open-rule.
+    #[test]
+    fn liveness_intervals_fold_adjacent_and_ignore_repeats() {
+        let db_path = temp_path("livdb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        store.record_status("s1", 100, "live", None, None).unwrap();
+        store.record_status("s1", 110, "live", None, None).unwrap();
+        store.record_status("s1", 200, "idle", None, None).unwrap();
+        store.record_status("s1", 300, "live", None, None).unwrap();
+
+        let spans = store.live_span(Some("s1")).unwrap();
+        assert_eq!(spans.len(), 3, "a repeat never inserts a row");
+        assert_eq!(spans[0]["from_ts"], 100);
+        assert_eq!(spans[0]["to_ts"], 200, "state change closes the interval");
+        assert_eq!(spans[1]["from_ts"], 200);
+        assert_eq!(spans[1]["to_ts"], 300);
+        assert_eq!(spans[2]["from_ts"], 300);
+        assert_eq!(spans[2]["to_ts"], serde_json::Value::Null, "open interval");
+
+        let at_150 = store.query_live_at(150).unwrap();
+        assert_eq!(at_150.len(), 1);
+        assert_eq!(at_150[0]["status"], "live");
+        let at_250 = store.query_live_at(250).unwrap();
+        assert_eq!(at_250[0]["status"], "idle");
+        let at_350 = store.query_live_at(350).unwrap();
+        assert_eq!(
+            at_350[0]["status"], "live",
+            "open interval covers the present"
+        );
+
+        let current: String = store
+            .connection
+            .query_row(
+                "SELECT d.value FROM agent_live a JOIN dict_status d ON d.id = a.status_id
+                 WHERE a.session_id = (SELECT id FROM dict_session WHERE value = 's1')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(current, "live", "agent_live stays the current-state cache");
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (item 10). Harnesses emit verbs in different casing; the
+    /// shared projection lowers once, so a canonical `verb` collides while the
+    /// `raw_verb` spelling survives per adapter.
+    #[test]
+    fn mixed_case_verbs_land_one_canonical_with_raw_retained() {
+        let db_path = temp_path("verbdb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+
+        let lines_path = temp_path("verblog");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&lines_path)
+            .unwrap();
+        writeln!(file, r#"{{"type":"assistant","sessionId":"ses-1","timestamp":"2026-08-01T00:00:01.000Z","gitBranch":"main","message":{{"content":[{{"type":"tool_use","name":"Read","input":{{"file_path":"/tmp/a.rs"}}}},{{"type":"tool_use","name":"Write","input":{{"file_path":"/tmp/b.rs"}}}}]}}}}"#).unwrap();
+        drop(file);
+        sync_session(
+            &store,
+            &crate::harness::claude::Claude,
+            &session_for(&lines_path),
+        )
+        .unwrap();
+
+        // A second adapter (opencode/codex path) funnels through the same
+        // canonical write site with lowercase verbs.
+        store
+            .write_tool_fact(
+                "oc-1",
+                1,
+                1000,
+                "read",
+                Some(&serde_json::json!({"file_path": "/tmp/a.rs"})),
+            )
+            .unwrap();
+
+        // The canonical verb (verb_id) is lowercase for every spelling.
+        let verb_sql = "SELECT json_group_array(value) FROM (
+                          SELECT DISTINCT dv.value
+                          FROM agent_touch t JOIN dict_verb dv ON dv.id = t.verb_id
+                          ORDER BY dv.value)";
+        let verbs: String = store
+            .connection
+            .query_row(verb_sql, [], |row| row.get(0))
+            .unwrap();
+        assert!(
+            verbs.contains("\"read\"") && verbs.contains("\"write\""),
+            "{verbs}"
+        );
+        assert!(
+            !verbs.contains("\"Read\""),
+            "canonical verb is lowercase: {verbs}"
+        );
+
+        // The raw spelling (raw_verb_id) retains the harness casing.
+        let raw_sql = "SELECT COUNT(*) FROM agent_touch t
+                       JOIN dict_verb dv ON dv.id = t.raw_verb_id
+                       WHERE dv.value = 'Read'";
+        let raw_read: i64 = store
+            .connection
+            .query_row(raw_sql, [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(raw_read, 1, "the claude 'Read' raw spelling survives");
+        let raw_lower: i64 = store
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM agent_touch t
+                 JOIN dict_verb dv ON dv.id = t.raw_verb_id
+                 WHERE dv.value = 'read'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw_lower, 1, "the opencode 'read' raw spelling survives");
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&lines_path);
+    }
+
+    /// The per-transcript cursor surfaces transcript identity for a later
+    /// stream: harness, session, path, and the byte offset ingest read to.
+    #[test]
+    fn query_cursors_expose_transcript_identity() {
+        let db_path = temp_path("curdb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+        let lines_path = temp_path("curlog");
+        let mut file = OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .open(&lines_path)
+            .unwrap();
+        writeln!(file, r#"{{"type":"user","sessionId":"ses-1","timestamp":"2026-08-01T00:00:00.100Z","message":"hello"}}"#).unwrap();
+        drop(file);
+        sync_session(
+            &store,
+            &crate::harness::claude::Claude,
+            &session_for(&lines_path),
+        )
+        .unwrap();
+
+        let cursors = store.query_cursors(Some("ses-1")).unwrap();
+        assert_eq!(cursors.len(), 1);
+        assert_eq!(cursors[0].session, "ses-1");
+        assert_eq!(cursors[0].harness, "claude");
+        assert!(cursors[0].byte_offset > 0, "cursor advanced past the line");
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+        let _ = std::fs::remove_file(&lines_path);
     }
 }
