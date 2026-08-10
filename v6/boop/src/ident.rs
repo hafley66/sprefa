@@ -131,9 +131,9 @@ impl Store {
         if self.schema_version()? >= SCHEMA_VERSION {
             return Ok(false);
         }
-        let turns: i64 = self
-            .connection
-            .query_row("SELECT COUNT(*) FROM agent_turn", [], |row| row.get(0))?;
+        let turns: i64 =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM agent_turn", [], |row| row.get(0))?;
         Ok(turns > 0)
     }
 
@@ -887,9 +887,8 @@ fn parse_usage<'a>(
             .unwrap_or(0)
     };
     let split = usage.get("cache_creation").and_then(|v| v.as_object());
-    let split_count = |key: &str| -> Option<i64> {
-        split?.get(key).and_then(serde_json::Value::as_i64)
-    };
+    let split_count =
+        |key: &str| -> Option<i64> { split?.get(key).and_then(serde_json::Value::as_i64) };
     // The flat cache_creation_input_tokens cannot say which window it bought,
     // so it falls into the 5m bucket; 99.7% of records carry the split.
     let (create_5m, create_1h) = match (
@@ -910,7 +909,9 @@ fn parse_usage<'a>(
             .get("model")
             .and_then(serde_json::Value::as_str)
             .unwrap_or("unknown"),
-        service_tier: usage.get("service_tier").and_then(serde_json::Value::as_str),
+        service_tier: usage
+            .get("service_tier")
+            .and_then(serde_json::Value::as_str),
         input_tokens: count("input_tokens"),
         output_tokens: count("output_tokens"),
         cache_create_5m_tokens: create_5m,
@@ -1332,7 +1333,10 @@ mod tests {
             ..Default::default()
         };
         let rows = store.query_turns(&filter).unwrap();
-        let ordinals: Vec<i64> = rows.iter().map(|row| row["turn"].as_i64().unwrap()).collect();
+        let ordinals: Vec<i64> = rows
+            .iter()
+            .map(|row| row["turn"].as_i64().unwrap())
+            .collect();
         assert_eq!(ordinals, vec![1, 2], "ordinals are dense, not 2 and 4");
 
         drop(store);
@@ -1409,7 +1413,12 @@ mod tests {
             writeln!(file, "{line}").unwrap();
         }
         drop(file);
-        let stat = sync_session(store, &crate::harness::claude::Claude, &session_for(&lines_path)).unwrap();
+        let stat = sync_session(
+            store,
+            &crate::harness::claude::Claude,
+            &session_for(&lines_path),
+        )
+        .unwrap();
         let _ = std::fs::remove_file(&lines_path);
         stat
     }
@@ -1464,8 +1473,18 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
         let store = Store::open(db_path.clone()).unwrap();
         let lines = vec![
-            usage_record("msg_a", r#""requestId":"req_a","#, 396, r#"{"type":"text","text":"hi"}"#),
-            usage_record("msg_a", r#""requestId":"req_a","#, 3, r#"{"type":"text","text":"hi"}"#),
+            usage_record(
+                "msg_a",
+                r#""requestId":"req_a","#,
+                396,
+                r#"{"type":"text","text":"hi"}"#,
+            ),
+            usage_record(
+                "msg_a",
+                r#""requestId":"req_a","#,
+                3,
+                r#"{"type":"text","text":"hi"}"#,
+            ),
         ];
         sync_lines(&store, "u2log", &lines);
         let (rows, output, _, _) = usage_totals(&store);

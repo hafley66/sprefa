@@ -15,23 +15,54 @@ use boop::proc::ProcReader;
 use boop::registry::Registry;
 use boop::{bus, ident, identity, proc, query, tmux, usage};
 
+const DOCTRINE: &str = "\
+DOCTRINE (this help is the usage contract; agents read it with `boop --help`):
 
+SPAWN: every lane spawn goes through lane create; bare tmux spawns leave no
+edge and stay invisible to tracking:
+    boop beep lane create --lane <id> --cwd <repo> --brief <abs-path> \\
+      [--parent <coordinator>] [--branch <b> --base-sha <sha>] \\
+      [--model <m>] [--tmux <name>] [--mail-dir <d>] [--dry-run]
+  One shot: worktree at base sha + spawn + route registration.
+  Always --dry-run first; the printed `cmd:` line is the literal spawn.
 
+COMPLETION: --parent appends an on-exit hail `lane <id> done rc=$rc` into the
+  parent's mailbox. A lane spawned with --parent reports completion; do not poll.
 
+LIVENESS: a lane can die silently, producing nothing. Liveness is TWO checks:
+    1. process alive:    boop beep ps <lane>
+    2. worktree changed: git -C <worktree> status --short
+  A REPORT.md at the root alone proves nothing; check its mtime and first line
+  against the lane you dispatched.
 
+HAIL: boop beep hail <lane> --body \"text\" [--from <me>] [--kind <k>]
+  Injects keystrokes AND reports whether they landed. `opencode run` lanes take
+  their prompt from ARGV, so a mid-flight hail reaches nothing: let the lane
+  finish and re-dispatch with its session id, or kill it. Only interactive TUIs
+  receive mid-flight hails.
 
+ACK: boop beep message ack is age-based bulk-mark, NOT proof-of-read. An ack
+  proves read at best, never compliance; compliance = the work's own artifacts.
+
+ROUTE: session id for a lane: boop beep lane route <lane> (route cwd = the
+  lane's worktree). Mailbox: ~/.agent/mail/ (bus.ndjson + registry.json),
+  override with --mail-dir.
+
+STORE SCHEMA: this build writes version 5. A store written by an older build is
+refused, and `boop db sync create --rebuild` drops every stored row and
+re-projects every transcript from byte 0 (about 18 s over 1.5 GB here). Nothing
+is wiped without that flag.
+
+The pre-split verbs (harnesses, sessions, events, chat, tail, list, measure,
+dispatch, lane, resolve, adopt, sweep, prune, hail, sync, follow) still run as
+hidden aliases for one release. Use `beep` and `db`.";
 
 #[derive(Parser)]
 #[command(
     name = "boop",
     version,
     about = "Cross-harness agent transcript reader: drive agents with `beep`, read what they did with `db`",
-    after_help = "STORE SCHEMA: this build writes version 5. A store written by an older \
-build is refused, and `boop db sync create --rebuild` drops every stored row and \
-re-projects every transcript from byte 0 (about 18 s over 1.5 GB here). Nothing is \
-wiped without that flag.\n\nThe pre-split verbs (harnesses, sessions, events, chat, \
-tail, list, measure, dispatch, lane, resolve, adopt, sweep, prune, hail, sync, follow) \
-still run as hidden aliases for one release. Use `beep` and `db`."
+    after_help = DOCTRINE
 )]
 struct Cli {
     #[command(subcommand)]
@@ -487,7 +518,8 @@ fn run_sessions(registry: &Registry, harness_id: Option<&str>) -> Result<()> {
     };
     for adapter in harnesses {
         for session in adapter.sessions()? {
-            line(&format!("{}\t{}\t{}\t{}\t{}\t{}",
+            line(&format!(
+                "{}\t{}\t{}\t{}\t{}\t{}",
                 session.session_id,
                 session.harness,
                 session.cwd.as_deref().unwrap_or("-"),
@@ -585,7 +617,8 @@ fn emit_rows(rows: &[ident::Row], format: QueryFormat) {
                 }
             }
             QueryFormat::Text => {
-                line(&format!("{} {} {} {} {}",
+                line(&format!(
+                    "{} {} {} {} {}",
                     row["session"].as_str().unwrap_or(""),
                     row["turn"].as_i64().unwrap_or(0),
                     row["role"].as_str().unwrap_or(""),
@@ -706,10 +739,7 @@ fn file_mtime_ms(path: &std::path::Path) -> Result<u64> {
     }
 }
 
-fn resolve_harness<'a>(
-    registry: &'a Registry,
-    id: &str,
-) -> Result<&'a dyn boop::harness::Harness> {
+fn resolve_harness<'a>(registry: &'a Registry, id: &str) -> Result<&'a dyn boop::harness::Harness> {
     registry
         .by_id(id)
         .with_context(|| format!("no harness registered with id `{id}`"))
@@ -803,7 +833,8 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
                 let padded_mode = pad(route.mode.as_deref().unwrap_or("-"), 6);
                 let padded_model = pad(route.model.as_deref().unwrap_or("-"), 46);
                 let padded_tmux = pad(route.tmux.as_deref().unwrap_or("-"), 16);
-                line(&format!("{} {} {} {} {} {} {}",
+                line(&format!(
+                    "{} {} {} {} {} {} {}",
                     pad(state, 4),
                     padded_name,
                     padded_harness,
@@ -823,7 +854,8 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
                 line(&bus::message_line(&message).to_string());
             }
             if !all {
-                line(&format!("{} open (closed history: --all)",
+                line(&format!(
+                    "{} open (closed history: --all)",
                     bus::unacked(&all_messages(&dir)?).len()
                 ));
             }
@@ -845,7 +877,8 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
             }
             let mut combined = inbox.clone();
             combined.extend(outbox.iter().cloned());
-            line(&format!("{agent_id}: {} in, {} out, {} unacked",
+            line(&format!(
+                "{agent_id}: {} in, {} out, {} unacked",
                 inbox.len(),
                 outbox.len(),
                 bus::unacked(&combined).len()
@@ -877,7 +910,8 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
         match snapshot.process(pane_pid) {
             Some(info) => {
                 let uptime = info.start_time_secs;
-                line(&format!("{}\t{}\t{}\t{:.1}\t{}\t{}",
+                line(&format!(
+                    "{}\t{}\t{}\t{:.1}\t{}\t{}",
                     name,
                     pane_pid,
                     info.rss_bytes / 1024,
@@ -1368,15 +1402,21 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
         .brief
         .clone()
         .unwrap_or_else(|| PathBuf::from(&args.cwd).join("brief.md"));
-    let model = args.model.clone().unwrap_or_else(|| DEFAULT_LANE_MODEL.to_owned());
+    let model = args
+        .model
+        .clone()
+        .unwrap_or_else(|| DEFAULT_LANE_MODEL.to_owned());
     let prompt = brief.display().to_string();
     let worktree_mode = args.branch.is_some() && args.base_sha.is_some();
     let branch = args
         .branch
         .clone()
         .unwrap_or_else(|| args.tmux.clone().unwrap_or_else(|| args.name.clone()));
-    let worktree_dir = worktree_mode
-        .then(|| PathBuf::from(&args.cwd).join(".boop-worktrees").join(&branch));
+    let worktree_dir = worktree_mode.then(|| {
+        PathBuf::from(&args.cwd)
+            .join(".boop-worktrees")
+            .join(&branch)
+    });
     // The epilogue runs in the lane's pane: the sender is the lane, and the
     // mailbox must be the one this dispatch registered in, never the default.
     let hail_mail_dir = mail_dir(args.mail_dir.as_deref())?;
@@ -1579,7 +1619,6 @@ fn append_ack(
 mod tests {
     use super::resolve_dispatch_harness;
     use boop::registry::Registry;
-    
 
     /// A named harness that is not registered must be refused, never quietly
     /// swapped for the first adapter, which would be a capability lie.
@@ -2173,7 +2212,8 @@ fn run_lane_list(
                 continue;
             }
         }
-        line(&format!("{} {} {} {} {} {} {}",
+        line(&format!(
+            "{} {} {} {} {} {} {}",
             pad(state, 4),
             pad(name, 16),
             pad(route.harness.as_deref().unwrap_or("-"), 10),
@@ -2493,11 +2533,13 @@ fn run_usage(args: &UsageArgs) -> Result<()> {
     let rows = store.usage_report(args.group_by, &filter)?;
     emit_json_rows(&rows, args.format);
     for row in store.unpriced_models(&filter)? {
-        line(&serde_json::json!({
-            "unpriced_model": row["model"],
-            "calls": row["calls"],
-        })
-        .to_string());
+        line(
+            &serde_json::json!({
+                "unpriced_model": row["model"],
+                "calls": row["calls"],
+            })
+            .to_string(),
+        );
     }
     Ok(())
 }

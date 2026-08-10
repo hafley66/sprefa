@@ -27,7 +27,10 @@ impl GroupBy {
             GroupBy::Session => ("dict_session.value", true),
             GroupBy::Project => ("COALESCE(dict_cwd.value, '-')", true),
             GroupBy::Harness => ("dict_harness.value", true),
-            GroupBy::Hour => ("STRFTIME('%Y-%m-%dT%H', usage.ts / 1000, 'unixepoch')", false),
+            GroupBy::Hour => (
+                "STRFTIME('%Y-%m-%dT%H', usage.ts / 1000, 'unixepoch')",
+                false,
+            ),
             GroupBy::Day => ("DATE(usage.ts / 1000, 'unixepoch')", false),
             GroupBy::Week => ("STRFTIME('%Y-W%W', usage.ts / 1000, 'unixepoch')", false),
             GroupBy::Month => ("STRFTIME('%Y-%m', usage.ts / 1000, 'unixepoch')", false),
@@ -152,8 +155,9 @@ impl Store {
                 values.push(session.clone().into());
             }
             (Some(session), false) => {
-                clause
-                    .push_str(" AND usage.session_id = (SELECT id FROM dict_session WHERE value = ?)");
+                clause.push_str(
+                    " AND usage.session_id = (SELECT id FROM dict_session WHERE value = ?)",
+                );
                 values.push(session.clone().into());
             }
             (None, _) => {}
@@ -506,10 +510,10 @@ mod cte_equality {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let db_path = std::env::temp_dir()
-            .join(format!("boop_cte_{}_{}.db", std::process::id(), stamp));
-        let log_path = std::env::temp_dir()
-            .join(format!("boop_cte_{}_{}.jsonl", std::process::id(), stamp));
+        let db_path =
+            std::env::temp_dir().join(format!("boop_cte_{}_{}.db", std::process::id(), stamp));
+        let log_path =
+            std::env::temp_dir().join(format!("boop_cte_{}_{}.jsonl", std::process::id(), stamp));
         let _ = std::fs::remove_file(&db_path);
         let store = Store::open(db_path.clone()).unwrap();
         let mut file = std::fs::File::create(&log_path).unwrap();
@@ -589,7 +593,10 @@ mod cte_equality {
 
     #[test]
     fn fold_and_cte_agree_across_a_gap() {
-        assert_agrees(&[(hour(1), 10), (hour(9), 20), (hour(9) + 60_000, 30)], hour(5));
+        assert_agrees(
+            &[(hour(1), 10), (hour(9), 20), (hour(9) + 60_000, 30)],
+            hour(5),
+        );
     }
 
     #[test]

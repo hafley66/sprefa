@@ -74,7 +74,11 @@ impl ProcReader for SysinfoSnapshot {
         self.system
             .processes()
             .iter()
-            .filter(|(_, process)| process.parent().is_some_and(|parent| parent.as_u32() == pid))
+            .filter(|(_, process)| {
+                process
+                    .parent()
+                    .is_some_and(|parent| parent.as_u32() == pid)
+            })
             .map(|(child_pid, _)| child_pid.as_u32())
             .collect()
     }

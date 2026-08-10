@@ -75,8 +75,10 @@ fn route_from_value(entry: &Value) -> Route {
         cwd: string_field(object, "cwd"),
         model: string_field(object, "model"),
         mode: string_field(object, "mode"),
-        session_id: string_field(object, "sessionId").or_else(|| string_field(object, "session_id")),
-        source_path: string_field(object, "sourcePath").or_else(|| string_field(object, "source_path")),
+        session_id: string_field(object, "sessionId")
+            .or_else(|| string_field(object, "session_id")),
+        source_path: string_field(object, "sourcePath")
+            .or_else(|| string_field(object, "source_path")),
     }
 }
 
@@ -117,7 +119,9 @@ pub fn read_boxes(dir: &Path) -> Result<Vec<PathBuf>> {
 
 /// Parse the NDJSON lines in one mailbox file, skipping malformed lines.
 pub fn parse_box(path: &Path) -> Vec<Message> {
-    let Ok(text) = fs::read_to_string(path) else { return Vec::new() };
+    let Ok(text) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
     text.lines().filter_map(parse_line).collect()
 }
 
@@ -155,17 +159,25 @@ pub fn fold(rows: &[Message]) -> Vec<Message> {
         if !latest.contains_key(&row.id) {
             order.push(row.id.clone());
         }
-        let prior_ack = latest.get(&row.id).and_then(|prior| prior.to_timestamp.clone());
+        let prior_ack = latest
+            .get(&row.id)
+            .and_then(|prior| prior.to_timestamp.clone());
         let to_timestamp = prior_ack.or_else(|| row.to_timestamp.clone());
         let mut merged = row.clone();
         merged.to_timestamp = to_timestamp;
         latest.insert(row.id.clone(), merged);
     }
-    order.into_iter().filter_map(|id| latest.remove(&id)).collect()
+    order
+        .into_iter()
+        .filter_map(|id| latest.remove(&id))
+        .collect()
 }
 
 pub fn unacked(rows: &[Message]) -> Vec<Message> {
-    fold(rows).into_iter().filter(|row| row.to_timestamp.is_none()).collect()
+    fold(rows)
+        .into_iter()
+        .filter(|row| row.to_timestamp.is_none())
+        .collect()
 }
 
 pub fn message_line(message: &Message) -> String {
@@ -238,10 +250,7 @@ pub fn cas_update_json(
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension(format!(
-        "tmp-{}",
-        std::process::id()
-    ));
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
     let mut output = Vec::new();
     output.extend_from_slice(bytes);
     output.push(b'\n');
@@ -267,7 +276,9 @@ pub fn default_mail_dir() -> Result<PathBuf> {
 pub fn now_iso() -> String {
     use time::format_description::well_known::Rfc3339;
     use time::OffsetDateTime;
-    OffsetDateTime::now_utc().format(&Rfc3339).unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".into())
 }
 
 pub fn mint_id() -> String {
@@ -290,7 +301,9 @@ fn getrandom_bytes(out: &mut [u8]) {
         .unwrap_or(0);
     let mut state = seed ^ (std::process::id() as u64);
     for slot in out.iter_mut() {
-        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         *slot = (state >> 33) as u8;
     }
 }
@@ -323,21 +336,21 @@ mod tests {
         });
         let ack = parse_line(&ack_line).unwrap();
         assert_eq!(ack.id, "m-abcdef01");
-        assert_eq!(ack.to_timestamp.as_deref(), Some("2026-01-01T00:00:01.000Z"));
+        assert_eq!(
+            ack.to_timestamp.as_deref(),
+            Some("2026-01-01T00:00:01.000Z")
+        );
         assert!(injected_line(&send("m-abcdef01")).contains("m-abcdef01"));
         let _ = send_line;
     }
 
     #[test]
     fn unacked_drops_rows_with_a_timestamp() {
-        let rows = vec![
-            send("a"),
-            {
-                let mut m = send("b");
-                m.to_timestamp = Some("2026-01-01T00:00:01.000Z".into());
-                m
-            },
-        ];
+        let rows = vec![send("a"), {
+            let mut m = send("b");
+            m.to_timestamp = Some("2026-01-01T00:00:01.000Z".into());
+            m
+        }];
         let pending = unacked(&rows);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, "a");
@@ -351,6 +364,9 @@ mod tests {
         let resend = send("x");
         let folded = fold(&[send_row, ack_row, resend]);
         assert_eq!(folded.len(), 1);
-        assert_eq!(folded[0].to_timestamp.as_deref(), Some("2026-01-01T00:00:01.000Z"));
+        assert_eq!(
+            folded[0].to_timestamp.as_deref(),
+            Some("2026-01-01T00:00:01.000Z")
+        );
     }
 }

@@ -8,7 +8,9 @@ use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
 
 use crate::event::AgentEvent;
-use crate::harness::{Capabilities, Harness, Ingested, ReadChunk, SendOutcome, SessionRef, SpawnSpec};
+use crate::harness::{
+    Capabilities, Harness, Ingested, ReadChunk, SendOutcome, SessionRef, SpawnSpec,
+};
 use crate::ident::{Store, SyncStat, UsageRow};
 
 pub struct Opencode;
@@ -103,7 +105,10 @@ impl Harness for Opencode {
 
     fn spawn(&self, spec: &SpawnSpec) -> Result<SessionRef> {
         let session_id = format!("agent-{}", random_hex());
-        let tmux_name = spec.tmux.clone().unwrap_or_else(|| format!("boop-{session_id}"));
+        let tmux_name = spec
+            .tmux
+            .clone()
+            .unwrap_or_else(|| format!("boop-{session_id}"));
         let cwd = crate::worktree::prepare_spawn_dir(spec)?;
         let command = launch_command(spec)?;
         crate::tmux::new_detached_session(
@@ -165,8 +170,13 @@ impl Harness for Opencode {
                 match part.kind.as_str() {
                     "text" => {
                         turn += 1;
-                        let inserted =
-                            store.write_turn(&session.session_id, turn, message.ts, &message.role, &part.text)?;
+                        let inserted = store.write_turn(
+                            &session.session_id,
+                            turn,
+                            message.ts,
+                            &message.role,
+                            &part.text,
+                        )?;
                         record(&mut stat, inserted);
                         first_turn.get_or_insert(turn);
                     }
@@ -194,8 +204,13 @@ impl Harness for Opencode {
                 Some(turn) => turn,
                 None => {
                     turn += 1;
-                    let inserted =
-                        store.write_turn(&session.session_id, turn, message.ts, &message.role, "")?;
+                    let inserted = store.write_turn(
+                        &session.session_id,
+                        turn,
+                        message.ts,
+                        &message.role,
+                        "",
+                    )?;
                     record(&mut stat, inserted);
                     turn
                 }
@@ -241,9 +256,7 @@ impl Message {
             return None;
         }
         let tokens = self.data.get("tokens")?.as_object()?;
-        let count = |key: &str| -> i64 {
-            tokens.get(key).and_then(Value::as_i64).unwrap_or(0)
-        };
+        let count = |key: &str| -> i64 { tokens.get(key).and_then(Value::as_i64).unwrap_or(0) };
         let cache = |key: &str| -> i64 {
             tokens
                 .get("cache")
@@ -309,7 +322,10 @@ fn launch_command(spec: &SpawnSpec) -> Result<String> {
     if let Some(session) = &spec.resume_session {
         command.push_str(&format!(" -s {}", shell_quote(session)));
     }
-    command.push_str(&format!(" --auto \"$(cat {})\"", shell_quote_double(&spec.prompt)));
+    command.push_str(&format!(
+        " --auto \"$(cat {})\"",
+        shell_quote_double(&spec.prompt)
+    ));
     Ok(spec.with_on_exit(match &spec.env_stamp {
         Some(stamp) => format!("{stamp} {command}"),
         None => command,
@@ -389,9 +405,7 @@ fn messages_after(connection: &Connection, session: &str, after: u64) -> Result<
 fn parts_of(connection: &Connection, message_id: &str) -> Result<Vec<Part>> {
     let mut statement =
         connection.prepare("SELECT data FROM part WHERE message_id = ?1 ORDER BY id")?;
-    let rows = statement.query_map(rusqlite::params![message_id], |row| {
-        row.get::<_, String>(0)
-    })?;
+    let rows = statement.query_map(rusqlite::params![message_id], |row| row.get::<_, String>(0))?;
     let mut out = Vec::new();
     for row in rows {
         let data: Value = match serde_json::from_str(&row?) {
@@ -541,7 +555,12 @@ mod tests {
                 let worktree =
                     std::env::temp_dir().join(format!("boop-oc-wt-{}", std::process::id()));
                 let _ = std::fs::remove_dir_all(&worktree);
-                Command::new("git").arg("init").arg("-q").arg(&dir).status().unwrap();
+                Command::new("git")
+                    .arg("init")
+                    .arg("-q")
+                    .arg(&dir)
+                    .status()
+                    .unwrap();
                 let d = dir.display().to_string();
                 Command::new("git")
                     .args(["-C", &d, "config", "user.email", "t@t"])
@@ -552,8 +571,14 @@ mod tests {
                     .status()
                     .unwrap();
                 std::fs::write(dir.join("seed.txt"), "s").unwrap();
-                Command::new("git").args(["-C", &d, "add", "-A"]).status().unwrap();
-                Command::new("git").args(["-C", &d, "commit", "-qm", "seed"]).status().unwrap();
+                Command::new("git")
+                    .args(["-C", &d, "add", "-A"])
+                    .status()
+                    .unwrap();
+                Command::new("git")
+                    .args(["-C", &d, "commit", "-qm", "seed"])
+                    .status()
+                    .unwrap();
                 let sha = String::from_utf8_lossy(
                     &Command::new("git")
                         .args(["-C", &d, "rev-parse", "HEAD"])
@@ -609,7 +634,8 @@ mod tests {
     fn on_exit_appends_and_reraises_the_exit_code() {
         let guard = TmuxGuard::new();
         let mut req = spec(&guard);
-        req.on_exit = Some("boop hail --to 'coord' --kind result --body \"lane done rc=$__rc\"".to_owned());
+        req.on_exit =
+            Some("boop hail --to 'coord' --kind result --body \"lane done rc=$__rc\"".to_owned());
         let command = launch_command(&req).unwrap();
         assert!(command.contains("; __rc=$?; boop hail --to 'coord'"));
         assert!(command.ends_with("; exit $__rc"));
@@ -628,7 +654,10 @@ mod tests {
         let opencode = Opencode;
         let session = opencode.spawn(&req).unwrap();
         assert_eq!(
-            session.tmux.as_deref().map(|t| t.starts_with("boop-agent-")),
+            session
+                .tmux
+                .as_deref()
+                .map(|t| t.starts_with("boop-agent-")),
             Some(true)
         );
         assert_eq!(session.tmux_socket.as_deref(), Some(guard.socket.as_str()));
