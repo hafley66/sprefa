@@ -19,12 +19,9 @@ pub struct Store {
     connection: Connection,
 }
 
-/// Bumped whenever stored rows mean something different. 2 = dense per-session
-/// turn ordinals and per-transcript cursors. 3 = token usage. 4 = rate table.
-/// 5 = agent_fetch covers searches, not only url fetches. 6 = agent_live_span
-/// records historical liveness, agent_touch carries canonical verbs, and
-/// agent_edge carries temporal evidence. 7 = sync cursors carry record fields.
-pub const SCHEMA_VERSION: i64 = 7;
+/// Bumped whenever stored rows mean something different. 8 = agent_pr keyed
+/// (session_id, turn, pr_url_id): a turn with two PRs keeps two rows.
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// A row returned to the CLI, joined back from ids to the TEXT the query
 /// surface exposes.
@@ -117,7 +114,17 @@ impl Store {
                    (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
                  ALTER TABLE sync_cursor ADD COLUMN record_id_id INTEGER;
                  ALTER TABLE sync_cursor ADD COLUMN turn INTEGER NOT NULL DEFAULT 0;
-                 ALTER TABLE sync_cursor ADD COLUMN timestamp INTEGER NOT NULL DEFAULT 0;",
+                 ALTER TABLE sync_cursor ADD COLUMN timestamp INTEGER NOT NULL DEFAULT 0;
+                 CREATE TABLE agent_pr_new (
+                   session_id INTEGER NOT NULL,
+                   turn INTEGER NOT NULL,
+                   pr_url_id INTEGER NOT NULL,
+                   PRIMARY KEY (session_id, turn, pr_url_id)
+                 ) WITHOUT ROWID;
+                 INSERT INTO agent_pr_new (session_id, turn, pr_url_id)
+                   SELECT session_id, turn, pr_url_id FROM agent_pr;
+                 DROP TABLE agent_pr;
+                 ALTER TABLE agent_pr_new RENAME TO agent_pr;",
             )?;
             store.stamp_version()?;
         }
@@ -1365,7 +1372,7 @@ CREATE TABLE IF NOT EXISTS agent_pr (
   session_id INTEGER NOT NULL,
   turn INTEGER NOT NULL,
   pr_url_id INTEGER NOT NULL,
-  PRIMARY KEY (session_id, turn)
+  PRIMARY KEY (session_id, turn, pr_url_id)
 ) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS agent_span (
@@ -1902,6 +1909,111 @@ mod tests {
         );
         assert!(!plan.contains("SCAN agent_usage"), "plan scans: {plan}");
         drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (Job 1). A turn with two PR urls keeps two rows; the key is
+    /// (session_id, turn, pr_url_id) and a re-sync dedups on the full key.
+    #[test]
+    fn two_prs_in_one_turn_survive_and_resync_dedups() {
+        let db_path = temp_path("prdb");
+        let _ = std::fs::remove_file(&db_path);
+        let store = Store::open(db_path.clone()).unwrap();
+
+        store
+            .add_pr("s1", 1, "https://github.com/a/b/pull/1")
+            .unwrap();
+        store
+            .add_pr("s1", 1, "https://github.com/a/b/pull/2")
+            .unwrap();
+        let n: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM agent_pr", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(n, 2, "two urls on one turn must both survive");
+
+        // A re-sync repeats the same urls; INSERT OR IGNORE dedups by the full
+        // key, so no row count can grow.
+        store
+            .add_pr("s1", 1, "https://github.com/a/b/pull/1")
+            .unwrap();
+        store
+            .add_pr("s1", 1, "https://github.com/a/b/pull/2")
+            .unwrap();
+        let n: i64 = store
+            .connection
+            .query_row("SELECT COUNT(*) FROM agent_pr", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(n, 2, "re-sync must not grow the row count");
+
+        // The query surface exposes both urls for the turn.
+        let (_, urls) = store
+            .passthrough(
+                "SELECT dp.value FROM agent_pr pr
+                 JOIN dict_pr dp ON dp.id = pr.pr_url_id
+                 WHERE pr.session_id = (SELECT id FROM dict_session WHERE value = 's1')
+                 ORDER BY dp.value",
+            )
+            .unwrap();
+        assert_eq!(urls.len(), 2);
+
+        drop(store);
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// ACCEPTANCE (Job 1 migration). A v7 store (agent_pr keyed on
+    /// (session_id, turn)) rebuilds onto the three-column key and keeps rows.
+    #[test]
+    fn a_v7_store_migrates_agent_pr_onto_the_three_column_key() {
+        let db_path = temp_path("prmig");
+        let _ = std::fs::remove_file(&db_path);
+        {
+            // The v7 store: agent_pr keyed on (session_id, turn), sync_cursor
+            // without the record fields, stamped 7.
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute_batch(
+                "PRAGMA user_version = 7;
+                 CREATE TABLE dict_session (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 CREATE TABLE dict_pr (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 CREATE TABLE agent_session (
+                   session_id INTEGER PRIMARY KEY,
+                   harness_id INTEGER NOT NULL,
+                   nickname TEXT,
+                   cwd_id INTEGER,
+                   branch_id INTEGER,
+                   started_ts INTEGER);
+                 CREATE TABLE dict_harness (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 CREATE TABLE agent_pr (
+                   session_id INTEGER NOT NULL,
+                   turn INTEGER NOT NULL,
+                   pr_url_id INTEGER NOT NULL,
+                   PRIMARY KEY (session_id, turn)
+                 ) WITHOUT ROWID;
+                 CREATE TABLE sync_cursor (
+                   session_id INTEGER NOT NULL,
+                   path_id INTEGER NOT NULL,
+                   offset INTEGER NOT NULL,
+                   PRIMARY KEY (session_id, path_id)
+                 ) WITHOUT ROWID;
+                 CREATE TABLE dict_path (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+                 INSERT INTO dict_session (id, value) VALUES (1, 's1');
+                 INSERT INTO dict_pr (id, value) VALUES (1, 'https://github.com/a/b/pull/1');
+                 INSERT INTO agent_pr (session_id, turn, pr_url_id) VALUES (1, 1, 1);",
+            )
+            .unwrap();
+        }
+        {
+            let store = Store::open(db_path.clone()).unwrap();
+            assert_eq!(store.schema_version().unwrap(), super::SCHEMA_VERSION);
+            // The migrated turn endorses a second urls; it must survive.
+            store
+                .add_pr("s1", 1, "https://github.com/a/b/pull/2")
+                .unwrap();
+            let (_, rows) = store
+                .passthrough("SELECT pr_url_id FROM agent_pr WHERE session_id = 1 AND turn = 1")
+                .unwrap();
+            assert_eq!(rows.len(), 2, "post-migration, both urls survive one turn");
+        }
         let _ = std::fs::remove_file(&db_path);
     }
 
