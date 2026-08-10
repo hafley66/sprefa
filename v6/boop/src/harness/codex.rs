@@ -26,7 +26,7 @@ impl Harness for Codex {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             send_midflight: true,
-            resume: false,
+            resume: true,
             spawn: true,
             subagent_visible: false,
         }
@@ -154,7 +154,14 @@ fn codex_sessions_dir() -> anyhow::Result<PathBuf> {
 /// A model value may carry an `@low|@medium|@high` suffix, lowered to codex's
 /// `model_reasoning_effort` config override.
 fn launch_command(spec: &SpawnSpec) -> String {
-    let mut command = format!("codex {}", shell_quote(&spec.prompt));
+    let mut command = match &spec.resume_session {
+        Some(id) => format!(
+            "codex resume {} {}",
+            shell_quote(id),
+            shell_quote(&spec.prompt)
+        ),
+        None => format!("codex {}", shell_quote(&spec.prompt)),
+    };
     if let Some(model) = spec.model.as_deref().filter(|value| !value.is_empty()) {
         let (name, effort) = match model.rsplit_once('@') {
             Some((name, effort)) if matches!(effort, "low" | "medium" | "high") => {
@@ -586,9 +593,20 @@ mod tests {
     fn codex_capabilities_are_measured() {
         let caps = Codex.capabilities();
         assert!(caps.send_midflight);
-        assert!(!caps.resume);
+        assert!(caps.resume);
         assert!(caps.spawn);
         assert!(!caps.subagent_visible);
+    }
+
+    #[test]
+    fn launch_command_resumes_by_session_id() {
+        let mut spec = spawn_spec(None);
+        spec.resume_session = Some("0192aef3-aaaa-bbbb-cccc-dddddddddddd".to_owned());
+        spec.model = Some("gpt-5.6-luna".to_owned());
+        let command = super::launch_command(&spec);
+        assert!(command.starts_with("codex resume "), "{command}");
+        assert!(command.contains("'do the lane'"), "{command}");
+        assert!(command.ends_with(" -m 'gpt-5.6-luna'"), "{command}");
     }
 
     #[test]
