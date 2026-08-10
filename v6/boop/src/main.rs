@@ -1868,7 +1868,7 @@ mod tests {
         meta.insert("child".into(), live_meta(4242));
         let mut include = BTreeSet::new();
         include.insert("child".into());
-        let nodes = super::build_lane_nodes(&edges, &meta, &include);
+        let nodes = super::build_lane_nodes(&routes, &edges, &meta, &include);
         let text = super::render_text(&nodes);
         let joined = text.join("\n");
         assert!(joined.contains("coordinator [gone]"), "text:\n{joined}");
@@ -1899,6 +1899,60 @@ mod tests {
         let edge = &edges["loner"];
         assert_eq!(edge.parent, None);
         assert!(!edge.inferred);
+    }
+
+    /// RECEIPT (job 2). A route's goal rides the lane line as a ` -- <goal>`
+    /// suffix and the ndjson row as a `goal` string.
+    #[test]
+    fn pstree_carries_the_goal() {
+        let mut routes = BTreeMap::new();
+        routes.insert(
+            "child".into(),
+            Route {
+                harness: Some("opencode".into()),
+                tmux: Some("lane-x".into()),
+                cwd: None,
+                model: None,
+                mode: None,
+                session_id: None,
+                source_path: None,
+                parent: None,
+                goal: Some("ship the edge".into()),
+            },
+        );
+        let messages = vec![dispatch("coordinator", "child")];
+        let edges = super::resolve_edges(&routes, &messages);
+        let mut meta = BTreeMap::new();
+        meta.insert("child".into(), live_meta(4242));
+        let mut include = BTreeSet::new();
+        include.insert("child".into());
+        let nodes = super::build_lane_nodes(&routes, &edges, &meta, &include);
+        let text = super::render_text(&nodes).join("\n");
+        assert!(
+            text.contains("child (4242) [live] [inferred] -- ship the edge"),
+            "text:\n{text}"
+        );
+        let ndjson = super::render_ndjson(&nodes);
+        let row = &ndjson[0];
+        assert!(row.contains("\"goal\":\"ship the edge\""), "row: {row}");
+    }
+
+    /// RECEIPT (job 2). A lane without a goal renders no text suffix and a
+    /// null ndjson goal.
+    #[test]
+    fn pstree_goal_null_when_absent() {
+        let mut routes = BTreeMap::new();
+        routes.insert("loner".into(), route_with(None));
+        let edges = super::resolve_edges(&routes, &[]);
+        let mut meta = BTreeMap::new();
+        meta.insert("loner".into(), live_meta(7));
+        let mut include = BTreeSet::new();
+        include.insert("loner".into());
+        let nodes = super::build_lane_nodes(&routes, &edges, &meta, &include);
+        let text = super::render_text(&nodes).join("\n");
+        assert!(!text.contains(" -- "), "text:\n{text}");
+        let row = &super::render_ndjson(&nodes)[0];
+        assert!(row.contains("\"goal\":null"), "row: {row}");
     }
 }
 
@@ -2705,11 +2759,13 @@ struct LaneNode {
     pid: u32,
     state: &'static str,
     descendants: Vec<ProcessDesc>,
+    goal: Option<String>,
     gone: bool,
     children: Vec<usize>,
 }
 
 fn build_lane_nodes(
+    routes: &BTreeMap<String, Route>,
     edges: &BTreeMap<String, LaneEdge>,
     meta: &BTreeMap<String, LaneMeta>,
     include: &BTreeSet<String>,
@@ -2727,6 +2783,7 @@ fn build_lane_nodes(
             pid: lane.pid,
             state: lane.state,
             descendants: lane.descendants.clone(),
+            goal: routes.get(name).and_then(|route| route.goal.clone()),
             gone: false,
             children: Vec::new(),
         });
@@ -2749,6 +2806,7 @@ fn build_lane_nodes(
             pid: 0,
             state: "gone",
             descendants: Vec::new(),
+            goal: None,
             gone: true,
             children: Vec::new(),
         });
@@ -2807,7 +2865,7 @@ fn run_pstree(mail_dir_arg: Option<&Path>, all: bool, format: PstreeFormat) -> R
             },
         );
     }
-    let nodes = build_lane_nodes(&edges, &meta, &include);
+    let nodes = build_lane_nodes(&routes, &edges, &meta, &include);
     match format {
         PstreeFormat::Text => {
             for output in render_text(&nodes) {
@@ -2838,10 +2896,14 @@ fn render_text(nodes: &[LaneNode]) -> Vec<String> {
                         node.pid.to_string()
                     };
                     format!(
-                        "{} ({pid}) [{}]{}",
+                        "{} ({pid}) [{}]{}{}",
                         node.name,
                         node.state,
-                        if node.inferred { " [inferred]" } else { "" }
+                        if node.inferred { " [inferred]" } else { "" },
+                        match &node.goal {
+                            Some(goal) => format!(" -- {goal}"),
+                            None => String::new(),
+                        }
                     )
                 }
             }
@@ -2883,6 +2945,7 @@ fn render_ndjson(nodes: &[LaneNode]) -> Vec<String> {
                 "inferred": node.inferred,
                 "pid": if node.gone { None } else { Some(node.pid) },
                 "state": node.state,
+                "goal": node.goal,
                 "children": node.descendants.iter().map(|desc| desc.pid).collect::<Vec<_>>(),
             })
             .to_string()
