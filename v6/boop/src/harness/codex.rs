@@ -30,7 +30,7 @@ impl Harness for Codex {
             send_midflight: false,
             resume: true,
             spawn: true,
-            subagent_visible: false,
+            subagent_visible: true,
         }
     }
 
@@ -598,7 +598,7 @@ mod tests {
         assert!(!caps.send_midflight, "codex exec reads no stdin mid-turn");
         assert!(caps.resume);
         assert!(caps.spawn);
-        assert!(!caps.subagent_visible);
+        assert!(caps.subagent_visible);
     }
 
     #[test]
