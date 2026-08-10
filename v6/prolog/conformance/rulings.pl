@@ -429,6 +429,8 @@ ruling(json5_subset, unquoted_keys_only, user,
        'user 2026-07-30: "just unquoted keys". Trailing commas and # comments are NOT taken; the subset is exactly json plus bare identifier keys').
 ruling(list_spelling, list_of_type, user,
        'user 2026-07-30: "list spelling is list(text) seems easy enough"').
+ruling(json_list_one_spelling, json_list_every_layer, user,
+       'user 2026-08-10: json_list(T) is the one spelling at every layer (text door, retained prolog term, emitted catalog strings); list(T) is freed for the upcoming relational generics').
 ruling(string_quote, both_parse, user,
        'user 2026-07-30: "sring quote: both"').
 ruling(descent_depth_cap, uncapped, user,

@@ -2779,7 +2779,7 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 3, parent_id: 0, ordinal: 0, local_name: "float", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
-  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "list(int)", kind: "list", type_id: 2, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
+  { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "json_list(int)", kind: "json_list", type_id: 2, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 7, parent_id: 0, ordinal: 0, local_name: "pokeapi_shape", kind: "module", type_id: 0, arity: 0, module_id: 7, h_id: "cacef1a51f87e50e", h_schema: "", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 0, local_name: "__opt_bool_none", kind: "rel", type_id: 0, arity: 1, module_id: 7, h_id: "2abce204a57cb73b", h_schema: "a910993d429fe6c3", h_rule: "" },
   { rel_id: 9, parent_id: 8, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 7, h_id: "80f21f6dd234b1df", h_schema: "", h_rule: "" },

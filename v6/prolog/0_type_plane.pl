@@ -89,7 +89,7 @@ column_storage(_, json, json) :- !.
 % ruling list_spelling = list_of_type ("list(text) seems easy enough").
 %
 % THE VERDICT THIS EXECUTES (json_syntax lab §3): json is the array CARRIER and
-% `list(T)` is a TYPED VIEW over it. Relational element storage is not a list,
+% `json_list(T)` is a TYPED VIEW over it. Relational element storage is not a list,
 % it is a rel with an index column, declared as such. The lab graded three
 % options on five axes with a receipt per cell; the carrier wins content
 % identity (the canonical text IS the id, and it is already the log contract),
@@ -100,7 +100,7 @@ column_storage(_, json, json) :- !.
 % indexed rows, 1000 as cons cells, and all three render byte-identically.
 %
 % T ranges over a CLOSED four-element set, so there is no type variable, no
-% unification and no instantiation -- that is what lets list(T) be the only
+% unification and no instantiation -- that is what lets json_list(T) be the only
 % parametric type without dragging generics into the checker. The whole
 % measured delta is these four clauses: the storage row, the element guard, and
 % the two named unsupported constructs below.
@@ -110,9 +110,9 @@ column_storage(_, json, json) :- !.
 % ELEMENT type -- CHECK constraints prohibit subqueries and json_each is a
 % table function. Element typing is a checker/emitted-guard obligation. Today
 % the storage kind collapses to `json`, so neither guard is emitted; the
-% array-ness CHECK needs list(T) to survive as its own kind all the way to
+% array-ness CHECK needs json_list(T) to survive as its own kind all the way to
 % lower.pl:column_def/3, which widens every place that matches on `json`.
-column_storage(Types, list(Element), list(Element)) :-
+column_storage(Types, json_list(Element), json_list(Element)) :-
     !,
     (   list_element_type(Types, Element)
     ->  true
@@ -137,7 +137,7 @@ list_element_type(_, text).
 list_element_type(_, bool).
 list_element_type(_, float).
 list_element_type(_, json).
-list_element_type(Types, list(Inner)) :- list_element_type(Types, Inner).
+list_element_type(Types, json_list(Inner)) :- list_element_type(Types, Inner).
 
 
 % The ref columns of one type, as Column-ChildType pairs.
@@ -579,9 +579,9 @@ column_value_shape_error(_, text, Value, field_not_text(Value)) :-
 % not checked: the shared arrival reader only verifies the value is a
 % document, and a CHECK constraint cannot reach into elements (json_each is a
 % table function and CHECK prohibits subqueries).
-column_value_shape_error(_, list(_), Value, field_not_array(Value)) :-
+column_value_shape_error(_, json_list(_), Value, field_not_array(Value)) :-
     \+ is_list(Value), !.
-column_value_shape_error(Types, list(Element), Value, list_element_shape(Index, Reason)) :-
+column_value_shape_error(Types, json_list(Element), Value, list_element_shape(Index, Reason)) :-
     nth1(Index, Value, Elem),
     column_value_shape_error(Types, Element, Elem, Reason),
     !.

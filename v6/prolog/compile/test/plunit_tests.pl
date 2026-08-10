@@ -997,7 +997,7 @@ test(catalog_rows_are_one_statement) :-
 test(catalog_all_rows_equals_decl_rows) :-
     inferred_relplans([ rel_spec(node/1, set, [id], none, [int]),
                         rel_spec(holder/1, set, [item, target], none, [text, ref(node)]),
-                        rel_spec(items/1, set, [list_col], none, [list(text)]) ],
+                        rel_spec(items/1, set, [list_col], none, [json_list(text)]) ],
                       RelPlans),
     lower:catalog_rows(catalog_all_eq, [], RelPlans, DeclRows),
     lower:catalog_all_rows(direct, catalog_all_eq, [], RelPlans, [], [], [],
@@ -1547,23 +1547,23 @@ test(catalog_ref_column_carries_target_rel_id) :-
     memberchk(row(7, 6, 0, node, rel, 0, 1, 6, _, _, _), Rows),
     memberchk(row(10, 9, 1, item, column, 7, 0, 6, _, '', ''), Rows).
 
-% A list(text) column carries the synthetic list row's id (6); that row's own
+% A json_list(text) column carries the synthetic list row's id (6); that row's own
 % type_id is the element id 1 (text). The new row shifts every id after it.
 test(catalog_list_column_carries_element_typed_row) :-
-    inferred_relplans([ rel_spec(items/1, set, [list_col], none, [list(text)]) ],
+    inferred_relplans([ rel_spec(items/1, set, [list_col], none, [json_list(text)]) ],
                       RelPlans),
     lower:catalog_rows(catalog_list, [], RelPlans, Rows),
-    memberchk(row(6, 0, 0, 'list(text)', list, 1, 0, 0, '', '', ''), Rows),
+    memberchk(row(6, 0, 0, 'json_list(text)', json_list, 1, 0, 0, '', '', ''), Rows),
     memberchk(row(9, 8, 1, list_col, column, 6, 0, 7, _, '', ''), Rows).
 
-% Nested list(list(text)) mints two synthetic rows, the inner list(text) row
-% before the outer one, and the column points at the outer row's id (7).
+% Nested json_list(json_list(text)) mints two synthetic rows, the inner json_list(text)
+% row before the outer one, and the column points at the outer row's id (7).
 test(catalog_nested_list_emits_inner_before_outer) :-
-    inferred_relplans([ rel_spec(items/1, set, [list_col], none, [list(list(text))]) ],
+    inferred_relplans([ rel_spec(items/1, set, [list_col], none, [json_list(json_list(text))]) ],
                       RelPlans),
     lower:catalog_rows(catalog_nested, [], RelPlans, Rows),
-    nth0(5, Rows, row(6, 0, 0, 'list(text)', list, 1, 0, 0, _, _, _)),
-    nth0(6, Rows, row(7, 0, 0, 'list(list(text))', list, 6, 0, 0, _, _, _)),
+    nth0(5, Rows, row(6, 0, 0, 'json_list(text)', json_list, 1, 0, 0, _, _, _)),
+    nth0(6, Rows, row(7, 0, 0, 'json_list(json_list(text))', json_list, 6, 0, 0, _, _, _)),
     memberchk(row(10, 9, 1, list_col, column, 7, 0, 8, _, '', ''), Rows).
 
 % Byte-stability receipt: a no-ref no-list two-rel program emits today's ids,
@@ -1582,11 +1582,11 @@ test(catalog_no_ref_no_list_ids_unchanged) :-
 % An inferred rel has no declaration, so the catalog once typed its list column
 % as unknown while the emitted DDL enforced array-ness on the same column.
 test(catalog_inferred_list_column_resolves_to_the_list_row) :-
-    inferred_relplans([ rel_spec(declared/1, set, [payloads], none, [list(json)]),
-                        rel_spec(inferred/1, set, [payloads], none, [list(json)]) ],
+    inferred_relplans([ rel_spec(declared/1, set, [payloads], none, [json_list(json)]),
+                        rel_spec(inferred/1, set, [payloads], none, [json_list(json)]) ],
                       RelPlans),
     lower:catalog_rows(catalog_inferred, [], RelPlans, Rows),
-    memberchk(row(ListId, 0, 0, 'list(json)', list, _, _, _, _, _, _), Rows),
+    memberchk(row(ListId, 0, 0, 'json_list(json)', json_list, _, _, _, _, _, _), Rows),
     forall(member(row(_, _, _, payloads, column, TypeId, _, _, _, _, _), Rows),
            TypeId == ListId).
 
@@ -7353,20 +7353,20 @@ test(the_rail_reads_the_corpus_it_scans) :-
 % DDL pins json_valid AND json_type = 'array', so SQLite rejects a non-list
 % document where it is written.
 test(list_column_ddl_carries_array_check) :-
-    column_def(dict, '"payloads"', list(json), Def),
+    column_def(dict, '"payloads"', json_list(json), Def),
     sub_atom(Def, _, _, _, 'json_type("payloads") = \'array\''),
     sub_atom(Def, _, _, _, 'json_valid("payloads")').
 
 % The /2 widening admits json and a nested list, and keeps the four scalars.
 test(list_storage_kind_survives_for_json_and_nested_elements) :-
-    type_plane:column_storage([], list(json), list(json)),
-    type_plane:column_storage([], list(list(text)), list(list(text))),
-    type_plane:column_storage([], list(text), list(text)).
+    type_plane:column_storage([], json_list(json), json_list(json)),
+    type_plane:column_storage([], json_list(json_list(text)), json_list(json_list(text))),
+    type_plane:column_storage([], json_list(text), json_list(text)).
 
 % A relation ref as the element keeps its distinct named unsupported construct.
 test(list_of_relation_refs_keeps_its_unsupported) :-
     Types = [type_def(span, [start, end], [int, int])],
-    catch(type_plane:column_storage(Types, list(span), _), Thrown, true),
+    catch(type_plane:column_storage(Types, json_list(span), _), Thrown, true),
     Thrown == unsupported_construct(list_of_relation_refs(span)).
 
 :- end_tests(list_element_widening).

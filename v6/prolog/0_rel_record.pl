@@ -12,7 +12,7 @@
 %                inferred: no decl, so Storage came from analyze.pl's
 %                literal-witness + head-expression fixpoint, or the rel is
 %                compiler-minted (the dictionary tables).
-%                Storage: int | float | bool | text | json | list(T) |
+%                Storage: int | float | bool | text | json | json_list(T) |
 %                ref(TypeName), the one thing lower.pl:column_def/3 reads.
 %     KeyOrNone  key(Positions) | none.
 %
