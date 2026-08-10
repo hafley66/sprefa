@@ -103,10 +103,10 @@ expectations. Merged ranking:
 
 | rank | move | lines saved (est) | gate |
 |---|---|---|---|
-| 1 | delete dead trees (§3) | ~4,916 | battery green |
-| 2 | catalog row-family constructors -> descriptor tables + one walker (lower.pl:878-1236) | 700-1,000 (luna est; opus says lower is wide, so verify on a slice first) | conformance 346/0 + byte-identity 246 + green-all |
-| 3 | operator tiers: parser reads registry.pl:236 like the printer already does | small, high leverage | TEXT_DOOR 196 |
-| 4 | emitter record serializers from field descriptors (emit_ts.pl:732-1436; fixpoint_*_text 1285-1435 is 151 lines/35 preds of one shape, js_shape/2 idiom already proven at :1364) | 250-400 | byte-identity 246 |
+| 1 | DONE #105: delete dead trees (§3) | 25,111 actual | battery green |
+| 2 | CLOSED 2026-08-10: pilot #111 took the one profitable slice (-45, six level-plane families). A follow-up lane converted the two remaining candidates (per-rel planes, views) and MEASURED +34 net: at 3-row family size the walker overhead exceeds the savings, so the 700-1,000 estimate is falsified and the unmerged branch refactor/descriptor-families holds the receipt. No further rank-2 lanes. | -45 actual (est was 700-1,000) | conformance 346/0 + byte-identity 246 + green-all |
+| 3 | DONE #108: operator tiers, parser reads registry data | ~30 | TEXT_DOOR 246 |
+| 4 | first slice DONE #114: fixpoint_*_text via js_shape/2 descriptors measured -7 (est 250-400 for the whole rank; treat the estimate as optimistic and re-size per family before dispatching more). Remaining families: DDL, snapshot, arrival, relation-plan, aggregate, expand/dred. | -7 so far | byte-identity 246 |
 | 5 | dedup pairs from §5 | ~250 | battery |
 | 6 | unify A/B decl grammar loops (parse_dl.pl:598-887) | 180-260 | TEXT_DOOR + plunit |
 | 7 | production-table for the regular parser surface (~1,150 of 1,983 lines regular; luna est 600-800 saved; opus counter: variable-identity threading through 114 predicates resists, a lexeme//1 wrapper hits the same 153 ws0 + 119 lit_dcg noise without redesign) | 300-800 OR the cheap lexeme route | TEXT_DOOR + plunit + conformance |

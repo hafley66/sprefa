@@ -720,3 +720,19 @@ ruling(list_bare_default_dense_owned_sequence, bare_list_is_dense_owned_sequence
 % json_list(T) is the inline-JSON spelling and does not collide with list(T).
 ruling(list_flavor_set_v1, four_lab_constructors, user,
        'user 2026-08-10: "Ship the lab''s four constructors: list(T), list_entity_dense_sequence(T), list_interned_set(T), list_entity_linked_sequence(T)". json_list(T) is the inline-JSON term at every layer (main 1d0e294a).').
+
+% 2026-08-10: JS is never the row engine. The 4a9b45f7 incident (failure-modes
+% entry 45) exposed boundary_delta materializing a 1,069,200-row delta into V8
+% row-by-row; the user ruled the whole shape out, not just the incident. rxjs
+% is the tick/flow boundary ONLY; row work stays in emitted SQL; anything
+% SQLite can compute (consolidation, aggregation, checksums) the emitter must
+% emit as SQL, and rows cross into JS only at a true app-boundary subscriber,
+% never as an engine step.
+ruling(js_never_the_row_engine, rows_stay_in_sql_rxjs_is_flow_boundary, user,
+       'user 2026-08-10: "we should truely never be using js as sqlite lol, yes, do not materialize rows mate, rxjs is the cut time boudnary for flow, okay. if sqlite can do it, our emitter should predict that".').
+
+% 2026-08-10: template rules policy. Generic templates mint DECLARATIONS only;
+% no maintained rules or guards are generated per instance. Operations over
+% minted tables are author-written. Opt-in library rules stay an open road.
+ruling(generic_template_rules, declarations_only, user,
+       'user 2026-08-10: "b" to decls-only vs template-minted rules vs opt-in library rules; unused maintained heads are write amplification per sqlite-costs; upgrade path to opt-in library rules stays open').
