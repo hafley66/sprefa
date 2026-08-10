@@ -41,6 +41,7 @@
               [ parse_dl_file/4,
                 parse_dl_line_for_reason/2
               ]).
+:- use_module('use_resolve', [expand_uses/8]).
 :- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
@@ -324,7 +325,8 @@ compile_dl6(File, OutFile) :-
 compile_dl6(File, OutFile, Options) :-
     catch(
         ( run_compile_phase(parse,
-                            parse_dl_file(File, Prog, Bindings, Findings),
+                            expand_uses(File, [], [], _, Prog, _,
+                                        Bindings, Findings),
                             ParseMeasurement),
           ( Findings == []
           -> true

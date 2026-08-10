@@ -6750,7 +6750,9 @@ test(use_one_sibling_splices_before_own) :-
           "main.dl6" = "use \"lib.dl6\".\nrel main(z:int).\nmain(1).\n" ]),
     use_entry(Dir, 'main.dl6', Entry),
     expand_uses(Entry, [], [], _, prog(Decls, _), Table),
-    append([col_type(lib/1, k, int), col_type(main/1, z, int)], _, Decls),
+    nth0(LibAt, Decls, col_type(lib/1, k, int)),
+    nth0(MainAt, Decls, col_type(main/1, z, int)),
+    LibAt < MainAt,
     maplist(arg(1), Table, Paths),
     length(Paths, 2).
 

@@ -65,7 +65,10 @@
             statement_location_for_reference/4,
             % use_resolve.pl:expand_uses/6 peels `use "path".` off an entry
             % file before the remainder is parsed as a Core program.
-            use_item/3
+            use_item/3,
+            % The peeled remainder still parses UNDER its own file path, so
+            % the diag channel's line table names the file on disk.
+            parse_dl_source/5
           ]).
 
 :- set_prolog_flag(back_quotes, codes).
