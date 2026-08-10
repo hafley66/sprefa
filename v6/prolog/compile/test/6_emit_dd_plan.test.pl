@@ -3,6 +3,7 @@
 :- use_module('../6_emit_dd_plan', [dd_plan_text/2, fixture_dd_plan_text/3, fixture_dd_plan_json_text/3]).
 :- use_module('../../compile', [program_plan/2, read_fixture_term/4]).
 :- use_module('../../analyze', [body_ref_uses/2]).
+:- use_module(library(http/json), [json_read_dict/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -46,7 +47,46 @@ test(json_twins_are_deterministic) :-
            ( fixture_dd_plan_json_text(Fixture, Name, First),
              fixture_dd_plan_json_text(Fixture, Name, Second),
              First == Second,
-             dd_json_golden(Name, First) )).
+              dd_json_golden(Name, First) )).
+
+test(json_twin_carries_join_keys_outside_sql) :-
+    dd_fixture_file('5_value_plane.pl', Fixture),
+    fixture_dd_plan_json_text(Fixture, float_exact_join_has_no_epsilon, Text),
+    json_text_dict(Text, Dict),
+    get_dict(operators, Dict, Operators),
+    member(Op, Operators),
+    get_dict(kind, Op, join),
+    get_dict(join_keys, Op, JoinKeys),
+    get_dict(left, JoinKeys, Left),
+    get_dict(key_columns, Left, [name, value]),
+    get_dict(right, JoinKeys, Right),
+    get_dict(key_columns, Right, [name, value]).
+
+test(json_twin_carries_reduce_aggregate) :-
+    dd_fixture_file('5_value_plane.pl', Fixture),
+    fixture_dd_plan_json_text(Fixture, float_avg_is_grouped, Text),
+    json_text_dict(Text, Dict),
+    get_dict(operators, Dict, Operators),
+    member(Op, Operators),
+    get_dict(kind, Op, reduce),
+    get_dict(aggregate, Op, Agg),
+    get_dict(kind, Agg, Kinds),
+    memberchk(avg, Kinds),
+    get_dict(group, Agg, Group), Group == [group],
+    get_dict(value, Agg, Value), Value == [value].
+
+test(json_twin_carries_arrangements_and_wires) :-
+    dd_fixture_file('5_value_plane.pl', Fixture),
+    fixture_dd_plan_json_text(Fixture, float_exact_join_has_no_epsilon, Text),
+    json_text_dict(Text, Dict),
+    get_dict(arrangements, Dict, Arrangements),
+    member(App, Arrangements),
+    get_dict(rel, App, 'left/2'),
+    get_dict(key_columns, App, [name, value]),
+    get_dict(wires, Dict, Wires), Wires \== [],
+    member(Wire, Wires),
+    get_dict(from, Wire, 'join_1_1'),
+    get_dict(to, Wire, 'map_1').
 
 test(every_operator_has_a_wire) :-
     dd_fixture_file('5_value_plane.pl', Fixture),
@@ -102,11 +142,25 @@ test(description_join_keys_cover_body_argument_equalities) :-
              forall(member(Rule, Rules),
                     rule_shared_columns_are_arrangement_keys(Rule, Rels, Arrangements)) )).
 
-test(json_rejects_edge_statement_payload,
-     [throws(unsupported_construct(edgestmt))]) :-
+test(edge_rule_operator_serializes_with_classification) :-
     test_dir_fact(Here),
     atomic_list_concat([Here, '/dd/emit_dd_plan_unsupported_fixture.pl'], Fixture),
-    fixture_dd_plan_json_text(Fixture, emit_dd_plan_edge_rule, _).
+    fixture_dd_plan_json_text(Fixture, emit_dd_plan_edge_rule, Text),
+    json_text_dict(Text, Dict),
+    get_dict(operators, Dict, Operators),
+    member(Op, Operators),
+    forall(member(Key-Value,
+                  [kind-map, classification-edge, head-'output/1',
+                   trigger-'input/1', id-map_1]),
+           get_dict(Key, Op, Value)),
+    get_dict(rules, Dict, Rules),
+    Rules == [].
+
+json_text_dict(Text, Dict) :-
+    atom_string(Atom, Text),
+    open_string(Atom, Stream),
+    json_read_dict(Stream, Dict, [value_string_as(atom)]),
+    close(Stream).
 
 test(empty_rule_order_falls_back_to_program_rules) :-
     Program = prog([], [(copy(Item) <- source(Item))]),
