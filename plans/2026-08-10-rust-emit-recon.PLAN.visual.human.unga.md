@@ -1,0 +1,469 @@
+# Rust output and one-file programs
+
+## TOC
+
+1. Goal
+2. Current layers
+3. What generated code expects
+4. Rust event shape
+5. What V5 supplies
+6. Types first
+7. Three one-binary paths
+8. Order of work
+
+## 1. Goal
+
+Keep the TypeScript engine running.
+
+Add generated declarations first.
+
+Measure a one-file TypeScript package now.
+
+Build the Rust runtime in parity-sized slices.
+
+The Prolog compiler remains the source of decisions.
+
+## 2. Current layers
+
+```text
+DL6 text
+   |
+   v
++---------------------------+
+| Prolog compiler           |
+|                           |
+| parse                     |
+| check                     |
+| order rules               |
+| build SQL                 |
+| build plans               |
+| build catalog rows        |
++---------------------------+
+   |
+   | lowered SQL and plans
+   v
++---------------------------+
+| TypeScript emitter        |
+|                           |
+| prints constants          |
+| prints specialized code   |
+| prints the tick sequence  |
++---------------------------+
+   |
+   v
++---------------------------+
+| TypeScript runtime        |
+|                           |
+| SQLite runner             |
+| text ids                  |
+| relation-reference ids    |
+| tick loop                 |
+| HTTP                      |
+| timers                    |
+| file watch                |
+| shell hosts               |
++---------------------------+
+```
+
+The Rust emitter can read the same lowered compiler result.
+
+SQL building does not need a second implementation for the first Rust path.
+
+## 3. What generated code expects
+
+```text
+program
+ |
+ +-- name
+ +-- text storage mode
+ +-- table creation SQL
+ +-- relation columns and types
+ +-- accepted arrival relations
+ +-- boot rows
+ +-- final SELECT statements
+ +-- shell host plans
+ +-- timer and watch bind plans
+ +-- query plans
+ +-- subscribed relations
+ +-- catalog rows
+ +-- tick function
+```
+
+The tick function uses one SQLite connection.
+
+It needs four database operations:
+
+```text
+execute one statement
+execute a statement batch
+execute a multi-statement SQL block
+read one scalar value
+```
+
+Its ordered phases are:
+
+```text
+prepare
+  |
+advance clock when used
+  |
+intern text
+  |
+intern relation-shaped values
+  |
+apply arrivals
+  |
+grow and reconcile levels before edges
+  |
+run edges
+  |
+merge next frontier
+  |
+grow levels after edges
+  |
+apply retention
+  |
+reconcile
+  |
+read boundary changes
+  |
+stage departures
+  |
+promote frontiers
+  |
+return deltas and carry flag
+```
+
+The carry flag requests another tick with no outside arrivals.
+
+The cap is 100 drain ticks.
+
+## 4. Rust event shape
+
+Inside one tick:
+
+```text
+fn tick(...) -> Result<TickDeltas>
+```
+
+The tick and SQLite connection stay on one writer thread.
+
+Outside the tick:
+
+```text
+HTTP --------+
+timer -------+
+watch -------+--> bounded queue --> writer thread --> tick results
+shell host --+                              |
+                                            +--> replies
+                                            +--> subscribers
+```
+
+Rust streams fit HTTP, timers, file watch, and subprocess output.
+
+A plain loop fits schedule replay and drain ticks.
+
+Candidate library map:
+
+```text
+SQLite             rusqlite first; libsql adapter when required
+async queue        tokio mpsc
+request reply      tokio oneshot
+tick broadcast     tokio broadcast
+HTTP               axum
+file watch         notify
+stream adapters    tokio-stream or futures
+SQL builder        sea-query when Rust owns new SQL construction
+tracing            tracing and tracing-subscriber
+```
+
+## 5. What V5 supplies
+
+```text
+V5 Rust
+ |
+ +-- bundled SQLite setup
+ +-- parameter and row conversion idioms
+ +-- bulk statement chunking
+ +-- SQL timing
+ +-- structured tracing
+ +-- trace-file flushing
+ +-- process CPU and IO budgets
+ +-- worker-thread caps
+ +-- fixpoint row caps
+```
+
+V6 adds a different semantic shape:
+
+```text
+log and set relations
+arrival occurrences
+positive and negative boundary changes
+current frontier
+next frontier
+departure frontier
+pre plane
+edge rules
+level rules
+retention
+expand walks
+DRed walks
+drain ticks
+```
+
+V5 infrastructure can move by behavior and dependency.
+
+The V6 tick executor uses V6 plan structures.
+
+## 6. Types first
+
+The catalog already carries:
+
+```text
+primitive types
+nested list types
+modules
+relations
+columns in order
+column type ids
+relation arity
+containment
+schema hashes
+rule hashes
+runtime plane rows
+```
+
+First generated pair:
+
+```text
+same catalog rows
+      |
+      +--> declarations.d.ts
+      |
+      +--> declarations.rs
+```
+
+First fixture:
+
+```text
+one module
+one scalar relation
+one list(text) column
+one nested relation
+one relation reference
+```
+
+Both files must compile.
+
+Both files must be regenerated by one command.
+
+Both checked-in files must byte-match fresh output.
+
+Missing rules before this slice closes:
+
+```text
+null and optional fields
+Rust ownership types
+module and nesting names
+keyword escaping
+public versus internal relations
+relation references on the wire
+schema constraints
+```
+
+Estimated handwritten source:
+
+```text
+catalog decoder       80 to 140 lines
+TypeScript printer    80 to 140 lines
+Rust printer         100 to 180 lines
+fixtures             100 to 180 lines
+staleness gate        40 to  80 lines
+-------------------------------------
+total                400 to 720 lines
+```
+
+The row-spec document named by the brief is absent from this base.
+
+The live catalog implementation is available.
+
+## 7. Three one-binary paths
+
+### Path A: one Rust binary per program
+
+```text
+program.dl6
+    |
+    v
+  swipl
+    |
+    v
+program.rs + Rust runtime
+    |
+    v
+cargo build
+    |
+    v
+one executable for that program
+```
+
+SWI-Prolog:
+
+```text
+build time: yes
+run time:   no
+```
+
+First milestone:
+
+```text
+one arrival
+one positive level rule
+SQLite DDL and boot
+tick output byte-equal to the oracle
+```
+
+Estimated runtime and compiler source:
+
+```text
+without serving     4,300 to  7,600 lines
+with serving        5,800 to 10,100 lines
+```
+
+Each program runs Cargo once.
+
+Each program gets its own executable.
+
+### Path B: one generic Rust binary plus program data
+
+```text
+program.dl6
+    |
+    v
+  swipl
+    |
+    v
+versioned plan data ----------+
+                               |
+generic Rust runtime ----------+
+                               |
+                               v
+                       one runtime executable
+                       many program data files
+```
+
+SWI-Prolog:
+
+```text
+plan compile time: yes
+runtime with compiled plan: no
+runtime accepting raw DL6: yes, until compiler replacement
+```
+
+First milestone:
+
+```text
+serialize one simple plan
+load it in the generic binary
+run it
+match the oracle
+```
+
+Estimated source:
+
+```text
+without serving     4,400 to  7,800 lines
+with serving        5,900 to 10,300 lines
+```
+
+The missing piece is a complete versioned plan format.
+
+Some current generated helpers have no data-only form yet.
+
+### Path C: package the TypeScript engine now
+
+```text
+fixed generated program
+          +
+TypeScript runtime
+          +
+serve entry
+          |
+          v
+ bun build --compile
+          |
+          v
+one executable with the Bun runtime inside
+```
+
+SWI-Prolog:
+
+```text
+one executable per precompiled program: compile time only
+server accepting raw DL6: runtime subprocess remains
+server accepting precompiled plans: runtime SWI can be absent
+```
+
+First milestone:
+
+```text
+statically import one generated program
+compile one executable
+run one fixture schedule
+byte-match the oracle
+```
+
+First probe size:
+
+```text
+entry and build files       60 to 160 lines
+compatibility receipts     100 to 250 lines
+-----------------------------------------
+total                      160 to 410 lines
+```
+
+Items the probe must execute:
+
+```text
+RxJS
+libSQL client
+linked store package
+file-backed SQLite
+HTTP
+shell subprocess
+timer
+recursive file watch
+watch cancellation
+process cancellation
+shutdown
+```
+
+The current live compiler writes a new TypeScript module and imports it by path.
+
+That loader needs a separate packaging decision.
+
+## 8. Order of work
+
+```text
+0. Bun fixed-program executable receipt
+   |
+1. catalog rows to .d.ts and .rs
+   |
+2. Rust SQLite seam and one level-rule tick
+   |
+3. complete Rust plan structures
+   |
+   +--> A. generated Rust program binaries
+   |
+   +--> B. generic runtime plus plan data
+   |
+4. Rust HTTP, watch, timer, and shell edges
+```
+
+Every Rust semantic milestone uses the same test:
+
+```text
+Prolog oracle tick log
+          |
+          +--> byte diff <-- Rust tick log
+```
