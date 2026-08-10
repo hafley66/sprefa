@@ -1,0 +1,6 @@
+{
+  "grid_10000": {
+    "fixpoint_ms_ceiling": 2500,
+    "peak_rss_mb_ceiling": 900
+  }
+}
