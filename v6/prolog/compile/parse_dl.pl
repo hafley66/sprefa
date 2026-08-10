@@ -545,23 +545,34 @@ get_or_make_var(Name, Vars0, Var, Vars) :-
     ; Vars = [Name-Var | Vars0]
     ).
 
-% ═══ module import: `use "path".` / `use "path" as alias.` ══════════════════
+% ═══ module import: `use "path".` / `pub use "path".` ═════════════════════
 % `use` and `as` stay plain identifiers, so neither lexer nor statement/6 moves.
 
 %! use_item(-Item, +S0, -S) is semidet.
 %  Runs before parse_dl_source, on one line at a time, never on a whole file.
 use_item(Item, S0, S) :-
     skip_ws(S0, S1),
-    word(`use`, S1, S2),
+    use_visibility(Visibility, S1, S2),
     skip_ws(S2, S3),
     string_lit(Text, S3, S4),
     skip_ws(S4, S5),
     (   use_alias_clause(Alias, S5, S6)
-    ->  Item = use(Text, Alias), S7 = S6
-    ;   Item = use(Text), S7 = S5
+    ->  use_item_term(Visibility, Text, Alias, Item), S7 = S6
+    ;   use_item_term(Visibility, Text, none, Item), S7 = S5
     ),
     skip_ws(S7, S8),
     S8 = [0'. | S].
+
+use_visibility(private, S0, S) :- word(`use`, S0, S).
+use_visibility(public, S0, S) :-
+    word(`pub`, S0, S1),
+    skip_ws(S1, S2),
+    word(`use`, S2, S).
+
+use_item_term(private, Text, none, use(Text)).
+use_item_term(private, Text, Alias, use(Text, Alias)).
+use_item_term(public, Text, none, pub_use(Text)).
+use_item_term(public, Text, Alias, pub_use(Text, Alias)).
 
 use_alias_clause(Alias, S0, S) :-
     word(`as`, S0, S1),
