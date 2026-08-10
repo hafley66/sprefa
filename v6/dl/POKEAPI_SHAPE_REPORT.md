@@ -14,7 +14,7 @@ The fixture emits all 212 source component names. The generated JSON Schema cont
 | nullable properties | 129 | yes: `option(T)`; emitted as option helper relations |
 | direct component `$ref` occurrences | 255 | partial: direct non-array refs use named relation types; refs inside arrays or compound shapes are `json` |
 | scalar arrays | 1 | yes: `json_list(int)` |
-| arrays of component refs | 139 | no: `list(T)` relation-ref storage is refused; fixture uses `json` |
+| arrays of component refs | 139 | no: `list(T)` relation-ref storage is not built yet; fixture uses `json` |
 | other array/object shapes | 85 | no: inline and compound element shapes are represented as `json` |
 | enums | 0 | no enum surface in this source file |
 | `oneOf` schemas | 1 | no: represented as `json` |
