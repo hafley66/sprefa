@@ -361,6 +361,21 @@ dl6-bench:
 dl6-doc:
 	DL6_BENCH_UNBATCH=1 DL6_BENCH_DOC=1 bash {{v6}}/labs/exec_shootout/dl6/bench.sh
 
+# full dl6 bench: adds layered_10000 + chain_10000 (~35s more than dl6-bench)
+# (expect: chain_10000 derived=9996213 checksum=df09b2f409f8b9a8)
+dl6-bench-full:
+	DL6_BENCH_FULL=1 bash {{v6}}/labs/exec_shootout/dl6/bench.sh
+
+# retraction maintenance bench (DRed in-place vs refCount recompute), grid 45x45
+# numbers banked in labs/exec_shootout/dl6/FACTS.dredland.md
+dl6-dred-bench:
+	cd {{v6}}/labs/exec_shootout/dl6 && bash bench.sh && node --experimental-transform-types incbench.ts "$PWD/.compiled/reachability.ts" 45
+
+# rust execution-strategy shootout (interp/rxgraph/mono), chain/grid/layered at 10k/100k/1M
+# standings: labs/exec_shootout/STANDINGS.md (expect: chain 10k mono fp rows/sec ~7e7)
+shootout work_dir="/tmp/sprefa-shootout":
+	cd {{v6}}/labs/exec_shootout && cargo build --release --manifest-path harness/Cargo.toml && cargo build --release --manifest-path interp/Cargo.toml && cargo build --release --manifest-path rxgraph/Cargo.toml && cargo build --release --manifest-path mono/Cargo.toml && mkdir -p {{work_dir}} && ./harness/target/release/harness --engines interp/target/release/interp,rxgraph/target/release/rxgraph,mono/target/release/mono --scales 10000,100000,1000000 --measure-builds --work {{work_dir}}
+
 # the house scale-test rig (engines/*.sh emit a shared CSV protocol)
 bench:
 	cd {{v6}}/sprefa-store/bench && bash run.sh

@@ -217,7 +217,7 @@ function runCase(name: string, inputPath: string, modulePath: string): Promise<I
   const seam: ISqlSeam = {
     ...opened,
     runner: recordingRunner(opened.runner, shapes),
-    unobservedRels: new Set(["edge", "reachable"]),
+    unobserved_rels: new Set(["edge", "reachable"]),
   };
 
   return import(resolve(modulePath)).then(

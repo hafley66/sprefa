@@ -44,12 +44,15 @@ if [ "${DL6_BENCH_FULL:-0}" = "1" ]; then
   CASES+=("layered_10000=$WORK/layered_10000.in" "chain_10000=$WORK/chain_10000.in")
 fi
 
-DL6_BENCH_JSON="$HERE/FACTS.json" node --experimental-transform-types "$HERE/bench.ts" "$MODULE" "${CASES[@]}" >"$FACTS"
+# temp-then-move: a crashed run must not truncate the banked FACTS.md
+DL6_BENCH_JSON="$HERE/FACTS.json" node --experimental-transform-types "$HERE/bench.ts" "$MODULE" "${CASES[@]}" >"$FACTS.tmp"
 status=$?
 if [ "$status" -ne 0 ]; then
+  rm -f "$FACTS.tmp"
   echo "dl6-bench: run failed" >&2
   exit "$status"
 fi
+mv "$FACTS.tmp" "$FACTS"
 
 echo "dl6-bench: wrote $FACTS" >&2
 
