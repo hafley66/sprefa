@@ -53,6 +53,10 @@ refused, and `boop db sync create --rebuild` drops every stored row and
 re-projects every transcript from byte 0 (about 18 s over 1.5 GB here). Nothing
 is wiped without that flag.
 
+SQL: the store is SQLite at ~/.agent/boop.db; `boop db \"<sql>\"` queries it
+  read-only. sqlite3 dot-commands (.schema, .tables) are NOT supported; the
+  passthrough takes plain SQL only.
+
 The pre-split verbs (harnesses, sessions, events, chat, tail, list, measure,
 dispatch, lane, resolve, adopt, sweep, prune, hail, sync, follow) still run as
 hidden aliases for one release. Use `beep` and `db`.";
@@ -76,10 +80,18 @@ enum SubCmd {
         #[command(subcommand)]
         cmd: BeepCmd,
     },
-    /// Read and count what agents did.
+    /// Run raw SQL read-only against the store (the default `db` form), or
+    /// read/count what agents did through a `db` subcommand.
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Db {
+        /// The SQL to run against ~/.agent/boop.db.
+        #[arg(value_name = "SQL")]
+        sql: Option<String>,
+        /// Output format for the SQL passthrough.
+        #[arg(long, value_enum)]
+        format: Option<QueryFormat>,
         #[command(subcommand)]
-        cmd: DbCmd,
+        cmd: Option<DbCmd>,
     },
     /// Report the caller's own identity and the rung that resolved it.
     Whoami {
@@ -495,7 +507,15 @@ fn main() -> Result<()> {
         ),
         SubCmd::Prune { mail_dir } => run_prune(mail_dir.as_deref()),
         SubCmd::Beep { cmd } => run_beep(&registry, cmd),
-        SubCmd::Db { cmd } => run_db(&registry, cmd),
+        SubCmd::Db { sql, format, cmd } => match cmd {
+            Some(cmd) => run_db(&registry, cmd),
+            None => match sql {
+                Some(sql) => run_passthrough(&sql, format.unwrap_or_default()),
+                None => anyhow::bail!(
+                    "boop db needs a SQL string or a subcommand; see `boop db --help`"
+                ),
+            },
+        },
         SubCmd::Whoami { json } => run_whoami(json),
     }
 }
@@ -2425,6 +2445,42 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
 
 fn open_store() -> Result<ident::Store> {
     ident::Store::open(ident::Store::default_path()?)
+}
+
+/// `boop db "<sql>": run raw SQL read-only against the store. The open is
+/// SQLITE_OPEN_READONLY by flag, so a write is refused by SQLite itself.
+fn run_passthrough(sql: &str, format: QueryFormat) -> Result<()> {
+    run_passthrough_at(ident::Store::default_path()?, sql, format)
+}
+
+fn run_passthrough_at(path: PathBuf, sql: &str, format: QueryFormat) -> Result<()> {
+    let store = ident::Store::open_readonly(path)?;
+    let (names, rows) = store.passthrough(sql)?;
+    match format {
+        QueryFormat::Ndjson => {
+            for row in &rows {
+                line(&serde_json::to_string(row)?);
+            }
+        }
+        QueryFormat::Text => {
+            line(&names.join("\t"));
+            for row in &rows {
+                let Some(object) = row.as_object() else {
+                    continue;
+                };
+                let cells: Vec<String> = names
+                    .iter()
+                    .map(|name| match object.get(name) {
+                        Some(serde_json::Value::String(text)) => text.clone(),
+                        Some(serde_json::Value::Null) | None => "-".to_owned(),
+                        Some(other) => other.to_string(),
+                    })
+                    .collect();
+                line(&cells.join("\t"));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_fact(kind: query::FactKind, cmd: FactCmd) -> Result<()> {
