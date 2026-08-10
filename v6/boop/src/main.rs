@@ -957,15 +957,16 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
             .as_deref()
             .and_then(|target| tmux::pane_pid(None, target))
             .unwrap_or(0);
-        match snapshot.process(pane_pid) {
-            Some(info) => {
-                let uptime = info.start_time_secs;
+        match snapshot.tree_sum(pane_pid) {
+            Some(sum) => {
+                let now = now_unix_secs();
+                let uptime = proc::uptime_secs(sum.start_time_secs, now);
                 line(&format!(
                     "{}\t{}\t{}\t{:.1}\t{}\t{}",
                     name,
                     pane_pid,
-                    info.rss_bytes / 1024,
-                    info.cpu_percent,
+                    sum.rss_bytes / 1024,
+                    sum.cpu_percent,
                     uptime,
                     snapshot.descendent_count(pane_pid),
                 ));
@@ -2668,16 +2669,20 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<
             .as_deref()
             .and_then(|target| tmux::pane_pid(None, target))
             .unwrap_or(0);
-        match snapshot.process(pane_pid) {
-            Some(info) => println!(
-                "{}\t{}\t{}\t{:.1}\t{}\t{}",
-                name,
-                pane_pid,
-                info.rss_bytes / 1024,
-                info.cpu_percent,
-                info.start_time_secs,
-                snapshot.descendent_count(pane_pid),
-            ),
+        match snapshot.tree_sum(pane_pid) {
+            Some(sum) => {
+                let now = now_unix_secs();
+                let uptime = proc::uptime_secs(sum.start_time_secs, now);
+                println!(
+                    "{}\t{}\t{}\t{:.1}\t{}\t{}",
+                    name,
+                    pane_pid,
+                    sum.rss_bytes / 1024,
+                    sum.cpu_percent,
+                    uptime,
+                    snapshot.descendent_count(pane_pid),
+                );
+            }
             // A dead route prints only when asked for by name or --all.
             None if all || lane.is_some() => {
                 println!("{}\t{}\t-\t-\t-\t-", name, pane_pid);
@@ -2686,6 +2691,13 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<
         }
     }
     Ok(())
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
