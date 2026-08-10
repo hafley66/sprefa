@@ -3,6 +3,7 @@
 //! processes cost). The CLI routes to layers 0-3; it contains no `match` on
 //! harness id and no direct `Command::new("tmux")` beyond the layer-1 helpers.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -267,6 +268,9 @@ enum SubCmd {
         model: Option<String>,
         #[arg(long)]
         mode: Option<String>,
+        /// The lane that summoned this one.
+        #[arg(long)]
+        parent: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -340,6 +344,13 @@ enum QueryFormat {
 enum OutputFormat {
     Text,
     Json,
+}
+
+#[derive(Clone, Copy, ValueEnum, Default)]
+enum PstreeFormat {
+    #[default]
+    Text,
+    Ndjson,
 }
 
 /// Write one line, treating a closed pipe as a normal end. Rust masks SIGPIPE,
@@ -421,6 +432,7 @@ fn main() -> Result<()> {
                 base_sha,
                 branch: None,
                 worktree_dir: None,
+                parent: None,
                 on_exit: None,
             },
         ),
@@ -494,6 +506,7 @@ fn main() -> Result<()> {
             cwd,
             model,
             mode,
+            parent,
             mail_dir,
         } => run_adopt(
             &name,
@@ -503,6 +516,7 @@ fn main() -> Result<()> {
             cwd.as_deref(),
             model.as_deref(),
             mode.as_deref(),
+            parent.as_deref(),
             mail_dir.as_deref(),
         ),
         SubCmd::Prune { mail_dir } => run_prune(mail_dir.as_deref()),
@@ -977,6 +991,8 @@ struct DispatchArgs {
     /// The worktree to create; `None` spawns in `cwd` (`main_tree` decides
     /// whether that's a fast-forward check or a plain directory).
     worktree_dir: Option<PathBuf>,
+    /// The lane that summoned this one; written to the route's `parent`.
+    parent: Option<String>,
     /// Shell appended after the harness command; `lane create --parent`
     /// composes the completion hail here.
     on_exit: Option<String>,
@@ -1050,6 +1066,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         mode: args.mode.clone(),
         session_id: args.session_id.clone(),
         source_path: None,
+        parent: args.parent.clone(),
     };
     write_route(&dir, &args.to, route)?;
     append_message(&dir, &message)?;
@@ -1499,6 +1516,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             base_sha: args.base_sha,
             branch: Some(branch),
             worktree_dir,
+            parent: args.parent.clone(),
             on_exit,
         },
     )
@@ -1521,6 +1539,7 @@ fn run_adopt(
     cwd: Option<&str>,
     model: Option<&str>,
     mode: Option<&str>,
+    parent: Option<&str>,
     mail_dir_arg: Option<&Path>,
 ) -> Result<()> {
     if !tmux::has_session(None, tmux_session)? {
@@ -1536,6 +1555,7 @@ fn run_adopt(
         mode: mode.map(str::to_owned),
         session_id: session_id.map(str::to_owned),
         source_path: None,
+        parent: parent.map(str::to_owned),
     };
     write_route(&dir, name, route)?;
     println!("adopted {name} -> tmux {tmux_session}");
@@ -1598,6 +1618,9 @@ fn route_to_json(route: &Route) -> serde_json::Value {
     if let Some(session_id) = &route.session_id {
         object.insert("sessionId".into(), serde_json::json!(session_id));
     }
+    if let Some(parent) = &route.parent {
+        object.insert("parent".into(), serde_json::json!(parent));
+    }
     serde_json::Value::Object(object)
 }
 
@@ -1632,6 +1655,7 @@ fn append_ack(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
 
     use super::{resolve_dispatch_harness, run_lane_delete, write_route};
@@ -1679,6 +1703,7 @@ mod tests {
                 mode: None,
                 session_id: None,
                 source_path: None,
+                parent: None,
             },
         )
         .unwrap();
@@ -1689,6 +1714,115 @@ mod tests {
             "a finished lane must leave no registry row"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn route_with(parent: Option<&str>) -> Route {
+        Route {
+            harness: Some("opencode".into()),
+            tmux: Some("lane-x".into()),
+            cwd: None,
+            model: None,
+            mode: None,
+            session_id: None,
+            source_path: None,
+            parent: parent.map(str::to_owned),
+        }
+    }
+
+    fn dispatch(from: &str, to: &str) -> boop::bus::Message {
+        boop::bus::Message {
+            id: format!("m-{from}-{to}"),
+            from: from.into(),
+            to: to.into(),
+            from_timestamp: "2026-01-01T00:00:00.000Z".into(),
+            to_timestamp: None,
+            kind: "dispatch".into(),
+            reply_to: None,
+            body: "".into(),
+            r#ref: None,
+        }
+    }
+
+    fn live_meta(pid: u32) -> super::LaneMeta {
+        super::LaneMeta {
+            pid,
+            state: "live",
+            descendants: vec![],
+        }
+    }
+
+    /// RECEIPT (pstree). A route's explicit `--parent` wins over a mailbox
+    /// dispatch edge that names a different summoner.
+    #[test]
+    fn explicit_parent_beats_inferred_dispatch() {
+        let mut routes = BTreeMap::new();
+        routes.insert("child".into(), route_with(Some("explicit")));
+        let messages = vec![dispatch("mailbox", "child")];
+        let edges = super::resolve_edges(&routes, &messages);
+        let edge = &edges["child"];
+        assert_eq!(edge.parent.as_deref(), Some("explicit"));
+        assert!(!edge.inferred);
+    }
+
+    /// RECEIPT (pstree). An orphaned route infers its summoner from the FIRST
+    /// dispatch row addressed to it, later rows ignored.
+    #[test]
+    fn orphan_infers_summoner_from_first_dispatch() {
+        let mut routes = BTreeMap::new();
+        routes.insert("child".into(), route_with(None));
+        let messages = vec![
+            dispatch("summoner1", "child"),
+            dispatch("summoner2", "child"),
+        ];
+        let edges = super::resolve_edges(&routes, &messages);
+        let edge = &edges["child"];
+        assert_eq!(edge.parent.as_deref(), Some("summoner1"));
+        assert!(edge.inferred);
+    }
+
+    /// RECEIPT (pstree). A summoner absent from the registry renders as a
+    /// `[gone]` root with the orphan lane hung beneath it.
+    #[test]
+    fn orphan_root_prints_gone_summoner() {
+        let mut routes = BTreeMap::new();
+        routes.insert("child".into(), route_with(None));
+        let messages = vec![dispatch("coordinator", "child")];
+        let edges = super::resolve_edges(&routes, &messages);
+        let mut meta = BTreeMap::new();
+        meta.insert("child".into(), live_meta(4242));
+        let mut include = BTreeSet::new();
+        include.insert("child".into());
+        let nodes = super::build_lane_nodes(&edges, &meta, &include);
+        let text = super::render_text(&nodes);
+        let joined = text.join("\n");
+        assert!(joined.contains("coordinator [gone]"), "text:\n{joined}");
+        assert!(
+            joined.contains("child (4242) [live] [inferred]"),
+            "text:\n{joined}"
+        );
+        let ndjson = super::render_ndjson(&nodes);
+        let gone = ndjson
+            .iter()
+            .find(|row| row.contains("\"lane\":\"coordinator\""))
+            .unwrap();
+        assert!(gone.contains("\"state\":\"gone\""), "row: {gone}");
+        assert!(gone.contains("\"pid\":null"), "row: {gone}");
+    }
+
+    /// RECEIPT (pstree). A true root with no parent edge stays a root and is
+    /// never inferred from a non-dispatch message.
+    #[test]
+    fn a_lane_with_no_dispatch_shadow_is_a_root() {
+        let mut routes = BTreeMap::new();
+        routes.insert("loner".into(), route_with(None));
+        let messages = vec![boop::bus::Message {
+            kind: "note".into(),
+            ..dispatch("whoever", "loner")
+        }];
+        let edges = super::resolve_edges(&routes, &messages);
+        let edge = &edges["loner"];
+        assert_eq!(edge.parent, None);
+        assert!(!edge.inferred);
     }
 }
 
@@ -1734,6 +1868,16 @@ enum BeepCmd {
         /// Include dead routes (no live process behind the pane).
         #[arg(long)]
         all: bool,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// Filesystem-style tree of lanes by parent edge.
+    Pstree {
+        /// Include dead lanes; default is live-only.
+        #[arg(long)]
+        all: bool,
+        #[arg(long, value_enum, default_value_t = PstreeFormat::Text)]
+        format: PstreeFormat,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -1808,6 +1952,9 @@ enum LaneCmd {
         model: Option<String>,
         #[arg(long)]
         mode: Option<String>,
+        /// The lane that summoned this one.
+        #[arg(long)]
+        parent: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -2145,6 +2292,11 @@ fn run_beep(registry: &Registry, cmd: BeepCmd) -> Result<()> {
             all,
             mail_dir,
         } => run_ps(mail_dir.as_deref(), lane.as_deref(), all),
+        BeepCmd::Pstree {
+            all,
+            format,
+            mail_dir,
+        } => run_pstree(mail_dir.as_deref(), all, format),
     }
 }
 
@@ -2194,6 +2346,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             cwd,
             model,
             mode,
+            parent,
             mail_dir,
         } => run_adopt(
             &lane,
@@ -2203,6 +2356,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             cwd.as_deref(),
             model.as_deref(),
             mode.as_deref(),
+            parent.as_deref(),
             mail_dir.as_deref(),
         ),
         LaneCmd::Delete {
@@ -2394,6 +2548,262 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// pstree
+// ---------------------------------------------------------------------------
+
+/// The resolved `from -> to` summon edge for a lane. Explicit beats inferred.
+#[derive(Clone, Debug)]
+struct LaneEdge {
+    /// The summoning lane, `None` for a true root.
+    parent: Option<String>,
+    /// `true` when the edge came from the first dispatch row, not a route
+    /// `--parent`.
+    inferred: bool,
+}
+
+fn resolve_edges(
+    routes: &BTreeMap<String, Route>,
+    messages: &[bus::Message],
+) -> BTreeMap<String, LaneEdge> {
+    routes
+        .iter()
+        .map(|(name, route)| {
+            let edge = match &route.parent {
+                Some(parent) => LaneEdge {
+                    parent: Some(parent.clone()),
+                    inferred: false,
+                },
+                None => {
+                    let summoner = messages
+                        .iter()
+                        .find(|message| message.kind == "dispatch" && message.to == *name)
+                        .and_then(|message| {
+                            (!message.from.is_empty()).then(|| message.from.clone())
+                        });
+                    match summoner {
+                        Some(parent) => LaneEdge {
+                            parent: Some(parent),
+                            inferred: true,
+                        },
+                        None => LaneEdge {
+                            parent: None,
+                            inferred: false,
+                        },
+                    }
+                }
+            };
+            (name.clone(), edge)
+        })
+        .collect()
+}
+
+struct LaneMeta {
+    pid: u32,
+    state: &'static str,
+    descendants: Vec<ProcessDesc>,
+}
+
+#[derive(Clone)]
+struct ProcessDesc {
+    pid: u32,
+    comm: String,
+}
+
+/// One renderable node: a real lane or a `[gone]` phantom for a summoner that
+/// is not itself a known lane.
+struct LaneNode {
+    name: String,
+    parent: Option<String>,
+    inferred: bool,
+    pid: u32,
+    state: &'static str,
+    descendants: Vec<ProcessDesc>,
+    gone: bool,
+    children: Vec<usize>,
+}
+
+fn build_lane_nodes(
+    edges: &BTreeMap<String, LaneEdge>,
+    meta: &BTreeMap<String, LaneMeta>,
+    include: &BTreeSet<String>,
+) -> Vec<LaneNode> {
+    let mut nodes: Vec<LaneNode> = Vec::new();
+    let mut index: BTreeMap<String, usize> = BTreeMap::new();
+    for name in include {
+        let lane = meta.get(name).expect("included lane has meta");
+        let edge = edges.get(name).expect("included lane has edge");
+        let idx = nodes.len();
+        nodes.push(LaneNode {
+            name: name.clone(),
+            parent: edge.parent.clone(),
+            inferred: edge.inferred,
+            pid: lane.pid,
+            state: lane.state,
+            descendants: lane.descendants.clone(),
+            gone: false,
+            children: Vec::new(),
+        });
+        index.insert(name.clone(), idx);
+    }
+    let mut phantom: BTreeSet<String> = BTreeSet::new();
+    for name in include {
+        if let Some(parent) = edges.get(name).and_then(|edge| edge.parent.as_deref()) {
+            if !include.contains(parent) {
+                phantom.insert(parent.to_owned());
+            }
+        }
+    }
+    for name in phantom {
+        let idx = nodes.len();
+        nodes.push(LaneNode {
+            name: name.clone(),
+            parent: None,
+            inferred: false,
+            pid: 0,
+            state: "gone",
+            descendants: Vec::new(),
+            gone: true,
+            children: Vec::new(),
+        });
+        index.insert(name, idx);
+    }
+    for idx in 0..nodes.len() {
+        let parent = nodes[idx].parent.clone();
+        if let Some(parent) = parent {
+            if let Some(&parent_idx) = index.get(&parent) {
+                nodes[parent_idx].children.push(idx);
+            }
+        }
+    }
+    let names: Vec<String> = nodes.iter().map(|node| node.name.clone()).collect();
+    for node in &mut nodes {
+        node.children.sort_by_key(|&child| names[child].clone());
+    }
+    nodes
+}
+
+fn run_pstree(mail_dir_arg: Option<&Path>, all: bool, format: PstreeFormat) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    let routes = bus::read_routes(&dir)?;
+    let messages = all_messages(&dir)?;
+    let edges = resolve_edges(&routes, &messages);
+    let snapshot = proc::SysinfoSnapshot::capture()?;
+    let mut meta: BTreeMap<String, LaneMeta> = BTreeMap::new();
+    let mut include: BTreeSet<String> = BTreeSet::new();
+    for (name, route) in &routes {
+        let pane_pid = route
+            .tmux
+            .as_deref()
+            .and_then(|target| tmux::pane_pid(None, target))
+            .unwrap_or(0);
+        let live = snapshot.process(pane_pid).is_some();
+        if !all && !live {
+            continue;
+        }
+        include.insert(name.clone());
+        let descendants = snapshot
+            .descendants(pane_pid)
+            .into_iter()
+            .filter_map(|pid| {
+                snapshot.process(pid).map(|info| ProcessDesc {
+                    pid,
+                    comm: info.name,
+                })
+            })
+            .collect();
+        meta.insert(
+            name.clone(),
+            LaneMeta {
+                pid: pane_pid,
+                state: if live { "live" } else { "dead" },
+                descendants,
+            },
+        );
+    }
+    let nodes = build_lane_nodes(&edges, &meta, &include);
+    match format {
+        PstreeFormat::Text => {
+            for output in render_text(&nodes) {
+                line(&output);
+            }
+        }
+        PstreeFormat::Ndjson => {
+            for output in render_ndjson(&nodes) {
+                line(&output);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn render_text(nodes: &[LaneNode]) -> Vec<String> {
+    fn emit(out: &mut Vec<String>, nodes: &[LaneNode], idx: usize, depth: usize) {
+        let node = &nodes[idx];
+        out.push(format!(
+            "{}{}",
+            "  ".repeat(depth),
+            match node.gone {
+                true => format!("{} [gone]", node.name),
+                false => {
+                    let pid = if node.pid == 0 {
+                        "-".to_owned()
+                    } else {
+                        node.pid.to_string()
+                    };
+                    format!(
+                        "{} ({pid}) [{}]{}",
+                        node.name,
+                        node.state,
+                        if node.inferred { " [inferred]" } else { "" }
+                    )
+                }
+            }
+        ));
+        if !node.gone {
+            for desc in &node.descendants {
+                out.push(format!(
+                    "{}  {} ({})",
+                    "  ".repeat(depth + 1),
+                    desc.comm,
+                    desc.pid
+                ));
+            }
+        }
+        for child in &node.children {
+            emit(out, nodes, *child, depth + 1);
+        }
+    }
+    let roots: Vec<usize> = nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| node.parent.is_none())
+        .map(|(idx, _)| idx)
+        .collect();
+    let mut out = Vec::new();
+    for root in roots {
+        emit(&mut out, nodes, root, 0);
+    }
+    out
+}
+
+fn render_ndjson(nodes: &[LaneNode]) -> Vec<String> {
+    nodes
+        .iter()
+        .map(|node| {
+            serde_json::json!({
+                "lane": node.name,
+                "parent": node.parent,
+                "inferred": node.inferred,
+                "pid": if node.gone { None } else { Some(node.pid) },
+                "state": node.state,
+                "children": node.descendants.iter().map(|desc| desc.pid).collect::<Vec<_>>(),
+            })
+            .to_string()
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
