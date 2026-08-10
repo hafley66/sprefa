@@ -12,6 +12,7 @@ pub mod event;
 pub mod harness;
 pub mod ident;
 pub mod identity;
+pub mod lane;
 pub mod proc;
 pub mod query;
 pub mod registry;

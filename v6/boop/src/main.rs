@@ -14,21 +14,33 @@ use boop::bus::Route;
 use boop::event::AgentEvent;
 use boop::proc::ProcReader;
 use boop::registry::Registry;
-use boop::{bus, ident, identity, proc, query, tmux, usage};
+use boop::{bus, ident, identity, lane, proc, query, tmux, usage};
 
 const DOCTRINE: &str = "\
 DOCTRINE (this help is the usage contract; agents read it with `boop --help`):
 
 SPAWN: every lane spawn goes through lane create; bare tmux spawns leave no
 edge and stay invisible to tracking:
-    boop beep lane create --lane <id> --cwd <repo> --brief <abs-path> \\
-      [--parent <coordinator>] [--branch <b> --base-sha <sha>] \\
-      [--model <m>] [--tmux <name>] [--mail-dir <d>] [--dry-run]
+    boop beep lane create --branch feature/<name> --brief <abs-path> \\
+      [--goal <text>] [--model <m>] [--wait] [--mail-dir <d>] [--dry-run]
+  ONE derivation, from the whole branch name: `feature/schema-emit` gives lane
+  id and tmux session `feature-schema-emit` (`/` spelled `-`, the one character
+  tmux cannot hold) and worktree `.boop-worktrees/feature/schema-emit` (the same
+  name as a path). No prefix is dropped and no `lane/` prefix is added.
+  Kinds are feature/fix/refactor/chore, a convention the CLI prints, not a gate.
+  --cwd defaults to the repo you stand in, --base-sha to origin/main's head
+  (resolved at spawn and printed), --parent to you then to the one registered
+  coordinator, --harness to the one the model spelling names (gpt-* codex,
+  provider/model opencode, kimi-* kimi).
+  Overrides: --lane <id>, --tmux <name>, --base-sha <sha>, --harness <id>.
   One shot: worktree at base sha + spawn + route registration.
   Always --dry-run first; the printed `cmd:` line is the literal spawn.
 
 COMPLETION: --parent appends an on-exit hail `lane <id> done rc=$rc` into the
   parent's mailbox. A lane spawned with --parent reports completion; do not poll.
+  `--wait` blocks on that row and exits with the lane's rc, so spawn-and-join is
+  one command; `--wait-timeout <s>` (default 3600, 0 waits forever) exits 124.
+  The same wait after the fact is `boop beep lane wait <lane>`.
 
 LIVENESS: a lane can die silently, producing nothing. Liveness is TWO checks:
     1. process alive:    boop beep ps <lane>
@@ -493,8 +505,8 @@ fn main() -> Result<()> {
         } => run_lane(
             &registry,
             LaneArgs {
-                name,
-                cwd,
+                name: Some(name),
+                cwd: Some(cwd),
                 harness,
                 brief,
                 model,
@@ -506,6 +518,8 @@ fn main() -> Result<()> {
                 goal,
                 mail_dir,
                 dry_run,
+                wait: false,
+                wait_timeout: 0,
             },
         ),
         SubCmd::Adopt {
@@ -1489,8 +1503,8 @@ fn parse_iso_ms(text: &str) -> Option<u64> {
 const DEFAULT_LANE_MODEL: &str = "openrouter/deepseek/deepseek-v4-flash-0731";
 
 struct LaneArgs {
-    name: String,
-    cwd: String,
+    name: Option<String>,
+    cwd: Option<String>,
     harness: Option<String>,
     brief: Option<PathBuf>,
     model: Option<String>,
@@ -1502,97 +1516,137 @@ struct LaneArgs {
     goal: Option<String>,
     mail_dir: Option<PathBuf>,
     dry_run: bool,
+    wait: bool,
+    wait_timeout: u64,
 }
 
 /// Register and spawn a lane. No match on harness id here; the adapter's own
 /// `spawn`/`preview_command` decides how `prompt` becomes a real invocation.
 fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
-    let harness_id = args.harness.clone().unwrap_or_else(|| "opencode".into());
+    let harness_id = lane::harness_for_spawn(args.harness.as_deref(), args.model.as_deref())?;
     let adapter = harness_by_id(registry, &harness_id)?;
-    let brief = args
-        .brief
-        .clone()
-        .unwrap_or_else(|| PathBuf::from(&args.cwd).join("brief.md"));
-    let model = args
-        .model
-        .clone()
-        .unwrap_or_else(|| DEFAULT_LANE_MODEL.to_owned());
+    let repo = match &args.cwd {
+        Some(cwd) => PathBuf::from(cwd),
+        None => lane::repo_root(&std::env::current_dir().context("read the current directory")?)?,
+    };
+    let identity = lane::derive(
+        &repo,
+        args.branch.as_deref(),
+        args.name.as_deref(),
+        args.tmux.as_deref(),
+    )?;
+    let worktree_mode = identity.worktree_dir.is_some();
+    let brief = args.brief.clone().unwrap_or_else(|| repo.join("brief.md"));
+    // The flash4 default belongs to opencode's spelling; another harness gets
+    // no model rather than one it cannot resolve.
+    let model = match (args.model.clone(), harness_id.as_str()) {
+        (Some(model), _) => Some(model),
+        (None, "opencode") => Some(DEFAULT_LANE_MODEL.to_owned()),
+        (None, _) => None,
+    };
     let prompt = brief.display().to_string();
-    let worktree_mode = args.branch.is_some() && args.base_sha.is_some();
-    let branch = args
-        .branch
-        .clone()
-        .unwrap_or_else(|| args.tmux.clone().unwrap_or_else(|| args.name.clone()));
-    let worktree_dir = worktree_mode.then(|| {
-        PathBuf::from(&args.cwd)
-            .join(".boop-worktrees")
-            .join(&branch)
-    });
+    // A worktree branches from origin/main unless pinned; the repo-tree shape
+    // keeps its own HEAD, where a base of origin/main would be a merge.
+    let base = match (&args.base_sha, worktree_mode) {
+        (Some(sha), _) => lane::BaseSha {
+            sha: sha.clone(),
+            rev: "--base-sha".to_owned(),
+        },
+        (None, true) => lane::default_base_sha(&repo)?,
+        (None, false) => lane::BaseSha {
+            sha: git_head(&repo.display().to_string())?.unwrap_or_else(|| "HEAD".into()),
+            rev: "HEAD".to_owned(),
+        },
+    };
+    let hail_mail_dir = mail_dir(args.mail_dir.as_deref())?;
+    let routes = bus::read_routes(&hail_mail_dir)?;
+    let caller = identity::resolve(&routes)?
+        .lane
+        .filter(|lane| *lane != identity.lane);
+    let parent = lane::resolve_parent(args.parent.as_deref(), caller.as_deref(), &routes);
     // The epilogue runs in the lane's pane: the sender is the lane, and the
     // mailbox must be the one this dispatch registered in, never the default.
-    let hail_mail_dir = mail_dir(args.mail_dir.as_deref())?;
-    let on_exit = args.parent.as_ref().map(|parent| {
+    let on_exit = parent.parent.as_ref().map(|parent| {
         format!(
             "boop hail --to {} --from {} --mail-dir {} --kind result --body \"lane {} done rc=$__rc\" ; boop beep lane delete {} --route-only --mail-dir {}",
             shell_quote(parent),
-            shell_quote(&args.name),
+            shell_quote(&identity.lane),
             shell_quote(&hail_mail_dir.display().to_string()),
-            args.name,
-            shell_quote(&args.name),
+            identity.lane,
+            shell_quote(&identity.lane),
             shell_quote(&hail_mail_dir.display().to_string()),
         )
     });
-    let tmux_name = args.tmux.clone().unwrap_or_else(|| args.name.clone());
 
     if args.dry_run {
         let spec = boop::harness::SpawnSpec {
             harness: harness_id.clone(),
-            branch: branch.clone(),
-            base_sha: args.base_sha.clone().unwrap_or_else(|| "HEAD".to_owned()),
+            branch: identity.branch.clone(),
+            base_sha: base.sha.clone(),
             main_tree: !worktree_mode,
             setup: Vec::new(),
             prompt: prompt.clone(),
             resume_session: None,
             socket: args.socket.clone(),
-            worktree_dir: worktree_dir.clone(),
-            repo: PathBuf::from(&args.cwd),
+            worktree_dir: identity.worktree_dir.clone(),
+            repo: repo.clone(),
             env_stamp: None,
-            model: Some(model.clone()),
+            model: model.clone(),
             on_exit: on_exit.clone(),
-            tmux: Some(tmux_name.clone()),
+            tmux: Some(identity.tmux.clone()),
         };
         let command = adapter
             .preview_command(&spec)
             .unwrap_or_else(|| format!("{} {}", adapter.id(), shell_quote(&prompt)));
         println!("cmd: {command}");
-        println!("to: {}", args.name);
-        println!("cwd: {}", args.cwd);
+        println!("to: {}", identity.lane);
+        println!("cwd: {}", repo.display());
         println!("harness: {harness_id}");
-        println!("branch: {branch}");
-        if let Some(worktree_dir) = &worktree_dir {
+        match lane::kind_of(&identity.branch) {
+            Some(kind) => println!("branch: {} (kind {kind})", identity.branch),
+            None => println!("branch: {}", identity.branch),
+        }
+        if let Some(worktree_dir) = &identity.worktree_dir {
             println!("worktree: {}", worktree_dir.display());
         }
-        println!("tmux: {}", args.tmux.as_deref().unwrap_or(&args.name));
-        if let Some(parent) = &args.parent {
-            println!("parent: {parent} (completion hail appended on exit)");
+        println!("base-sha: {} (from {})", base.sha, base.rev);
+        println!("tmux: {}", identity.tmux);
+        match &parent.parent {
+            Some(name) => println!(
+                "parent: {name} (from {}; completion hail appended on exit)",
+                parent.source
+            ),
+            None => println!("parent: - (no completion hail; pass --parent <lane>)"),
         }
         if let Some(goal) = &args.goal {
             println!("goal: {goal}");
         }
+        if args.wait {
+            println!(
+                "wait: for {} result, timeout {}s",
+                identity.lane, args.wait_timeout
+            );
+        }
         return Ok(());
     }
+    if args.wait && parent.parent.is_none() {
+        anyhow::bail!(
+            "--wait needs a parent: the result row it blocks on is written by the on-exit hail, which only exists with --parent <lane>"
+        );
+    }
+    let lane_id = identity.lane.clone();
     run_dispatch(
         registry,
         DispatchArgs {
-            to: args.name,
-            cwd: args.cwd,
+            to: identity.lane,
+            cwd: repo.display().to_string(),
             cmd: prompt,
             from: None,
             harness: Some(harness_id),
             session_id: None,
-            model: Some(model),
+            model,
             mode: Some("auto".into()),
-            tmux: Some(tmux_name),
+            tmux: Some(identity.tmux),
             socket: args.socket,
             body: Some(format!(
                 "Read and execute the lane brief at {}",
@@ -1602,14 +1656,19 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             mail_dir: args.mail_dir,
             resolve_wait: 3,
             main_tree: !worktree_mode,
-            base_sha: args.base_sha,
-            branch: Some(branch),
-            worktree_dir,
-            parent: args.parent.clone(),
+            base_sha: Some(base.sha),
+            branch: Some(identity.branch),
+            worktree_dir: identity.worktree_dir,
+            parent: parent.parent,
             goal: args.goal.clone(),
             on_exit,
         },
-    )
+    )?;
+    if args.wait {
+        // Same code path as `beep lane wait`, which exits with the lane's rc.
+        return run_lane_wait(Some(&hail_mail_dir), &lane_id, args.wait_timeout);
+    }
+    Ok(())
 }
 
 fn shell_quote(value: &str) -> String {
@@ -1874,6 +1933,103 @@ mod tests {
         message.kind = "note".into();
         append_message(&dir, &message).unwrap();
         assert_eq!(super::lane_result_rc(&dir, "l"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RECEIPT. The on-exit epilogue hails `--to <parent> --from <lane>`, so a
+    /// wait keyed on the recipient never saw the row it exists to wait for.
+    #[test]
+    fn wait_matches_the_row_the_on_exit_epilogue_actually_writes() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut message = result_message("m-3", "feature-schema-emit", 0);
+        message.to = "sprefa-coordinator".into();
+        append_message(&dir, &message).unwrap();
+        assert_eq!(super::lane_result_rc(&dir, "feature-schema-emit"), Some(0));
+        assert_eq!(
+            super::wait_for_result(
+                &dir,
+                "feature-schema-emit",
+                Some(std::time::Duration::from_secs(2)),
+                std::time::Duration::from_millis(10),
+            ),
+            Some(0)
+        );
+        assert_eq!(
+            super::lane_result_rc(&dir, "some-other-lane"),
+            None,
+            "another lane's completion never satisfies this wait"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RECEIPT. A lane that fails hands its rc back through the same row, and
+    /// an absent row is the 124 timeout `--wait-timeout` exits on.
+    #[test]
+    fn wait_propagates_a_failing_rc_and_times_out_otherwise() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(
+            super::wait_for_result(
+                &dir,
+                "feature-schema-emit",
+                Some(std::time::Duration::from_millis(40)),
+                std::time::Duration::from_millis(10),
+            ),
+            None,
+            "no result row yet: the verb exits 124 on this None"
+        );
+        let mut message = result_message("m-4", "feature-schema-emit", 17);
+        message.to = "sprefa-coordinator".into();
+        append_message(&dir, &message).unwrap();
+        assert_eq!(super::lane_result_rc(&dir, "feature-schema-emit"), Some(17));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RECEIPT. A registry row written before the branch-derived names (lane id
+    /// with no kind, `lane/*` worktree cwd) still reads, resolves and deletes.
+    #[test]
+    fn a_pre_branch_registry_row_still_reads_and_deletes() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("registry.json"),
+            r#"{
+  "boop-sql": {
+    "harness": "opencode",
+    "tmux": "boop-sql",
+    "cwd": "/Users/x/projects/sprefa/.boop-worktrees/lane/boop-sql",
+    "model": "openrouter/deepseek/deepseek-v4-flash-0731",
+    "mode": "auto",
+    "sessionId": "ses_0167"
+  },
+  "sprefa-coordinator": { "harness": "claude", "tmux": "shell:0.0" }
+}"#,
+        )
+        .unwrap();
+        let routes = read_routes(&dir).unwrap();
+        let old = &routes["boop-sql"];
+        assert_eq!(old.session_id.as_deref(), Some("ses_0167"));
+        assert_eq!(old.tmux.as_deref(), Some("boop-sql"));
+        assert!(old
+            .cwd
+            .as_deref()
+            .unwrap()
+            .contains(".boop-worktrees/lane/"));
+        assert_eq!(
+            boop::lane::resolve_parent(None, None, &routes)
+                .parent
+                .as_deref(),
+            Some("sprefa-coordinator"),
+            "an old row is still a usable parent default"
+        );
+        run_lane_delete(Some(&dir), "boop-sql", true).unwrap();
+        let after = read_routes(&dir).unwrap();
+        assert!(!after.contains_key("boop-sql"));
+        assert!(
+            after.contains_key("sprefa-coordinator"),
+            "deleting one old row leaves the others"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2187,32 +2343,47 @@ enum LaneCmd {
     },
     /// Make a worktree, spawn the agent, register the route.
     Create {
+        /// The lane's whole identity: `feature/<name>`, also fix/, refactor/,
+        /// chore/. Lane id and tmux session are the branch with `/` as `-`.
         #[arg(long)]
-        lane: String,
+        branch: Option<String>,
+        /// Absolute path to the brief the lane reads and executes.
         #[arg(long)]
-        cwd: String,
+        brief: Option<PathBuf>,
+        /// What the lane is running toward.
+        #[arg(long)]
+        goal: Option<String>,
+        /// Repo to branch from; defaults to the repo the caller stands in.
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Defaults to origin/main's head, resolved and printed at spawn.
+        #[arg(long)]
+        base_sha: Option<String>,
+        /// Defaults to the caller, then to the one registered coordinator.
+        #[arg(long)]
+        parent: Option<String>,
+        /// Defaults to the harness the model spelling names.
         #[arg(long)]
         harness: Option<String>,
         #[arg(long)]
-        brief: Option<PathBuf>,
-        #[arg(long)]
         model: Option<String>,
+        /// Block until the lane's on-exit result row lands, then exit with its
+        /// rc. Needs a parent, since that hail is what writes the row.
+        #[arg(long)]
+        wait: bool,
+        /// Seconds `--wait` blocks before exiting 124; 0 waits forever.
+        #[arg(long, default_value_t = 3600)]
+        wait_timeout: u64,
+        /// Overrides the lane id derived from `--branch`.
+        #[arg(long)]
+        lane: Option<String>,
+        /// Overrides the tmux session name derived from `--branch`.
         #[arg(long)]
         tmux: Option<String>,
-        #[arg(long)]
-        parent: Option<String>,
-        /// New branch name; with `--base-sha`, spawns in a worktree instead
-        /// of `--cwd` directly.
-        #[arg(long)]
-        branch: Option<String>,
-        #[arg(long)]
-        base_sha: Option<String>,
         /// tmux socket to spawn on; a throwaway socket for tests, `None` for
         /// the default server.
         #[arg(long)]
         socket: Option<String>,
-        #[arg(long)]
-        goal: Option<String>,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
         #[arg(long)]
@@ -2620,6 +2791,8 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             goal,
             mail_dir,
             dry_run,
+            wait,
+            wait_timeout,
         } => run_lane(
             registry,
             LaneArgs {
@@ -2636,6 +2809,8 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 goal,
                 mail_dir,
                 dry_run,
+                wait,
+                wait_timeout,
             },
         ),
         LaneCmd::Get { lane, mail_dir } => run_lane_get(mail_dir.as_deref(), &lane),
@@ -2847,7 +3022,9 @@ fn lane_result_rc(dir: &std::path::Path, lane: &str) -> Option<i32> {
     folded
         .iter()
         .rev()
-        .find(|message| message.kind == "result" && message.to == lane)
+        // The on-exit epilogue hails `--to <parent> --from <lane>`, so the
+        // lane that finished is the sender; `to` matches a hand-addressed row.
+        .find(|message| message.kind == "result" && (message.from == lane || message.to == lane))
         .and_then(|message| parse_result_rc(&message.body))
 }
 
