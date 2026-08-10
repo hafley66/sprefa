@@ -26,4 +26,26 @@ test(float_avg_is_grouped) :-
     fixture_dd_plan_text(Fixture, float_avg_is_grouped, Text),
     dd_golden(float_avg_is_grouped, Text).
 
+test(every_operator_has_a_wire) :-
+    dd_fixture_file('5_value_plane.pl', Fixture),
+    forall(member(Name, [float_exact_join_has_no_epsilon, float_avg_is_grouped]),
+           ( fixture_dd_plan_text(Fixture, Name, Text),
+             text_plan(Text, dd_plan(_, _, _, operators(Operators), wires(Wires), _)),
+             forall(member(op(Id, _), Operators), operator_has_wire(Id, Wires)) )).
+
+test(join_inputs_have_keyed_arrangements) :-
+    dd_fixture_file('5_value_plane.pl', Fixture),
+    fixture_dd_plan_text(Fixture, float_exact_join_has_no_epsilon, Text),
+    text_plan(Text, dd_plan(_, _, arrangements(Arrangements),
+                            operators([_, op(_, join(_, _, LeftId, RightId))]), _, _)),
+    memberchk(arr(LeftId, left/2, [name], [value], signed), Arrangements),
+    memberchk(arr(RightId, right/2, [name], [value], signed), Arrangements).
+
+text_plan(Text, Plan) :-
+    atom_string(Atom, Text),
+    read_term_from_atom(Atom, Plan, []).
+
+operator_has_wire(Id, Wires) :- memberchk(wire(Id, _, _), Wires), !.
+operator_has_wire(Id, Wires) :- memberchk(wire(_, Id, _), Wires).
+
 :- end_tests(emit_dd_plan).

@@ -10,8 +10,9 @@
 
 :- use_module('../compile', [read_fixture_term/4, program_plan/2]).
 :- use_module('../analyze', [body_ref_uses/2, rule_head_ref/2,
-                              rule_is_aggregate/1]).
-:- use_module('../0_rel_record', [relplan_parts/6]).
+                              rule_is_aggregate/1,
+                              aggregate_head_template/2]).
+:- use_module('../0_rel_record', [relplan_parts/6, relplan_columns/3]).
 :- use_module('../lower', [lower_program/2]).
 
 fixture_dd_plan_text(FixtureFile, Name, Text) :-
@@ -37,8 +38,8 @@ dd_plan_term(plan(Name, prog(_, Rules), _, RelPlans, _, RuleOrder, _, _, _),
              dd_plan(Name, rels(Rels), arrangements(Arrangements),
                      operators(Operators), wires(Wires), tick_order(TickOrder))) :-
     maplist(rel_term, RelPlans, Rels),
-    maplist(arrangement_term, RelPlans, Arrangements),
     ordered_rules(RuleOrder, Rules, OrderedRules),
+    arrangement_terms(RelPlans, OrderedRules, Arrangements),
     rule_operators(OrderedRules, Operators),
     rule_wires(OrderedRules, Wires),
     tick_order(TickOrder).
@@ -72,6 +73,118 @@ positions_columns([Position | Rest], Columns, [Column | More]) :-
 arrangement_id(Name/Arity, Id) :-
     format(atom(Id), 'arr_~w_~w', [Name, Arity]).
 
+arrangement_terms(RelPlans, Rules, Arrangements) :-
+    maplist(arrangement_term, RelPlans, SetArrangements),
+    rule_arrangements(Rules, RelPlans, 1, OperatorArrangements),
+    append(SetArrangements, OperatorArrangements, Arrangements).
+
+rule_arrangements([], _, _, []).
+rule_arrangements([Rule | Rest], RelPlans, Number, Arrangements) :-
+    rule_arrangement_terms(Rule, RelPlans, Number, Current),
+    Next is Number + 1,
+    rule_arrangements(Rest, RelPlans, Next, More),
+    append(Current, More, Arrangements).
+
+rule_arrangement_terms(Rule, RelPlans, Number, Arrangements) :-
+    rule_body_uses(Rule, Uses),
+    include(positive_use, Uses, PositiveUses),
+    join_arrangements(PositiveUses, Rule, RelPlans, Number, 1, JoinArrangements),
+    reduce_arrangements(Rule, PositiveUses, RelPlans, Number, ReduceArrangements),
+    append(JoinArrangements, ReduceArrangements, Arrangements).
+
+join_arrangements([_], _, _, _, _, []) :- !.
+join_arrangements([], _, _, _, _, []) :- !.
+join_arrangements([Left | [Right | Rest]], Rule, RelPlans, Number, Index,
+                  Arrangements) :-
+    join_key_columns(Left, Right, Rule, RelPlans, LeftKeys, RightKeys),
+    join_arrangement_id(Left, Number, Index, left, LeftId),
+    join_arrangement_id(Right, Number, Index, right, RightId),
+    arrangement_for_use(Left, RelPlans, LeftKeys, LeftId, LeftArrangement),
+    arrangement_for_use(Right, RelPlans, RightKeys, RightId, RightArrangement),
+    Next is Index + 1,
+    join_arrangements([Right | Rest], Rule, RelPlans, Number, Next, More),
+    append([LeftArrangement, RightArrangement], More, Arrangements).
+
+join_arrangement_id(use(Ref, _, _, _), Number, Index, Side, Id) :-
+    operator_id(join, Number-Index, JoinId),
+    Ref = Name/Arity,
+    format(atom(Id), 'arr_~w_~w_~w_~w', [Name, Arity, JoinId, Side]).
+
+join_key_columns(use(LeftRef, LeftArgs, _, _), use(RightRef, RightArgs, _, _),
+                 Rule, RelPlans, LeftKeys, RightKeys) :-
+    rule_head_arguments(Rule, HeadArgs),
+    shared_head_positions(LeftArgs, RightArgs, HeadArgs, LeftPositions, RightPositions),
+    relplan_columns(RelPlans, LeftRef, LeftColumns),
+    relplan_columns(RelPlans, RightRef, RightColumns),
+    positions_columns(LeftPositions, LeftColumns, LeftKeys),
+    positions_columns(RightPositions, RightColumns, RightKeys).
+
+shared_head_positions(LeftArgs, RightArgs, HeadArgs, LeftPositions, RightPositions) :-
+    findall(LeftPosition-RightPosition,
+            ( nth1(LeftPosition, LeftArgs, Argument),
+              nth1(RightPosition, RightArgs, OtherArgument),
+              Argument == OtherArgument,
+              member_same_variable(Argument, HeadArgs) ),
+            Pairs),
+    pairs_positions(Pairs, LeftPositions, RightPositions).
+
+pairs_positions([], [], []).
+pairs_positions([Left-Right | Rest], [Left | Lefts], [Right | Rights]) :-
+    pairs_positions(Rest, Lefts, Rights).
+
+member_same_variable(Argument, [Candidate | _]) :- Argument == Candidate, !.
+member_same_variable(Argument, [_ | Rest]) :- member_same_variable(Argument, Rest).
+
+arrangement_for_use(use(Ref, _, _, _), RelPlans, KeyColumns, Id,
+                    arr(Id, Ref, KeyColumns, ValueColumns, signed)) :-
+    relplan_columns(RelPlans, Ref, Columns),
+    subtract(Columns, KeyColumns, ValueColumns).
+
+reduce_arrangements(Rule, [Use | _], RelPlans, Number, [Arrangement]) :-
+    rule_is_aggregate(Rule),
+    !,
+    aggregate_key_columns(Rule, Use, RelPlans, KeyColumns),
+    operator_id(reduce, Number, ReduceId),
+    Use = use(Ref, _, _, _),
+    Ref = Name/Arity,
+    format(atom(Id), 'arr_~w_~w_~w', [Name, Arity, ReduceId]),
+    arrangement_for_use(Use, RelPlans, KeyColumns, Id, Arrangement).
+reduce_arrangements(_, _, _, _, []).
+
+aggregate_key_columns(Rule, use(Ref, Args, _, _), RelPlans, KeyColumns) :-
+    rule_head_arguments(Rule, HeadArgs),
+    aggregate_head_template_from_rule(Rule, Template),
+    aggregate_plain_positions(Template, 1, PlainPositions),
+    arguments_positions(PlainPositions, HeadArgs, Args, ArgumentPositions),
+    relplan_columns(RelPlans, Ref, Columns),
+    positions_columns(ArgumentPositions, Columns, KeyColumns).
+
+aggregate_head_template_from_rule((Head <- _), Template) :-
+    aggregate_head_template(Head, Template).
+
+aggregate_plain_positions([], _, []).
+aggregate_plain_positions([plain(_) | Rest], Position, [Position | Positions]) :-
+    !,
+    Next is Position + 1,
+    aggregate_plain_positions(Rest, Next, Positions).
+aggregate_plain_positions([_ | Rest], Position, Positions) :-
+    Next is Position + 1,
+    aggregate_plain_positions(Rest, Next, Positions).
+
+arguments_positions([], _, _, []).
+arguments_positions([HeadPosition | Rest], HeadArgs, Args, [ArgPosition | Positions]) :-
+    nth1(HeadPosition, HeadArgs, Argument),
+    argument_position(Argument, Args, ArgPosition),
+    arguments_positions(Rest, HeadArgs, Args, Positions).
+
+argument_position(Argument, [Candidate | _], 1) :- Argument == Candidate, !.
+argument_position(Argument, [_ | Rest], Position) :-
+    argument_position(Argument, Rest, Previous),
+    Position is Previous + 1.
+
+rule_head_arguments((Head <- _), Arguments) :- Head =.. [_ | Arguments].
+rule_head_arguments((Head <+ _), Arguments) :- Head =.. [_ | Arguments].
+
 rule_operators(Rules, Operators) :-
     rule_operators(Rules, 1, Operators).
 
@@ -104,9 +217,13 @@ positive_use(use(_, _, pos, _)).
 
 join_operator_terms([_], _, _, []) :- !.
 join_operator_terms([], _, _, []) :- !.
-join_operator_terms([use(Left, _, _, _) | [use(Right, _, _, _) | Rest]], Number,
-                    Index, [op(Id, join(Left, Right)) | More]) :-
+join_operator_terms([LeftUse | [RightUse | Rest]], Number, Index,
+                    [op(Id, join(Left, Right, LeftArrangement, RightArrangement)) | More]) :-
+    LeftUse = use(Left, _, _, _),
+    RightUse = use(Right, _, _, _),
     operator_id(join, Number-Index, Id),
+    join_arrangement_id(LeftUse, Number, Index, left, LeftArrangement),
+    join_arrangement_id(RightUse, Number, Index, right, RightArrangement),
     Next is Index + 1,
     join_operator_terms([use(Right, [], pos, unmarked) | Rest], Number, Next, More).
 
@@ -116,10 +233,15 @@ filter_operators(Uses, Number, Operators) :-
               operator_id(filter, Number-Index, Id) ),
             Operators).
 
-reduce_operators(Rule, Number, [op(Id, reduce)]) :-
+reduce_operators(Rule, Number, [op(Id, reduce(Arrangement))]) :-
     rule_is_aggregate(Rule),
     !,
-    operator_id(reduce, Number, Id).
+    operator_id(reduce, Number, Id),
+    rule_body_uses(Rule, Uses),
+    include(positive_use, Uses, [Use | _]),
+    Use = use(Ref, _, _, _),
+    Ref = Name/Arity,
+    format(atom(Arrangement), 'arr_~w_~w_~w', [Name, Arity, Id]).
 reduce_operators(_, _, []).
 
 iterate_operators(HeadRef, Uses, Number, [op(Id, iterate(HeadRef))]) :-
@@ -142,12 +264,48 @@ rule_wires([], _, []).
 rule_wires([Rule | Rest], Number, Wires) :-
     rule_head_ref(Rule, HeadRef),
     rule_body_uses(Rule, Uses),
-    operator_id(map, Number, MapId),
-    findall(wire(Ref, MapId, delta), member(use(Ref, _, _, _), Uses), Inputs),
-    append(Inputs, [wire(MapId, HeadRef, delta)], Current),
+    rule_wires_for_operators(Rule, Uses, Number, HeadRef, Current),
     Next is Number + 1,
     rule_wires(Rest, Next, More),
     append(Current, More, Wires).
+
+rule_wires_for_operators(Rule, Uses, Number, HeadRef, Wires) :-
+    include(positive_use, Uses, PositiveUses),
+    filter_operators(Uses, Number, FilterOperators),
+    reduce_operators(Rule, Number, ReduceOperators),
+    iterate_operators(HeadRef, Uses, Number, IterateOperators),
+    operator_id(map, Number, MapId),
+    join_operators(PositiveUses, Number, JoinOperators),
+    append([FilterOperators, ReduceOperators, IterateOperators, [op(MapId, map(HeadRef))]],
+           TailOperators),
+    TailOperators = [op(FirstTailId, _) | _],
+    wire_operator_inputs(PositiveUses, JoinOperators, FirstTailId, InputWires),
+    operator_chain_wires(TailOperators, HeadRef, TailWires),
+    negative_filter_wires(Uses, FilterOperators, NegativeWires),
+    append([InputWires, TailWires, NegativeWires], Wires).
+
+wire_operator_inputs([use(Ref, _, _, _)], [], FirstTailId,
+                     [wire(Ref, FirstTailId, delta)]) :- !.
+wire_operator_inputs([use(Left, _, _, _), use(Right, _, _, _) | Rest],
+                     [op(JoinId, _) | JoinOperators], FirstTailId,
+                     [wire(Left, JoinId, delta), wire(Right, JoinId, delta) | More]) :-
+    wire_join_inputs(Rest, JoinId, JoinOperators, FirstTailId, More).
+wire_operator_inputs([], [], _, []).
+
+wire_join_inputs([], JoinId, [], FirstTailId, [wire(JoinId, FirstTailId, delta)]).
+wire_join_inputs([use(Ref, _, _, _) | Rest], PreviousJoinId,
+                 [op(JoinId, _) | JoinOperators], FirstTailId,
+                 [wire(PreviousJoinId, JoinId, delta), wire(Ref, JoinId, delta) | More]) :-
+    wire_join_inputs(Rest, JoinId, JoinOperators, FirstTailId, More).
+
+operator_chain_wires([op(Id, _)], HeadRef, [wire(Id, HeadRef, delta)]).
+operator_chain_wires([op(Id, _) | [op(NextId, _) | Rest]], HeadRef,
+                     [wire(Id, NextId, delta) | More]) :-
+    operator_chain_wires([op(NextId, _) | Rest], HeadRef, More).
+
+negative_filter_wires(_, [], []).
+negative_filter_wires(Uses, [op(FilterId, _) | _], Wires) :-
+    findall(wire(Ref, FilterId, delta), member(use(Ref, _, neg, _), Uses), Wires).
 
 tick_order([ phase(absorb_arrivals), phase(index_delta),
              phase(level_before_edges), phase(edge_arrivals),
