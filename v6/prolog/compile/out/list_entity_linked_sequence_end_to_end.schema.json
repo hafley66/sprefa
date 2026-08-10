@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link": {
+      "additionalProperties":false,
+      "properties": {
+        "after_member_id": {"type":"integer"},
+        "before_member_id": {"type":"integer"}
+      },
+      "required": ["after_member_id", "before_member_id" ],
+      "type":"object"
+    },
+    "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member": {
+      "additionalProperties":false,
+      "properties": {
+        "list_id": {"type":"integer"},
+        "member_id": {"type":"integer"},
+        "value": {"type":"string"}
+      },
+      "required": ["list_id", "member_id", "value" ],
+      "type":"object"
+    },
+    "linked_parent": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "linked_parent__entries": {
+      "additionalProperties":false,
+      "properties": {
+        "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35_id": {"type":"integer"},
+        "linked_parent_id": {"type":"integer"}
+      },
+      "required": [
+        "linked_parent_id",
+        "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35_id"
+      ],
+      "type":"object"
+    }
+  },
+  "$id":"list_entity_linked_sequence_end_to_end#912a58302c168a19",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

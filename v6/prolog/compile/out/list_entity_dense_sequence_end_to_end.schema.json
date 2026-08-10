@@ -1,0 +1,52 @@
+{
+  "$defs": {
+    "__gen__list_entity_dense_sequence_text_42382f22da23f5c6": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member": {
+      "additionalProperties":false,
+      "properties": {
+        "idx": {"type":"integer"},
+        "list_id": {"type":"integer"},
+        "value": {"type":"string"}
+      },
+      "required": ["idx", "list_id", "value" ],
+      "type":"object"
+    },
+    "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner": {
+      "additionalProperties":false,
+      "properties": {"list_id": {"type":"integer"},"owner_id": {"type":"integer"}},
+      "required": ["list_id", "owner_id" ],
+      "type":"object"
+    },
+    "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount": {
+      "additionalProperties":false,
+      "properties": {"count": {"type":"integer"},"list_id": {"type":"integer"}},
+      "required": ["count", "list_id" ],
+      "type":"object"
+    },
+    "entity_parent": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "entity_parent__entries": {
+      "additionalProperties":false,
+      "properties": {
+        "__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id": {"type":"integer"},
+        "entity_parent_id": {"type":"integer"}
+      },
+      "required": [
+        "entity_parent_id",
+        "__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id"
+      ],
+      "type":"object"
+    }
+  },
+  "$id":"list_entity_dense_sequence_end_to_end#aa82da9dfc7c18f5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

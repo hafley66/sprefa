@@ -28,6 +28,34 @@
     "final_detail": ""
   },
   {
+    "name": "generic_expansion_end_to_end",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "list_entity_dense_sequence_end_to_end",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "list_entity_linked_sequence_end_to_end",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "list_bare_column_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "option_text_column_reads_through_tag_join",
     "bucket": "identical",
     "detail": "",
