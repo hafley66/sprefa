@@ -15,3 +15,4 @@ gen_emitted/golden-flex.ts
 # gated numbers live in scripts/scale-floor-reference.json, which IS tracked.
 goldens/scale-floor-history.jsonl
 gen_emitted/
+gen/pe_emit/
