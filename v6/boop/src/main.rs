@@ -1148,6 +1148,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         source_path: None,
         parent: args.parent.clone(),
         goal: args.goal.clone(),
+        registered_at: Some(bus::now_iso()),
     };
     write_route(&dir, &args.to, route)?;
     append_message(&dir, &message)?;
@@ -1719,6 +1720,7 @@ fn run_adopt(
         source_path: None,
         parent: parent.map(str::to_owned),
         goal: goal.map(str::to_owned),
+        registered_at: Some(bus::now_iso()),
     };
     write_route(&dir, name, route)?;
     println!("adopted {name} -> tmux {tmux_session}");
@@ -1786,6 +1788,9 @@ fn route_to_json(route: &Route) -> serde_json::Value {
     }
     if let Some(goal) = &route.goal {
         object.insert("goal".into(), serde_json::json!(goal));
+    }
+    if let Some(registered_at) = &route.registered_at {
+        object.insert("registeredAt".into(), serde_json::json!(registered_at));
     }
     serde_json::Value::Object(object)
 }
@@ -1874,6 +1879,7 @@ mod tests {
                 source_path: None,
                 parent: None,
                 goal: None,
+                registered_at: None,
             },
         )
         .unwrap();
@@ -1900,20 +1906,82 @@ mod tests {
         }
     }
 
-    /// RECEIPT (Job 3). A result row that already exists satisfies the wait
-    /// immediately with the rc its body names.
+    fn registered_route(ts: &str) -> Route {
+        Route {
+            harness: Some("claude".into()),
+            tmux: Some("l".into()),
+            cwd: None,
+            model: None,
+            mode: None,
+            session_id: None,
+            source_path: None,
+            parent: None,
+            goal: None,
+            registered_at: Some(ts.into()),
+        }
+    }
+
+    /// RECEIPT (was wait_returns_rc_from_a_preexisting_result_row; pre-fix
+    /// rc=0). Older than the spawn's registration: skipped, times out (124).
     #[test]
-    fn wait_returns_rc_from_a_preexisting_result_row() {
+    fn wait_skips_a_result_row_older_than_the_current_spawn() {
         let dir = temp_mail_dir();
         std::fs::create_dir_all(&dir).unwrap();
         append_message(&dir, &result_message("m-1", "l", 5)).unwrap();
-        let outcome = super::wait_for_result(
-            &dir,
-            "l",
-            Some(std::time::Duration::from_secs(2)),
-            std::time::Duration::from_millis(10),
+        write_route(&dir, "l", registered_route("2026-08-02T00:00:00.000Z")).unwrap();
+        assert_eq!(
+            super::wait_for_result(
+                &dir,
+                "l",
+                Some(std::time::Duration::from_millis(60)),
+                std::time::Duration::from_millis(10),
+            ),
+            None,
+            "an older row is skipped, so the wait times out (exits 124)"
         );
-        assert_eq!(outcome, Some(5));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A result row at or after the current spawn's registration satisfies the
+    /// wait immediately with the rc its body names.
+    #[test]
+    fn wait_accepts_a_result_row_after_the_current_spawn() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        write_route(&dir, "l", registered_route("2026-08-01T00:00:00.000Z")).unwrap();
+        let mut message = result_message("m-2", "l", 7);
+        message.from_timestamp = "2026-08-02T00:00:00.000Z".into();
+        append_message(&dir, &message).unwrap();
+        assert_eq!(
+            super::wait_for_result(
+                &dir,
+                "l",
+                Some(std::time::Duration::from_secs(2)),
+                std::time::Duration::from_millis(10),
+            ),
+            Some(7)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RECEIPT (contract 3). No route row survives, so any result row
+    /// satisfies: the after-the-fact read.
+    #[test]
+    fn wait_accepts_a_result_row_with_no_route_registered() {
+        let dir = temp_mail_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut message = result_message("m-3", "l", 4);
+        message.from_timestamp = "2026-07-01T00:00:00.000Z".into();
+        append_message(&dir, &message).unwrap();
+        assert_eq!(
+            super::wait_for_result(
+                &dir,
+                "l",
+                Some(std::time::Duration::from_secs(2)),
+                std::time::Duration::from_millis(10),
+            ),
+            Some(4)
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2060,6 +2128,7 @@ mod tests {
             source_path: None,
             parent: None,
             goal: Some("ship the edge".into()),
+            registered_at: None,
         };
         write_route(&dir, "child", route).unwrap();
         let routes = read_routes(&dir).unwrap();
@@ -2125,6 +2194,7 @@ mod tests {
             source_path: None,
             parent: parent.map(str::to_owned),
             goal: None,
+            registered_at: None,
         }
     }
 
@@ -2241,6 +2311,7 @@ mod tests {
                 source_path: None,
                 parent: None,
                 goal: Some("ship the edge".into()),
+                registered_at: None,
             },
         );
         let messages = vec![dispatch("coordinator", "child")];
@@ -3024,8 +3095,16 @@ fn run_lane_wait(mail_dir_arg: Option<&Path>, lane: &str, timeout_secs: u64) -> 
 }
 
 /// The rc from the lane's most recent `kind=result` mailbox row (`lane <id>
-/// done rc=N`), `None` when no result row for that lane exists yet.
+/// done rc=N`), `None` when no result row for that lane exists yet. Without a
+/// route row the wait is after-the-fact: any result row satisfies.
+#[cfg(test)]
 fn lane_result_rc(dir: &std::path::Path, lane: &str) -> Option<i32> {
+    lane_result_rc_since(dir, lane, None)
+}
+
+/// As `lane_result_rc`, but only a result row at or after `since` (ms since
+/// epoch) satisfies; older rows belong to a previous spawn and are skipped.
+fn lane_result_rc_since(dir: &std::path::Path, lane: &str, since: Option<u64>) -> Option<i32> {
     let mut messages = Vec::new();
     for box_path in bus::read_boxes(dir).unwrap_or_default() {
         messages.extend(bus::parse_box(&box_path));
@@ -3036,8 +3115,26 @@ fn lane_result_rc(dir: &std::path::Path, lane: &str) -> Option<i32> {
         .rev()
         // The on-exit epilogue hails `--to <parent> --from <lane>`, so the
         // lane that finished is the sender; `to` matches a hand-addressed row.
-        .find(|message| message.kind == "result" && (message.from == lane || message.to == lane))
+        .find(|message| {
+            if message.kind != "result" || (message.from != lane && message.to != lane) {
+                return false;
+            }
+            match since {
+                Some(boundary) => parse_iso_ms(&message.from_timestamp).unwrap_or(0) >= boundary,
+                None => true,
+            }
+        })
         .and_then(|message| parse_result_rc(&message.body))
+}
+
+/// The lane's registration timestamp (ms since epoch) for the spawn that
+/// wrote the current route row; `None` when no route row exists.
+fn route_registered_at(dir: &std::path::Path, lane: &str) -> Option<u64> {
+    bus::read_routes(dir)
+        .ok()?
+        .get(lane)
+        .and_then(|route| route.registered_at.as_deref())
+        .and_then(parse_iso_ms)
 }
 
 fn parse_result_rc(body: &str) -> Option<i32> {
@@ -3049,16 +3146,17 @@ fn parse_result_rc(body: &str) -> Option<i32> {
 }
 
 /// Poll `lane_result_rc` every `interval` until a result appears or `deadline`
-/// passes (`None` waits forever). `None` on deadline is a timeout.
+/// passes. `None` on deadline is a timeout; `since` bounds satisfying rows.
 fn wait_for_result(
     dir: &std::path::Path,
     lane: &str,
     deadline: Option<std::time::Duration>,
     interval: std::time::Duration,
 ) -> Option<i32> {
+    let since = route_registered_at(dir, lane);
     let start = std::time::Instant::now();
     loop {
-        if let Some(rc) = lane_result_rc(dir, lane) {
+        if let Some(rc) = lane_result_rc_since(dir, lane, since) {
             return Some(rc);
         }
         if deadline.is_some_and(|limit| start.elapsed() >= limit) {
