@@ -1,12 +1,14 @@
 //! Lane names derived from one branch name: `feature/schema-emit` is the lane
 //! id, the tmux session and the worktree path. `--lane <id>` still spawns.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
 use crate::bus::Route;
+use crate::config;
 
 /// The worktree parent directory, relative to the repo root.
 pub const WORKTREE_ROOT: &str = ".boop-worktrees";
@@ -14,8 +16,8 @@ pub const WORKTREE_ROOT: &str = ".boop-worktrees";
 /// Conventional prefixes; nothing here rejects another one.
 pub const KINDS: [&str; 4] = ["feature", "fix", "refactor", "chore"];
 
-/// Model spelling -> harness, longest prefix first. A `provider/model` spelling
-/// is opencode's; `gpt-5.6-luna@medium` is codex's.
+/// Model spelling -> harness, longest prefix first. `provider/model` is
+/// opencode's; `gpt-5.6-luna@medium` is codex's. config `model-harness` wins.
 const MODEL_HARNESS: [(&str, &str); 9] = [
     ("gpt", "codex"),
     ("codex", "codex"),
@@ -26,6 +28,21 @@ const MODEL_HARNESS: [(&str, &str); 9] = [
     ("sonnet", "claude"),
     ("haiku", "claude"),
     ("kimi", "kimi"),
+];
+
+/// Model-family prefix -> owning harness on a flat-rate plan. The default ban
+/// table; config `opencode-banned` wins when set.
+const PLAN_FAMILY_TO_HARNESS: [(&str, &str); 10] = [
+    ("gpt", "codex"),
+    ("codex", "codex"),
+    ("o3", "codex"),
+    ("o4", "codex"),
+    ("claude", "claude"),
+    ("opus", "claude"),
+    ("sonnet", "claude"),
+    ("haiku", "claude"),
+    ("fable", "claude"),
+    ("gemini", "gemini"),
 ];
 
 /// Every name one spawn answers to.
@@ -246,43 +263,57 @@ fn shell_word(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
-/// The harness a model spelling names, or `None` when it names none.
-pub fn harness_for_model(model: &str) -> Option<&'static str> {
+/// The harness a model spelling names, or `None` when it names none. Config's
+/// `model-harness` wins when non-empty; otherwise the compiled table decides.
+pub fn harness_for_model(model: &str) -> Result<Option<Cow<'static, str>>> {
     let name = model.split('@').next().unwrap_or(model).trim();
     if name.is_empty() {
-        return None;
+        return Ok(None);
     }
     if name.contains('/') {
-        return Some("opencode");
+        return Ok(Some(Cow::Borrowed("opencode")));
     }
     let name = name.to_ascii_lowercase();
-    MODEL_HARNESS
+    let config = config::loaded()?;
+    if !config.model_harness.is_empty() {
+        return Ok(config
+            .model_harness
+            .iter()
+            .find(|(prefix, _)| name.starts_with(prefix.as_str()))
+            .map(|(_, harness)| Cow::Borrowed(harness.as_str())));
+    }
+    Ok(MODEL_HARNESS
         .into_iter()
         .find(|(prefix, _)| name.starts_with(prefix))
-        .map(|(_, harness)| harness)
+        .map(|(_, harness)| Cow::Borrowed(harness)))
 }
 
 /// A model family whose own harness runs on a flat-rate plan; opencode would
 /// pay metered credit for it, so spawn refuses with no override.
-fn plan_harness_family(model: &str) -> Option<&'static str> {
+fn plan_harness_family(model: &str) -> Result<Option<Cow<'static, str>>> {
     let lowered = model.to_ascii_lowercase();
     let name = lowered.split('@').next().unwrap_or(&lowered).trim();
     let bare = name.rsplit('/').next().unwrap_or(name);
-    [
-        ("gpt", "codex"),
-        ("codex", "codex"),
-        ("o3", "codex"),
-        ("o4", "codex"),
-        ("claude", "claude"),
-        ("opus", "claude"),
-        ("sonnet", "claude"),
-        ("haiku", "claude"),
-        ("fable", "claude"),
-        ("gemini", "gemini"),
-    ]
-    .into_iter()
-    .find(|(prefix, _)| bare.starts_with(prefix))
-    .map(|(_, harness)| harness)
+    let config = config::loaded()?;
+    if !config.opencode_banned.is_empty() {
+        return Ok(config
+            .opencode_banned
+            .iter()
+            .find(|(prefix, _)| bare.starts_with(prefix.as_str()))
+            .map(|(_, owner)| Cow::Borrowed(owner.as_str())));
+    }
+    Ok(PLAN_FAMILY_TO_HARNESS
+        .into_iter()
+        .find(|(prefix, _)| bare.starts_with(prefix))
+        .map(|(_, owner)| Cow::Borrowed(owner)))
+}
+
+/// The refused-from-opencode error, naming the flat-rate harness that owns the
+/// family.
+fn banned_error(model: &str, owner: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "model `{model}` is BANNED from opencode: its family runs on the `{owner}` harness's flat-rate plan, and opencode would pay metered API credit for it. Spell the bare model name (no provider path) so the `{owner}` harness picks it up."
+    )
 }
 
 /// The harness a spawn runs on: `--harness` wins, else the model spelling.
@@ -292,10 +323,8 @@ pub fn harness_for_spawn(explicit: Option<&str>, model: Option<&str>) -> Result<
     if let Some(harness) = explicit.filter(|harness| !harness.is_empty()) {
         if harness == "opencode" {
             if let Some(model) = model_named {
-                if let Some(owner) = plan_harness_family(model) {
-                    anyhow::bail!(
-                        "model `{model}` is BANNED from opencode: its family runs on the `{owner}` harness's flat-rate plan, and opencode would pay metered API credit for it. Spell the bare model name (no provider path) so the `{owner}` harness picks it up."
-                    );
+                if let Some(owner) = plan_harness_family(model)? {
+                    return Err(banned_error(model, &owner));
                 }
             }
         }
@@ -304,16 +333,14 @@ pub fn harness_for_spawn(explicit: Option<&str>, model: Option<&str>) -> Result<
     let Some(model) = model_named else {
         return Ok("opencode".to_owned());
     };
-    let Some(harness) = harness_for_model(model) else {
+    let Some(harness) = harness_for_model(model)? else {
         anyhow::bail!(
             "model `{model}` names no harness (gpt-* codex, kimi-* kimi, claude-* claude, provider/model opencode); pass --harness <id>"
         );
     };
     if harness == "opencode" {
-        if let Some(owner) = plan_harness_family(model) {
-            anyhow::bail!(
-                "model `{model}` is BANNED from opencode: its family runs on the `{owner}` harness's flat-rate plan, and opencode would pay metered API credit for it. Spell the bare model name (no provider path) so the `{owner}` harness picks it up."
-            );
+        if let Some(owner) = plan_harness_family(model)? {
+            return Err(banned_error(model, &owner));
         }
     }
     if harness == "claude" {
@@ -321,7 +348,7 @@ pub fn harness_for_spawn(explicit: Option<&str>, model: Option<&str>) -> Result<
             "model `{model}` is a Claude model, and Claude workers run as the coordinator's own Agent-tool subagents, never as tmux lanes; pass --harness claude to spawn one anyway"
         );
     }
-    Ok(harness.to_owned())
+    Ok(harness.into_owned())
 }
 
 /// Who gets the completion hail: the flag, else the caller (a spawner is the
@@ -629,21 +656,31 @@ mod tests {
     /// `--harness` dry-ran as opencode; the spelling names the harness now.
     #[test]
     fn a_gpt_model_names_the_codex_harness() {
-        assert_eq!(harness_for_model("gpt-5.6-luna@medium"), Some("codex"));
+        assert_eq!(
+            harness_for_model("gpt-5.6-luna@medium").unwrap().as_deref(),
+            Some("codex")
+        );
         assert_eq!(
             harness_for_spawn(None, Some("gpt-5.6-luna@medium")).unwrap(),
             "codex"
         );
-        assert_eq!(harness_for_model("kimi-k2"), Some("kimi"));
         assert_eq!(
-            harness_for_model("openrouter/deepseek/deepseek-v4-flash-0731"),
+            harness_for_model("kimi-k2").unwrap().as_deref(),
+            Some("kimi")
+        );
+        assert_eq!(
+            harness_for_model("openrouter/deepseek/deepseek-v4-flash-0731")
+                .unwrap()
+                .as_deref(),
             Some("opencode")
         );
         assert_eq!(
-            harness_for_model("zai-coding-plan/glm-4.6"),
+            harness_for_model("zai-coding-plan/glm-4.6")
+                .unwrap()
+                .as_deref(),
             Some("opencode")
         );
-        assert_eq!(harness_for_model("nothing-known"), None);
+        assert_eq!(harness_for_model("nothing-known").unwrap(), None);
     }
 
     /// RECEIPT (field, 2026-08-11). `openrouter/openai/gpt-5.6-sol` spawned
