@@ -589,10 +589,10 @@ fn sql_ref_to_json(value: rusqlite::types::ValueRef<'_>) -> Value {
     }
 }
 
-/// The tick log renders a REAL the way ECMAScript `Number::toString` does
-/// (0_type_plane.pl:js_float_text/2), so an integral float loses its `.0`.
+/// An integral REAL loses its `.0` the way ECMAScript `Number::toString` and
+/// 0_type_plane.pl:js_float_text/2 drop it; past 2^53 `as i64` saturates.
 fn js_number(value: f64) -> Value {
-    if value.fract() == 0.0 && value.abs() < 1e21 {
+    if value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_992.0 {
         json!(value as i64)
     } else {
         json!(value)
