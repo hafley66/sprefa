@@ -9,9 +9,8 @@ source components: 212 | generated component rels: 212 | lifted/enum rels: 161
 
 ## KNOWN emitter/compiler gaps (do not fail the gate)
 
-- **G1 lifted rel name == option companion rel name**: this converter names a lifted inline-object rel `<parent>__<prop>`, and the compiler's reference-option desugar names its companion split rel `<parent>__<column>` (0_option_expand.pl companion_rel_decls/4), so every nullable lifted-object property declares one name at two arities and the program stops with `unsupported_construct(rel_arity_collision(<parent>__<prop>, 1, 2))`. All 12 dropped columns are this shape, measured. `option(<rel>)` and `option(list(<rel>))` themselves compile: conformance fixtures 14_option_wrapper_walk.pl round-trip both, absent and present.
-- **G2 a reference target whose every column is a reference option**: `move_detail__contest_combos__normal` and `__super` carry only `option(list(<rel>))` columns, so the desugar moves both to companion rels and the parent shrinks to zero columns. A zero-column ref target has no full-row identity, which is what the type plane falls back to without `key(...)`; it stops as `column_type_unknown(option(list(<rel>)))`. This is a design question, not unfinished bookkeeping.
-- Renaming the converter's lifted rels alone takes the drop count 12 -> 4, measured; the remaining 4 are G2.
+- **G1 a reference target whose every column is a reference option**: `move_detail__contest_combos__normal` and `__super` carry only `option(list(<rel>))` columns, so the desugar moves both to companion split rels and the parent keeps zero stored columns. Target identity is `key(...)` or the full row (0_type_plane.pl header) and a zero-column row has neither, so it stops as `unsupported_construct(reference_target_has_no_columns(<rel>/0))`. All 4 remaining drops are this shape, measured. Reaching 0 needs a ruling on what identity such a target has; the forks are in plans/2026-08-11-option-list-rel-generic.md.
+- **CLOSED, `option(<rel>)` and `option(list(<rel>))` on a reference target**: both compile and round-trip absent and present (conformance fixtures 14_option_wrapper_walk.pl). The 12 drops this file used to report were a rel-name collision: a lifted inline-object rel named `<parent>__<prop>` is the name the reference-option desugar mints for that property's companion split rel. A nullable lifted object now takes the `_object` suffix, which took the count 12 -> 4.
 - Full trace, forks and receipts: `plans/2026-08-11-pokeapi-generic-nesting.md`.
 
 ### Component name set
@@ -63,7 +62,7 @@ source components: 212 | generated component rels: 212 | lifted/enum rels: 161
 
 ```
 wrote /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/pe_pokeapi_gen.ts
-COMPILE-TRACE program=pokeapi_gen parse=1450/7711179 plan=962/9063849 lower=195/840598 boot=1/24516 emit=920/8329230 write=34/271 total=3562/25969643
+COMPILE-TRACE program=pokeapi_gen parse=1326/7711179 plan=958/9063849 lower=193/840598 boot=1/24516 emit=956/8329230 write=34/271 total=3468/25969643
 emit-back wrote /Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1237a7d94bba8cfe/v6/tsv2/gen/pe_emit/schema.json
 emit-back wrote /Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1237a7d94bba8cfe/v6/tsv2/gen/pe_emit/openapi.json
 ```
