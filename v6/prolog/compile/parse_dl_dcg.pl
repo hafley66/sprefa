@@ -167,10 +167,9 @@ statement_reference(decl, Decls, Ref) :-
     declaration_source_ref(Decl, Ref),
     !.
 
-record_statement(decl_list, Decls, Rem) :- !,
-    assertz(source_statement_fact(decl, Decls, Rem)).
-record_statement(rule, Rule, Rem) :- !,
-    assertz(source_statement_fact(rule, Rule, Rem)).
+record_statement(Kind, Item, Rem) :-
+    memberchk(Kind-Recorded, [decl_list-decl, rule-rule]), !,
+    assertz(source_statement_fact(Recorded, Item, Rem)).
 record_statement(_, _, _).
 
 declaration_source_ref(Decl, Ref) :-
@@ -653,9 +652,14 @@ bind_decl_stmt(bind_decl(Name, Cols)) -->
     { specs_to_columns(Specs, Cols),
       record_spec_names(Name, Specs) }.
 
-sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
+% sh_head//2 is called separately by each clause, never shared across them:
+% clause 2 must reparse the columns so column_type_wrapper is recorded twice.
+sh_head(Name, Specs) -->
     ~`sh`, ws, ident(Name), #`(`,
-    decl_b_columns(Name, InSpecs), #`)`, ws,
+    decl_b_columns(Name, Specs), #`)`, ws.
+
+sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
+    sh_head(Name, InSpecs),
     @`->`, #`(`,
     host_output_columns(Name, OutSpecs), #`)`, ws,
     @`=`, ws, template_lit(Template), #`.`,
@@ -666,8 +670,7 @@ sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
       record_host_signature(Name, Ins, Outs) }.
 
 sh_decl_stmt(unsupported_host_decl(Name, Cols)) -->
-    ~`sh`, ws, ident(Name), #`(`,
-    decl_b_columns(Name, Specs), #`)`, ws,
+    sh_head(Name, Specs),
     @`=`, ws, template_lit(_), #`.`,
     { specs_to_columns(Specs, Cols),
       length(Cols, Arity),
@@ -756,12 +759,9 @@ atom_arg(named(Name, Value)) -->
 atom_arg(pos(Value)) --> expr(Value).
 
 
-resolve_named_args(_, _, [], []) :- !.
 resolve_named_args(_, _, Args, Pos) :-
-    ( forall(member(A, Args), A = pos(_))
-    -> maplist(arg_value, Args, Pos)
-    ),
-    !.
+    \+ member(named(_, _), Args), !,
+    maplist(arg_value, Args, Pos).
 resolve_named_args(Mode, Rel, Args, Pos) :-
     ( lookup_column_order(Rel, Cols)
     -> resolve_mixed_args(Mode, Rel, Args, Cols, Pos)
@@ -776,7 +776,7 @@ resolve_mixed_args(Mode, Rel, Args, Cols, Pos) :-
     length(Cols, N),
     length(Pos, N),
     validate_named_columns(Rel, Args, Cols),
-    place_named(Cols, 1, Args, Pos),
+    maplist(place_named(Args), Cols, Pos),
     findall(Col, member(named(Col, _), Args), NamedCols),
     findall(I, ( nth1(I, Cols, Col), \+ memberchk(Col, NamedCols) ), FreeIdxs),
     findall(V, member(pos(V), Args), PosValues),
@@ -791,11 +791,10 @@ validate_named_columns(Rel, Args, Cols) :-
     ; true
     ).
 
-place_named([], _, _, _).
-place_named([Col | Cols], Idx, Args, Pos) :-
-    ( member(named(Col, V), Args) -> nth1(Idx, Pos, V) ; true ),
-    Idx1 is Idx + 1,
-    place_named(Cols, Idx1, Args, Pos).
+% Pos is already a fresh list as long as Cols, so maplist/3 pairs column to
+% slot and the hand-rolled index walk disappears.
+place_named(Args, Col, Slot) :-
+    ( member(named(Col, V), Args) -> Slot = V ; true ).
 
 fill_free_slots(Is, Vs, Pos) :-
     maplist({Pos}/[I, V]>>nth1(I, Pos, V), Is, Vs).
@@ -887,16 +886,15 @@ annotate_cst_leaf(Head, Vars, RVars,
     term_variables((Path, Digest), IVars),
     cst_variable_names(RVars, Vars, RNames),
     cst_variable_names(IVars, Vars, InNames),
-    cst_body_variable_names(Head, Path, Digest, Vars, InNames, Cands).
+    cst_body_variable_names(Head, Vars, InNames, Cands).
 annotate_cst_leaf(_, _, _, Item, Item).
 
-cst_body_variable_names(Head, Path, Digest, Vars, InNames, Names) :-
+% the caller already derived InNames from (Path, Digest), and append(L, L, LL)
+% then sort/2 is sort/2, so the exclusion set is just the sorted InNames.
+cst_body_variable_names(Head, Vars, InNames, Names) :-
     term_variables(Head, HVars),
-    term_variables((Path, Digest), IVars),
     cst_variable_names(HVars, Vars, HNames),
-    cst_variable_names(IVars, Vars, InNames0),
-    append(InNames, InNames0, Excluded0),
-    sort(Excluded0, Excluded),
+    sort(InNames, Excluded),
     subtract(HNames, Excluded, WithoutInputs),
     subtract(WithoutInputs, [line, end_line], Names).
 
