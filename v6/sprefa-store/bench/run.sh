@@ -16,12 +16,8 @@ CSV="$OUT/results.csv"
 : > "$OUT/tsv2-results.jsonl"
 : > "$OUT/v1-results.jsonl"
 CAP="${CAP:-4096}"
-# Engines: label|binary|extra-env. sqlite runs twice (mem vs disk).
+# Engines: label|binary|extra-env.
 ENGINES=(
-  "sqlite-mem|sqlite_reach|DL_SQLITE_MODE=mem"
-  "sqlite-disk|sqlite_reach|DL_SQLITE_MODE=disk"
-  "dd|dd_reach|"
-  "dbsp|dbsp_reach|"
   "swi-incr|bench/engines/swi_incr.sh|"
   "swipl-pure|bench/engines/swipl_pure.sh|"
   "swi-sqlite|bench/engines/swi_sqlite.sh|"

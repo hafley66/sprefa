@@ -14,7 +14,9 @@ use boop::bus::Route;
 use boop::event::AgentEvent;
 use boop::proc::ProcReader;
 use boop::registry::Registry;
-use boop::{bus, config, ident, identity, lane, proc, query, tmux, usage};
+use boop::{bus, config, ident, identity, lane, proc, tmux};
+#[cfg(feature = "agent-read")]
+use boop::{query, usage};
 
 const DOCTRINE: &str = "\
 DOCTRINE (this help is the usage contract; agents read it with `boop --help`):
@@ -843,7 +845,7 @@ fn session_route_pid(
         .find(|(_, route)| session_matches_route(route, session));
     route
         .and_then(|(_, route)| route.tmux.as_deref())
-        .and_then(|target| tmux::pane_pid(None, target))
+        .and_then(|target| tmux::mux().pane_pid(None, target))
         .map(i64::from)
 }
 
@@ -948,7 +950,7 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
     match agent {
         None => {
             let routes = bus::read_routes(&dir)?;
-            let live = tmux::live_sessions(None);
+            let live = tmux::mux().live_sessions(None);
             for (name, route) in &routes {
                 let state = match &live {
                     None => "?",
@@ -1037,7 +1039,7 @@ fn run_measure(mail_dir_arg: Option<&Path>) -> Result<()> {
         let pane_pid = route
             .tmux
             .as_deref()
-            .and_then(|target| tmux::pane_pid(None, target))
+            .and_then(|target| tmux::mux().pane_pid(None, target))
             .unwrap_or(0);
         match snapshot.tree_sum(pane_pid) {
             Some(sum) => {
@@ -1352,7 +1354,8 @@ fn run_hail(
         return Ok(());
     };
     let pane = route.tmux.as_deref();
-    let no_pane = pane.is_none() || pane.is_some_and(|target| !tmux::target_alive(socket, target));
+    let no_pane =
+        pane.is_none() || pane.is_some_and(|target| !tmux::mux().target_alive(socket, target));
     if no_pane && matches!(route.kind.as_str(), "coordinator" | "native") {
         println!("queued {} -> {to} (no pane)", message.id);
         return Ok(());
@@ -1743,7 +1746,7 @@ fn run_adopt(
     goal: Option<&str>,
     mail_dir_arg: Option<&Path>,
 ) -> Result<()> {
-    if !tmux::has_session(None, tmux_session)? {
+    if !tmux::mux().has_session(None, tmux_session)? {
         println!("refusing adopt {name}: no such tmux session {tmux_session}");
         return Ok(());
     }
@@ -1768,7 +1771,7 @@ fn run_adopt(
 
 fn run_prune(mail_dir_arg: Option<&Path>) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
-    if tmux::live_sessions(None).is_none() {
+    if tmux::mux().live_sessions(None).is_none() {
         println!("refusing prune: tmux unreachable, cannot tell live from dead");
         return Ok(());
     }
@@ -1780,7 +1783,7 @@ fn run_prune(mail_dir_arg: Option<&Path>) -> Result<()> {
             let Some(target) = route.tmux.as_deref() else {
                 return true;
             };
-            !tmux::target_alive(None, target)
+            !tmux::mux().target_alive(None, target)
         })
         .map(|(name, _)| name.clone())
         .collect();
@@ -2829,6 +2832,7 @@ enum MessageCmd {
 
 #[derive(Subcommand)]
 enum DbCmd {
+    #[cfg(feature = "agent-read")]
     Session {
         #[command(subcommand)]
         cmd: SessionCmd,
@@ -2841,26 +2845,32 @@ enum DbCmd {
         #[command(subcommand)]
         cmd: ChatCmd,
     },
+    #[cfg(feature = "agent-read")]
     Touch {
         #[command(subcommand)]
         cmd: FactCmd,
     },
+    #[cfg(feature = "agent-read")]
     Command {
         #[command(subcommand)]
         cmd: FactCmd,
     },
+    #[cfg(feature = "agent-read")]
     Fetch {
         #[command(subcommand)]
         cmd: FactCmd,
     },
+    #[cfg(feature = "agent-read")]
     Skill {
         #[command(subcommand)]
         cmd: FactCmd,
     },
+    #[cfg(feature = "agent-read")]
     Pr {
         #[command(subcommand)]
         cmd: FactCmd,
     },
+    #[cfg(feature = "agent-read")]
     Span {
         #[command(subcommand)]
         cmd: FactCmd,
@@ -2872,6 +2882,7 @@ enum DbCmd {
     /// Tokens and cost. A totals report the passthrough powers, and a parent
     /// of the row computations blocks and burn-rate; clap needs both attributes
     /// to accept the two forms.
+    #[cfg(feature = "agent-read")]
     #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
     Usage {
         #[command(flatten)]
@@ -2883,6 +2894,7 @@ enum DbCmd {
         cmd: Option<UsageCmd>,
     },
     /// The rate table cost is computed from.
+    #[cfg(feature = "agent-read")]
     Price {
         #[command(subcommand)]
         cmd: PriceCmd,
@@ -2893,11 +2905,13 @@ enum DbCmd {
         cmd: SyncCmd,
     },
     /// How far ingest has read each transcript.
+    #[cfg(feature = "agent-read")]
     SyncCursor {
         #[command(subcommand)]
         cmd: CursorCmd,
     },
     /// Who is alive, who moved recently, and what it cost.
+    #[cfg(feature = "agent-read")]
     Status {
         /// Window in minutes.
         #[arg(long, default_value_t = 10)]
@@ -2907,12 +2921,14 @@ enum DbCmd {
     },
 }
 
+#[cfg(feature = "agent-read")]
 #[derive(clap::Args, Clone, Default)]
 struct UsageArgs {
     #[arg(long, value_enum, default_value_t = QueryFormat::Ndjson)]
     format: QueryFormat,
 }
 
+#[cfg(feature = "agent-read")]
 #[derive(clap::Args, Clone, Default)]
 struct FactArgs {
     #[arg(long)]
@@ -2930,6 +2946,7 @@ struct FactArgs {
     format: QueryFormat,
 }
 
+#[cfg(feature = "agent-read")]
 #[derive(Subcommand)]
 enum UsageCmd {
     /// Gap-aware billing windows.
@@ -2951,6 +2968,7 @@ enum UsageCmd {
     },
 }
 
+#[cfg(feature = "agent-read")]
 #[derive(Subcommand)]
 enum PriceCmd {
     List,
@@ -2972,6 +2990,7 @@ enum PriceCmd {
     },
 }
 
+#[cfg(feature = "agent-read")]
 #[derive(Subcommand)]
 enum FactCmd {
     List {
@@ -2980,6 +2999,7 @@ enum FactCmd {
     },
 }
 
+#[cfg(feature = "agent-read")]
 #[derive(Subcommand)]
 enum SessionCmd {
     List {
@@ -3042,6 +3062,7 @@ enum SyncCmd {
     },
 }
 
+#[cfg(feature = "agent-read")]
 #[derive(Subcommand)]
 enum CursorCmd {
     List {
@@ -3303,7 +3324,7 @@ fn run_lane_list(
 ) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
     let routes = bus::read_routes(&dir)?;
-    let live = tmux::live_sessions(None);
+    let live = tmux::mux().live_sessions(None);
     for (name, route) in &routes {
         let state = lane_state(&live, route);
         if let Some(want) = state_filter {
@@ -3345,7 +3366,7 @@ fn run_lane_get(mail_dir_arg: Option<&Path>, lane: &str) -> Result<()> {
     let Some(route) = routes.get(lane) else {
         anyhow::bail!("no registry route for lane `{lane}`")
     };
-    let live = tmux::live_sessions(None);
+    let live = tmux::mux().live_sessions(None);
     println!(
         "{}",
         serde_json::json!({
@@ -3372,8 +3393,8 @@ fn run_lane_delete(mail_dir_arg: Option<&Path>, lane: &str, route_only: bool) ->
     };
     if !route_only {
         if let Some(session) = route.tmux.as_deref() {
-            match tmux::has_session(None, session) {
-                Ok(true) => tmux::kill_session(None, session)?,
+            match tmux::mux().has_session(None, session) {
+                Ok(true) => tmux::mux().kill_session(None, session)?,
                 Ok(false) => {}
                 Err(error) => anyhow::bail!("tmux unreachable, refusing to delete {lane}: {error}"),
             }
@@ -3391,7 +3412,7 @@ fn run_lane_delete(mail_dir_arg: Option<&Path>, lane: &str, route_only: bool) ->
 /// Bulk-drop dead rows. Registry-only: bus.ndjson is never touched.
 fn run_lane_prune(mail_dir_arg: Option<&Path>, dry_run: bool) -> Result<()> {
     let dir = mail_dir(mail_dir_arg)?;
-    if tmux::live_sessions(None).is_none() {
+    if tmux::mux().live_sessions(None).is_none() {
         anyhow::bail!("tmux unreachable, cannot tell live from dead");
     }
     let routes = bus::read_routes(&dir)?;
@@ -3432,10 +3453,10 @@ fn dead_reason(route: &Route, snapshot: &proc::SysinfoSnapshot) -> Option<String
     let Some(target) = route.tmux.as_deref() else {
         return Some("no tmux session recorded".to_owned());
     };
-    if tmux::target_alive(None, target) {
+    if tmux::mux().target_alive(None, target) {
         return None;
     }
-    match tmux::pane_pid(None, target) {
+    match tmux::mux().pane_pid(None, target) {
         Some(pid) if snapshot.is_alive(pid) => None,
         Some(pid) => Some(format!("tmux session gone, pid {pid} not alive")),
         None => Some("tmux session gone, no pid recorded".to_owned()),
@@ -3456,7 +3477,7 @@ fn run_lane_pane(
     let Some(target) = route.tmux.as_deref() else {
         anyhow::bail!("lane `{lane}` has no tmux session to capture")
     };
-    print!("{}", tmux::capture_pane(socket, target, lines)?);
+    print!("{}", tmux::mux().capture_pane(socket, target, lines)?);
     Ok(())
 }
 
@@ -3562,7 +3583,7 @@ fn run_ps(mail_dir_arg: Option<&Path>, lane: Option<&str>, all: bool) -> Result<
         let pane_pid = route
             .tmux
             .as_deref()
-            .and_then(|target| tmux::pane_pid(None, target))
+            .and_then(|target| tmux::mux().pane_pid(None, target))
             .unwrap_or(0);
         match snapshot.tree_sum(pane_pid) {
             Some(sum) => {
@@ -3746,7 +3767,7 @@ fn run_pstree(mail_dir_arg: Option<&Path>, all: bool, format: PstreeFormat) -> R
         let pane_pid = route
             .tmux
             .as_deref()
-            .and_then(|target| tmux::pane_pid(None, target))
+            .and_then(|target| tmux::mux().pane_pid(None, target))
             .unwrap_or(0);
         let live = snapshot.process(pane_pid).is_some();
         if !all && !live {
@@ -3866,6 +3887,7 @@ fn render_ndjson(nodes: &[LaneNode]) -> Vec<String> {
 
 fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
     match cmd {
+        #[cfg(feature = "agent-read")]
         DbCmd::Session { cmd } => match cmd {
             SessionCmd::List { limit, format } => {
                 let store = open_store()?;
@@ -3899,11 +3921,17 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
         DbCmd::Chat { cmd } => match cmd {
             ChatCmd::List { query, all, follow } => run_chat_query(&query, all, follow, false),
         },
+        #[cfg(feature = "agent-read")]
         DbCmd::Touch { cmd } => run_fact(query::FactKind::Touch, cmd),
+        #[cfg(feature = "agent-read")]
         DbCmd::Command { cmd } => run_fact(query::FactKind::Command, cmd),
+        #[cfg(feature = "agent-read")]
         DbCmd::Fetch { cmd } => run_fact(query::FactKind::Fetch, cmd),
+        #[cfg(feature = "agent-read")]
         DbCmd::Skill { cmd } => run_fact(query::FactKind::Skill, cmd),
+        #[cfg(feature = "agent-read")]
         DbCmd::Pr { cmd } => run_fact(query::FactKind::Pr, cmd),
+        #[cfg(feature = "agent-read")]
         DbCmd::Span { cmd } => run_fact(query::FactKind::Span, cmd),
         DbCmd::Edge { cmd } => match cmd {
             EdgeCmd::List { session, limit } => {
@@ -3911,6 +3939,7 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
                 emit_edges(&store, session.as_deref(), limit)
             }
         },
+        #[cfg(feature = "agent-read")]
         DbCmd::Usage {
             args,
             show_sql,
@@ -3927,6 +3956,7 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
                 args,
             }) => run_usage_burn_rate(&args, window_minutes),
         },
+        #[cfg(feature = "agent-read")]
         DbCmd::Price { cmd } => run_price(cmd),
         DbCmd::Sync { cmd } => match cmd {
             SyncCmd::Create { rebuild, forever } => {
@@ -3937,6 +3967,7 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
                 }
             }
         },
+        #[cfg(feature = "agent-read")]
         DbCmd::SyncCursor { cmd } => match cmd {
             CursorCmd::List { limit, format } => {
                 let store = open_store()?;
@@ -3944,6 +3975,7 @@ fn run_db(registry: &Registry, cmd: DbCmd) -> Result<()> {
                 Ok(())
             }
         },
+        #[cfg(feature = "agent-read")]
         DbCmd::Status { window, format } => run_status(window, format),
     }
 }
@@ -3988,6 +4020,7 @@ fn run_passthrough_at(path: PathBuf, sql: &str, format: QueryFormat) -> Result<(
     Ok(())
 }
 
+#[cfg(feature = "agent-read")]
 fn run_fact(kind: query::FactKind, cmd: FactCmd) -> Result<()> {
     let FactCmd::List { args } = cmd;
     let store = open_store()?;
@@ -4004,13 +4037,14 @@ fn run_fact(kind: query::FactKind, cmd: FactCmd) -> Result<()> {
 
 /// Liveness is asked of tmux once and joined onto the rows; the store cannot
 /// know it and a per-row tmux call would be an N+1.
+#[cfg(feature = "agent-read")]
 fn run_status(window_minutes: u64, format: QueryFormat) -> Result<()> {
     let store = open_store()?;
     let now = now_ms();
     let mut rows = store.query_status(window_minutes * 60_000, now)?;
     let dir = mail_dir(None)?;
     let routes = bus::read_routes(&dir).unwrap_or_default();
-    let live = tmux::live_sessions(None);
+    let live = tmux::mux().live_sessions(None);
     for row in &mut rows {
         let session = row["session"].as_str().unwrap_or("").to_owned();
         let lane = routes.iter().find(|(_, route)| {
@@ -4030,6 +4064,7 @@ fn run_status(window_minutes: u64, format: QueryFormat) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "agent-read")]
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -4117,6 +4152,7 @@ fn run_config(cmd: ConfigCmd) -> Result<()> {
 
 /// The `db usage` alias's report SQL: totals with cost over the whole store.
 /// The passthrough is the engine; `--show-sql` prints this const.
+#[cfg(feature = "agent-read")]
 const USAGE_TOTALS_SQL: &str = "
 SELECT COUNT(*) AS calls,
        COALESCE(SUM(usage.input_tokens), 0) AS input_tokens,
@@ -4132,12 +4168,14 @@ SELECT COUNT(*) AS calls,
 FROM agent_usage AS usage
 LEFT JOIN model_price AS price ON price.model_id = usage.model_id";
 
+#[cfg(feature = "agent-read")]
 fn open_ro_store() -> Result<ident::Store> {
     ident::Store::open_readonly(ident::Store::default_path()?)
 }
 
 /// `db usage`: the totals report, a thin alias over USAGE_TOTALS_SQL. `--show-sql`
 /// prints that const and exits; otherwise it runs through the read-only passthrough.
+#[cfg(feature = "agent-read")]
 fn run_usage(args: &UsageArgs, show_sql: bool) -> Result<()> {
     if show_sql {
         line(USAGE_TOTALS_SQL.trim());
@@ -4146,6 +4184,7 @@ fn run_usage(args: &UsageArgs, show_sql: bool) -> Result<()> {
     run_passthrough(USAGE_TOTALS_SQL, args.format)
 }
 
+#[cfg(feature = "agent-read")]
 fn run_usage_blocks(args: &UsageArgs, window_hours: u64, active_only: bool) -> Result<()> {
     let store = open_ro_store()?;
     let window_ms = (window_hours * 3_600_000) as i64;
@@ -4173,6 +4212,7 @@ fn run_usage_blocks(args: &UsageArgs, window_hours: u64, active_only: bool) -> R
     Ok(())
 }
 
+#[cfg(feature = "agent-read")]
 fn run_usage_burn_rate(args: &UsageArgs, window_minutes: u64) -> Result<()> {
     let store = open_ro_store()?;
     let filter = usage::UsageQuery {
@@ -4183,6 +4223,7 @@ fn run_usage_burn_rate(args: &UsageArgs, window_minutes: u64) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "agent-read")]
 fn run_price(cmd: PriceCmd) -> Result<()> {
     let store = open_store()?;
     match cmd {

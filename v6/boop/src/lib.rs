@@ -7,6 +7,7 @@
 //! pins the exact call per view.
 
 pub mod bus;
+#[cfg(feature = "agent-read")]
 pub mod chat;
 pub mod config;
 pub mod event;
@@ -15,21 +16,25 @@ pub mod ident;
 pub mod identity;
 pub mod lane;
 pub mod proc;
+#[cfg(feature = "agent-read")]
 pub mod query;
 pub mod registry;
 pub mod rows;
 pub mod tail;
 pub mod tmux;
+#[cfg(feature = "agent-read")]
 pub mod usage;
 pub mod worktree;
 
 pub use ident::{Store, SyncStat};
+#[cfg(feature = "agent-read")]
 pub use query::{FactKind, FactQuery};
 pub use registry::Registry;
 pub use rows::{
     CommandRow, EdgeRow, FactCursor, FetchRow, LiveSpanRow, SessionRow, StatusRow, TouchRow,
     TurnRow, UsageRow,
 };
+#[cfg(feature = "agent-read")]
 pub use usage::{GroupBy, UsageQuery};
 
 /// Open the default store at `~/.agent/boop.db`.

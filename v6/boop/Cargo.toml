@@ -10,7 +10,16 @@ description = "cross-harness agent transcript reader: tail agent events from eve
 license = "MIT OR Apache-2.0"
 publish = false
 
+[features]
+# Transcript reading and its store-facing read surface: the query, usage, and
+# chat-repr modules. Default on; `--no-default-features` keeps the lane/bus/mux
+# verbs with no transcript reader in the graph.
+default = ["agent-read"]
+agent-read = []
+
 [dependencies]
+# The tmux multiplexer seam: one trait, one implementation, in its own crate.
+boop-mux = { path = "../boop-mux" }
 # clap derive gives the self-describing --help, subcommand help, and shell
 # completions this CLI exists to have. Chosen by the user (build-vs-buy, fixed).
 clap = { version = "4", features = ["derive"] }
@@ -27,8 +36,6 @@ dirs = "5"
 walkdir = "2"
 # Layer 0: process tree, cpu, rss, cwd in one cross-platform API.
 sysinfo = "0.39"
-# Layer 1: typed tmux command argv builder.
-tmux_interface = "0.4"
 # Layer 3: the SQLite store at ~/.agent/boop.db. `bundled` compiles SQLite in,
 # so no system SQLite version can disagree with it. Applies the repo's
 # surrogate-key law (interning natural TEXT keys to INTEGER ids).
@@ -47,3 +54,12 @@ path = "src/lib.rs"
 [[bin]]
 name = "boop"
 path = "src/main.rs"
+
+# The two examples are store views; agent-read only.
+[[example]]
+name = "instant_views"
+required-features = ["agent-read"]
+
+[[example]]
+name = "typed_rows"
+required-features = ["agent-read"]
