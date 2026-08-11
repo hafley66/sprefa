@@ -7555,11 +7555,8 @@ test(list_of_relation_refs_keeps_its_unsupported) :-
 
 :- end_tests(list_element_widening).
 
-:- begin_tests(schema_emit).
-
-% The compile/text-door pipeline that feeds an emitter, shared by both tests.
-% The rows come from lower:catalog_decl_rows/6 -- the same rows the sweep
-% feeds the schema emitter -- never from re-parsing the fixture source.
+% The compile/text-door pipeline that feeds an emitter, shared by the
+% schema_emit and schema_parity_golden units (file scope: no cross-unit calls).
 schema_emit_rows(RelPath, Name, Rows) :- once((
     test_dir_fact(Dir),
     atomic_list_concat([Dir, '/../dl_view/', RelPath], File),
@@ -7575,6 +7572,8 @@ read_emit_fixture(Path, Text) :-
     setup_call_cleanup(open(Path, read, Stream),
                        read_string(Stream, _, Text),
                        close(Stream)).
+
+:- begin_tests(schema_emit).
 
 % The JSON Schema emitter's *_text/1 output is byte-identical to the checked-in
 % fixture (the generated-artifact staleness class the .ts/.schedule.json sweep
@@ -7741,7 +7740,7 @@ parity_row(openapi, webhooks, no_surface,
            '').
 
 parity_rows(Rows) :-
-    once(plunit_schema_emit:schema_emit_rows(
+    once(schema_emit_rows(
         'struct_column_renders_canonical_json.dl6',
         struct_column_renders_canonical_json, Rows)).
 
@@ -7767,7 +7766,7 @@ parity_rows_markdown(Markdown) :-
 parity_checked_in(Path, Text) :-
     test_dir_fact(Dir),
     atomic_list_concat([Dir, '/emit/PARITY.golden.md'], Path),
-    plunit_schema_emit:read_emit_fixture(Path, Text).
+    read_emit_fixture(Path, Text).
 
 parity_diff(Expected, Actual) :-
     format(user_error, 'PARITY.golden.md mismatch~n--- expected~n~s+++ actual~n~s',
