@@ -1,0 +1,7 @@
+rel plot(row: int, col: int).
+rel patch(label: text, at: plot).
+rel tree(tree_id: int, species: text, site: patch).
+rel tree_label(tree_id: int, label: text).
+rel box_list(tree_id: int, items: list(text)).
+
+tree_label(TreeId, Label) <- tree(TreeId, _Species, Site), decode(Site, {label: Label}).

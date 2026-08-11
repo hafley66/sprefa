@@ -366,6 +366,7 @@ function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITi
     concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
       .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+  ).pipe(
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );

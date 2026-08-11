@@ -1,5 +1,12 @@
 [
   {
+    "name": "declaration_order_preserves_struct_refs",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "enum_decl_variant_rows_round_trip_through_tag_view",
     "bucket": "identical",
     "detail": "",

@@ -147,8 +147,8 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "__gen__list_text_df210f232c1299bd" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "__gen__list_text_df210f232c1299bd__member" ("idx" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("idx", "list_id")) WITHOUT ROWID`,
-  `CREATE TEMP VIEW "__txt___gen__list_text_df210f232c1299bd__member" AS SELECT t."idx" AS "idx", t."list_id" AS "list_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "__gen__list_text_df210f232c1299bd__member" t`,
+  `CREATE TABLE "__gen__list_text_df210f232c1299bd__member" ("list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("list_id", "idx")) WITHOUT ROWID`,
+  `CREATE TEMP VIEW "__txt___gen__list_text_df210f232c1299bd__member" AS SELECT t."list_id" AS "list_id", t."idx" AS "idx", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "__gen__list_text_df210f232c1299bd__member" t`,
   `CREATE TABLE "box" ("id" INTEGER NOT NULL, "items" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
   `CREATE TABLE "carry" ("id" INTEGER NOT NULL, "items" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "items")) WITHOUT ROWID`,
   `CREATE TEMP TABLE "__delta___gen__list_text_df210f232c1299bd" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
@@ -157,13 +157,13 @@ const ddl: readonly string[] = [
   `CREATE TEMP TABLE "__frontier___gen__list_text_df210f232c1299bd" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier___gen__list_text_df210f232c1299bd_phase" ON "__frontier___gen__list_text_df210f232c1299bd" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier___gen__list_text_df210f232c1299bd" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta___gen__list_text_df210f232c1299bd__member" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta___gen__list_text_df210f232c1299bd__member" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___gen__list_text_df210f232c1299bd__member_sign" ON "__delta___gen__list_text_df210f232c1299bd__member" ("_sign")`,
-  `CREATE INDEX "__delta___gen__list_text_df210f232c1299bd__member_group" ON "__delta___gen__list_text_df210f232c1299bd__member" ("idx", "list_id", "value")`,
-  `CREATE TEMP TABLE "__frontier___gen__list_text_df210f232c1299bd__member" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta___gen__list_text_df210f232c1299bd__member_group" ON "__delta___gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value")`,
+  `CREATE TEMP TABLE "__frontier___gen__list_text_df210f232c1299bd__member" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier___gen__list_text_df210f232c1299bd__member_phase" ON "__frontier___gen__list_text_df210f232c1299bd__member" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier___gen__list_text_df210f232c1299bd__member" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta___gen__list_text_df210f232c1299bd__member" AS SELECT t."idx" AS "idx", t."list_id" AS "list_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta___gen__list_text_df210f232c1299bd__member" t`,
+  `CREATE TEMP TABLE "__next_frontier___gen__list_text_df210f232c1299bd__member" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta___gen__list_text_df210f232c1299bd__member" AS SELECT t."list_id" AS "list_id", t."idx" AS "idx", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta___gen__list_text_df210f232c1299bd__member" t`,
   `CREATE TEMP TABLE "__delta_box" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "items" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_box_sign" ON "__delta_box" ("_sign")`,
   `CREATE INDEX "__delta_box_group" ON "__delta_box" ("id", "items")`,
@@ -183,7 +183,7 @@ const ddl: readonly string[] = [
 
 const rel_columns: Record<string, readonly string[]> = {
   __gen__list_text_df210f232c1299bd: ["id"],
-  __gen__list_text_df210f232c1299bd__member: ["idx", "list_id", "value"],
+  __gen__list_text_df210f232c1299bd__member: ["list_id", "idx", "value"],
   box: ["id", "items"],
   carry: ["id", "items"],
 };
@@ -204,9 +204,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "list_bare_text_door", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "3a3abbbb0bc3f7fe", h_schema: "", h_rule: "" },
   { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "__gen__list_text_df210f232c1299bd", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "f44c2dd42955265a", h_schema: "a910993d429fe6c3", h_rule: "" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "dcbb051241e4f35c", h_schema: "", h_rule: "" },
-  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "__gen__list_text_df210f232c1299bd__member", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "5457ca2bdd7775cf", h_schema: "6978460a2d02ea08", h_rule: "" },
-  { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "idx", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ded05af6c46326f1", h_schema: "", h_rule: "" },
-  { rel_id: 11, parent_id: 9, ordinal: 2, local_name: "list_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "2dc67c1ee95572f7", h_schema: "", h_rule: "" },
+  { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "__gen__list_text_df210f232c1299bd__member", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "5457ca2bdd7775cf", h_schema: "f64ec156ee27684c", h_rule: "" },
+  { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "list_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "2dc67c1ee95572f7", h_schema: "", h_rule: "" },
+  { rel_id: 11, parent_id: 9, ordinal: 2, local_name: "idx", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ded05af6c46326f1", h_schema: "", h_rule: "" },
   { rel_id: 12, parent_id: 9, ordinal: 3, local_name: "value", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "67b6f26d8187144c", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 6, ordinal: 0, local_name: "box", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "8821d01f7aa3cdd3", h_schema: "1226f81e544d32b3", h_rule: "" },
   { rel_id: 14, parent_id: 13, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "440497a335d2555e", h_schema: "", h_rule: "" },
@@ -217,11 +217,11 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 19, parent_id: 7, ordinal: 0, local_name: "__delta___gen__list_text_df210f232c1299bd", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "f4f7c9ea1d2a5dc4", h_schema: "d63e416beccf4892", h_rule: "" },
   { rel_id: 20, parent_id: 7, ordinal: 0, local_name: "__frontier___gen__list_text_df210f232c1299bd", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "b4edad465d7f4a1f", h_schema: "a186680c4c0c99e7", h_rule: "" },
   { rel_id: 21, parent_id: 7, ordinal: 0, local_name: "__next_frontier___gen__list_text_df210f232c1299bd", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "784515a003d9d15a", h_schema: "a186680c4c0c99e7", h_rule: "" },
-  { rel_id: 22, parent_id: 9, ordinal: 0, local_name: "__delta___gen__list_text_df210f232c1299bd__member", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "87d2b3c13d40390b", h_schema: "87c44e43aada5978", h_rule: "" },
-  { rel_id: 23, parent_id: 9, ordinal: 0, local_name: "__frontier___gen__list_text_df210f232c1299bd__member", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "c0235ac6fb3a7c65", h_schema: "ee83a99265a5d889", h_rule: "" },
-  { rel_id: 24, parent_id: 9, ordinal: 0, local_name: "__next_frontier___gen__list_text_df210f232c1299bd__member", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "acf0a06d1af21f2c", h_schema: "ee83a99265a5d889", h_rule: "" },
-  { rel_id: 25, parent_id: 9, ordinal: 0, local_name: "__txt___gen__list_text_df210f232c1299bd__member", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "0957f8ec6cd64df8", h_schema: "e5a0ecf4499c4280", h_rule: "" },
-  { rel_id: 26, parent_id: 22, ordinal: 0, local_name: "__txt___delta___gen__list_text_df210f232c1299bd__member", kind: "view", type_id: 0, arity: 5, module_id: 6, h_id: "770973bfcc3eef70", h_schema: "e5a0ecf4499c4280", h_rule: "" },
+  { rel_id: 22, parent_id: 9, ordinal: 0, local_name: "__delta___gen__list_text_df210f232c1299bd__member", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "87d2b3c13d40390b", h_schema: "ea61441000e639f0", h_rule: "" },
+  { rel_id: 23, parent_id: 9, ordinal: 0, local_name: "__frontier___gen__list_text_df210f232c1299bd__member", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "c0235ac6fb3a7c65", h_schema: "d4dad3a95054b279", h_rule: "" },
+  { rel_id: 24, parent_id: 9, ordinal: 0, local_name: "__next_frontier___gen__list_text_df210f232c1299bd__member", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "acf0a06d1af21f2c", h_schema: "d4dad3a95054b279", h_rule: "" },
+  { rel_id: 25, parent_id: 9, ordinal: 0, local_name: "__txt___gen__list_text_df210f232c1299bd__member", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "0957f8ec6cd64df8", h_schema: "a1c39d800092e3bf", h_rule: "" },
+  { rel_id: 26, parent_id: 22, ordinal: 0, local_name: "__txt___delta___gen__list_text_df210f232c1299bd__member", kind: "view", type_id: 0, arity: 5, module_id: 6, h_id: "770973bfcc3eef70", h_schema: "a1c39d800092e3bf", h_rule: "" },
   { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__delta_box", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "438d244a36b16a97", h_schema: "b6fd24d210c1d98b", h_rule: "" },
   { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__frontier_box", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "5498dc7cef7ddc64", h_schema: "589494175fd3986e", h_rule: "" },
   { rel_id: 29, parent_id: 13, ordinal: 0, local_name: "__next_frontier_box", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "d90025dda4409bfb", h_schema: "589494175fd3986e", h_rule: "" },
@@ -232,8 +232,8 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 34, parent_id: 16, ordinal: 0, local_name: "__support_next_carry", kind: "refcount", type_id: 0, arity: 3, module_id: 6, h_id: "1cebebe3ce4b8a7a", h_schema: "", h_rule: "" },
   { rel_id: 35, parent_id: 16, ordinal: 0, local_name: "__new_carry", kind: "refcount_staging", type_id: 0, arity: 3, module_id: 6, h_id: "8d60d58c0451bcd0", h_schema: "", h_rule: "" },
   { rel_id: 36, parent_id: 8, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "434753879bf94d06", h_schema: "", h_rule: "" },
-  { rel_id: 37, parent_id: 10, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "32f1ef790462031f", h_schema: "", h_rule: "" },
-  { rel_id: 38, parent_id: 11, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "d4cb8f500e157bdb", h_schema: "", h_rule: "" },
+  { rel_id: 37, parent_id: 10, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "d4cb8f500e157bdb", h_schema: "", h_rule: "" },
+  { rel_id: 38, parent_id: 11, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "32f1ef790462031f", h_schema: "", h_rule: "" },
   { rel_id: 39, parent_id: 12, ordinal: 3, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "c9415b0e9eb41761", h_schema: "", h_rule: "" },
   { rel_id: 40, parent_id: 14, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "134c59092f322468", h_schema: "", h_rule: "" },
   { rel_id: 41, parent_id: 15, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "93df6886d40b2dd3", h_schema: "", h_rule: "" },
@@ -264,7 +264,7 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT "id" FROM "__gen__list_text_df210f232c1299bd"`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT "idx", "list_id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member"`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
+    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT "list_id", "idx", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member"`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
     box: select_rows(seam, `SELECT "id", "items" FROM "box"`, rel_columns.box!, rel_column_types.box!),
     carry: select_rows(seam, `SELECT "id", "items" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
   });
@@ -275,7 +275,7 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT "id" FROM "__gen__list_text_df210f232c1299bd"`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT "idx", "list_id", "value" FROM "__gen__list_text_df210f232c1299bd__member"`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
+    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT "list_id", "idx", "value" FROM "__gen__list_text_df210f232c1299bd__member"`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
     box: select_rows(seam, `SELECT "id", "items" FROM "box"`, rel_columns.box!, rel_column_types.box!),
     carry: select_rows(seam, `SELECT "id", "items" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
   });
@@ -287,14 +287,14 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 
 const final_select: Record<string, string> = {
   __gen__list_text_df210f232c1299bd: `SELECT "id" FROM "__gen__list_text_df210f232c1299bd"`,
-  __gen__list_text_df210f232c1299bd__member: `SELECT "idx", "list_id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member"`,
+  __gen__list_text_df210f232c1299bd__member: `SELECT "list_id", "idx", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member"`,
   box: `SELECT "id", "items" FROM "box"`,
   carry: `SELECT "id", "items" FROM "carry"`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
   __gen__list_text_df210f232c1299bd: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE "id" = ?` },
-  __gen__list_text_df210f232c1299bd__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("idx", "list_id", "value") VALUES (?, ?, ?) ON CONFLICT ("idx", "list_id") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE "idx" = ? AND "list_id" = ? AND "value" = ?` },
+  __gen__list_text_df210f232c1299bd__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") VALUES (?, ?, ?) ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE "list_id" = ? AND "idx" = ? AND "value" = ?` },
   box: { kind: "set", add_sql: `INSERT INTO "box" ("id", "items") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "items" = excluded."items"`, del_sql: `DELETE FROM "box" WHERE "id" = ? AND "items" = ?` },
 };
 
@@ -322,7 +322,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_text_df210f232c1299bd", kind: "set", table_name: "__gen__list_text_df210f232c1299bd", delta_table_name: "__delta___gen__list_text_df210f232c1299bd", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__list_text_df210f232c1299bd" WHERE "_sign" IN (-1, 1) GROUP BY "id", "_sign"`, rule_observers: [] },
-  { rel: "__gen__list_text_df210f232c1299bd__member", kind: "set", table_name: "__gen__list_text_df210f232c1299bd__member", delta_table_name: "__delta___gen__list_text_df210f232c1299bd__member", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd__member", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd__member", columns: ["idx", "list_id", "value"], column_types: ["int", "int", "text"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("idx", "list_id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("idx", "list_id") DO UPDATE SET "value" = excluded."value" RETURNING "idx", "list_id", "value"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE ("idx", "list_id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "idx", "list_id", "value"`, boundary_sql: `SELECT "idx", "list_id", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_text_df210f232c1299bd__member" WHERE "_sign" IN (-1, 1) GROUP BY "idx", "list_id", "value", "_sign"`, rule_observers: [] },
+  { rel: "__gen__list_text_df210f232c1299bd__member", kind: "set", table_name: "__gen__list_text_df210f232c1299bd__member", delta_table_name: "__delta___gen__list_text_df210f232c1299bd__member", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd__member", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd__member", columns: ["list_id", "idx", "value"], column_types: ["int", "int", "text"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value" RETURNING "list_id", "idx", "value"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE ("list_id", "idx", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "list_id", "idx", "value"`, boundary_sql: `SELECT "list_id", "idx", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_text_df210f232c1299bd__member" WHERE "_sign" IN (-1, 1) GROUP BY "list_id", "idx", "value", "_sign"`, rule_observers: [] },
   { rel: "box", kind: "set", table_name: "box", delta_table_name: "__delta_box", frontier_table_name: "__frontier_box", next_frontier_table_name: "__next_frontier_box", columns: ["id", "items"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "box" ("id", "items") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "items" = excluded."items" RETURNING "id", "items"`, arrival_del_sql: `DELETE FROM "box" WHERE ("id", "items") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "items"`, boundary_sql: `SELECT "id", "items", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_box" WHERE "_sign" IN (-1, 1) GROUP BY "id", "items", "_sign"`, rule_observers: ["carry/2"] },
   { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "items"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", "items", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" WHERE "_sign" IN (-1, 1) GROUP BY "id", "items", "_sign"`, rule_observers: [] },
 ];
@@ -362,6 +362,7 @@ function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITi
     concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
       .pipe(map((interned) => { arrivals = interned; return before; }))),
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+  ).pipe(
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );

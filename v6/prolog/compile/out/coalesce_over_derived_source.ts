@@ -346,6 +346,7 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
 function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshot(seam).pipe(
     concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
+  ).pipe(
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
   );
