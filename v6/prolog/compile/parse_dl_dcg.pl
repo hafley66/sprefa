@@ -415,9 +415,11 @@ rel_stmt(Decls) -->
     ; decl_b_tail(Decls)
     ).
 
-column_less_decls(_, Specs, _, []) :- Specs \== [], !.
-column_less_decls(Ref, _, Mods, Decls) :-
-    ( memberchk(kind(Ref, _), Mods) -> Decls = [] ; Decls = [kind(Ref, set)] ).
+column_less_decls(Ref, Specs, Mods, Decls) :-
+    ( ( Specs \== [] ; memberchk(kind(Ref, _), Mods) )
+    -> Decls = []
+    ; Decls = [kind(Ref, set)]
+    ).
 
 module_path_name(Segs, Name) :- atomic_list_concat(Segs, '__', Name).
 
@@ -621,9 +623,9 @@ relation_schema(Decls, Name, Ref, Specs) :-
 declared_column_type_name(Decls, Name) :-
     ( member(col_type(_, _, Type), Decls),
       ( Name = Type ; list_element_type_name(Type, Name) )
-    ; member(sh_decl(_, Ins, Outs, _), Decls),
-      ( member(col(_, Name), Ins) ; member(col(_, Name), Outs) )
-    ; member(bind_decl(_, Cols), Decls),
+    ; ( member(sh_decl(_, Ins, Outs, _), Decls), append(Ins, Outs, Cols)
+      ; member(bind_decl(_, Cols), Decls)
+      ),
       member(col(_, Name), Cols)
     ; member(enum_decl(_, Variants), Decls),
       tree_leaf(';', Variants, Variant),
@@ -800,8 +802,7 @@ fill_free_slots(Is, Vs, Pos) :-
     maplist({Pos}/[I, V]>>nth1(I, Pos, V), Is, Vs).
 
 fill_partial_slots(Mode, Rel, Arity, FreeIdxs, PosValues, Pos) :-
-    length(PosValues, PosCount),
-    length(FilledIdxs, PosCount),
+    same_length(PosValues, FilledIdxs),
     append(FilledIdxs, OmittedIdxs, FreeIdxs),
     fill_free_slots(FilledIdxs, PosValues, Pos),
     finish_omitted_slots(Mode, Rel/Arity, OmittedIdxs, Pos).
@@ -980,10 +981,11 @@ op_codes([F | R]) -->
     ( { code_type(F, alpha) } -> ~[F | R] ; @[F | R] ).
 
 
+% append/3 against an InCount-long prefix already fails when Values is short,
+% so the explicit length comparison is redundant.
 split_probe_values(InCount, Values, Ins, Outs) :-
-    length(Values, Count),
-    ( Count >= InCount
-    -> length(Ins, InCount), append(Ins, Outs, Values)
+    ( length(Ins, InCount), append(Ins, Outs, Values)
+    -> true
     ; Ins = Values, Outs = []
     ).
 
