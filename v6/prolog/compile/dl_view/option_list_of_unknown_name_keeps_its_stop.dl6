@@ -1,0 +1,1 @@
+rel squad(id: int, members: option(list(fighter_summry))) key(1).

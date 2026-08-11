@@ -1,0 +1,2 @@
+rel fighter_summary(name: text, url: text).
+rel squad(id: int, members: option(list_entity_dense_sequence(fighter_summary))) key(1).
