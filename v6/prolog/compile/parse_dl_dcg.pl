@@ -75,9 +75,9 @@ parse_dl_source(_, Codes, Prog, Bindings, Findings) :-
     ).
 
 parse_failure(Reason) :-
-    nb_getval(parse_furthest_remaining, Remaining),
-    remaining_line_column(Remaining, Line, Column),
-    throw(dl_parse_error(Reason, position(Line, Column))).
+    nb_getval(parse_furthest_remaining, Rem),
+    remaining_line_column(Rem, Line, Col),
+    throw(dl_parse_error(Reason, position(Line, Col))).
 
 % mark/1 records the furthest-reached suffix; error positions derive from it
 mark(S) :-
@@ -87,14 +87,14 @@ mark(S) :-
     nb_setval(parse_furthest_remaining, R).
 mark(_).
 
-remaining_line_column(Remaining, Line, Column) :-
+remaining_line_column(Rem, Line, Col) :-
     nb_getval(parse_input_length, Len),
-    Index is Len - Remaining,
+    Index is Len - Rem,
     nb_getval(parse_line_starts, Starts),
     nb_getval(parse_line_count, Count),
     line_containing(1, Count, Index, Starts, Line),
     arg(Line, Starts, Start),
-    Column is Index - Start + 1.
+    Col is Index - Start + 1.
 
 line_containing(Low, High, Index, Starts, Line) :-
     ( Low >= High
@@ -109,21 +109,14 @@ line_containing(Low, High, Index, Starts, Line) :-
     ).
 
 build_line_starts(Codes) :-
-    split_string(Codes, "\n", "", Lines),
-    line_start_offsets(Lines, 0, Offsets),
-    Starts =.. [line_starts | Offsets],
-    length(Offsets, Count),
+    findall(P, ( nth0(I, Codes, 0'\n), P is I + 1 ), Ps),
+    Starts =.. [line_starts, 0 | Ps],
+    functor(Starts, _, Count),
     nb_setval(parse_line_starts, Starts),
     nb_setval(parse_line_count, Count).
 
-line_start_offsets([], _, []).
-line_start_offsets([Line | Rest], Offset, [Offset | More]) :-
-    string_length(Line, Len),
-    Next is Offset + Len + 1,
-    line_start_offsets(Rest, Next, More).
-
-prolog:message(dl_parse_error(Reason, position(Line, Column))) -->
-    [ 'parse error at line ~d, column ~d: ~w'-[Line, Column, Reason] ].
+prolog:message(dl_parse_error(Reason, position(Line, Col))) -->
+    [ 'parse error at line ~d, column ~d: ~w'-[Line, Col, Reason] ].
 
 parse_dl_line_for_reason(Reason, Line) :-
     reason_references(Reason, Refs),
@@ -133,10 +126,10 @@ parse_dl_line_for_reason(Reason, Line) :-
     -> true
     ).
 
-statement_location_for_reason(Reason, Line, Column) :-
+statement_location_for_reason(Reason, Line, Col) :-
     reason_references(Reason, Refs),
-    ( member(Ref, Refs), statement_location_for_reference(rule, Ref, Line, Column)
-    ; member(Ref, Refs), statement_location_for_reference(decl, Ref, Line, Column)
+    ( member(Ref, Refs), statement_location_for_reference(rule, Ref, Line, Col)
+    ; member(Ref, Refs), statement_location_for_reference(decl, Ref, Line, Col)
     ).
 
 reason_references(Reason, Refs) :-
@@ -145,16 +138,16 @@ reason_references(Reason, Refs) :-
             Refs0),
     sort(Refs0, Refs).
 
-statement_location_for_reference(rule, Ref, Line, Column) :-
-    source_statement_fact(rule, Item, Remaining),
+statement_location_for_reference(rule, Ref, Line, Col) :-
+    source_statement_fact(rule, Item, Rem),
     statement_head_reference(Item, Ref),
     !,
-    remaining_line_column(Remaining, Line, Column).
-statement_location_for_reference(Kind, Ref, Line, Column) :-
-    source_statement_fact(Kind, Item, Remaining),
+    remaining_line_column(Rem, Line, Col).
+statement_location_for_reference(Kind, Ref, Line, Col) :-
+    source_statement_fact(Kind, Item, Rem),
     statement_reference(Kind, Item, Ref),
     !,
-    remaining_line_column(Remaining, Line, Column).
+    remaining_line_column(Rem, Line, Col).
 
 statement_head_reference((Head <- _), Name/Arity) :- !, functor(Head, Name, Arity).
 statement_head_reference((Head <+ _), Name/Arity) :- functor(Head, Name, Arity).
@@ -170,10 +163,10 @@ statement_reference(decl, Decls, Ref) :-
     declaration_source_ref(Decl, Ref),
     !.
 
-record_statement(decl_list, Decls, Remaining) :- !,
-    assertz(source_statement_fact(decl, Decls, Remaining)).
-record_statement(rule, Rule, Remaining) :- !,
-    assertz(source_statement_fact(rule, Rule, Remaining)).
+record_statement(decl_list, Decls, Rem) :- !,
+    assertz(source_statement_fact(decl, Decls, Rem)).
+record_statement(rule, Rule, Rem) :- !,
+    assertz(source_statement_fact(rule, Rule, Rem)).
 record_statement(_, _, _).
 
 declaration_source_ref(Decl, Ref) :-
@@ -182,8 +175,8 @@ declaration_source_ref(Decl, Ref) :-
 declaration_source_ref(type_decl(Name, Specs), Name/Arity) :-
     length(Specs, Arity).
 declaration_source_ref(sh_decl(Name, Ins, Outs, _), Name/Arity) :-
-    append(Ins, Outs, Columns),
-    length(Columns, Arity).
+    append(Ins, Outs, Cols),
+    length(Cols, Arity).
 
 
 normalize_host_calls(Decls, Rules, Out) :-
@@ -227,7 +220,7 @@ statements(V0, V, Decls, Rules, Queries) -->
     ( { S1 == [] }
     -> { Decls = [], Rules = [], Queries = [], V = V0 }
     ; ( statement(Kind, Item, V0, V1)
-      -> { length(S1, Remaining), record_statement(Kind, Item, Remaining) }
+      -> { length(S1, Rem), record_statement(Kind, Item, Rem) }
       ; { parse_failure(statement) }
       ),
       statements(V1, V, Decls1, Rules1, Queries1),
@@ -326,17 +319,13 @@ sign_opt([S]) --> [S], { memberchk(S, `+-`) }, !.
 sign_opt([]) --> [].
 
 
-atom_lit(Atom, S0, S) :-
-    mark(S0),
-    S0 = [0'\' | S1], !,
-    quoted_chars(0'\', S1, Cs, S),
-    atom_codes(Atom, Cs).
+atom_lit(Atom, S0, S) :- quoted(0'\', Cs, S0, S), atom_codes(Atom, Cs).
+string_lit(Str, S0, S) :- quoted(0'", Cs, S0, S), string_codes(Str, Cs).
 
-string_lit(Str, S0, S) :-
+quoted(Q, Cs, S0, S) :-
     mark(S0),
-    S0 = [0'" | S1], !,
-    quoted_chars(0'", S1, Cs, S),
-    string_codes(Str, Cs).
+    S0 = [Q | S1], !,
+    quoted_chars(Q, S1, Cs, S).
 
 quoted_chars(Q, [Q, Q | Rest], [Q | More], S) :- !,
     mark([Q, Q | Rest]),
@@ -405,37 +394,38 @@ argsv(P, Xs, V0, V) -->
 nv(P, X, V, V) --> call(P, X).
 args(P, Xs) --> argsv(nv(P), Xs, 0, _).
 sep(P, Xs) --> sepv(nv(P), Xs, 0, _).
+tok(Cs) --> ws, lit(Cs).
 
 
 decl_a_stmt([enum_decl(Name, Variants)]) -->
-    word(`rel`), ws, ident(Name), ws, lit(`(`),
-    enum_variants(Variants), ws, lit(`)`), ws, lit(`.`),
+    word(`rel`), ws, ident(Name), tok(`(`),
+    enum_variants(Variants), tok(`)`), tok(`.`),
     { record_enum_column_orders(Name, Variants) }.
 
 decl_a_stmt(Decls) -->
-    word(`rel`), ws, dotted_path(Segments), ws, lit(`(`),
-    args(decl_a_column, Specs), ws, lit(`)`),
+    word(`rel`), ws, dotted_path(Segs), tok(`(`),
+    args(decl_a_column, Specs), tok(`)`),
     { length(Specs, Arity),
-      module_path_name(Segments, Name),
+      module_path_name(Segs, Name),
       Ref = Name/Arity,
       column_spec_names(Specs, Cols),
       record_column_order(Name, Cols) },
     ws,
     { typed_decl_entries(Ref, Specs, Typed) },
     rel_modifiers(Ref, Mods),
-    { module_path_decls(Segments, Ref, PathDecls),
+    { module_path_decls(Segs, Ref, PathDecls),
       column_less_decls(Ref, Specs, Mods, UnitDecls),
       append([Typed, Mods, PathDecls, UnitDecls], Decls) },
-    ws, lit(`.`).
+    tok(`.`).
 
 column_less_decls(_, Specs, _, []) :- Specs \== [], !.
 column_less_decls(Ref, _, Mods, Decls) :-
     ( memberchk(kind(Ref, _), Mods) -> Decls = [] ; Decls = [kind(Ref, set)] ).
 
-module_path_name(Segments, Name) :- atomic_list_concat(Segments, '__', Name).
+module_path_name(Segs, Name) :- atomic_list_concat(Segs, '__', Name).
 
 module_path_decls([_], _, []) :- !.
-module_path_decls(Segments, Ref, [rel_path_decl(Ref, Segments)]).
+module_path_decls(Segs, Ref, [rel_path_decl(Ref, Segs)]).
 
 rel_modifiers(Ref, [Decl | Rest]) -->
     ( word(`log`) -> { Decl = kind(Ref, log) }
@@ -463,19 +453,19 @@ type_base(T) -->
                  list_interned_set, list_entity_linked_sequence]),
       atom_codes(W, Cs) },
     word(Cs), !,
-    ws, lit(`(`), ws, type_expr(E), ws, lit(`)`),
+    tok(`(`), ws, type_expr(E), tok(`)`),
     { T =.. [W, E] }.
 type_base(Name) --> ident(Name).
 
 enum_variants((First ; Rest)) -->
-    enum_variant(First), ws, lit(`;`), ws, enum_variants(Rest).
+    enum_variant(First), tok(`;`), ws, enum_variants(Rest).
 enum_variants(Variant) --> enum_variant(Variant).
 
 enum_variant(Variant) -->
-    ws, ident(Name), ws, lit(`(`), args(enum_field, Fields), ws, lit(`)`),
+    ws, ident(Name), tok(`(`), args(enum_field, Fields), tok(`)`),
     { Variant =.. [Name | Fields] }.
 
-enum_field(Col:Type) --> ident(Col), ws, lit(`:`), ws, ident(Type).
+enum_field(Col:Type) --> ident(Col), tok(`:`), ws, ident(Type).
 
 record_enum_column_orders(Rel, Variants) :-
     tag_rel_name(Rel, Tag),
@@ -502,30 +492,30 @@ typed_decl_entries(Ref, Specs, Decls) :-
             Decls).
 
 keep_clause(Policy) -->
-    word(`keep`), ws, lit(`(`), ws,
+    word(`keep`), tok(`(`), ws,
     ( word(`all`) -> { Policy = all }
-    ; word(`count`), ws, lit(`(`), ws, int_lit(N), ws, lit(`)`)
+    ; word(`count`), tok(`(`), ws, int_lit(N), tok(`)`)
     -> { Policy = count(N) }
     ),
-    ws, lit(`)`).
+    tok(`)`).
 
 key_clause(Positions) -->
-    word(`key`), ws, lit(`(`), ws, sep(int_lit, Positions), ws, lit(`)`).
+    word(`key`), tok(`(`), ws, sep(int_lit, Positions), tok(`)`).
 
 
 decl_b_stmt(Decls) -->
     word(`rel`), ws,
-    ( lit(`(`) -> ws, int_lit(Retention), ws, lit(`)`), { HasRetention = true }
+    ( lit(`(`) -> ws, int_lit(Ret), tok(`)`), { HasRetention = true }
     ; { HasRetention = false }
     ),
-    ws, ident(Name), ws, lit(`(`),
-    decl_b_columns(Name, Specs), ws, lit(`)`), ws, lit(`.`),
+    ws, ident(Name), tok(`(`),
+    decl_b_columns(Name, Specs), tok(`)`), tok(`.`),
     { length(Specs, Arity),
       Ref = Name/Arity,
       column_spec_names(Specs, Cols),
       record_column_order(Name, Cols),
       ( HasRetention == true
-      -> record_finding(unsupported_surface(retention_marker(Ref, Retention)))
+      -> record_finding(unsupported_surface(retention_marker(Ref, Ret)))
       ; true
       ),
       typed_decl_entries(Ref, Specs, Decls) }.
@@ -533,7 +523,7 @@ decl_b_stmt(Decls) -->
 decl_b_columns(Rel, Specs) --> args(typed_col(decl_b_column_type(Rel)), Specs).
 
 typed_col(TypeP, column(Col, Type)) -->
-    ident(Col), ws, lit(`:`), ws, call(TypeP, Col, Type).
+    ident(Col), tok(`:`), ws, call(TypeP, Col, Type).
 
 decl_b_column_type(Rel, Col, none) -->
     coltype(W), { W \== none }, !,
@@ -543,21 +533,21 @@ decl_b_column_type(_, _, Type) --> type_expr(Type).
 coltype(W) -->
     { member(W, ['Key', 'Min', 'Max']), atom_codes(W, Cs) },
     word(Cs), !,
-    ws, lit(`(`), ws, ident(_), ws, lit(`)`).
+    tok(`(`), ws, ident(_), tok(`)`).
 coltype(none) --> ident(_).
 
 
 resolve_module_path_collisions(Decls0, Decls) :-
-    findall(Ref-Segments, member(rel_path_decl(Ref, Segments), Decls0), Paths),
+    findall(Ref-Segs, member(rel_path_decl(Ref, Segs), Decls0), Paths),
     ( Paths == []
     -> Decls = Decls0
     ; reserved_rel_names(Decls0, Paths, Reserved),
       foldl(disambiguate_module_path(Reserved), Paths, Decls0, Decls)
     ).
 
-disambiguate_module_path(Reserved, Name/Arity-Segments, Decls0, Decls) :-
+disambiguate_module_path(Reserved, Name/Arity-Segs, Decls0, Decls) :-
     ( memberchk(Name, Reserved)
-    -> variant_sha1(Segments, Sha),
+    -> variant_sha1(Segs, Sha),
        sub_atom(Sha, 0, 16, _, Digest),
        atomic_list_concat([Name, '__', Digest], Digested),
        ( lookup_column_order(Name, Cols)
@@ -592,8 +582,8 @@ declared_rel_name(Decls, enum_decl(Name), Name) :-
     member(enum_decl(Name, _), Decls).
 
 minted_rel_name(Decls, Companion) :-
-    member(col_type(Parent/_, Column, option(_)), Decls),
-    atomic_list_concat([Parent, '__', Column], Companion).
+    member(col_type(Parent/_, Col, option(_)), Decls),
+    atomic_list_concat([Parent, '__', Col], Companion).
 minted_rel_name(Decls, EnumName) :-
     member(col_type(_, _, option(Element)), Decls),
     atom(Element),
@@ -636,7 +626,7 @@ normalize_relation_value_decls([Decl | Rest], ValueNames, Seen, [Decl | More]) :
 relation_schema(Decls, Name, Ref, Specs) :-
     once(member(col_type(Name/Arity, _, _), Decls)),
     Ref = Name/Arity,
-    findall(col(Column, Type), member(col_type(Ref, Column, Type), Decls), Specs),
+    findall(col(Col, Type), member(col_type(Ref, Col, Type), Decls), Specs),
     length(Specs, Arity).
 
 declared_column_type_name(Decls, Name) :-
@@ -644,8 +634,8 @@ declared_column_type_name(Decls, Name) :-
       ( Name = Type ; list_element_type_name(Type, Name) )
     ; member(sh_decl(_, Ins, Outs, _), Decls),
       ( member(col(_, Name), Ins) ; member(col(_, Name), Outs) )
-    ; member(bind_decl(_, Columns), Decls),
-      member(col(_, Name), Columns)
+    ; member(bind_decl(_, Cols), Decls),
+      member(col(_, Name), Cols)
     ; member(enum_decl(_, Variants), Decls),
       enum_decl_variant_term(Variants, Variant),
       Variant =.. [_ | Fields],
@@ -661,26 +651,22 @@ list_element_type_name(Type, Name) :-
     list_element_type_name(Element, Name).
 list_element_type_name(Name, Name) :- atom(Name).
 
-scalar_column_type(int).
-scalar_column_type(text).
-scalar_column_type(json).
-scalar_column_type(bool).
-scalar_column_type(float).
+scalar_column_type(T) :- member(T, [int, text, json, bool, float]).
 
 
-bind_decl_stmt(bind_decl(Name, Columns)) -->
-    word(`bind`), ws, ident(Name), ws, lit(`(`),
-    decl_b_columns(Name, Specs), ws, lit(`)`), ws, lit(`.`),
-    { specs_to_columns(Specs, Columns),
+bind_decl_stmt(bind_decl(Name, Cols)) -->
+    word(`bind`), ws, ident(Name), tok(`(`),
+    decl_b_columns(Name, Specs), tok(`)`), tok(`.`),
+    { specs_to_columns(Specs, Cols),
       column_spec_names(Specs, Names),
       record_column_order(Name, Names) }.
 
 sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
-    word(`sh`), ws, ident(Name), ws, lit(`(`),
-    decl_b_columns(Name, InSpecs), ws, lit(`)`), ws,
-    lit(`->`), ws, lit(`(`),
-    host_output_columns(Name, OutSpecs), ws, lit(`)`), ws,
-    lit(`=`), ws, template_lit(Template), ws, lit(`.`),
+    word(`sh`), ws, ident(Name), tok(`(`),
+    decl_b_columns(Name, InSpecs), tok(`)`), ws,
+    lit(`->`), tok(`(`),
+    host_output_columns(Name, OutSpecs), tok(`)`), ws,
+    lit(`=`), ws, template_lit(Template), tok(`.`),
     { specs_to_columns(InSpecs, Ins),
       specs_to_columns(OutSpecs, Outs),
       append(InSpecs, OutSpecs, Specs),
@@ -688,12 +674,12 @@ sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
       record_column_order(Name, Names),
       record_host_signature(Name, Ins, Outs) }.
 
-sh_decl_stmt(unsupported_host_decl(Name, Columns)) -->
-    word(`sh`), ws, ident(Name), ws, lit(`(`),
-    decl_b_columns(Name, Specs), ws, lit(`)`), ws,
-    lit(`=`), ws, template_lit(_), ws, lit(`.`),
-    { specs_to_columns(Specs, Columns),
-      length(Columns, Arity),
+sh_decl_stmt(unsupported_host_decl(Name, Cols)) -->
+    word(`sh`), ws, ident(Name), tok(`(`),
+    decl_b_columns(Name, Specs), tok(`)`), ws,
+    lit(`=`), ws, template_lit(_), tok(`.`),
+    { specs_to_columns(Specs, Cols),
+      length(Cols, Arity),
       column_spec_names(Specs, Names),
       record_column_order(Name, Names),
       record_finding(unsupported_surface(host_decl_inferred(Name/Arity))) }.
@@ -719,15 +705,15 @@ template_codes([C | Cs]) --> [C], template_codes(Cs).
 
 
 query_stmt(query(Atom), V0, V) -->
-    lit(`?`), ws, ident(Name), ws, lit(`(`),
-    head_args(Args, V0, V), ws, lit(`)`), ws, lit(`.`),
-    { resolve_named_args(head, Name, Args, Positional),
-      Atom =.. [Name | Positional] }.
+    lit(`?`), ws, ident(Name), tok(`(`),
+    head_args(Args, V0, V), tok(`)`), tok(`.`),
+    { resolve_named_args(head, Name, Args, Pos),
+      Atom =.. [Name | Pos] }.
 
 
 match_stmt(match(Source, Arms), V0, V) -->
     word(`match`), ws, head_atom(Source, V0, V1), ws,
-    lit(`(`), match_arms(Arms, V1, V), ws, lit(`)`), ws, lit(`.`).
+    lit(`(`), match_arms(Arms, V1, V), tok(`)`), tok(`.`).
 
 match_arms(Arms, V0, V) -->
     ws, ( lit(`;`) -> ws ; [] ),
@@ -755,19 +741,19 @@ rule_stmt(Rule, V0, V) -->
     ; lit(`<+`) -> { Arrow = (<+) }, ws, body(Body, V1, V)
     ; { Arrow = (<-), Body = true, V = V1 }
     ),
-    ws, lit(`.`),
+    tok(`.`),
     { Rule =.. [Arrow, Head, Body] }.
 
 
 head_atom(Term, V0, V) -->
-    dotted_path(Segments), ws, lit(`(`),
-    head_args(Args, V0, V), ws, lit(`)`),
-    { last(Segments, Local),
-      module_path_name(Segments, Resolved),
-      resolve_named_args(head, Resolved, Args, Positional),
-      ( Segments = [_]
-      -> Term =.. [Local | Positional]
-      ; Term = rel_path(Segments, Positional)
+    dotted_path(Segs), tok(`(`),
+    head_args(Args, V0, V), tok(`)`),
+    { last(Segs, Local),
+      module_path_name(Segs, Resolved),
+      resolve_named_args(head, Resolved, Args, Pos),
+      ( Segs = [_]
+      -> Term =.. [Local | Pos]
+      ; Term = rel_path(Segs, Pos)
       ) }.
 
 head_args(Args, V0, V) --> argsv(atom_arg, Args, V0, V).
@@ -780,30 +766,30 @@ atom_arg(pos(Value), V0, V) --> expr(Value, V0, V).
 
 
 resolve_named_args(_, _, [], []) :- !.
-resolve_named_args(_, _, Args, Positional) :-
+resolve_named_args(_, _, Args, Pos) :-
     ( forall(member(A, Args), A = pos(_))
-    -> maplist(arg_value, Args, Positional)
+    -> maplist(arg_value, Args, Pos)
     ),
     !.
-resolve_named_args(Mode, Rel, Args, Positional) :-
+resolve_named_args(Mode, Rel, Args, Pos) :-
     ( lookup_column_order(Rel, Cols)
-    -> resolve_mixed_args(Mode, Rel, Args, Cols, Positional)
+    -> resolve_mixed_args(Mode, Rel, Args, Cols, Pos)
     ; record_finding(unsupported_surface(named_args_unresolved(Rel))),
-      maplist(arg_value, Args, Positional)
+      maplist(arg_value, Args, Pos)
     ).
 
 arg_value(pos(V), V) :- !.
 arg_value(named(_, V), V).
 
-resolve_mixed_args(Mode, Rel, Args, Cols, Positional) :-
+resolve_mixed_args(Mode, Rel, Args, Cols, Pos) :-
     length(Cols, N),
-    length(Positional, N),
+    length(Pos, N),
     validate_named_columns(Rel, Args, Cols),
-    place_named(Cols, 1, Args, Positional),
+    place_named(Cols, 1, Args, Pos),
     findall(Col, member(named(Col, _), Args), NamedCols),
     findall(I, ( nth1(I, Cols, Col), \+ memberchk(Col, NamedCols) ), FreeIdxs),
     findall(V, member(pos(V), Args), PosValues),
-    fill_partial_slots(Mode, Rel, N, FreeIdxs, PosValues, Positional).
+    fill_partial_slots(Mode, Rel, N, FreeIdxs, PosValues, Pos).
 
 validate_named_columns(Rel, Args, Cols) :-
     findall(Name, member(named(Name, _), Args), Names),
@@ -815,41 +801,37 @@ validate_named_columns(Rel, Args, Cols) :-
     ).
 
 place_named([], _, _, _).
-place_named([Col | Cols], Idx, Args, Positional) :-
-    ( member(named(Col, V), Args) -> nth1(Idx, Positional, V) ; true ),
+place_named([Col | Cols], Idx, Args, Pos) :-
+    ( member(named(Col, V), Args) -> nth1(Idx, Pos, V) ; true ),
     Idx1 is Idx + 1,
-    place_named(Cols, Idx1, Args, Positional).
+    place_named(Cols, Idx1, Args, Pos).
 
-fill_free_slots([], [], _).
-fill_free_slots([I | Is], [V | Vs], Positional) :-
-    nth1(I, Positional, V),
-    fill_free_slots(Is, Vs, Positional).
+fill_free_slots(Is, Vs, Pos) :-
+    maplist({Pos}/[I, V]>>nth1(I, Pos, V), Is, Vs).
 
-fill_partial_slots(Mode, Rel, Arity, FreeIdxs, PosValues, Positional) :-
+fill_partial_slots(Mode, Rel, Arity, FreeIdxs, PosValues, Pos) :-
     length(PosValues, PosCount),
     length(FilledIdxs, PosCount),
     append(FilledIdxs, OmittedIdxs, FreeIdxs),
-    fill_free_slots(FilledIdxs, PosValues, Positional),
-    finish_omitted_slots(Mode, Rel/Arity, OmittedIdxs, Positional).
+    fill_free_slots(FilledIdxs, PosValues, Pos),
+    finish_omitted_slots(Mode, Rel/Arity, OmittedIdxs, Pos).
 
-finish_omitted_slots(body, _, Idxs, Positional) :-
-    fill_anonymous_slots(Idxs, Positional).
-finish_omitted_slots(head, Ref, Idxs, Positional) :-
+finish_omitted_slots(body, _, Idxs, Pos) :-
+    fill_anonymous_slots(Idxs, Pos).
+finish_omitted_slots(head, Ref, Idxs, Pos) :-
     ( Idxs == []
     -> true
     ; record_finding(unsupported_surface(partial_head(Ref))),
-      fill_anonymous_slots(Idxs, Positional)
+      fill_anonymous_slots(Idxs, Pos)
     ).
 
-fill_anonymous_slots([], _).
-fill_anonymous_slots([I | Is], Positional) :-
-    nth1(I, Positional, _),
-    fill_anonymous_slots(Is, Positional).
+fill_anonymous_slots(Is, Pos) :-
+    maplist({Pos}/[I]>>nth1(I, Pos, _), Is).
 
 
 body(Body, V0, V) -->
     ws,
-    ( lit(`(`) -> body(Inner, V0, V1), ws, lit(`)`)
+    ( lit(`(`) -> body(Inner, V0, V1), tok(`)`)
     ; body_item(Inner, V0, V1)
     ),
     ws,
@@ -876,24 +858,24 @@ body_item(Name, V, V) -->
 body_item(Item, V0, V) --> bind_item(Item, V0, V), !.
 body_item(Item, V0, V) --> cmp_item(Item, V0, V), !.
 body_item(not(Atom), V0, V) -->
-    lit(`!`), ident(Name), ws, lit(`(`),
-    arg_exprs(Args, V0, V), ws, lit(`)`), !,
+    lit(`!`), ident(Name), tok(`(`),
+    arg_exprs(Args, V0, V), tok(`)`), !,
     { Atom =.. [Name | Args] }.
 body_item(Item, V0, V) --> relatom_item(Item, V0, V).
 
 
 cst_item(cst(Path, Digest, Language, Query), V0, V) -->
-    word(`cst`), ws, lit(`(`),
-    expr(Path, V0, V1), ws, lit(`,`),
-    expr(Digest, V1, V), ws, lit(`,`),
-    ws, ident(Language), ws, lit(`)`),
-    ws, lit(`{`),
+    word(`cst`), tok(`(`),
+    expr(Path, V0, V1), tok(`,`),
+    expr(Digest, V1, V), tok(`,`),
+    ws, ident(Language), tok(`)`),
+    tok(`{`),
     cst_block(Inner), here(S),
     { parse_cst_query_or_error(Inner, S, Query) }.
 
-parse_cst_query_or_error(Codes, Remaining, Query) :-
+parse_cst_query_or_error(Codes, Rem, Query) :-
     catch(parse_cst_query(Codes, Query), _,
-          ( mark(Remaining), parse_failure(cst_query) )),
+          ( mark(Rem), parse_failure(cst_query) )),
     !.
 
 cst_block([]) --> [0'}], !.
@@ -956,26 +938,30 @@ cst_variable_names([Var | Rest], Vars, Names) :-
 
 keyword_call(Keyword, Inner) -->
     { atom_codes(Keyword, Cs) },
-    word(Cs), ws, lit(`(`),
+    word(Cs), tok(`(`),
     balanced(Inner).
 
 balanced(Inner, S0, S) :- bp(S0, 0, [], Rev, S), reverse(Rev, Inner).
 
-bp([Q | T], D, A, Out, S) :- quote_code(Q), !,
-    bp_quoted(Q, T, [Q | A], A1, S1),
-    bp(S1, D, A1, Out, S).
-bp([0'( | T], D, A, Out, S) :- !, D1 is D + 1, bp(T, D1, [0'( | A], Out, S).
-bp([0') | T], 0, A, A, T) :- !.
-bp([0') | T], D, A, Out, S) :- !, D1 is D - 1, bp(T, D1, [0') | A], Out, S).
-bp([C | T], D, A, Out, S) :- !, bp(T, D, [C | A], Out, S).
+bp([C | T], D, A, Out, S) :-
+    ( quote_code(C) -> bp_quoted(C, T, [C | A], A1, S1), bp(S1, D, A1, Out, S)
+    ; C == 0'( -> D1 is D + 1, bp(T, D1, [C | A], Out, S)
+    ; C == 0') ->
+        ( D == 0 -> Out = A, S = T
+        ; D1 is D - 1, bp(T, D1, [C | A], Out, S)
+        )
+    ; bp(T, D, [C | A], Out, S)
+    ).
 
 quote_code(0'").
 quote_code(0'\').
 
-bp_quoted(Q, [Q, Q | T], A, Out, S) :- !, bp_quoted(Q, T, [Q, Q | A], Out, S).
-bp_quoted(Q, [Q | T], A, [Q | A], T) :- !.
-bp_quoted(Q, [0'\\, E | T], A, Out, S) :- !, bp_quoted(Q, T, [E, 0'\\ | A], Out, S).
-bp_quoted(Q, [C | T], A, Out, S) :- bp_quoted(Q, T, [C | A], Out, S).
+bp_quoted(Q, [C | T], A, Out, S) :-
+    ( C == Q, T = [Q | T1] -> bp_quoted(Q, T1, [Q, Q | A], Out, S)
+    ; C == Q -> Out = [Q | A], S = T
+    ; C == 0'\\, T = [E | T1] -> bp_quoted(Q, T1, [E, 0'\\ | A], Out, S)
+    ; bp_quoted(Q, T, [C | A], Out, S)
+    ).
 
 parse_full(Goal, Codes) :-
     call(Goal, Codes, Left),
@@ -983,12 +969,12 @@ parse_full(Goal, Codes) :-
     ( Left1 == [] -> true ; throw(dl_parse_error(trailing_input(Left1))) ).
 
 rel_atom_term(Term, V0, V) -->
-    ident(Name), ws, lit(`(`),
-    arg_exprs(Args, V0, V), ws, lit(`)`),
+    ident(Name), tok(`(`),
+    arg_exprs(Args, V0, V), tok(`)`),
     { Term =.. [Name | Args] }.
 
 two_args(A, B, V0, V) -->
-    ws, expr(A, V0, V1), ws, lit(`,`), ws, expr(B, V1, V), ws.
+    ws, expr(A, V0, V1), tok(`,`), ws, expr(B, V1, V).
 
 parse_surface_wrapper(rel_atom, 1, Codes, [Atom], V0, V) :-
     parse_full(rel_atom_term(Atom, V0, V), Codes).
@@ -1005,7 +991,7 @@ parse_surface_wrapper(rel_atom_default, 2, Codes, [Atom, Default], V0, V) :-
     parse_full(rel_atom_default_args(Atom, Default, V0, V), Codes).
 
 rel_atom_default_args(Atom, Default, V0, V) -->
-    ws, rel_atom_term(Atom, V0, V1), ws, lit(`,`), ws, expr(Default, V1, V).
+    ws, rel_atom_term(Atom, V0, V1), tok(`,`), ws, expr(Default, V1, V).
 
 arg_exprs(Args, V0, V) --> argsv(expr, Args, V0, V).
 
@@ -1024,16 +1010,17 @@ cmp_op(Op) --> infix_op(guard, Op), !.
 cmp_op(==) --> lit(`=`).
 
 infix_op(Axis, Op) -->
-    { findall(NegLen-(Cs-Candidate),
-              ( surface(Candidate/2, Axis, no_refs, infix(_), _),
-                atom_codes(Candidate, Cs),
-                length(Cs, Len),
-                NegLen is -Len
-              ),
-              Candidates),
-      keysort(Candidates, Ordered),
-      member(_-(Cs-Op), Ordered) },
+    { findall(C, surface(C/2, Axis, no_refs, infix(_), _), Cands),
+      longest_first(Cands, Ordered),
+      member(Op, Ordered),
+      atom_codes(Op, Cs) },
     op_codes(Cs).
+
+neg_length(Atom, NegLen) :- atom_length(Atom, Len), NegLen is -Len.
+longest_first(Atoms, Sorted) :-
+    map_list_to_pairs(neg_length, Atoms, Keyed),
+    keysort(Keyed, Ordered),
+    pairs_values(Ordered, Sorted).
 
 op_codes([F | R]) -->
     ( { code_type(F, alpha) } -> word([F | R]) ; lit([F | R]) ).
@@ -1060,20 +1047,20 @@ partition_hiv([col(Name, _) | Cols], [V | Vs], [Role | Roles], Ids, Salts) :-
     partition_hiv(Cols, Vs, Roles, Ids1, Salts1).
 
 relatom_item(Item, V0, V) -->
-    dotted_path(Segments),
-    { last(Segments, Name), module_path_name(Segments, Resolved) },
+    dotted_path(Segs),
+    { last(Segs, Name), module_path_name(Segs, Resolved) },
     ws,
     ( lit(`!`)
-    -> ws, lit(`(`), head_args(Args, V0, V), ws, lit(`)`),
+    -> tok(`(`), head_args(Args, V0, V), tok(`)`),
        { length(Args, Arity),
          record_finding(unsupported_surface(mutation(Name/Arity))),
-         resolve_named_args(body, Resolved, Args, Positional),
-         Item =.. [Name | Positional] }
-    ; lit(`(`), head_args(Args, V0, V), ws, lit(`)`),
-      { resolve_named_args(body, Resolved, Args, Positional),
-        ( Segments = [_]
-        -> Item =.. [Name | Positional]
-        ; Item = rel_path(Segments, Positional)
+         resolve_named_args(body, Resolved, Args, Pos),
+         Item =.. [Name | Pos] }
+    ; lit(`(`), head_args(Args, V0, V), tok(`)`),
+      { resolve_named_args(body, Resolved, Args, Pos),
+        ( Segs = [_]
+        -> Item =.. [Name | Pos]
+        ; Item = rel_path(Segs, Pos)
         ) }
     ).
 
@@ -1084,15 +1071,9 @@ arithmetic_tiers(Tiers) :-
     findall(P, expression(_/2, arithmetic, P, _, _), Ps),
     sort(Ps, Tiers).
 
-tier_operators(Precedence, Ops) :-
-    findall(NegLen-Op,
-            ( expression(Op/2, arithmetic, Precedence, _, _),
-              atom_length(Op, Len),
-              NegLen is -Len
-            ),
-            Candidates),
-    keysort(Candidates, Ordered),
-    findall(Op, member(_-Op, Ordered), Ops).
+tier_operators(Prec, Ops) :-
+    findall(Op, expression(Op/2, arithmetic, Prec, _, _), Ops0),
+    longest_first(Ops0, Ops).
 
 tier_expr([], E, V0, V) --> factor(E, V0, V).
 tier_expr([P | Tighter], E, V0, V) -->
@@ -1116,7 +1097,7 @@ tier_op([Op | Rest], Matched) -->
 
 factor(E, V0, V) -->
     ws, here(S), { refuse_tagged_brace(S) },
-    ( lit(`(`) -> ws, expr(E, V0, V), ws, lit(`)`)
+    ( lit(`(`) -> ws, expr(E, V0, V), tok(`)`)
     ; bool_lit(E) -> { V = V0 }
     ; float_lit(E) -> { V = V0 }
     ; int_lit(E) -> { V = V0 }
@@ -1149,20 +1130,20 @@ wildcard_var(_) -->
 compound_or_var(E, V0, V) -->
     ident(Name), here(S1), ws,
     ( peek(0'()
-    -> lit(`(`), arg_exprs(Args, V0, V), ws, lit(`)`),
+    -> lit(`(`), arg_exprs(Args, V0, V), tok(`)`),
        { E =.. [Name | Args] }
-    ; { get_or_make_var(Name, V0, Receiver, V) },
-      back(S1), dot_chain(Receiver, E)
+    ; { get_or_make_var(Name, V0, Rec, V) },
+      back(S1), dot_chain(Rec, E)
     ).
 
 dotted_path([Segment | Rest]) -->
     ident(Segment),
     ( dot_then_ident -> dotted_path(Rest) ; { Rest = [] } ).
 
-dot_chain(Receiver, Final) -->
+dot_chain(Rec, Final) -->
     ( dot_then_ident
-    -> ident(Field), dot_chain(dot_get(Receiver, Field), Final)
-    ; { Final = Receiver }
+    -> ident(Field), dot_chain(dot_get(Rec, Field), Final)
+    ; { Final = Rec }
     ).
 
 dot_then_ident([0'. | S], S) :-
@@ -1178,19 +1159,19 @@ braces_term(Term, V0, V) -->
     ; { Term = '{}'(Pairs) },
       brace_pairs(Pairs, V0, V)
     ),
-    ws, lit(`}`).
+    tok(`}`).
 
 brace_pairs((Pair, Rest), V0, V) -->
-    brace_pair(Pair, V0, V1), ws, lit(`,`), !, ws,
+    brace_pair(Pair, V0, V1), tok(`,`), !, ws,
     brace_pairs(Rest, V1, V).
 brace_pairs(Pair, V0, V) --> brace_pair(Pair, V0, V).
 
 brace_pair(Key:Typed, V0, V) -->
-    brace_key(Key, V0, V1), ws, lit(`:`), ws,
+    brace_key(Key, V0, V1), tok(`:`), ws,
     expr(Value, V1, V),
     brace_value_type(Value, Typed).
 
-brace_value_type(Value, Value:Type) --> ws, lit(`:`), !, ws, ident(Type).
+brace_value_type(Value, Value:Type) --> tok(`:`), !, ws, ident(Type).
 brace_value_type(Value, Value) --> [].
 
 brace_key('**', V, V) --> lit(`**`), !.
@@ -1208,4 +1189,4 @@ list_term(Term, V0, V) -->
     ; peek(0']) -> { Term = [], V = V0 }
     ; sepv(expr, Term, V0, V)
     ),
-    ws, lit(`]`).
+    tok(`]`).
