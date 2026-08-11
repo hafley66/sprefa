@@ -214,7 +214,10 @@ report is 0: no fixture in the corpus reaches
 | 1 | error | departure arm writes NULL | `finalize_over_log_fires_on_retention_prune` |
 | 1 | error | keyed replace departure | `keyed_replace_departs_the_old_row` |
 
-Two structural counts inside that set:
+Three structural counts inside that set, 41 of the 69 between them:
+
+- **14** lose an edge arm to the head-scoped `edgestmt` lookup (finding 1
+  below). Their second clause is not reachable from the JSON twin at all.
 
 - **12** fixtures show a rel in the oracle tick log that **no** plan term can
   produce: no rule head, no edge arm head, no arrival. Examples: `agent_turn`
@@ -375,7 +378,7 @@ this lane, so none is fixed here.
 
 | # | defect | receipt | cost of the gap |
 |---|---|---|---|
-| 1 | Edge arms are HEAD-scoped, so a head with two clauses reports its FIRST arm twice and the second arm is lost | `operator_payload/3` findalls `EdgeStatements` by `HeadRef` only (`:603-607`); `json_operator`'s edge branch takes the first `member/2` match (`:131`). In `any_two_tagged_arms_land_on_one_tick`, `map_1` and `map_2` both carry trigger `dispatch_ack/1` writing the literal `acked`; the `dispatch_seal` arm does not appear | at least 1 fixture; the runner now drops the duplicate rather than writing it twice |
+| 1 | Edge arms are HEAD-scoped, so a head with two clauses reports its FIRST arm twice and the second arm is lost | `operator_payload/3` findalls `EdgeStatements` by `HeadRef` only (`:603-607`); `json_operator`'s edge branch takes the first `member/2` match (`:131`). In `any_two_tagged_arms_land_on_one_tick`, `map_1` and `map_2` both carry trigger `dispatch_ack/1` writing the literal `acked`; the `dispatch_seal` arm does not appear | **14 of the 69 failures.** 16 plans have >1 map operator on a head all reporting the same `edgestmt`; 14 of them are not byte-clean. The runner drops the duplicate rather than writing it twice, which is all it can do without the missing arm |
 | 2 | `rel/3`'s `Kind` (`set` / `log`) is dropped | `6_emit_dd_plan.pl:83-84` | the runner cannot tell a log arrival (a second row) from a set arrival (a dedupe). `set_dedups_log_stacks` diffs on exactly that |
 | 3 | Level bundles are also head-scoped, so `rules[]` repeats a head once per clause | `flagship_flow_reach_over_resolved_edges` carries `flow_reach/4`'s identical bundle at `map_2` and `map_3` | wasted `DELETE`+`INSERT` per repeat; the runner dedupes by head |
 | 4 | `ArrivalStatements` (`arrivalstmt/6`) never reaches the JSON | `dd_plan_json_dict` destructures `lowered(_, Ddl, _, _, _, DeltaStatements, _, _)` (`:56`) | the runner hand-builds `INSERT OR IGNORE` / `DELETE`, which is not the emitted arrival semantics |
