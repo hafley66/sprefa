@@ -39,6 +39,9 @@ pub struct Route {
     pub parent: Option<String>,
     /// What the lane is running toward; `None` when spawned without `--goal`.
     pub goal: Option<String>,
+    /// When this lane last registered (`lane create`/dispatch), ISO-8601. The
+    /// wait since-boundary that skips a previous run's result rows.
+    pub registered_at: Option<String>,
 }
 
 /// Read the route map out of the `--mail-dir` registry. Corrupt JSON is an
@@ -85,6 +88,8 @@ fn route_from_value(entry: &Value) -> Route {
             .or_else(|| string_field(object, "source_path")),
         parent: string_field(object, "parent"),
         goal: string_field(object, "goal"),
+        registered_at: string_field(object, "registeredAt")
+            .or_else(|| string_field(object, "registered_at")),
     }
 }
 
@@ -100,6 +105,7 @@ impl Route {
             source_path: None,
             parent: None,
             goal: None,
+            registered_at: None,
         }
     }
 }

@@ -559,6 +559,7 @@ mod tests {
             source_path: None,
             parent: None,
             goal: None,
+            registered_at: None,
         }
     }
 
