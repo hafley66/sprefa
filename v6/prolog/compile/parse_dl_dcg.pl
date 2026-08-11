@@ -59,11 +59,13 @@ parse_dl_source(_, Codes, Prog, Bindings, Findings) :-
     nb_setval(parse_input_length, Len),
     nb_setval(parse_furthest_remaining, Len),
     build_line_starts(Codes),
-    phrase(statements([], VarsFinal, Decls0, Rules0, Queries), Codes, Left),
+    b_setval(dl_vars, []),
+    phrase(statements(Decls0, Rules0, Queries), Codes, Left),
     ( Left == [] -> true ; mark(Left), parse_failure(trailing_input) ),
     resolve_module_path_collisions(Decls0, Decls1),
     normalize_relation_value_decls(Decls1, Decls),
     normalize_host_calls(Decls, Rules0, Rules),
+    b_getval(dl_vars, VarsFinal),
     maplist([Name-Var, Name=Var]>>true, VarsFinal, BindingsRev),
     reverse(BindingsRev, Bindings),
     findall(F, finding_fact(F), Findings),
@@ -219,15 +221,15 @@ normalize_host_body(Decls, Atom, probe(Name, Ins, Outs, Salts)) :-
 normalize_host_body(_, Item, Item).
 
 
-statements(V0, V, Decls, Rules, Queries) -->
+statements(Decls, Rules, Queries) -->
     ws, here(S1),
     ( { S1 == [] }
-    -> { Decls = [], Rules = [], Queries = [], V = V0 }
-    ; ( statement(Kind, Item, V0, V1)
+    -> { Decls = [], Rules = [], Queries = [] }
+    ; ( statement(Kind, Item)
       -> { length(S1, Rem), record_statement(Kind, Item, Rem) }
       ; { parse_failure(statement) }
       ),
-      statements(V1, V, Decls1, Rules1, Queries1),
+      statements(Decls1, Rules1, Queries1),
       { attach(Kind, Item, Decls1, Rules1, Queries1, Decls, Rules, Queries) }
     ).
 
@@ -344,14 +346,17 @@ escape(Q, Q, [Q | M], M) :- !.
 escape(_, O, [0'\\, O | M], M).
 
 
-get_or_make_var(Name, Vars0, Var, Vars) :-
+% dl_vars: b_setval backtrackable global replaces the old V0/V accumulator
+% threading; the trail unwinds it exactly as the threaded pair used to.
+get_or_make_var(Name, Var) :-
+    b_getval(dl_vars, Vars0),
     ( memberchk(Name-Existing, Vars0)
-    -> Var = Existing, Vars = Vars0
-    ; Vars = [Name-Var | Vars0]
+    -> Var = Existing
+    ; b_setval(dl_vars, [Name-Var | Vars0])
     ).
 
-hole_var('_', V, _, V) :- !.
-hole_var(Name, V0, Var, V) :- get_or_make_var(Name, V0, Var, V).
+hole_var('_', _) :- !.
+hole_var(Name, Var) :- get_or_make_var(Name, Var).
 
 
 use_item(Item) -->
@@ -365,26 +370,22 @@ use_item(Item) -->
     ws, [0'.].
 
 
-statement(Kind, Item, V0, V) -->
+statement(Kind, Item) -->
     ws,
-    ( bind_decl_stmt(D) -> { Kind = decl_list, Item = [D], V = V0 }
-    ; rel_stmt(Ds) -> { Kind = decl_list, Item = Ds, V = V0 }
-    ; sh_decl_stmt(D) -> { Kind = decl_list, Item = [D], V = V0 }
-    ; query_stmt(Q, V0, V) -> { Kind = query, Item = Q }
-    ; match_stmt(M, V0, V1) -> { Kind = rule, annotate_cst_item(M, V1, Item), V = V1 }
-    ; rule_stmt(R, V0, V1) -> { Kind = rule, annotate_cst_item(R, V1, Item), V = V1 }
+    ( bind_decl_stmt(D) -> { Kind = decl_list, Item = [D] }
+    ; rel_stmt(Ds) -> { Kind = decl_list, Item = Ds }
+    ; sh_decl_stmt(D) -> { Kind = decl_list, Item = [D] }
+    ; query_stmt(Q) -> { Kind = query, Item = Q }
+    ; ( match_stmt(R) -> [] ; rule_stmt(R) -> [] ),
+      { Kind = rule, b_getval(dl_vars, Vars), annotate_cst_item(R, Vars, Item) }
     ).
 
 
-% parameterized nonterminals via call//N: comma-separated lists, var-threaded
-sepv(P, [X | Xs], V0, V) -->
-    call(P, X, V0, V1), ws,
-    ( lit(`,`) -> ws, sepv(P, Xs, V1, V) ; { Xs = [], V = V1 } ).
-argsv(P, Xs, V0, V) -->
-    ws, ( peek(0')) -> { Xs = [], V = V0 } ; sepv(P, Xs, V0, V) ).
-nv(P, X, V, V) --> call(P, X).
-args(P, Xs) --> argsv(nv(P), Xs, 0, _).
-sep(P, Xs) --> sepv(nv(P), Xs, 0, _).
+% parameterized nonterminals via call//N; one arity now that dl_vars is global
+sep(P, [X | Xs]) -->
+    call(P, X), ws,
+    ( lit(`,`) -> ws, sep(P, Xs) ; { Xs = [] } ).
+args(P, Xs) --> ws, ( peek(0')) -> { Xs = [] } ; sep(P, Xs) ).
 tok(Cs) --> ws, lit(Cs).
 
 
@@ -688,50 +689,50 @@ template_codes([0'\\ | Cs]) --> [0'\\, 0'\\], !, template_codes(Cs).
 template_codes([C | Cs]) --> [C], template_codes(Cs).
 
 
-query_stmt(query(Atom), V0, V) -->
+query_stmt(query(Atom)) -->
     lit(`?`), ws, ident(Name), tok(`(`),
-    head_args(Args, V0, V), tok(`)`), tok(`.`),
+    head_args(Args), tok(`)`), tok(`.`),
     { resolve_named_args(head, Name, Args, Pos),
       Atom =.. [Name | Pos] }.
 
 
-match_stmt(match(Source, Arms), V0, V) -->
-    word(`match`), ws, head_atom(Source, V0, V1), ws,
-    lit(`(`), match_arms(Arms, V1, V), tok(`)`), tok(`.`).
+match_stmt(match(Source, Arms)) -->
+    word(`match`), ws, head_atom(Source), ws,
+    lit(`(`), match_arms(Arms), tok(`)`), tok(`.`).
 
-match_arms(Arms, V0, V) -->
+match_arms(Arms) -->
     ws, ( lit(`;`) -> ws ; [] ),
-    match_arm(First, V0, V1),
-    match_arm_tail(First, Arms, V1, V).
+    match_arm(First),
+    match_arm_tail(First, Arms).
 
-match_arm_tail(First, Arms, V0, V) -->
+match_arm_tail(First, Arms) -->
     ws,
     ( lit(`;`)
-    -> ws, match_arm(Next, V0, V1),
-       match_arm_tail(Next, Rest, V1, V),
+    -> ws, match_arm(Next),
+       match_arm_tail(Next, Rest),
        { Arms = (First ; Rest) }
-    ; { Arms = First, V = V0 }
+    ; { Arms = First }
     ).
 
-match_arm(Arm, V0, V) -->
-    body(Guards, V0, V1), ws,
+match_arm(Arm) -->
+    body(Guards), ws,
     ( lit(`|->`) -> { Arrow = (<-) } ; lit(`|+>`) -> { Arrow = (<+) } ),
-    ws, head_atom(Head, V1, V),
+    ws, head_atom(Head),
     { Arm =.. [Arrow, Head, Guards] }.
 
-rule_stmt(Rule, V0, V) -->
-    head_atom(Head, V0, V1), ws,
-    ( lit(`<-`) -> { Arrow = (<-) }, ws, body(Body, V1, V)
-    ; lit(`<+`) -> { Arrow = (<+) }, ws, body(Body, V1, V)
-    ; { Arrow = (<-), Body = true, V = V1 }
+rule_stmt(Rule) -->
+    head_atom(Head), ws,
+    ( lit(`<-`) -> { Arrow = (<-) }, ws, body(Body)
+    ; lit(`<+`) -> { Arrow = (<+) }, ws, body(Body)
+    ; { Arrow = (<-), Body = true }
     ),
     tok(`.`),
     { Rule =.. [Arrow, Head, Body] }.
 
 
-head_atom(Term, V0, V) -->
+head_atom(Term) -->
     dotted_path(Segs), tok(`(`),
-    head_args(Args, V0, V), tok(`)`),
+    head_args(Args), tok(`)`),
     { last(Segs, Local),
       module_path_name(Segs, Resolved),
       resolve_named_args(head, Resolved, Args, Pos),
@@ -740,13 +741,13 @@ head_atom(Term, V0, V) -->
       ; Term = rel_path(Segs, Pos)
       ) }.
 
-head_args(Args, V0, V) --> argsv(atom_arg, Args, V0, V).
+head_args(Args) --> args(atom_arg, Args).
 
-atom_arg(named(Name, Value), V0, V) -->
+atom_arg(named(Name, Value)) -->
     ident(Name), ws,
     here([0':, Next | _]), { Next \== 0'=, Next \== 0': }, !,
-    lit(`:`), ws, expr(Value, V0, V).
-atom_arg(pos(Value), V0, V) --> expr(Value, V0, V).
+    lit(`:`), ws, expr(Value).
+atom_arg(pos(Value)) --> expr(Value).
 
 
 resolve_named_args(_, _, [], []) :- !.
@@ -813,43 +814,43 @@ fill_anonymous_slots(Is, Pos) :-
     maplist({Pos}/[I]>>nth1(I, Pos, _), Is).
 
 
-body(Body, V0, V) -->
+body(Body) -->
     ws,
-    ( lit(`(`) -> body(Inner, V0, V1), tok(`)`)
-    ; body_item(Inner, V0, V1)
+    ( lit(`(`) -> body(Inner), tok(`)`)
+    ; body_item(Inner)
     ),
     ws,
-    ( lit(`,`) -> ws, body(Rest, V1, V), { Body = (Inner, Rest) }
-    ; { Body = Inner, V = V1 }
+    ( lit(`,`) -> ws, body(Rest), { Body = (Inner, Rest) }
+    ; { Body = Inner }
     ).
 
 
-body_item(Item, V0, V) --> cst_item(Item, V0, V), !.
-body_item(Item, V0, V) -->
+body_item(Item) --> cst_item(Item), !.
+body_item(Item) -->
     { Name = pre, Arity = 2, Shape = rel_atom_default
     ; surface(Name/Arity, _, _, LowerRole, _),
       wrapper_lower_role(LowerRole, Shape, _)
     },
     keyword_call(Name, Inner),
-    { parse_surface_wrapper(Shape, Arity, Inner, Args, V0, V) },
+    { parse_surface_wrapper(Shape, Arity, Inner, Args) },
     !,
     { Item =.. [Name | Args] }.
-body_item(Name, V, V) -->
+body_item(Name) -->
     { surface(Name/0, _, _, word(_), _), atom_codes(Name, Cs) },
     word(Cs), !.
-body_item(Item, V0, V) --> bind_item(Item, V0, V), !.
-body_item(Item, V0, V) --> cmp_item(Item, V0, V), !.
-body_item(not(Atom), V0, V) -->
+body_item(Item) --> bind_item(Item), !.
+body_item(Item) --> cmp_item(Item), !.
+body_item(not(Atom)) -->
     lit(`!`), ident(Name), tok(`(`),
-    arg_exprs(Args, V0, V), tok(`)`), !,
+    args(expr, Args), tok(`)`), !,
     { Atom =.. [Name | Args] }.
-body_item(Item, V0, V) --> relatom_item(Item, V0, V).
+body_item(Item) --> relatom_item(Item).
 
 
-cst_item(cst(Path, Digest, Language, Query), V0, V) -->
+cst_item(cst(Path, Digest, Language, Query)) -->
     word(`cst`), tok(`(`),
-    expr(Path, V0, V1), tok(`,`),
-    expr(Digest, V1, V), tok(`,`),
+    expr(Path), tok(`,`),
+    expr(Digest), tok(`,`),
     ws, ident(Language), tok(`)`),
     tok(`{`),
     cst_block(Inner), here(S),
@@ -949,37 +950,35 @@ parse_full(Goal, Codes) :-
     ws(Left, Left1),
     ( Left1 == [] -> true ; throw(dl_parse_error(trailing_input(Left1))) ).
 
-rel_atom_term(Term, V0, V) -->
+rel_atom_term(Term) -->
     ident(Name), tok(`(`),
-    arg_exprs(Args, V0, V), tok(`)`),
+    args(expr, Args), tok(`)`),
     { Term =.. [Name | Args] }.
 
-comma_pair(P1, P2, A, B, V0, V) -->
-    ws, call(P1, A, V0, V1), tok(`,`), ws, call(P2, B, V1, V).
+comma_pair(P1, P2, A, B) -->
+    ws, call(P1, A), tok(`,`), ws, call(P2, B).
 
-parse_surface_wrapper(atom_list, Arity, Codes, Atoms, V0, V) :-
-    parse_full(sepv(rel_atom_term, Atoms, V0, V), Codes),
+parse_surface_wrapper(atom_list, Arity, Codes, Atoms) :-
+    parse_full(sep(rel_atom_term, Atoms), Codes),
     ( Arity == variadic -> true ; integer(Arity), length(Atoms, Arity) ).
-parse_surface_wrapper(Shape, Arity, Codes, Args, V0, V) :-
-    wrapper_parser(Shape, Arity, Args, V0, V, Goal),
+parse_surface_wrapper(Shape, Arity, Codes, Args) :-
+    wrapper_parser(Shape, Arity, Args, Goal),
     parse_full(Goal, Codes).
 
-wrapper_parser(rel_atom, 1, [Atom], V0, V, rel_atom_term(Atom, V0, V)).
-wrapper_parser(body_item, 1, [Item], V0, V, body_item(Item, V0, V)).
-wrapper_parser(expr, 1, [E], V0, V, expr(E, V0, V)).
-wrapper_parser(expr_pair, 2, [A, B], V0, V, comma_pair(expr, expr, A, B, V0, V)).
-wrapper_parser(rel_atom_default, 2, [Atom, D], V0, V,
-               comma_pair(rel_atom_term, expr, Atom, D, V0, V)).
-
-arg_exprs(Args, V0, V) --> argsv(expr, Args, V0, V).
+wrapper_parser(rel_atom, 1, [Atom], rel_atom_term(Atom)).
+wrapper_parser(body_item, 1, [Item], body_item(Item)).
+wrapper_parser(expr, 1, [E], expr(E)).
+wrapper_parser(expr_pair, 2, [A, B], comma_pair(expr, expr, A, B)).
+wrapper_parser(rel_atom_default, 2, [Atom, D],
+               comma_pair(rel_atom_term, expr, Atom, D)).
 
 
-bind_item(Term, V0, V) -->
-    expr(Lhs, V0, V1), ws, infix_op(bind, Op), ws, expr(Rhs, V1, V),
+bind_item(Term) -->
+    expr(Lhs), ws, infix_op(bind, Op), ws, expr(Rhs),
     { Term =.. [Op, Lhs, Rhs] }.
 
-cmp_item(Term, V0, V) -->
-    expr(Lhs, V0, V1), ws, cmp_op(Op), ws, expr(Rhs, V1, V),
+cmp_item(Term) -->
+    expr(Lhs), ws, cmp_op(Op), ws, expr(Rhs),
     { Term =.. [Op, Lhs, Rhs] }.
 
 cmp_op(=<) --> lit(`<=`), !.
@@ -1018,12 +1017,12 @@ partition_hiv([col(Name, _) | Cols], [V | Vs], [Role | Roles], Ids, Salts) :-
     ),
     partition_hiv(Cols, Vs, Roles, Ids1, Salts1).
 
-relatom_item(Item, V0, V) -->
+relatom_item(Item) -->
     dotted_path(Segs),
     { last(Segs, Name), module_path_name(Segs, Resolved) },
     ws,
     ( lit(`!`) -> { Mut = true }, ws ; { Mut = false } ),
-    lit(`(`), head_args(Args, V0, V), tok(`)`),
+    lit(`(`), head_args(Args), tok(`)`),
     { ( Mut == true
       -> length(Args, Arity),
          record_finding(unsupported_surface(mutation(Name/Arity))),
@@ -1034,7 +1033,7 @@ relatom_item(Item, V0, V) -->
       ) }.
 
 
-expr(E, V0, V) --> { arithmetic_tiers(Tiers) }, tier_expr(Tiers, E, V0, V).
+expr(E) --> { arithmetic_tiers(Tiers) }, tier_expr(Tiers, E).
 
 arithmetic_tiers(Tiers) :-
     findall(P, expression(_/2, arithmetic, P, _, _), Ps),
@@ -1044,19 +1043,19 @@ tier_operators(Prec, Ops) :-
     findall(Op, expression(Op/2, arithmetic, Prec, _, _), Ops0),
     longest_first(Ops0, Ops).
 
-tier_expr([], E, V0, V) --> factor(E, V0, V).
-tier_expr([P | Tighter], E, V0, V) -->
-    tier_expr(Tighter, Acc, V0, V1),
+tier_expr([], E) --> factor(E).
+tier_expr([P | Tighter], E) -->
+    tier_expr(Tighter, Acc),
     { tier_operators(P, Ops) },
-    tier_rest(Ops, Tighter, Acc, E, V1, V).
+    tier_rest(Ops, Tighter, Acc, E).
 
-tier_rest(Ops, Tighter, Acc, E, V0, V) -->
+tier_rest(Ops, Tighter, Acc, E) -->
     here(Start), ws,
     ( tier_op(Ops, Op)
-    -> ws, tier_expr(Tighter, Rhs, V0, V1),
+    -> ws, tier_expr(Tighter, Rhs),
        { Next =.. [Op, Acc, Rhs] },
-       tier_rest(Ops, Tighter, Next, E, V1, V)
-    ; { E = Acc, V = V0 }, back(Start)
+       tier_rest(Ops, Tighter, Next, E)
+    ; { E = Acc }, back(Start)
     ).
 
 tier_op([Op | Rest], Matched) -->
@@ -1064,19 +1063,19 @@ tier_op([Op | Rest], Matched) -->
     ( op_codes(Cs) -> { Matched = Op } ; tier_op(Rest, Matched) ).
 
 
-factor(E, V0, V) -->
+factor(E) -->
     ws, here(S), { no_tagged_brace(S) },
-    ( lit(`(`) -> ws, expr(E, V0, V), tok(`)`)
-    ; bool_lit(E) -> { V = V0 }
-    ; float_lit(E) -> { V = V0 }
-    ; int_lit(E) -> { V = V0 }
-    ; atom_lit(E) -> { V = V0 }
-    ; string_lit(E) -> { V = V0 }
-    ; dollar_var(E, V0, V)
-    ; braces_term(E, V0, V)
-    ; list_term(E, V0, V)
-    ; wildcard_var(E) -> { V = V0 }
-    ; compound_or_var(E, V0, V)
+    ( lit(`(`) -> ws, expr(E), tok(`)`)
+    ; bool_lit(E) -> []
+    ; float_lit(E) -> []
+    ; int_lit(E) -> []
+    ; atom_lit(E) -> []
+    ; string_lit(E) -> []
+    ; dollar_var(E)
+    ; braces_term(E)
+    ; list_term(E)
+    ; wildcard_var(E) -> []
+    ; compound_or_var(E)
     ).
 
 no_tagged_brace(S) :-
@@ -1085,21 +1084,21 @@ no_tagged_brace(S) :-
     ; true
     ).
 
-dollar_var(Var, V0, V) -->
+dollar_var(Var) -->
     [0'$], ident(Name),
-    { hole_var(Name, V0, Var, V) }.
+    { hole_var(Name, Var) }.
 
 bool_lit(bool_lit(B)) -->
     { member(B, [true, false]), atom_codes(B, Cs) }, word(Cs), !.
 
 wildcard_var(_) --> word(`_`).
 
-compound_or_var(E, V0, V) -->
+compound_or_var(E) -->
     ident(Name), here(S1), ws,
     ( peek(0'()
-    -> lit(`(`), arg_exprs(Args, V0, V), tok(`)`),
+    -> lit(`(`), args(expr, Args), tok(`)`),
        { E =.. [Name | Args] }
-    ; { get_or_make_var(Name, V0, Rec, V) },
+    ; { get_or_make_var(Name, Rec) },
       back(S1), dot_chain(Rec, E)
     ).
 
@@ -1119,38 +1118,38 @@ dot_then_ident([0'. | S], S) :-
     !.
 
 
-braces_term(Term, V0, V) -->
+braces_term(Term) -->
     lit(`{`), !, ws,
     ( peek(0'})
-    -> { Term = '{}', V = V0 }
+    -> { Term = '{}' }
     ; { Term = '{}'(Pairs) },
-      brace_pairs(Pairs, V0, V)
+      brace_pairs(Pairs)
     ),
     tok(`}`).
 
-brace_pairs((Pair, Rest), V0, V) -->
-    brace_pair(Pair, V0, V1), tok(`,`), !, ws,
-    brace_pairs(Rest, V1, V).
-brace_pairs(Pair, V0, V) --> brace_pair(Pair, V0, V).
+brace_pairs((Pair, Rest)) -->
+    brace_pair(Pair), tok(`,`), !, ws,
+    brace_pairs(Rest).
+brace_pairs(Pair) --> brace_pair(Pair).
 
-brace_pair(Key:Typed, V0, V) -->
-    brace_key(Key, V0, V1), tok(`:`), ws,
-    expr(Value, V1, V),
+brace_pair(Key:Typed) -->
+    brace_key(Key), tok(`:`), ws,
+    expr(Value),
     ( tok(`:`) -> ws, ident(Type), { Typed = Value:Type } ; { Typed = Value } ).
 
-brace_key('**', V, V) --> lit(`**`), !.
-brace_key($(Var), V0, V) -->
+brace_key('**') --> lit(`**`), !.
+brace_key($(Var)) -->
     [0'$], !, ident(Name),
-    { hole_var(Name, V0, Var, V) }.
-brace_key(Key, V, V) --> atom_lit(Key), !.
-brace_key(Key, V, V) --> string_lit(Text), !, { atom_string(Key, Text) }.
-brace_key(Key, V, V) --> ident(Key).
+    { hole_var(Name, Var) }.
+brace_key(Key) --> atom_lit(Key), !.
+brace_key(Key) --> string_lit(Text), !, { atom_string(Key, Text) }.
+brace_key(Key) --> ident(Key).
 
 
-list_term(Term, V0, V) -->
+list_term(Term) -->
     lit(`[`), !, ws,
-    ( lit(`...`) -> ws, expr(Element, V0, V), { Term = spread(Element) }
-    ; peek(0']) -> { Term = [], V = V0 }
-    ; sepv(expr, Term, V0, V)
+    ( lit(`...`) -> ws, expr(Element), { Term = spread(Element) }
+    ; peek(0']) -> { Term = [] }
+    ; sep(expr, Term)
     ),
     tok(`]`).
