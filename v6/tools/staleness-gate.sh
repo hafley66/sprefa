@@ -7,6 +7,24 @@
 # This script is read-only against the tree. It names stale artifacts and the
 # command owned by the receipt scripts that can refresh them.
 #
+# ── SABOTAGE RECEIPT (run 2026-08-11, reverted; tree clean after) ─────────────
+# @comment-ok: mandated sabotage-receipt documentation, mirrors self-map.sh
+#
+#   Replaced line 1 of v6/ARCH-MAP.md with `# SABOTAGE PROBE LINE-1 2026-08-11`
+#   (was `# v6 architecture map`). Gate output, exactly:
+#     STALENESS_GATE_FAIL v6/ARCH-MAP.md is STALE (checked-in does not
+#     match self-map regeneration)
+#     1c1
+#     < # SABOTAGE PROBE LINE-1 2026-08-11
+#   Reverted with `git checkout -- v6/ARCH-MAP.md`; line 1 restored.
+#   Independent of this probe, the gate FAILS on this base because the
+#   checked-in v6/ARCH-MAP.md is already stale against HEAD sources, a
+#   separate finding (see the report).
+#
+# The discriminating part: the change reaches the gate through the same
+# self-map.sh entry the production rail uses, so a renderer that faked its
+# output would show no diff.
+#
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -116,8 +134,40 @@ check_binary "$REPO_ROOT/v6/sprefa-extract/target/release/extract" \
   "$REPO_ROOT/v6/sprefa-extract/src" "$REPO_ROOT/v6/sprefa-extract/Cargo.toml" \
   "cd $REPO_ROOT/v6/sprefa-extract && cargo build --release --features cli --bin extract"
 
+# ── (c) ARCH-MAP.md half ──────────────────────────────────────────────────────
+# @comment-ok: mandated ARC-MAP staleness gate; self-map entry required by spec
+# Regenerate ARCH-MAP.md through self-map.sh's entry and diff the result
+# against the checked-in release-gate file. The write destination is a literal
+# inside self-map.dl6, so the fresh render lands on the working-tree file; the
+# pre-run bytes are snapshotted first and the tree is restored after.
+
+SELF_MAP_SH="$V6_DIR/tsv2/scripts/self-map.sh"
+ARCH_MAP="$V6_DIR/ARCH-MAP.md"
+ARCH_TMP="${TMP_REGEN:-}"
+if [ -z "$ARCH_TMP" ]; then
+  ARCH_TMP="$(mktemp -d)"
+  trap 'rm -rf "$ARCH_TMP"' EXIT
+fi
+
+if [ ! -f "$SELF_MAP_SH" ]; then
+  fail "self-map entry missing: $SELF_MAP_SH"
+elif [ ! -f "$ARCH_MAP" ]; then
+  fail "ARCH-MAP.md missing: $ARCH_MAP"
+else
+  cp "$ARCH_MAP" "$ARCH_TMP/arch-map.committed"
+  if ! bash "$SELF_MAP_SH" >"$ARCH_TMP/self-map.run.log" 2>&1; then
+    fail "self-map regeneration failed, ARCH-MAP.md not verified: $(tail -1 "$ARCH_TMP/self-map.run.log")"
+  elif ! diff -q "$ARCH_TMP/arch-map.committed" "$ARCH_MAP" >/dev/null 2>&1; then
+    fail "v6/ARCH-MAP.md is STALE (checked-in does not match self-map regeneration)"
+    printf '  fix: cd %s && just self-map && git add ../ARCH-MAP.md\n' "$V6_DIR" >&2
+    diff "$ARCH_TMP/arch-map.committed" "$ARCH_MAP" 2>&1 | head -40 >&2
+  fi
+  # Restore the pre-run bytes so a stale finding leaves no working-tree diff.
+  cp "$ARCH_TMP/arch-map.committed" "$ARCH_MAP"
+fi
+
 if [ "$FAIL" -ne 0 ]; then
   exit 1
 fi
 
-echo "STALENESS_GATE_OK gen-modules current, binaries current"
+echo "STALENESS_GATE_OK gen-modules current, binaries current, ARCH-MAP.md current"
