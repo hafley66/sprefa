@@ -1,0 +1,50 @@
+{
+  "$defs": {
+    "__gen__list_fighter_summary_b424a4b49951eef7": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__gen__list_fighter_summary_b424a4b49951eef7__member": {
+      "additionalProperties":false,
+      "properties": {
+        "idx": {"type":"integer"},
+        "list_id": {"type":"integer"},
+        "value": {"$ref":"#/$defs/fighter_summary"}
+      },
+      "required": ["idx", "list_id", "value" ],
+      "type":"object"
+    },
+    "__gen__list_list_fighter_summary_de80754d44b67a64": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__gen__list_list_fighter_summary_de80754d44b67a64__member": {
+      "additionalProperties":false,
+      "properties": {
+        "idx": {"type":"integer"},
+        "list_id": {"type":"integer"},
+        "value": {"type":"integer"}
+      },
+      "required": ["idx", "list_id", "value" ],
+      "type":"object"
+    },
+    "fighter_summary": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+      "required": ["name", "url" ],
+      "type":"object"
+    },
+    "squad": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"members": {"type":"integer"}},
+      "required": ["id", "members" ],
+      "type":"object"
+    }
+  },
+  "$id":"nested_rel_element_list_round_trips#96bf3c91febff513",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

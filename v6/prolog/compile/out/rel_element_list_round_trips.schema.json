@@ -1,0 +1,34 @@
+{
+  "$defs": {
+    "__gen__list_fighter_summary_b424a4b49951eef7": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__gen__list_fighter_summary_b424a4b49951eef7__member": {
+      "additionalProperties":false,
+      "properties": {
+        "idx": {"type":"integer"},
+        "list_id": {"type":"integer"},
+        "value": {"$ref":"#/$defs/fighter_summary"}
+      },
+      "required": ["idx", "list_id", "value" ],
+      "type":"object"
+    },
+    "fighter_summary": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+      "required": ["name", "url" ],
+      "type":"object"
+    },
+    "squad": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"members": {"type":"integer"}},
+      "required": ["id", "members" ],
+      "type":"object"
+    }
+  },
+  "$id":"rel_element_list_round_trips#f214176517196d17",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
