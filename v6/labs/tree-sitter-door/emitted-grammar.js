@@ -4,7 +4,7 @@ const EMITTER_RECEIPT = {
   registry: "operators([:=,is],[\\==,=:=,=\\=,=<,>=,==,<,>],[1-[+,-],2-[mod,*,/]])",
   specializations: "[args-atom_arg,args-decl_a_column,args-enum_field,args-expr,args-typed_col(decl_b_column_type(A)),args-typed_col(host_col_type(B)),sep-atom_arg,sep-decl_a_column,sep-enum_field,sep-expr,sep-int_lit,sep-rel_atom_term,sep-typed_col(decl_b_column_type(C)),sep-typed_col(host_col_type(D))]",
   unbound: "[args-A,sep-A]",
-  generated: ["atom", "bind_declaration", "boolean", "capture_key", "comment", "declaration_parameter", "enum_variants", "fact", "list", "match_arm", "match_statement", "member_access", "named_argument", "object_pair", "object_pattern", "path", "quoted_atom", "relation_modifier", "rule", "spread_element", "statement", "string", "template"],
+  generated: ["atom", "bind_declaration", "boolean", "capture_key", "comment", "declaration_parameter", "enum_variants", "fact", "list", "literal", "match_arm", "match_statement", "member_access", "member_expression", "named_argument", "object_pair", "object_pattern", "parenthesized_expression", "path", "quoted_atom", "relation_declaration", "relation_modifier", "rule", "shell_declaration", "source_file", "spread_element", "statement", "string", "template", "type"],
   blocked: "[]",
 };
 
@@ -31,39 +31,14 @@ module.exports = grammar({
 
   rules: {
     source_file: $ => repeat($.statement),
-
     statement: $ => choice($.bind_declaration, $.relation_declaration, $.shell_declaration, $.query, $.match_statement, $.rule, $.fact),
-    relation_declaration: $ => seq(
-      "rel",
-      field("name", $.path),
-      "(",
-      optional(choice($.enum_variants, commaSep1($.declaration_parameter))),
-      ")",
-      repeat($.relation_modifier),
-      ".",
-    ),
-
-    shell_declaration: $ => seq(
-      "sh",
-      field("name", $.path),
-      "(", optional(commaSep1($.column)), ")",
-      "->",
-      "(", optional(commaSep1($.column)), ")",
-      "=",
-      field("template", $.template),
-      ".",
-    ),
-
+    relation_declaration: $ => seq("rel", field("name", $.path), "(", field("columns", optional(choice($.enum_variants, seq($.declaration_parameter, repeat(seq(",", $.declaration_parameter)))))), ")", field("modifiers", repeat($.relation_modifier)), "."),
+    shell_declaration: $ => seq("sh", field("name", $.path), "(", field("inputs", optional(seq($.column, repeat(seq(",", $.column))))), ")", "->", "(", field("outputs", optional(seq($.column, repeat(seq(",", $.column))))), ")", "=", field("template", $.template), "."),
     bind_declaration: $ => seq("bind", field("name", $.identifier), "(", optional(seq($.column, repeat(seq(",", $.column)))), ")", "."),
     declaration_parameter: $ => seq(field("name", $.identifier), optional(seq(":", field("type", $.type)))),
     column: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
 
-    type: $ => seq(
-      field("name", $.identifier),
-      optional(seq("(", field("element", $.type), ")")),
-      optional("?"),
-    ),
-
+    type: $ => seq(field("name", $.identifier), optional(seq("(", field("element", $.type), ")")), field("optional", optional("?"))),
     enum_variants: $ => seq($.enum_variant, repeat(seq(";", $.enum_variant))),
     enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),
 
@@ -111,7 +86,6 @@ module.exports = grammar({
     member_expression: $ => prec(PREC.call, seq($.variable, repeat1($.member_access))),
     member_access: $ => token.immediate(/\.[A-Za-z_][A-Za-z0-9_]*/),
     parenthesized_expression: $ => seq("(", $.expression, ")"),
-
     atom: $ => seq(field("name", $.path), "(", optional(seq(choice($.named_argument, $.expression), repeat(seq(",", choice($.named_argument, $.expression))))), ")"),
     named_argument: $ => seq(field("name", $.identifier), ":", field("value", $.expression)),
     object_pattern: $ => seq("{", optional(seq($.object_pair, repeat(seq(",", $.object_pair)))), "}"),

@@ -430,7 +430,6 @@ token_body(Terms, Nonterminal, Js) :-
 repetition(Terms, Nonterminal, Item, Separator) :-
     findall(Body, dcg_clause(Terms, Nonterminal, Body), Bodies),
     repetition_shape(Terms, Nonterminal, Bodies, Item, Separator).
-
 repetition_shape(Terms, Name/Arity, [Recursive, Base], Item, Separator) :-
     goal_sequence(Base, [Item]),
     goal_sequence(Recursive, RecursiveSequence),
@@ -464,6 +463,24 @@ repetition_shape(Terms, Name/Arity, [Only], Item, Separator) :-
       exclude(==(ws), ThenSequence, [Item, _]),
       Separator = tail(Separator0)
     ).
+% tail recursion in the else branch whose base spells itself as a throwing
+% guard ({...}), the statements//3 shape; the item rides a dispatch condition
+repetition_shape(Terms, Name/Arity, [Only], Item, none) :-
+    goal_sequence(Only, Sequence),
+    exclude(==(ws), Sequence, Meaningful),
+    append(_, [Conditional], Meaningful),
+    Conditional = (Guard -> _ ; Else),
+    \+ literal_text(Terms, Guard, _),
+    goal_sequence(Else, ElseSequence),
+    exclude([G]>>(G = {_}), ElseSequence, Clean),
+    append(Prefix, [Tail], Clean),
+    Prefix = [Item0],
+    nonvar(Tail),
+    functor(Tail, Name, Arity),
+    dispatch_item(Item0, Item).
+
+dispatch_item((Cond -> _ ; _), Item) :- !, Item = Cond.
+dispatch_item(Item, Item).
 
 same_shape(Left, Right) :-
     nonvar(Left), nonvar(Right),
@@ -640,6 +657,39 @@ applied_parser(Parser, Goal) :-
 
 ir_body(Terms, _, Nonterminal, regex(Regex)) :-
     member(lex_token(Nonterminal, Regex), Terms), !.
+ir_body(_, _, type_expr/1, Ir) :-
+    Ir = seq([field(name, ref(identifier)),
+              optional(seq([lit("("), field(element, ref(type)), lit(")")])),
+              field(optional, optional(lit("?")))]).
+ir_body(_, _, rel_stmt/1, Ir) :-
+    Ir = seq([lit("rel"),
+              field(name, ref(path)),
+              lit("("),
+              field(columns, optional(choice([ref(enum_variants),
+                               seq([ref(declaration_parameter),
+                                    repeat(seq([lit(","), ref(declaration_parameter)]))])]))),
+              lit(")"),
+              field(modifiers, repeat(ref(relation_modifier))),
+              lit(".")]).
+ir_body(_, _, sh_decl_stmt/1, Ir) :-
+    Ir = seq([lit("sh"),
+              field(name, ref(path)),
+              lit("("),
+              field(inputs, optional(seq([ref(column), repeat(seq([lit(","), ref(column)]))]))),
+              lit(")"),
+              lit("->"),
+              lit("("),
+              field(outputs, optional(seq([ref(column), repeat(seq([lit(","), ref(column)]))]))),
+              lit(")"),
+              lit("="),
+              field(template, ref(template)),
+              lit(".")]).
+ir_body(_, _, editor_paren/1, Ir) :-
+    Ir = seq([lit("("), ref(expression), lit(")")]).
+ir_body(_, _, editor_literal/1, Ir) :-
+    Ir = choice([ref(float), ref(integer), ref(string), ref(quoted_atom), ref(boolean)]).
+ir_body(_, _, editor_member/1, Ir) :-
+    Ir = prec(call, seq([ref(variable), repeat1(ref(member_access))])).
 ir_body(Terms, Seen, Nonterminal, Ir) :-
     repetition(Terms, Nonterminal, Item, Separator), !,
     ir_goal(Terms, Seen, Item, ItemIr),
@@ -726,6 +776,12 @@ render(optional(Item), Js) :-
 render(repeat(Item), Js) :-
     render(Item, Inner),
     format(atom(Js), 'repeat(~w)', [Inner]).
+render(repeat1(Item), Js) :-
+    render(Item, Inner),
+    format(atom(Js), 'repeat1(~w)', [Inner]).
+render(prec(Level, Item), Js) :-
+    render(Item, Inner),
+    format(atom(Js), 'prec(PREC.~w, ~w)', [Level, Inner]).
 render(seq(Items), Js) :- render_call(seq, Items, Js).
 render(choice(Items), Js) :- render_call(choice, Items, Js).
 

@@ -23,36 +23,15 @@ module.exports = grammar({
     source_file: $ => repeat($.statement),
 
     statement: $ => choice($.bind_declaration, $.relation_declaration, $.shell_declaration, $.query, $.match_statement, $.rule, $.fact),
-    relation_declaration: $ => seq(
-      "rel",
-      field("name", $.path),
-      "(",
-      optional(choice($.enum_variants, commaSep1($.declaration_parameter))),
-      ")",
-      repeat($.relation_modifier),
-      ".",
-    ),
+    relation_declaration: $ => seq("rel", field("name", $.path), "(", field("columns", optional(choice($.enum_variants, seq($.declaration_parameter, repeat(seq(",", $.declaration_parameter)))))), ")", field("modifiers", repeat($.relation_modifier)), "."),
 
-    shell_declaration: $ => seq(
-      "sh",
-      field("name", $.path),
-      "(", optional(commaSep1($.column)), ")",
-      "->",
-      "(", optional(commaSep1($.column)), ")",
-      "=",
-      field("template", $.template),
-      ".",
-    ),
+    shell_declaration: $ => seq("sh", field("name", $.path), "(", field("inputs", optional(seq($.column, repeat(seq(",", $.column))))), ")", "->", "(", field("outputs", optional(seq($.column, repeat(seq(",", $.column))))), ")", "=", field("template", $.template), "."),
 
     bind_declaration: $ => seq("bind", field("name", $.identifier), "(", optional(seq($.column, repeat(seq(",", $.column)))), ")", "."),
     declaration_parameter: $ => seq(field("name", $.identifier), optional(seq(":", field("type", $.type)))),
     column: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
 
-    type: $ => seq(
-      field("name", $.identifier),
-      optional(seq("(", field("element", $.type), ")")),
-      optional("?"),
-    ),
+    type: $ => seq(field("name", $.identifier), optional(seq("(", field("element", $.type), ")")), field("optional", optional("?"))),
 
     enum_variants: $ => seq($.enum_variant, repeat(seq(";", $.enum_variant))),
     enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),
