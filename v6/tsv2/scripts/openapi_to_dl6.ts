@@ -274,7 +274,7 @@ export class OpenapiToDl6 {
       const dropped = drop.get(r.name);
       const cols = r.columns.map((c) => {
         if (dropped !== undefined && dropped.has(c.name)) {
-          this.gaps.push(`${r.name}.${c.name}: ${c.type} -> json (0_program_check.pl:342)`);
+          this.gaps.push(`${r.name}.${c.name}: ${c.type} -> json (probe did not compile)`);
           return { name: c.name, type: "json" };
         }
         return c;
