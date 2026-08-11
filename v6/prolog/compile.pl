@@ -25,6 +25,10 @@
             compiler_owned_contract/1
           ]).
 
+% Without this, open/3 inherits the ambient locale: under LC_ALL=C the default
+% is `text` (ASCII) and any non-ASCII fixture throws on write.
+:- set_prolog_flag(encoding, utf8).
+
 :- use_module(library(lists)).
 :- use_module('0_unsupported_messages', []).
 :- use_module('1_expansion',

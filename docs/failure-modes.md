@@ -1781,6 +1781,33 @@ sites but not against new code. **missing** = nothing.
   lab drivers so a seam-literal key drift is a type error instead of a
   silent default.
 
+## 46. A gate that silently inherits the ambient locale (non-ASCII fixture unwritable)
+
+- WHAT IT LOOKS LIKE: a swipl entry point calls `open(File, write, Stream)`
+  with no `encoding(...)` option, so the stream encoding comes from the
+  operator's locale. Under a UTF-8 shell everything passes; under `LC_ALL=C`
+  the `encoding` flag is `text` (ASCII) and the first non-ASCII byte throws
+  `io_error(write, ...)` / `'Encoding cannot represent character'`.
+- HOW IT BIT US: 2026-08-11, a lane running `just text-door` reported
+  `TEXT_DOOR compiled=266 byte_identical=265 failures=1` on
+  `json_nfc_and_nfd_keys_stay_distinct` (the NFC/NFD fixture is the only
+  non-ASCII one), while the same command in the coordinator's shell printed
+  `266/266/0`. The lane stopped and reported instead of improvising, so the
+  cost was one stalled lane rather than a wrong verdict. Measured that day:
+  `LC_ALL=C swipl` reports `encoding=text`; UTF-8 or unset reports `utf8`.
+  51 `open/3` calls across `v6/prolog/**` carried no encoding option.
+- THE LAW: a gate's verdict never depends on the operator's environment.
+  Encoding is declared by the program, never inherited.
+- THE RAIL: enforced at the hub. `v6/prolog/compile.pl` sets
+  `:- set_prolog_flag(encoding, utf8)`, which is the default for every
+  `open/3` in the process; every gate entry point loads that module.
+  Proven fail-pre-fix: `LC_ALL=C bash prolog/compile/scripts/text_door_receipt.sh`
+  printed `265/failures=1` before the flag and `266/failures=0` after, same
+  command, same shell.
+- SAY THIS TO AN AGENT: Never let a locale decide whether a gate passes. If
+  you write a swipl entry point that does not load `compile.pl`, set the
+  encoding flag yourself.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
