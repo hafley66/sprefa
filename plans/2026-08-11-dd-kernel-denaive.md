@@ -205,17 +205,18 @@ keeps the bytes.
 |---|---:|---:|---:|
 | tc_line_24 | 27 | 22 | 1.23x |
 | tc_line_34 | 38 | 25 | 1.52x |
-| tc_line_80 | 310 | 87 | 3.56x |
-| join_300 | 27 | 23 | 1.17x |
+| tc_line_80 | 310 | 80 | 3.88x |
+| join_300 | 27 | 24 | 1.13x |
 | join_700 | 33 | 28 | 1.18x |
-| join_1400 | 46 | 36 | 1.28x |
+| join_1400 | 46 | 37 | 1.24x |
 | reduce_600 | 23 | 21 | 1.10x |
 | reduce_2000 | 26 | 23 | 1.13x |
-| reduce_20000 | 72 | 51 | 1.41x |
+| reduce_20000 | 72 | 52 | 1.38x |
 
 Six of the nine plans are now inside 5 ms of the 20 ms process floor, so those
 ratios are floor-bound and understate the change. `tc_line_80`, the only plan
-with real work left, is the honest one at 3.56x.
+with real work left, is the accurate one at 3.88x. Its peak RSS also falls from
+9328 KB to 3792 KB, which is the per-round state clone going away.
 
 ## Gate output
 
