@@ -112,6 +112,11 @@ enum SubCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect the boop configuration the CLI reads.
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
     /// List registered harness adapters, one per line. (pass 1)
     #[command(hide = true)]
     Harnesses,
@@ -374,6 +379,15 @@ enum PstreeFormat {
     Ndjson,
 }
 
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Print the resolved config path.
+    Path,
+    /// Print the loaded config as pretty JSON, including the defaults a
+    /// missing file produces.
+    Show,
+}
+
 /// Write one line, treating a closed pipe as a normal end. Rust masks SIGPIPE,
 /// so a bare `println!` panics the moment output is piped into `head`.
 fn line(text: &str) {
@@ -562,6 +576,7 @@ fn main() -> Result<()> {
             },
         },
         SubCmd::Whoami { json } => run_whoami(json),
+        SubCmd::Config { cmd } => run_config(cmd),
     }
 }
 
@@ -1570,15 +1585,12 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
     if !brief.exists() {
         anyhow::bail!("brief path does not exist: {}", brief.display());
     }
-    let model = match (
-        requested_model,
-        harness_id.as_str(),
+    let model = config::resolve_spawn_model(
+        requested_model.as_deref(),
+        None,
         config.default_model_preset.as_deref(),
-    ) {
-        (Some(model), _, _) => Some(model),
-        (None, "opencode", Some(preset)) => Some(config::resolve_model(preset, &config_path)?),
-        (None, _, _) => None,
-    };
+        &config_path,
+    )?;
     let prompt = brief.display().to_string();
     // A worktree branches from origin/main unless pinned; the repo-tree shape
     // keeps its own HEAD, where a base of origin/main would be a merge.
@@ -4047,6 +4059,17 @@ fn run_whoami(json: bool) -> Result<()> {
     println!("harness  {}", identity.harness.as_deref().unwrap_or("-"));
     println!("pane     {}", identity.pane.as_deref().unwrap_or("-"));
     println!("rung     {} ({})", rung.as_str(), rung.confidence());
+    Ok(())
+}
+
+/// `boop config path` prints the resolved config path; `boop config show`
+/// prints the loaded config as pretty JSON, including the defaults a missing
+/// file produces.
+fn run_config(cmd: ConfigCmd) -> Result<()> {
+    match cmd {
+        ConfigCmd::Path => line(&config::default_path()?.display().to_string()),
+        ConfigCmd::Show => println!("{}", config::show(&config::default_path()?)?),
+    }
     Ok(())
 }
 
