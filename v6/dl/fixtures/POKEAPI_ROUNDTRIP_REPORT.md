@@ -1,7 +1,9 @@
 # PokeAPI components round-trip report
 
-Source: `/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/pokeapi-strict/v6/dl/fixtures/pokeapi.openapi.yml`
-Generated: `/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/pokeapi-strict/v6/tsv2/gen/pokeapi_gen.dl6`
+Source: `/Users/chrishafley/projects/sprefa/.boop-worktrees/fix/typedecl-mirror/v6/dl/fixtures/pokeapi.openapi.yml`
+Generated: `/Users/chrishafley/projects/sprefa/.boop-worktrees/fix/typedecl-mirror/v6/tsv2/gen/pokeapi_gen.dl6`
+
+Strict round-trip known-gap count: **17 -> 17**
 
 compile (compile_dl6.sh) exit code: 0
 emit-back (4_emit_jsonschema / 5_emit_openapi): OK
@@ -97,9 +99,9 @@ _15 known-gap rows (sample):_
 
 ```
 wrote /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/pe_pokeapi_gen.ts
-COMPILE-TRACE program=pokeapi_gen parse=1266/7228204 plan=603/5060477 lower=157/671298 boot=2/22144 emit=774/7493601 write=28/179 total=2830/20475903
-emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/pokeapi-strict/v6/tsv2/gen/pe_emit/schema.json
-emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/pokeapi-strict/v6/tsv2/gen/pe_emit/openapi.json
+COMPILE-TRACE program=pokeapi_gen parse=1412/7228204 plan=673/5085303 lower=153/671298 boot=1/22144 emit=737/7493601 write=28/179 total=3004/20500729
+emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/fix/typedecl-mirror/v6/tsv2/gen/pe_emit/schema.json
+emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/fix/typedecl-mirror/v6/tsv2/gen/pe_emit/openapi.json
 ```
 
 Converter strict-mode dropped columns (G1) + nullable-array (G2): 75 + 4

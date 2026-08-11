@@ -4340,6 +4340,31 @@ test(generic_template_vocabularies_expand_the_e2e_fixture_identically) :-
     expand_generic_program_raw(Program, Raw),
     Typed == Raw.
 
+test(generic_expansion_retargets_ref_target_schema_mirror) :-
+    Program = prog(
+        [ type_decl(item, [col(item_id, int), col(note, option(text)),
+                           col(items, list(text))]),
+          col_type(item/3, item_id, int),
+          col_type(item/3, note, option(text)),
+          col_type(item/3, items, list(text)),
+          keyed(item/3, [1]),
+          col_type(box/2, id, int),
+          col_type(box/2, subject, item),
+          keyed(box/2, [1]),
+          col_type(bundle/2, id, int),
+          col_type(bundle/2, items, list(item)),
+          keyed(bundle/2, [1]) ],
+        []),
+    expand_generic_program(Program, prog(Expanded, _)),
+    memberchk(type_decl(item,
+                        [col(item_id, int), col(note, int),
+                         col(items, int)]),
+              Expanded),
+    memberchk(col_type(box/2, subject, item), Expanded),
+    memberchk(col_type(_, value, item), Expanded),
+    \+ member(col_type(item/3, note, option(text)), Expanded),
+    \+ member(col_type(item/3, items, list(text)), Expanded).
+
 % The receipt uses the full e2e program. Under fix A, only whole-rel movement
 % is invariant; a within-rel column shuffle changes the program.
 test(generic_e2e_declaration_permutation_is_byte_deterministic) :-
