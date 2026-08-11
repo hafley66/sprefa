@@ -153,7 +153,6 @@ export class OpenapiToDl6 {
   private readonly relNames = new Map<string, string>();
   private readonly rels: IRelDecl[] = [];
   private readonly seenNames = new Map<string, string>();
-  private readonly nullableArrayGaps: string[] = [];
   private readonly mode: "full" | "safe" | "strict";
   private readonly gaps: string[] = [];
   private resolved?: IRelDecl[];
@@ -210,11 +209,6 @@ export class OpenapiToDl6 {
     return [...this.gaps];
   }
 
-  /** Nullable array properties (compiler refuses option(list(...))). */
-  get nullableArrayGapList(): readonly string[] {
-    return [...this.nullableArrayGaps];
-  }
-
   // Spread the current compiler's safe subset over the full mapping output,
   // attributing each rewrite to a gap (see POKEAPI_ROUNDTRIP_REPORT.md).
   private applySafeFalls(): IRelDecl[] {
@@ -240,11 +234,6 @@ export class OpenapiToDl6 {
         const mo = /^option\((.*)\)$/.exec(t);
         if (mo) {
           const inner = mo[1]!;
-          if (inner.startsWith("list(") || inner.startsWith("json_list(")) {
-            this.nullableArrayGaps.push(`${r.name}.${c.name}`);
-            t = inner.startsWith("json_list(") ? inner : rewrite(c.name, "json");
-            return { name: c.name, type: t };
-          }
           // option(ref) where ref is an option-bearer: drop to json
           if (optionBearer.has(inner) && !isScalarType(inner)) {
             return { name: c.name, type: rewrite(c.name, "json") };
@@ -321,10 +310,6 @@ export class OpenapiToDl6 {
     const { inner, nullable } = unwrapNullable(schema);
     const base = this.emitShape(parent, prop, inner);
     if (nullable) {
-      if (base.startsWith("json_list(") || base.startsWith("list(")) {
-        this.nullableArrayGaps.push(`${parent}.${prop}`);
-        return base;
-      }
       if (!base.startsWith("option(")) {
         return `option(${base})`;
       }

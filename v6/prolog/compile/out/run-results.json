@@ -210,6 +210,13 @@
     "final_detail": ""
   },
   {
+    "name": "option_list_column_roundtrips_null_and_present",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "match_classify_response",
     "bucket": "identical",
     "detail": "",

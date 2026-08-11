@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "named": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["id", "name" ],
+      "type":"object"
+    },
+    "tagged": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"integer"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "tags_holder": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    }
+  },
+  "$id":"option_list_column_roundtrips_null_and_present#6d949e44999f5594",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
