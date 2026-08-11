@@ -116,7 +116,10 @@ fn full_pipeline_cold_and_incremental_on_large_repo() {
     // Incremental: one --changed path against the warm db. Should be a small
     // fraction of cold (the corpus did not move; only the one path re-runs).
     let Some(target) = first_rs(&root) else {
-        return;
+        panic!(
+            "perf_stress corpus at {} has no .rs file for the incremental tick",
+            root.display()
+        );
     };
     let t = Instant::now();
     let incr = Command::new(DL)
