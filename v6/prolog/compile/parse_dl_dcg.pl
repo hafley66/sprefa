@@ -29,6 +29,10 @@
 :- dynamic finding_fact/1, rel_column_order_fact/2,
            host_signature_fact/3, source_statement_fact/3.
 
+% lex_token/2 rows sit beside the escape decoders they mirror, so the clauses
+% are spread across the file on purpose.
+:- discontiguous lex_token/2.
+
 % Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
 % bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
 cst_shape(bind_decl_stmt/1, bind_declaration-[name]).
