@@ -22,6 +22,10 @@
 :- op(1150, xfx, <+).
 :- op(700,  xfx, :=).
 
+% Terminal sigils: a module-local prefix-operator DSL. @Codes matches the
+% literal right here, ~Codes adds a word boundary, #Codes skips ws then @Codes.
+:- op(200, fy, [#, @, ~]).
+
 :- dynamic finding_fact/1, rel_column_order_fact/2,
            host_signature_fact/3, source_statement_fact/3.
 
@@ -248,19 +252,19 @@ skip_to_eol(S0, S) :-
     ; S = S0
     ).
 
-lit([], S, S) :- mark(S).
-lit([C | Cs], S0, S) :-
+@([], S, S) :- mark(S).
+@([C | Cs], S0, S) :-
     S0 = [C | Rest],
-    ( lit(Cs, Rest, S) -> true ; mark(S0), fail ).
+    ( @(Cs, Rest, S) -> true ; mark(S0), fail ).
 
-word(Cs, S0, S) :-
-    lit(Cs, S0, S),
+~(Cs, S0, S) :-
+    @(Cs, S0, S),
     \+ (S = [C | _], id_code(C)).
 
 peek(C, S, S) :- S = [C | _], !.
 
 % kw//1: an already-chosen atom spelled as a word terminal
-kw(Word) --> { atom_codes(Word, Cs) }, word(Cs).
+kw(Word) --> { atom_codes(Word, Cs) }, ~Cs.
 
 id_code(0'_) :- !.
 id_code(C) :- code_type(C, alnum).
@@ -363,9 +367,9 @@ hole_var(Name, Var) :- get_or_make_var(Name, Var).
 
 use_item(Item) -->
     ws,
-    ( word(`pub`) -> ws, word(`use`), { F = pub_use } ; word(`use`), { F = use } ),
+    ( ~`pub` -> ws, ~`use`, { F = pub_use } ; ~`use`, { F = use } ),
     ws, string_lit(Text), ws,
-    ( word(`as`), ws, ident(Alias)
+    ( ~`as`, ws, ident(Alias)
     -> { Item =.. [F, Text, Alias] }
     ; { Item =.. [F, Text] }
     ),
@@ -386,18 +390,18 @@ statement(Kind, Item) -->
 % parameterized nonterminals via call//N; one arity now that dl_vars is global
 sep(P, [X | Xs]) -->
     call(P, X), ws,
-    ( lit(`,`) -> ws, sep(P, Xs) ; { Xs = [] } ).
+    ( @`,` -> ws, sep(P, Xs) ; { Xs = [] } ).
 args(P, Xs) --> ws, ( peek(0')) -> { Xs = [] } ; sep(P, Xs) ).
-tok(Cs) --> ws, lit(Cs).
+#Cs --> ws, @Cs.
 
 
 rel_stmt(Decls) -->
-    word(`rel`), ws,
-    ( ident(Name), tok(`(`), enum_variants(Variants), tok(`)`), tok(`.`),
+    ~`rel`, ws,
+    ( ident(Name), #`(`, enum_variants(Variants), #`)`, #`.`,
       { Decls = [enum_decl(Name, Variants)],
         record_enum_column_orders(Name, Variants) }
-    ; dotted_path(Segs), tok(`(`),
-      args(decl_a_column, Specs), tok(`)`),
+    ; dotted_path(Segs), #`(`,
+      args(decl_a_column, Specs), #`)`,
       { length(Specs, Arity),
         module_path_name(Segs, Name),
         Ref = Name/Arity,
@@ -408,7 +412,7 @@ rel_stmt(Decls) -->
       { module_path_decls(Segs, Ref, PathDecls),
         column_less_decls(Ref, Specs, Mods, UnitDecls),
         append([Typed, Mods, PathDecls, UnitDecls], Decls) },
-      tok(`.`)
+      #`.`
     ; decl_b_tail(Decls)
     ).
 
@@ -422,10 +426,10 @@ module_path_decls([_], _, []) :- !.
 module_path_decls(Segs, Ref, [rel_path_decl(Ref, Segs)]).
 
 rel_modifiers(Ref, Decls) -->
-    ( word(`log`) -> { Decl = kind(Ref, log) }
+    ( ~`log` -> { Decl = kind(Ref, log) }
     ; keep_clause(Policy) -> { Decl = keep(Ref, Policy) }
     ; key_clause(Positions) -> { Decl = keyed(Ref, Positions) }
-    ; word(`set`)
+    ; ~`set`
     -> { unsupported(removed_word(set)), Decl = none }
     ), !,
     ws, rel_modifiers(Ref, Rest),
@@ -434,29 +438,29 @@ rel_modifiers(_, []) --> [].
 
 decl_a_column(column(Name, Type)) -->
     ident(Name), ws,
-    ( lit(`:`) -> ws, type_expr(Type) ; { Type = none } ).
+    ( @`:` -> ws, type_expr(Type) ; { Type = none } ).
 
 type_expr(Type) -->
     type_base(Base),
-    ( lit(`?`) -> { Type = option(Base) } ; { Type = Base } ).
+    ( @`?` -> { Type = option(Base) } ; { Type = Base } ).
 
 type_base(T) --> { scalar_column_type(T) }, kw(T), !.
 type_base(T) -->
     { member(W, [option, json_list]) ; list_type_word(W) },
     kw(W), !,
-    tok(`(`), ws, type_expr(E), tok(`)`),
+    #`(`, ws, type_expr(E), #`)`,
     { T =.. [W, E] }.
 type_base(Name) --> ident(Name).
 
 enum_variants((First ; Rest)) -->
-    enum_variant(First), tok(`;`), ws, enum_variants(Rest).
+    enum_variant(First), #`;`, ws, enum_variants(Rest).
 enum_variants(Variant) --> enum_variant(Variant).
 
 enum_variant(Variant) -->
-    ws, ident(Name), tok(`(`), args(enum_field, Fields), tok(`)`),
+    ws, ident(Name), #`(`, args(enum_field, Fields), #`)`,
     { Variant =.. [Name | Fields] }.
 
-enum_field(Col:Type) --> ident(Col), tok(`:`), ws, ident(Type).
+enum_field(Col:Type) --> ident(Col), #`:`, ws, ident(Type).
 
 record_enum_column_orders(Rel, Variants) :-
     tag_rel_name(Rel, Tag),
@@ -487,23 +491,23 @@ typed_decl_entries(Ref, Specs, Decls) :-
             Decls).
 
 keep_clause(Policy) -->
-    word(`keep`), tok(`(`), ws,
-    ( word(`all`) -> { Policy = all }
-    ; word(`count`), tok(`(`), ws, int_lit(N), tok(`)`)
+    ~`keep`, #`(`, ws,
+    ( ~`all` -> { Policy = all }
+    ; ~`count`, #`(`, ws, int_lit(N), #`)`
     -> { Policy = count(N) }
     ),
-    tok(`)`).
+    #`)`.
 
 key_clause(Positions) -->
-    word(`key`), tok(`(`), ws, sep(int_lit, Positions), tok(`)`).
+    ~`key`, #`(`, ws, sep(int_lit, Positions), #`)`.
 
 
 decl_b_tail(Decls) -->
-    ( lit(`(`) -> ws, int_lit(Ret), tok(`)`), { HasRetention = true }
+    ( @`(` -> ws, int_lit(Ret), #`)`, { HasRetention = true }
     ; { HasRetention = false }
     ),
-    ws, ident(Name), tok(`(`),
-    decl_b_columns(Name, Specs), tok(`)`), tok(`.`),
+    ws, ident(Name), #`(`,
+    decl_b_columns(Name, Specs), #`)`, #`.`,
     { length(Specs, Arity),
       Ref = Name/Arity,
       record_spec_names(Name, Specs),
@@ -516,7 +520,7 @@ decl_b_tail(Decls) -->
 decl_b_columns(Rel, Specs) --> args(typed_col(decl_b_column_type(Rel)), Specs).
 
 typed_col(TypeP, column(Col, Type)) -->
-    ident(Col), tok(`:`), ws, call(TypeP, Col, Type).
+    ident(Col), #`:`, ws, call(TypeP, Col, Type).
 
 decl_b_column_type(Rel, Col, none) -->
     coltype(W), { W \== none }, !,
@@ -526,7 +530,7 @@ decl_b_column_type(_, _, Type) --> type_expr(Type).
 coltype(W) -->
     { member(W, ['Key', 'Min', 'Max']) },
     kw(W), !,
-    tok(`(`), ws, ident(_), tok(`)`).
+    #`(`, ws, ident(_), #`)`.
 coltype(none) --> ident(_).
 
 
@@ -645,17 +649,17 @@ scalar_column_type(T) :- member(T, [int, text, json, bool, float]).
 
 
 bind_decl_stmt(bind_decl(Name, Cols)) -->
-    word(`bind`), ws, ident(Name), tok(`(`),
-    decl_b_columns(Name, Specs), tok(`)`), tok(`.`),
+    ~`bind`, ws, ident(Name), #`(`,
+    decl_b_columns(Name, Specs), #`)`, #`.`,
     { specs_to_columns(Specs, Cols),
       record_spec_names(Name, Specs) }.
 
 sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
-    word(`sh`), ws, ident(Name), tok(`(`),
-    decl_b_columns(Name, InSpecs), tok(`)`), ws,
-    lit(`->`), tok(`(`),
-    host_output_columns(Name, OutSpecs), tok(`)`), ws,
-    lit(`=`), ws, template_lit(Template), tok(`.`),
+    ~`sh`, ws, ident(Name), #`(`,
+    decl_b_columns(Name, InSpecs), #`)`, ws,
+    @`->`, #`(`,
+    host_output_columns(Name, OutSpecs), #`)`, ws,
+    @`=`, ws, template_lit(Template), #`.`,
     { specs_to_columns(InSpecs, Ins),
       specs_to_columns(OutSpecs, Outs),
       append(InSpecs, OutSpecs, Specs),
@@ -663,9 +667,9 @@ sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
       record_host_signature(Name, Ins, Outs) }.
 
 sh_decl_stmt(unsupported_host_decl(Name, Cols)) -->
-    word(`sh`), ws, ident(Name), tok(`(`),
-    decl_b_columns(Name, Specs), tok(`)`), ws,
-    lit(`=`), ws, template_lit(_), tok(`.`),
+    ~`sh`, ws, ident(Name), #`(`,
+    decl_b_columns(Name, Specs), #`)`, ws,
+    @`=`, ws, template_lit(_), #`.`,
     { specs_to_columns(Specs, Cols),
       length(Cols, Arity),
       record_spec_names(Name, Specs),
@@ -692,24 +696,24 @@ template_codes([C | Cs]) --> [C], template_codes(Cs).
 
 
 query_stmt(query(Atom)) -->
-    lit(`?`), ws, ident(Name), tok(`(`),
-    head_args(Args), tok(`)`), tok(`.`),
+    @`?`, ws, ident(Name), #`(`,
+    head_args(Args), #`)`, #`.`,
     { resolve_named_args(head, Name, Args, Pos),
       Atom =.. [Name | Pos] }.
 
 
 match_stmt(match(Source, Arms)) -->
-    word(`match`), ws, head_atom(Source), ws,
-    lit(`(`), match_arms(Arms), tok(`)`), tok(`.`).
+    ~`match`, ws, head_atom(Source), ws,
+    @`(`, match_arms(Arms), #`)`, #`.`.
 
 match_arms(Arms) -->
-    ws, ( lit(`;`) -> ws ; [] ),
+    ws, ( @`;` -> ws ; [] ),
     match_arm(First),
     match_arm_tail(First, Arms).
 
 match_arm_tail(First, Arms) -->
     ws,
-    ( lit(`;`)
+    ( @`;`
     -> ws, match_arm(Next),
        match_arm_tail(Next, Rest),
        { Arms = (First ; Rest) }
@@ -718,23 +722,23 @@ match_arm_tail(First, Arms) -->
 
 match_arm(Arm) -->
     body(Guards), ws,
-    ( lit(`|->`) -> { Arrow = (<-) } ; lit(`|+>`) -> { Arrow = (<+) } ),
+    ( @`|->` -> { Arrow = (<-) } ; @`|+>` -> { Arrow = (<+) } ),
     ws, head_atom(Head),
     { Arm =.. [Arrow, Head, Guards] }.
 
 rule_stmt(Rule) -->
     head_atom(Head), ws,
-    ( lit(`<-`) -> { Arrow = (<-) }, ws, body(Body)
-    ; lit(`<+`) -> { Arrow = (<+) }, ws, body(Body)
+    ( @`<-` -> { Arrow = (<-) }, ws, body(Body)
+    ; @`<+` -> { Arrow = (<+) }, ws, body(Body)
     ; { Arrow = (<-), Body = true }
     ),
-    tok(`.`),
+    #`.`,
     { Rule =.. [Arrow, Head, Body] }.
 
 
 head_atom(Term) -->
-    dotted_path(Segs), tok(`(`),
-    head_args(Args), tok(`)`),
+    dotted_path(Segs), #`(`,
+    head_args(Args), #`)`,
     { last(Segs, Local),
       module_path_name(Segs, Resolved),
       resolve_named_args(head, Resolved, Args, Pos),
@@ -748,7 +752,7 @@ head_args(Args) --> args(atom_arg, Args).
 atom_arg(named(Name, Value)) -->
     ident(Name), ws,
     here([0':, Next | _]), { Next \== 0'=, Next \== 0': }, !,
-    lit(`:`), ws, expr(Value).
+    @`:`, ws, expr(Value).
 atom_arg(pos(Value)) --> expr(Value).
 
 
@@ -818,11 +822,11 @@ fill_anonymous_slots(Is, Pos) :-
 
 body(Body) -->
     ws,
-    ( lit(`(`) -> body(Inner), tok(`)`)
+    ( @`(` -> body(Inner), #`)`
     ; body_item(Inner)
     ),
     ws,
-    ( lit(`,`) -> ws, body(Rest), { Body = (Inner, Rest) }
+    ( @`,` -> ws, body(Rest), { Body = (Inner, Rest) }
     ; { Body = Inner }
     ).
 
@@ -833,7 +837,7 @@ body_item(Item) -->
     ; surface(Name/Arity, _, _, LowerRole, _),
       wrapper_lower_role(LowerRole, Shape, _)
     },
-    kw(Name), tok(`(`), balanced(Inner),
+    kw(Name), #`(`, balanced(Inner),
     { parse_surface_wrapper(Shape, Arity, Inner, Args) },
     !,
     { Item =.. [Name | Args] }.
@@ -842,18 +846,18 @@ body_item(Name) -->
 body_item(Item) --> infix_item(infix_op(bind), Item), !.
 body_item(Item) --> infix_item(cmp_op, Item), !.
 body_item(not(Atom)) -->
-    lit(`!`), ident(Name), tok(`(`),
-    args(expr, Args), tok(`)`), !,
+    @`!`, ident(Name), #`(`,
+    args(expr, Args), #`)`, !,
     { Atom =.. [Name | Args] }.
 body_item(Item) --> relatom_item(Item).
 
 
 cst_item(cst(Path, Digest, Language, Query)) -->
-    word(`cst`), tok(`(`),
-    expr(Path), tok(`,`),
-    expr(Digest), tok(`,`),
-    ws, ident(Language), tok(`)`),
-    tok(`{`),
+    ~`cst`, #`(`,
+    expr(Path), #`,`,
+    expr(Digest), #`,`,
+    ws, ident(Language), #`)`,
+    #`{`,
     cst_block(Inner), here(S),
     { parse_cst_query_or_error(Inner, S, Query) }.
 
@@ -939,12 +943,12 @@ parse_full(Goal, Codes) :-
     ( Left1 == [] -> true ; throw(dl_parse_error(trailing_input(Left1))) ).
 
 rel_atom_term(Term) -->
-    ident(Name), tok(`(`),
-    args(expr, Args), tok(`)`),
+    ident(Name), #`(`,
+    args(expr, Args), #`)`,
     { Term =.. [Name | Args] }.
 
 comma_pair(P1, P2, A, B) -->
-    ws, call(P1, A), tok(`,`), ws, call(P2, B).
+    ws, call(P1, A), #`,`, ws, call(P2, B).
 
 parse_surface_wrapper(atom_list, Arity, Codes, Atoms) :-
     parse_full(sep(rel_atom_term, Atoms), Codes),
@@ -966,10 +970,10 @@ infix_item(OpParser, Term) -->
     expr(Lhs), ws, call(OpParser, Op), ws, expr(Rhs),
     { Term =.. [Op, Lhs, Rhs] }.
 
-cmp_op(=<) --> lit(`<=`), !.
-cmp_op(\==) --> lit(`!=`), !.
+cmp_op(=<) --> @`<=`, !.
+cmp_op(\==) --> @`!=`, !.
 cmp_op(Op) --> infix_op(guard, Op), !.
-cmp_op(==) --> lit(`=`).
+cmp_op(==) --> @`=`.
 
 infix_op(Axis, Op) -->
     { findall(C, surface(C/2, Axis, no_refs, infix(_), _), Cands),
@@ -985,7 +989,7 @@ longest_first(Atoms, Sorted) :-
     pairs_values(Ordered, Sorted).
 
 op_codes([F | R]) -->
-    ( { code_type(F, alpha) } -> word([F | R]) ; lit([F | R]) ).
+    ( { code_type(F, alpha) } -> ~[F | R] ; @[F | R] ).
 
 
 split_probe_values(InCount, Values, Ins, Outs) :-
@@ -1006,8 +1010,8 @@ relatom_item(Item) -->
     dotted_path(Segs),
     { last(Segs, Name), module_path_name(Segs, Resolved) },
     ws,
-    ( lit(`!`) -> { Mut = true }, ws ; { Mut = false } ),
-    lit(`(`), head_args(Args), tok(`)`),
+    ( @`!` -> { Mut = true }, ws ; { Mut = false } ),
+    @`(`, head_args(Args), #`)`,
     { ( Mut == true
       -> length(Args, Arity),
          unsupported(mutation(Name/Arity)),
@@ -1050,7 +1054,7 @@ tier_op([Op | Rest], Matched) -->
 
 factor(E) -->
     ws, here(S), { no_tagged_brace(S) },
-    ( lit(`(`) -> ws, expr(E), tok(`)`)
+    ( @`(` -> ws, expr(E), #`)`
     ; bool_lit(E) -> []
     ; float_lit(E) -> []
     ; int_lit(E) -> []
@@ -1076,12 +1080,12 @@ dollar_var(Var) -->
 bool_lit(bool_lit(B)) -->
     { member(B, [true, false]) }, kw(B), !.
 
-wildcard_var(_) --> word(`_`).
+wildcard_var(_) --> ~`_`.
 
 compound_or_var(E) -->
     ident(Name), here(S1), ws,
     ( peek(0'()
-    -> lit(`(`), args(expr, Args), tok(`)`),
+    -> @`(`, args(expr, Args), #`)`,
        { E =.. [Name | Args] }
     ; { get_or_make_var(Name, Rec) },
       back(S1), dot_chain(Rec, E)
@@ -1104,25 +1108,25 @@ dot_then_ident([0'. | S], S) :-
 
 
 braces_term(Term) -->
-    lit(`{`), !, ws,
+    @`{`, !, ws,
     ( peek(0'})
     -> { Term = '{}' }
     ; { Term = '{}'(Pairs) },
       brace_pairs(Pairs)
     ),
-    tok(`}`).
+    #`}`.
 
 brace_pairs((Pair, Rest)) -->
-    brace_pair(Pair), tok(`,`), !, ws,
+    brace_pair(Pair), #`,`, !, ws,
     brace_pairs(Rest).
 brace_pairs(Pair) --> brace_pair(Pair).
 
 brace_pair(Key:Typed) -->
-    brace_key(Key), tok(`:`), ws,
+    brace_key(Key), #`:`, ws,
     expr(Value),
-    ( tok(`:`) -> ws, ident(Type), { Typed = Value:Type } ; { Typed = Value } ).
+    ( #`:` -> ws, ident(Type), { Typed = Value:Type } ; { Typed = Value } ).
 
-brace_key('**') --> lit(`**`), !.
+brace_key('**') --> @`**`, !.
 brace_key($(Var)) -->
     [0'$], !, ident(Name),
     { hole_var(Name, Var) }.
@@ -1132,9 +1136,9 @@ brace_key(Key) --> ident(Key).
 
 
 list_term(Term) -->
-    lit(`[`), !, ws,
-    ( lit(`...`) -> ws, expr(Element), { Term = spread(Element) }
+    @`[`, !, ws,
+    ( @`...` -> ws, expr(Element), { Term = spread(Element) }
     ; peek(0']) -> { Term = [] }
     ; sep(expr, Term)
     ),
-    tok(`]`).
+    #`]`.
