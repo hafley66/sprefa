@@ -368,8 +368,7 @@ use_item(Item) -->
 statement(Kind, Item, V0, V) -->
     ws,
     ( bind_decl_stmt(D) -> { Kind = decl_list, Item = [D], V = V0 }
-    ; decl_a_stmt(Ds) -> { Kind = decl_list, Item = Ds, V = V0 }
-    ; decl_b_stmt(Ds) -> { Kind = decl_list, Item = Ds, V = V0 }
+    ; rel_stmt(Ds) -> { Kind = decl_list, Item = Ds, V = V0 }
     ; sh_decl_stmt(D) -> { Kind = decl_list, Item = [D], V = V0 }
     ; query_stmt(Q, V0, V) -> { Kind = query, Item = Q }
     ; match_stmt(M, V0, V1) -> { Kind = rule, annotate_cst_item(M, V1, Item), V = V1 }
@@ -389,26 +388,27 @@ sep(P, Xs) --> sepv(nv(P), Xs, 0, _).
 tok(Cs) --> ws, lit(Cs).
 
 
-decl_a_stmt([enum_decl(Name, Variants)]) -->
-    word(`rel`), ws, ident(Name), tok(`(`),
-    enum_variants(Variants), tok(`)`), tok(`.`),
-    { record_enum_column_orders(Name, Variants) }.
-
-decl_a_stmt(Decls) -->
-    word(`rel`), ws, dotted_path(Segs), tok(`(`),
-    args(decl_a_column, Specs), tok(`)`),
-    { length(Specs, Arity),
-      module_path_name(Segs, Name),
-      Ref = Name/Arity,
-      spec_names(Specs, Cols),
-      record_cols(Name, Cols) },
-    ws,
-    { typed_decl_entries(Ref, Specs, Typed) },
-    rel_modifiers(Ref, Mods),
-    { module_path_decls(Segs, Ref, PathDecls),
-      column_less_decls(Ref, Specs, Mods, UnitDecls),
-      append([Typed, Mods, PathDecls, UnitDecls], Decls) },
-    tok(`.`).
+rel_stmt(Decls) -->
+    word(`rel`), ws,
+    ( ident(Name), tok(`(`), enum_variants(Variants), tok(`)`), tok(`.`),
+      { Decls = [enum_decl(Name, Variants)],
+        record_enum_column_orders(Name, Variants) }
+    ; dotted_path(Segs), tok(`(`),
+      args(decl_a_column, Specs), tok(`)`),
+      { length(Specs, Arity),
+        module_path_name(Segs, Name),
+        Ref = Name/Arity,
+        spec_names(Specs, Cols),
+        record_cols(Name, Cols) },
+      ws,
+      { typed_decl_entries(Ref, Specs, Typed) },
+      rel_modifiers(Ref, Mods),
+      { module_path_decls(Segs, Ref, PathDecls),
+        column_less_decls(Ref, Specs, Mods, UnitDecls),
+        append([Typed, Mods, PathDecls, UnitDecls], Decls) },
+      tok(`.`)
+    ; decl_b_tail(Decls)
+    ).
 
 column_less_decls(_, Specs, _, []) :- Specs \== [], !.
 column_less_decls(Ref, _, Mods, Decls) :-
@@ -419,16 +419,15 @@ module_path_name(Segs, Name) :- atomic_list_concat(Segs, '__', Name).
 module_path_decls([_], _, []) :- !.
 module_path_decls(Segs, Ref, [rel_path_decl(Ref, Segs)]).
 
-rel_modifiers(Ref, [Decl | Rest]) -->
+rel_modifiers(Ref, Decls) -->
     ( word(`log`) -> { Decl = kind(Ref, log) }
     ; keep_clause(Policy) -> { Decl = keep(Ref, Policy) }
     ; key_clause(Positions) -> { Decl = keyed(Ref, Positions) }
+    ; word(`set`)
+    -> { record_finding(unsupported_surface(removed_word(set))), Decl = none }
     ), !,
-    ws, rel_modifiers(Ref, Rest).
-rel_modifiers(Ref, Decls) -->
-    word(`set`), !,
-    { record_finding(unsupported_surface(removed_word(set))) },
-    ws, rel_modifiers(Ref, Decls).
+    ws, rel_modifiers(Ref, Rest),
+    { Decl == none -> Decls = Rest ; Decls = [Decl | Rest] }.
 rel_modifiers(_, []) --> [].
 
 decl_a_column(column(Name, Type)) -->
@@ -495,8 +494,7 @@ key_clause(Positions) -->
     word(`key`), tok(`(`), ws, sep(int_lit, Positions), tok(`)`).
 
 
-decl_b_stmt(Decls) -->
-    word(`rel`), ws,
+decl_b_tail(Decls) -->
     ( lit(`(`) -> ws, int_lit(Ret), tok(`)`), { HasRetention = true }
     ; { HasRetention = false }
     ),
@@ -827,13 +825,11 @@ body(Body, V0, V) -->
 
 
 body_item(Item, V0, V) --> cst_item(Item, V0, V), !.
-body_item(pre(Atom, Seed), V0, V) -->
-    keyword_call(pre, Inner),
-    { parse_surface_wrapper(rel_atom_default, 2, Inner, [Atom, Seed], V0, V) },
-    !.
 body_item(Item, V0, V) -->
-    { surface(Name/Arity, _, _, LowerRole, _),
-      wrapper_lower_role(LowerRole, Shape, _) },
+    { Name = pre, Arity = 2, Shape = rel_atom_default
+    ; surface(Name/Arity, _, _, LowerRole, _),
+      wrapper_lower_role(LowerRole, Shape, _)
+    },
     keyword_call(Name, Inner),
     { parse_surface_wrapper(Shape, Arity, Inner, Args, V0, V) },
     !,
@@ -958,8 +954,8 @@ rel_atom_term(Term, V0, V) -->
     arg_exprs(Args, V0, V), tok(`)`),
     { Term =.. [Name | Args] }.
 
-two_args(A, B, V0, V) -->
-    ws, expr(A, V0, V1), tok(`,`), ws, expr(B, V1, V).
+comma_pair(P1, P2, A, B, V0, V) -->
+    ws, call(P1, A, V0, V1), tok(`,`), ws, call(P2, B, V1, V).
 
 parse_surface_wrapper(atom_list, Arity, Codes, Atoms, V0, V) :-
     parse_full(sepv(rel_atom_term, Atoms, V0, V), Codes),
@@ -971,12 +967,9 @@ parse_surface_wrapper(Shape, Arity, Codes, Args, V0, V) :-
 wrapper_parser(rel_atom, 1, [Atom], V0, V, rel_atom_term(Atom, V0, V)).
 wrapper_parser(body_item, 1, [Item], V0, V, body_item(Item, V0, V)).
 wrapper_parser(expr, 1, [E], V0, V, expr(E, V0, V)).
-wrapper_parser(expr_pair, 2, [A, B], V0, V, two_args(A, B, V0, V)).
+wrapper_parser(expr_pair, 2, [A, B], V0, V, comma_pair(expr, expr, A, B, V0, V)).
 wrapper_parser(rel_atom_default, 2, [Atom, D], V0, V,
-               rel_atom_default_args(Atom, D, V0, V)).
-
-rel_atom_default_args(Atom, Default, V0, V) -->
-    ws, rel_atom_term(Atom, V0, V1), tok(`,`), ws, expr(Default, V1, V).
+               comma_pair(rel_atom_term, expr, Atom, D, V0, V)).
 
 arg_exprs(Args, V0, V) --> argsv(expr, Args, V0, V).
 
@@ -1072,7 +1065,7 @@ tier_op([Op | Rest], Matched) -->
 
 
 factor(E, V0, V) -->
-    ws, here(S), { refuse_tagged_brace(S) },
+    ws, here(S), { no_tagged_brace(S) },
     ( lit(`(`) -> ws, expr(E, V0, V), tok(`)`)
     ; bool_lit(E) -> { V = V0 }
     ; float_lit(E) -> { V = V0 }
@@ -1086,7 +1079,7 @@ factor(E, V0, V) -->
     ; compound_or_var(E, V0, V)
     ).
 
-refuse_tagged_brace(S) :-
+no_tagged_brace(S) :-
     ( ident(Name, S, [0'{ | _])
     -> throw(unsupported_construct(tagged_brace_reserved(Name)))
     ; true
@@ -1099,9 +1092,7 @@ dollar_var(Var, V0, V) -->
 bool_lit(bool_lit(B)) -->
     { member(B, [true, false]), atom_codes(B, Cs) }, word(Cs), !.
 
-wildcard_var(_) -->
-    lit(`_`), here(S),
-    { \+ (S = [C | _], id_code(C)) }.
+wildcard_var(_) --> word(`_`).
 
 compound_or_var(E, V0, V) -->
     ident(Name), here(S1), ws,
