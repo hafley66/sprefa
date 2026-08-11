@@ -269,16 +269,14 @@ target, the disk-class middle made honest. Until it lands, `dl6-bench-full`
 is compared only against the in-RAM ceiling, with the sqlite middle inferred
 from the store rig's sqlite strategies.
 
-**Status.** LANDING. The `labs/exec_shootout/sqlite_baseline` binary is absent
-at this lane's base sha; it is tracked in a parallel lane and enters on land.
-It is listed here and in the inventory, but it is deliberately NOT in
-`just perf-all` yet — a bench that does not exist at the base cannot be wired
-into the battery. On land, add it to `perf-all` and bank its numbers to
-`dl6/BASELINE.md` + json.
+**Status.** LANDED. The `labs/exec_shootout/sqlite_baseline` binary exists on
+disk (committed) and is wired into `just perf-all` (grid_10000, naive variant).
+Its numbers are banked in `labs/exec_shootout/dl6/BASELINE.md`.
 
-**Run command.** (once landed) `cd v6/labs/exec_shootout/sqlite_baseline && ...`
+**Run command.** `cd v6/labs/exec_shootout/sqlite_baseline && cargo build --release && ./target/release/sqlite_baseline --case grid_10000 --variant naive --runs 3`
 
-**Expected wall time.** N/A until landed.
+**Expected wall time.** single grid_10000 naive run ~1.5s (best of 3); the crate
+build dominates, a few seconds warm.
 
 ---
 
@@ -289,12 +287,6 @@ into the battery. On land, add it to `perf-all` and bank its numbers to
   store under one RAM budget on the current base. Blocked at this sha because
   the `dbsp_reach` example requires the `with-dbsp` feature built explicitly on
   stable (`Cargo.toml:60`) and it is not part of `cargo build --examples`.
-- **sqlite_baseline landing.** See above; wire into `perf-all` + `BASELINE.md`
-  when the parallel lane lands it.
-- **store rig missing engine binaries.** `sqlite_reach` / `dd_reach` /
-  `dbsp_reach` were folded out at `a7d5ad36`; `bench/run.sh` still lists them
-  and SKIPs them. Either restore the binaries or drop the entries so the rig's
-  inventory matches what actually runs.
 - **dl6-budget outer cap.** `perf-all` wraps dl6-budget in its own outer
   run-capped budget on top of budget-check.sh's internal `DL6_BUDGET_S` cap;
   the internal named line is the one that fires first, by design.
