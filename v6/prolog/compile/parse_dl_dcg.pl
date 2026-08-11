@@ -35,19 +35,196 @@ bindings(Variables, Bindings) :-
 
 variable_binding(Name-Variable, Name=Variable).
 
-program(prog([], Rules), Variables0, Variables) -->
+program(prog(Declarations, Rules), Variables0, Variables) -->
     ws,
-    rule_statements(Rules, Variables0, Variables),
+    statements(Declarations, Rules, Variables0, Variables),
     ws,
     eos.
 
-rule_statements([], Variables, Variables) -->
+statements([], [], Variables, Variables) -->
     eos,
     !.
-rule_statements([Rule | Rules], Variables0, Variables) -->
+statements(Declarations, Rules, Variables0, Variables) -->
+    relation_declaration(FirstDeclarations),
+    !,
+    ws,
+    statements(RestDeclarations, Rules, Variables0, Variables),
+    { append(FirstDeclarations, RestDeclarations, Declarations) }.
+statements(Declarations, [Rule | Rules], Variables0, Variables) -->
     rule_statement(Rule, Variables0, Variables1),
     ws,
-    rule_statements(Rules, Variables1, Variables).
+    statements(Declarations, Rules, Variables1, Variables).
+
+relation_declaration(Declarations) -->
+    keyword(`rel`),
+    ws,
+    identifier(Name),
+    ws,
+    `(`,
+    declaration_columns(Specifications),
+    ws,
+    `)`,
+    { length(Specifications, Arity), Reference = Name/Arity },
+    ws,
+    declaration_modifiers(Reference, Modifiers),
+    ws,
+    `.`,
+    { typed_declarations(Reference, Specifications, Typed),
+      zero_column_declarations(Reference, Specifications, Modifiers, Unit),
+      append([Typed, Modifiers, Unit], Declarations)
+    }.
+
+declaration_columns([]) -->
+    ws,
+    peek(0')),
+    !.
+declaration_columns([Specification | Specifications]) -->
+    declaration_column(Specification),
+    ws,
+    declaration_column_tail(Specifications).
+
+declaration_column_tail(Specifications) -->
+    `,`,
+    !,
+    declaration_columns(Specifications).
+declaration_column_tail([]) --> [].
+
+declaration_column(column(Name, Type)) -->
+    ws,
+    identifier(Name),
+    ws,
+    ( `:`
+    -> ws,
+       column_type(Type)
+    ; { Type = none }
+    ).
+
+column_type(Type) -->
+    column_type_base(Base),
+    ( `?`
+    -> { Type = option(Base) }
+    ; { Type = Base }
+    ).
+
+column_type_base(int) --> keyword(`int`), !.
+column_type_base(text) --> keyword(`text`), !.
+column_type_base(json) --> keyword(`json`), !.
+column_type_base(bool) --> keyword(`bool`), !.
+column_type_base(float) --> keyword(`float`), !.
+column_type_base(option(Element)) -->
+    keyword(`option`),
+    !,
+    ws,
+    `(`,
+    ws,
+    column_type(Element),
+    ws,
+    `)`.
+column_type_base(json_list(Element)) -->
+    keyword(`json_list`),
+    !,
+    ws,
+    `(`,
+    ws,
+    column_type(Element),
+    ws,
+    `)`.
+column_type_base(list(Element)) -->
+    keyword(`list`),
+    !,
+    ws,
+    `(`,
+    ws,
+    column_type(Element),
+    ws,
+    `)`.
+column_type_base(list_entity_dense_sequence(Element)) -->
+    keyword(`list_entity_dense_sequence`),
+    !,
+    ws,
+    `(`,
+    ws,
+    column_type(Element),
+    ws,
+    `)`.
+column_type_base(list_interned_set(Element)) -->
+    keyword(`list_interned_set`),
+    !,
+    ws,
+    `(`,
+    ws,
+    column_type(Element),
+    ws,
+    `)`.
+column_type_base(list_entity_linked_sequence(Element)) -->
+    keyword(`list_entity_linked_sequence`),
+    !,
+    ws,
+    `(`,
+    ws,
+    column_type(Element),
+    ws,
+    `)`.
+
+declaration_modifiers(Reference, [Modifier | Modifiers]) -->
+    declaration_modifier(Reference, Modifier),
+    !,
+    ws,
+    declaration_modifiers(Reference, Modifiers).
+declaration_modifiers(_, []) --> [].
+
+declaration_modifier(Reference, kind(Reference, log)) --> keyword(`log`).
+declaration_modifier(Reference, keep(Reference, Policy)) -->
+    keyword(`keep`),
+    ws,
+    `(`,
+    ws,
+    keep_policy(Policy),
+    ws,
+    `)`.
+declaration_modifier(Reference, keyed(Reference, Positions)) -->
+    keyword(`key`),
+    ws,
+    `(`,
+    integer_list(Positions),
+    ws,
+    `)`.
+
+keep_policy(all) --> keyword(`all`), !.
+keep_policy(count(Count)) -->
+    keyword(`count`),
+    ws,
+    `(`,
+    ws,
+    integer_literal(Count),
+    ws,
+    `)`.
+
+integer_list([Value | Values]) -->
+    ws,
+    integer_literal(Value),
+    ws,
+    ( `,`
+    -> integer_list(Values)
+    ; { Values = [] }
+    ).
+
+typed_declarations(_, [], []).
+typed_declarations(Reference, [column(Name, Type) | Specifications], Declarations) :-
+    ( Type == none
+    -> Declarations = Rest
+    ; Declarations = [col_type(Reference, Name, Type) | Rest]
+    ),
+    typed_declarations(Reference, Specifications, Rest).
+
+zero_column_declarations(_, Specifications, _, []) :-
+    Specifications \== [],
+    !.
+zero_column_declarations(Reference, _, Modifiers, Declarations) :-
+    ( memberchk(kind(Reference, _), Modifiers)
+    -> Declarations = []
+    ; Declarations = [kind(Reference, set)]
+    ).
 
 rule_statement(Rule, Variables0, Variables) -->
     head_atom(Head, Variables0, Variables1),
@@ -243,7 +420,9 @@ compound_or_variable(Expression, Variables0, Variables) -->
     ).
 
 get_or_make_variable(Name, Variables0, Variable, Variables) :-
-    ( memberchk(Name-Existing, Variables0)
+    ( Name == '_'
+    -> Variables = Variables0
+    ; memberchk(Name-Existing, Variables0)
     -> Variable = Existing,
        Variables = Variables0
     ; Variables = [Name-Variable | Variables0]
