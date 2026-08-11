@@ -1828,12 +1828,14 @@ fn append_ack(
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
+    use std::process::Command;
 
     use super::{
-        append_message, resolve_dispatch_harness, run_lane_delete, session_matches_route,
-        write_route,
+        append_message, dead_reason, resolve_dispatch_harness, run_lane_delete, run_lane_prune,
+        session_matches_route, write_route,
     };
     use boop::bus::{read_routes, Route};
+    use boop::proc::SysinfoSnapshot;
     use boop::registry::Registry;
 
     /// A named harness that is not registered must be refused, never quietly
@@ -1890,6 +1892,129 @@ mod tests {
             "a finished lane must leave no registry row"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn unique_name(prefix: &str) -> String {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        )
+    }
+
+    fn tmux_route(tmux_name: &str) -> Route {
+        Route {
+            harness: Some("claude".into()),
+            tmux: Some(tmux_name.to_owned()),
+            cwd: None,
+            model: None,
+            mode: None,
+            session_id: None,
+            source_path: None,
+            parent: None,
+            goal: None,
+            registered_at: None,
+        }
+    }
+
+    /// A real session on the default tmux server, killed on drop; `lane
+    /// prune` hardcodes the default server, so a "live" fixture needs one.
+    struct LiveTmuxSession {
+        name: String,
+    }
+
+    impl LiveTmuxSession {
+        fn new(name: &str) -> Self {
+            let status = Command::new("tmux")
+                .args(["new-session", "-d", "-s", name])
+                .status()
+                .expect("tmux installed and reachable");
+            assert!(status.success(), "failed to create live session {name}");
+            LiveTmuxSession {
+                name: name.to_owned(),
+            }
+        }
+    }
+
+    impl Drop for LiveTmuxSession {
+        fn drop(&mut self) {
+            let _ = Command::new("tmux")
+                .args(["kill-session", "-t", &self.name])
+                .status();
+        }
+    }
+
+    /// FAIL-FIRST. Before `run_lane_prune` existed this had no callee to
+    /// assert against; now: a dead row is gone, a live row survives.
+    #[test]
+    fn prune_removes_a_dead_row_and_keeps_a_live_one() {
+        let dir = temp_mail_dir();
+        let live_name = unique_name("boop-prune-live");
+        let _session = LiveTmuxSession::new(&live_name);
+        write_route(&dir, "dead-lane", tmux_route(&unique_name("boop-prune-dead"))).unwrap();
+        write_route(&dir, "live-lane", tmux_route(&live_name)).unwrap();
+
+        run_lane_prune(Some(&dir), false).unwrap();
+
+        let routes = read_routes(&dir).unwrap();
+        assert!(!routes.contains_key("dead-lane"), "a dead row must be pruned");
+        assert!(routes.contains_key("live-lane"), "a live row must survive prune");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RECEIPT. `--dry-run` reports the same rows a real run would prune but
+    /// removes nothing.
+    #[test]
+    fn prune_dry_run_removes_nothing() {
+        let dir = temp_mail_dir();
+        write_route(&dir, "dead-lane", tmux_route(&unique_name("boop-prune-dead"))).unwrap();
+
+        run_lane_prune(Some(&dir), true).unwrap();
+
+        let routes = read_routes(&dir).unwrap();
+        assert!(routes.contains_key("dead-lane"), "--dry-run must remove nothing");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dead_reason_names_a_gone_session_with_no_pid() {
+        let snapshot = SysinfoSnapshot::capture().unwrap();
+        let route = tmux_route(&unique_name("boop-prune-nonexistent"));
+        assert_eq!(
+            dead_reason(&route, &snapshot).as_deref(),
+            Some("tmux session gone, no pid recorded")
+        );
+    }
+
+    #[test]
+    fn dead_reason_is_none_for_a_live_session() {
+        let name = unique_name("boop-prune-alive");
+        let _session = LiveTmuxSession::new(&name);
+        let snapshot = SysinfoSnapshot::capture().unwrap();
+        assert_eq!(dead_reason(&tmux_route(&name), &snapshot), None);
+    }
+
+    #[test]
+    fn dead_reason_names_no_recorded_session_when_tmux_is_absent() {
+        let snapshot = SysinfoSnapshot::capture().unwrap();
+        let route = Route {
+            harness: Some("claude".into()),
+            tmux: None,
+            cwd: None,
+            model: None,
+            mode: None,
+            session_id: None,
+            source_path: None,
+            parent: None,
+            goal: None,
+            registered_at: None,
+        };
+        assert_eq!(
+            dead_reason(&route, &snapshot).as_deref(),
+            Some("no tmux session recorded")
+        );
     }
 
     fn result_message(id: &str, lane: &str, rc: i32) -> boop::bus::Message {
@@ -2513,6 +2638,15 @@ enum LaneCmd {
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
+    /// Drop routes whose tmux session is gone AND whose recorded pid, if any,
+    /// is not alive. Refuses when tmux is unreachable.
+    Prune {
+        /// Print what would be pruned; remove nothing.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
     /// Which tmux pane and harness session id.
     Route {
         lane: String,
@@ -2932,6 +3066,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 anyhow::bail!("name a lane to delete, or pass --state dead for a bulk delete")
             }
         },
+        LaneCmd::Prune { dry_run, mail_dir } => run_lane_prune(mail_dir.as_deref(), dry_run),
         LaneCmd::Route { lane, mail_dir } => run_resolve(&lane, mail_dir.as_deref()),
         LaneCmd::Pane {
             lane,
@@ -3059,6 +3194,55 @@ fn run_lane_delete(mail_dir_arg: Option<&Path>, lane: &str, route_only: bool) ->
     })?;
     println!("deleted {lane}");
     Ok(())
+}
+
+/// Bulk-drop dead rows. Registry-only: bus.ndjson is never touched.
+fn run_lane_prune(mail_dir_arg: Option<&Path>, dry_run: bool) -> Result<()> {
+    let dir = mail_dir(mail_dir_arg)?;
+    if tmux::live_sessions(None).is_none() {
+        anyhow::bail!("tmux unreachable, cannot tell live from dead");
+    }
+    let routes = bus::read_routes(&dir)?;
+    let snapshot = proc::SysinfoSnapshot::capture()?;
+    let dead: Vec<(String, String, String)> = routes
+        .iter()
+        .filter_map(|(name, route)| {
+            let why = dead_reason(route, &snapshot)?;
+            Some((name.clone(), route.tmux.clone().unwrap_or_else(|| "-".into()), why))
+        })
+        .collect();
+    for (name, tmux_name, why) in &dead {
+        line(&format!("{name} {tmux_name} {why}"));
+    }
+    if dry_run {
+        line(&format!("{} lane(s) would be pruned (dry run)", dead.len()));
+        return Ok(());
+    }
+    let path = dir.join("registry.json");
+    bus::cas_update_json(&path, |current| {
+        for (name, _, _) in &dead {
+            current.remove(name);
+        }
+        Ok(())
+    })?;
+    line(&format!("{} lane(s) pruned", dead.len()));
+    Ok(())
+}
+
+/// `None` when the route's tmux target is live; `Some(reason)` when the tmux
+/// target is gone and its resolvable pid, if any, is also not alive.
+fn dead_reason(route: &Route, snapshot: &proc::SysinfoSnapshot) -> Option<String> {
+    let Some(target) = route.tmux.as_deref() else {
+        return Some("no tmux session recorded".to_owned());
+    };
+    if tmux::target_alive(None, target) {
+        return None;
+    }
+    match tmux::pane_pid(None, target) {
+        Some(pid) if snapshot.is_alive(pid) => None,
+        Some(pid) => Some(format!("tmux session gone, pid {pid} not alive")),
+        None => Some("tmux session gone, no pid recorded".to_owned()),
+    }
 }
 
 fn run_lane_pane(
