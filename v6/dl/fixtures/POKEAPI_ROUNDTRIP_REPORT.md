@@ -97,7 +97,7 @@ _15 known-gap rows (sample):_
 
 ```
 wrote /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/pe_pokeapi_gen.ts
-COMPILE-TRACE program=pokeapi_gen parse=1515/7228204 plan=593/5060477 lower=151/671298 boot=2/22144 emit=733/7493601 write=29/179 total=3023/20475903
+COMPILE-TRACE program=pokeapi_gen parse=1434/7228204 plan=593/5060477 lower=150/671298 boot=2/22144 emit=743/7493601 write=29/179 total=2951/20475903
 emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/pokeapi-strict/v6/tsv2/gen/pe_emit/schema.json
 emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/pokeapi-strict/v6/tsv2/gen/pe_emit/openapi.json
 ```
