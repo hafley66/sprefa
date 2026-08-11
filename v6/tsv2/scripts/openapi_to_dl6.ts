@@ -1,5 +1,17 @@
 // openapi_to_dl6.ts — OpenAPI 3.x document -> .dl6 text program.
 // COMPONENTS only; settled mapping rows are in POKEAPI_ROUNDTRIP_REPORT.md.
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+// v6/tsv2/scripts/openapi_to_dl6.ts -> v6, the same two-levels-up shape
+// openapi_roundtrip_check.ts uses to find prolog/.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const V6 = path.resolve(HERE, "..", "..");
+const COMPILE_PL = path.join(V6, "prolog", "compile.pl");
+
 export interface IOpenApiV3 {
   openapi?: string;
   components?: { schemas?: Record<string, IJsonSchema> };
@@ -250,8 +262,8 @@ export class OpenapiToDl6 {
     return out;
   }
 
-  // Strict mode: a ref target cannot carry generic option()/list() columns
-  // (0_type_plane.pl:128); those columns fall to json, attributed per property.
+  // Strict mode: some ref targets carry generic option()/list() columns the
+  // 0_type_plane.pl:128 mirror-schema gap refuses; probeRefTargets decides which, by compiling.
   private applyStrictFalls(): IRelDecl[] {
     const keep = this.rels.filter((r) => r.enumVariants === undefined);
     const enums = this.rels.filter((r) => r.enumVariants !== undefined);
@@ -266,11 +278,12 @@ export class OpenapiToDl6 {
         if (om && om[1] && byName.has(om[1])) refTarget.add(om[1]);
       }
     }
-    const bad = new Set<string>();
+    const candidates = new Set<string>();
     for (const t of refTarget) {
       const r = byName.get(t);
-      if (r && r.columns.some((c) => /^(option|list)\(/.test(c.type))) bad.add(t);
+      if (r && r.columns.some((c) => /^(option|list)\(/.test(c.type))) candidates.add(t);
     }
+    const bad = probeRefTargets(candidates, byName);
     const out = keep.map((r) => {
       const cols = r.columns.map((c) => {
         if (bad.has(r.name) && /^(option|list)\(/.test(c.type)) {
@@ -396,4 +409,69 @@ function relLine(rel: IRelDecl): string {
     return `rel ${rel.name}(${rel.enumVariants.join(" ; ")}).`;
   }
   return `rel ${rel.name}(${rel.columns.map((c) => `${c.name}: ${c.type}`).join(", ")}).`;
+}
+
+// The rel names one column type mentions (bare, list(), or option()), scoped
+// to names byName actually declares so scalars never register as targets.
+function columnRelRefs(type: string, byName: ReadonlyMap<string, IRelDecl>): string[] {
+  const refs: string[] = [];
+  if (/^[a-z_][a-z0-9_]*$/.test(type) && byName.has(type)) refs.push(type);
+  const list = /^list\(([a-z_][a-z0-9_]*)\)$/.exec(type);
+  if (list && list[1] && byName.has(list[1])) refs.push(list[1]);
+  const opt = /^option\(([a-z_][a-z0-9_]*)\)$/.exec(type);
+  if (opt && opt[1] && byName.has(opt[1])) refs.push(opt[1]);
+  return refs;
+}
+
+// One candidate as a ref target with its real columns; any rel its columns
+// name gets a scalar stand-in, since only the target's own shape is under test.
+function buildRefTargetProbe(target: IRelDecl, byName: ReadonlyMap<string, IRelDecl>): string {
+  const placeholders = new Set<string>();
+  for (const col of target.columns) {
+    for (const ref of columnRelRefs(col.type, byName)) {
+      if (ref !== target.name) placeholders.add(ref);
+    }
+  }
+  const lines = [...placeholders].map((name) => `rel ${name}(probe_value: int).`);
+  lines.push(relLine(target));
+  // Double-underscore rel names throw reserved_rel_namespace before the type plane runs.
+  lines.push(`rel probe_ref_holder(probe_value: ${target.name}).`);
+  return lines.join("\n") + "\n";
+}
+
+// One swipl process runs a forall/catch loop over compile_dl6/2, one probe per
+// candidate; returns the ones that still throw column_type_unknown today.
+function probeRefTargets(candidates: ReadonlySet<string>, byName: ReadonlyMap<string, IRelDecl>): Set<string> {
+  if (candidates.size === 0) return new Set();
+  let scratchDir: string;
+  try {
+    scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "dl6-strict-probe-"));
+  } catch {
+    return new Set(candidates);
+  }
+  try {
+    const probes = [...candidates]
+      .map((name) => byName.get(name))
+      .filter((r): r is IRelDecl => r !== undefined)
+      .map((r) => ({ id: r.name, file: path.join(scratchDir, `${r.name}.dl6`), out: path.join(scratchDir, `${r.name}.out.ts`) }));
+    for (const p of probes) {
+      fs.writeFileSync(p.file, buildRefTargetProbe(byName.get(p.id)!, byName));
+    }
+    const members = probes.map((p) => `id('${p.id}','${p.file}','${p.out}')`).join(",");
+    const goal =
+      `forall(member(id(Id,In,Out),[${members}]),` +
+      `catch((compile_dl6(In,Out),format('PROBE_OK ~w~n',[Id])),_,format('PROBE_FAIL ~w~n',[Id])))`;
+    const cp = spawnSync("swipl", ["-q", "-l", COMPILE_PL, "-g", goal, "-g", "halt"], { encoding: "utf8", timeout: 30000 });
+    if (cp.error || cp.status !== 0) return new Set(candidates);
+    const passed = new Set<string>();
+    for (const line of (cp.stdout ?? "").split("\n")) {
+      const m = /^PROBE_OK (\S+)$/.exec(line.trim());
+      if (m && m[1]) passed.add(m[1]);
+    }
+    return new Set([...candidates].filter((name) => !passed.has(name)));
+  } catch {
+    return new Set(candidates);
+  } finally {
+    fs.rmSync(scratchDir, { recursive: true, force: true });
+  }
 }

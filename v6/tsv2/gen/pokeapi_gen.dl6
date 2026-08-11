@@ -1,4 +1,4 @@
-rel ability_change(version_group: version_group_summary, effect_entries: json).
+rel ability_change(version_group: version_group_summary, effect_entries: list(ability_change_effect_text)).
 rel ability_change_effect_text(effect: text, language: language_summary).
 rel ability_detail(id: int, name: text, is_main_series: bool, generation: generation_summary, names: list(ability_name), effect_entries: list(ability_effect_text), effect_changes: list(ability_change), flavor_text_entries: list(ability_flavor_text), pokemon: list(ability_detail__pokemon)).
 rel ability_detail__pokemon(is_hidden: bool, slot: int, pokemon: ability_detail__pokemon__pokemon).
@@ -46,8 +46,8 @@ rel encounter_method_detail(id: int, name: text, order: option(int), names: list
 rel encounter_method_name(name: text, language: language_summary).
 rel encounter_method_summary(name: text, url: text).
 rel evolution_chain_detail(id: int, baby_trigger_item: item_summary, chain: evolution_chain_detail__chain).
-rel evolution_chain_detail__chain(evolution_details: json, evolves_to: json, is_baby: bool, species: evolution_chain_detail__chain__species).
-rel evolution_chain_detail__chain__evolves_to(evolution_details: json, is_baby: bool, species: evolution_chain_detail__chain__evolves_to__species).
+rel evolution_chain_detail__chain(evolution_details: json, evolves_to: list(evolution_chain_detail__chain__evolves_to), is_baby: bool, species: evolution_chain_detail__chain__species).
+rel evolution_chain_detail__chain__evolves_to(evolution_details: list(evolution_chain_detail__chain__evolves_to__evolution_details), is_baby: bool, species: evolution_chain_detail__chain__evolves_to__species).
 rel evolution_chain_detail__chain__evolves_to__evolution_details(version_group: evolution_chain_detail__chain__evolves_to__evolution_details__version_group, is_default: bool, gender: json, held_item: json, item: json, known_move: json, known_move_type: json, location: json, min_affection: json, min_beauty: json, min_damage_taken: json, min_happiness: json, min_level: json, min_move_count: json, min_steps: json, near_special_rock: json, needs_multiplayer: json, needs_overworld_rain: json, party_species: json, party_type: json, relative_physical_stats: json, time_of_day: text, trade_species: json, trigger: evolution_chain_detail__chain__evolves_to__evolution_details__trigger, turn_upside_down: bool, used_move: json, region: json, base_form: json, evolved_form: json).
 rel evolution_chain_detail__chain__evolves_to__evolution_details__base_form(name: text, url: text).
 rel evolution_chain_detail__chain__evolves_to__evolution_details__evolved_form(name: text, url: text).
@@ -88,7 +88,7 @@ rel item_category_summary(name: text, url: text).
 rel item_detail(id: int, name: text, fling_power: option(int), fling_effect: item_fling_effect_summary, attributes: list(item_detail__attributes), category: item_category_summary, effect_entries: list(item_effect_text), flavor_text_entries: list(item_flavor_text), game_indices: list(item_game_index), prices: list(item_price), names: list(item_name), held_by_pokemon: list(item_detail__held_by_pokemon), sprites: item_detail__sprites, baby_trigger_for: item_detail__baby_trigger_for, machines: list(item_detail__machines)).
 rel item_detail__attributes(name: text, url: text).
 rel item_detail__baby_trigger_for(url: text).
-rel item_detail__held_by_pokemon(pokemon: item_detail__held_by_pokemon__pokemon, version_details: json).
+rel item_detail__held_by_pokemon(pokemon: item_detail__held_by_pokemon__pokemon, version_details: list(item_detail__held_by_pokemon__version_details)).
 rel item_detail__held_by_pokemon__pokemon(name: text, url: text).
 rel item_detail__held_by_pokemon__version_details(rarity: int, version: item_detail__held_by_pokemon__version_details__version).
 rel item_detail__held_by_pokemon__version_details__version(name: text, url: text).
@@ -105,17 +105,17 @@ rel item_name(name: text, language: language_summary).
 rel item_pocket_detail(id: int, name: text, categories: list(item_category_summary), names: list(item_pocket_name)).
 rel item_pocket_name(name: text, language: language_summary).
 rel item_pocket_summary(name: text, url: text).
-rel item_price(purchase_price: json, sell_price: json, currency: currency_summary, version_group: version_group_summary).
+rel item_price(purchase_price: option(int), sell_price: option(int), currency: currency_summary, version_group: version_group_summary).
 rel item_summary(name: text, url: text).
 rel language_detail(id: int, name: text, official: bool, iso639: text, iso3166: text, names: list(language_name)).
 rel language_name(name: text, language: language_summary).
 rel language_summary(name: text, url: text).
 rel location_area_detail(id: int, name: text, game_index: int, encounter_method_rates: list(location_area_detail__encounter_method_rates), location: location_summary, names: list(location_area_name), pokemon_encounters: list(location_area_detail__pokemon_encounters)).
-rel location_area_detail__encounter_method_rates(encounter_method: location_area_detail__encounter_method_rates__encounter_method, version_details: json).
+rel location_area_detail__encounter_method_rates(encounter_method: location_area_detail__encounter_method_rates__encounter_method, version_details: list(location_area_detail__encounter_method_rates__version_details)).
 rel location_area_detail__encounter_method_rates__encounter_method(name: text, url: text).
 rel location_area_detail__encounter_method_rates__version_details(rate: int, version: location_area_detail__encounter_method_rates__version_details__version).
 rel location_area_detail__encounter_method_rates__version_details__version(name: text, url: text).
-rel location_area_detail__pokemon_encounters(pokemon: location_area_detail__pokemon_encounters__pokemon, version_details: json).
+rel location_area_detail__pokemon_encounters(pokemon: location_area_detail__pokemon_encounters__pokemon, version_details: list(location_area_detail__pokemon_encounters__version_details)).
 rel location_area_detail__pokemon_encounters__pokemon(name: text, url: text).
 rel location_area_detail__pokemon_encounters__version_details(version: location_area_detail__pokemon_encounters__version_details__version, max_chance: int, encounter_details: location_area_detail__pokemon_encounters__version_details__encounter_details).
 rel location_area_detail__pokemon_encounters__version_details__encounter_details(min_level: int, max_level: int, condition_values: location_area_detail__pokemon_encounters__version_details__encounter_details__condition_values, chance: int, method: location_area_detail__pokemon_encounters__version_details__encounter_details__method).
@@ -133,7 +133,7 @@ rel machine_summary(url: text).
 rel move_battle_style_detail(id: int, name: text, names: list(move_battle_style_name)).
 rel move_battle_style_name(name: text, language: language_summary).
 rel move_battle_style_summary(name: text, url: text).
-rel move_change(accuracy: json, power: json, pp: json, effect_chance: int, effect_entries: json, type: type_summary, version_group: version_group_summary).
+rel move_change(accuracy: option(int), power: option(int), pp: option(int), effect_chance: int, effect_entries: list(move_change__effect_entries), type: type_summary, version_group: version_group_summary).
 rel move_change__effect_entries(effect: text, short_effect: text, language: move_change__effect_entries__language).
 rel move_change__effect_entries__language(name: text, url: text).
 rel move_damage_class_description(description: text, language: language_summary).
@@ -142,13 +142,13 @@ rel move_damage_class_name(name: text, language: language_summary).
 rel move_damage_class_summary(name: text, url: text).
 rel move_detail(id: int, name: text, accuracy: option(int), effect_chance: int, pp: option(int), priority: option(int), power: option(int), contest_combos: move_detail__contest_combos, contest_type: contest_type_summary, contest_effect: contest_effect_summary, damage_class: move_damage_class_summary, effect_entries: list(move_detail__effect_entries), effect_changes: list(move_detail__effect_changes), generation: generation_summary, meta: move_meta, names: list(move_name), past_values: list(move_change), stat_changes: list(move_detail__stat_changes), super_contest_effect: super_contest_effect_summary, target: move_target_summary, type: type_summary, machines: list(move_detail__machines), flavor_text_entries: list(move_flavor_text), learned_by_pokemon: list(move_detail__learned_by_pokemon)).
 rel move_detail__contest_combos(normal: move_detail__contest_combos__normal, super: move_detail__contest_combos__super).
-rel move_detail__contest_combos__normal(use_before: json, use_after: json).
+rel move_detail__contest_combos__normal(use_before: list(move_detail__contest_combos__normal__use_before), use_after: list(move_detail__contest_combos__normal__use_after)).
 rel move_detail__contest_combos__normal__use_after(name: text, url: text).
 rel move_detail__contest_combos__normal__use_before(name: text, url: text).
-rel move_detail__contest_combos__super(use_before: json, use_after: json).
+rel move_detail__contest_combos__super(use_before: list(move_detail__contest_combos__super__use_before), use_after: list(move_detail__contest_combos__super__use_after)).
 rel move_detail__contest_combos__super__use_after(name: text, url: text).
 rel move_detail__contest_combos__super__use_before(name: text, url: text).
-rel move_detail__effect_changes(effect_entries: json, version_group: move_detail__effect_changes__version_group).
+rel move_detail__effect_changes(effect_entries: list(move_detail__effect_changes__effect_entries), version_group: move_detail__effect_changes__version_group).
 rel move_detail__effect_changes__effect_entries(effect: text, language: move_detail__effect_changes__effect_entries__language).
 rel move_detail__effect_changes__effect_entries__language(name: text, url: text).
 rel move_detail__effect_changes__version_group(name: text, url: text).
@@ -166,7 +166,7 @@ rel move_learn_method_detail(id: int, name: text, names: list(move_learn_method_
 rel move_learn_method_detail__version_groups(name: text, url: text).
 rel move_learn_method_name(name: text, language: language_summary).
 rel move_learn_method_summary(name: text, url: text).
-rel move_meta(ailment: move_meta_ailment_summary, category: move_meta_category_summary, min_hits: json, max_hits: json, min_turns: json, max_turns: json, drain: json, healing: json, crit_rate: json, ailment_chance: json, flinch_chance: json, stat_chance: json).
+rel move_meta(ailment: move_meta_ailment_summary, category: move_meta_category_summary, min_hits: option(int), max_hits: option(int), min_turns: option(int), max_turns: option(int), drain: option(int), healing: option(int), crit_rate: option(int), ailment_chance: option(int), flinch_chance: option(int), stat_chance: option(int)).
 rel move_meta_ailment_detail(id: int, name: text, moves: list(move_meta_ailment_detail__moves), names: list(move_meta_ailment_name)).
 rel move_meta_ailment_detail__moves(name: text, url: text).
 rel move_meta_ailment_name(name: text, language: language_summary).
@@ -242,7 +242,7 @@ rel pal_park_area_detail__pokemon_encounters__pokemon_species(name: text, url: t
 rel pal_park_area_name(name: text, language: language_summary).
 rel pal_park_area_summary(name: text, url: text).
 rel pokeathlon_stat_detail(id: int, name: text, affecting_natures: pokeathlon_stat_detail__affecting_natures, names: list(pokeathlon_stat_name)).
-rel pokeathlon_stat_detail__affecting_natures(decrease: json, increase: json).
+rel pokeathlon_stat_detail__affecting_natures(decrease: list(pokeathlon_stat_detail__affecting_natures__decrease), increase: list(pokeathlon_stat_detail__affecting_natures__increase)).
 rel pokeathlon_stat_detail__affecting_natures__decrease(max_change: int, nature: pokeathlon_stat_detail__affecting_natures__decrease__nature).
 rel pokeathlon_stat_detail__affecting_natures__decrease__nature(name: text, url: text).
 rel pokeathlon_stat_detail__affecting_natures__increase(max_change: int, nature: pokeathlon_stat_detail__affecting_natures__increase__nature).
@@ -263,24 +263,24 @@ rel pokemon_detail(id: int, name: text, base_experience: option(int), height: op
 rel pokemon_detail__abilities(ability: pokemon_detail__abilities__ability, is_hidden: bool, slot: int).
 rel pokemon_detail__abilities__ability(name: text, url: text).
 rel pokemon_detail__cries(latest: text, legacy: text).
-rel pokemon_detail__held_items(item: pokemon_detail__held_items__item, version_details: json).
+rel pokemon_detail__held_items(item: pokemon_detail__held_items__item, version_details: list(pokemon_detail__held_items__version_details)).
 rel pokemon_detail__held_items__item(name: text, url: text).
 rel pokemon_detail__held_items__version_details(rarity: int, version: pokemon_detail__held_items__version_details__version).
 rel pokemon_detail__held_items__version_details__version(name: text, url: text).
-rel pokemon_detail__moves(move: pokemon_detail__moves__move, version_group_details: json).
+rel pokemon_detail__moves(move: pokemon_detail__moves__move, version_group_details: list(pokemon_detail__moves__version_group_details)).
 rel pokemon_detail__moves__move(name: text, url: text).
 rel pokemon_detail__moves__version_group_details(level_learned_at: int, move_learn_method: pokemon_detail__moves__version_group_details__move_learn_method, version_group: pokemon_detail__moves__version_group_details__version_group).
 rel pokemon_detail__moves__version_group_details__move_learn_method(name: text, url: text).
 rel pokemon_detail__moves__version_group_details__version_group(name: text, url: text).
-rel pokemon_detail__past_abilities(abilities: json, generation: pokemon_detail__past_abilities__generation).
+rel pokemon_detail__past_abilities(abilities: list(pokemon_detail__past_abilities__abilities), generation: pokemon_detail__past_abilities__generation).
 rel pokemon_detail__past_abilities__abilities(ability: pokemon_detail__past_abilities__abilities__ability, is_hidden: bool, slot: int).
 rel pokemon_detail__past_abilities__abilities__ability(name: text, url: text).
 rel pokemon_detail__past_abilities__generation(name: text, url: text).
-rel pokemon_detail__past_stats(generation: pokemon_detail__past_stats__generation, stats: json).
+rel pokemon_detail__past_stats(generation: pokemon_detail__past_stats__generation, stats: list(pokemon_detail__past_stats__stats)).
 rel pokemon_detail__past_stats__generation(name: text, url: text).
 rel pokemon_detail__past_stats__stats(base_stat: int, effort: int, stat: pokemon_detail__past_stats__stats__stat).
 rel pokemon_detail__past_stats__stats__stat(name: text, url: text).
-rel pokemon_detail__past_types(generation: pokemon_detail__past_types__generation, types: json).
+rel pokemon_detail__past_types(generation: pokemon_detail__past_types__generation, types: list(pokemon_detail__past_types__types)).
 rel pokemon_detail__past_types__generation(name: text, url: text).
 rel pokemon_detail__past_types__types(slot: int, type: pokemon_detail__past_types__types__type).
 rel pokemon_detail__past_types__types__type(name: text, url: text).
@@ -329,12 +329,12 @@ rel region_name(name: text, language: language_summary).
 rel region_summary(name: text, url: text).
 rel stat_detail(id: int, name: text, game_index: int, is_battle_only: bool, affecting_moves: stat_detail__affecting_moves, affecting_natures: stat_detail__affecting_natures, affecting_items: list(stat_detail__affecting_items), characteristics: list(characteristic_summary), move_damage_class: move_damage_class_summary, names: list(stat_name)).
 rel stat_detail__affecting_items(name: text, url: text).
-rel stat_detail__affecting_moves(increase: json, decrease: json).
+rel stat_detail__affecting_moves(increase: list(stat_detail__affecting_moves__increase), decrease: list(stat_detail__affecting_moves__decrease)).
 rel stat_detail__affecting_moves__decrease(change: int, move: stat_detail__affecting_moves__decrease__move).
 rel stat_detail__affecting_moves__decrease__move(name: text, url: text).
 rel stat_detail__affecting_moves__increase(change: int, move: stat_detail__affecting_moves__increase__move).
 rel stat_detail__affecting_moves__increase__move(name: text, url: text).
-rel stat_detail__affecting_natures(increase: json, decrease: json).
+rel stat_detail__affecting_natures(increase: list(stat_detail__affecting_natures__increase), decrease: list(stat_detail__affecting_natures__decrease)).
 rel stat_detail__affecting_natures__decrease(name: text, url: text).
 rel stat_detail__affecting_natures__increase(name: text, url: text).
 rel stat_name(name: text, language: language_summary).
@@ -343,7 +343,7 @@ rel super_contest_effect_detail(id: int, appeal: int, flavor_text_entries: list(
 rel super_contest_effect_flavor_text(flavor_text: text, language: language_summary).
 rel super_contest_effect_summary(url: text).
 rel type_detail(id: int, name: text, damage_relations: type_detail__damage_relations, past_damage_relations: list(type_detail__past_damage_relations), game_indices: list(type_game_index), generation: generation_summary, move_damage_class: move_damage_class_summary, names: list(ability_name), pokemon: list(type_detail__pokemon), moves: list(move_summary), sprites: json).
-rel type_detail__damage_relations(no_damage_to: json, half_damage_to: json, double_damage_to: json, no_damage_from: json, half_damage_from: json, double_damage_from: json).
+rel type_detail__damage_relations(no_damage_to: list(type_detail__damage_relations__no_damage_to), half_damage_to: list(type_detail__damage_relations__half_damage_to), double_damage_to: list(type_detail__damage_relations__double_damage_to), no_damage_from: list(type_detail__damage_relations__no_damage_from), half_damage_from: list(type_detail__damage_relations__half_damage_from), double_damage_from: list(type_detail__damage_relations__double_damage_from)).
 rel type_detail__damage_relations__double_damage_from(name: text, url: text).
 rel type_detail__damage_relations__double_damage_to(name: text, url: text).
 rel type_detail__damage_relations__half_damage_from(name: text, url: text).
@@ -351,7 +351,7 @@ rel type_detail__damage_relations__half_damage_to(name: text, url: text).
 rel type_detail__damage_relations__no_damage_from(name: text, url: text).
 rel type_detail__damage_relations__no_damage_to(name: text, url: text).
 rel type_detail__past_damage_relations(generation: type_detail__past_damage_relations__generation, damage_relations: type_detail__past_damage_relations__damage_relations).
-rel type_detail__past_damage_relations__damage_relations(no_damage_to: json, half_damage_to: json, double_damage_to: json, no_damage_from: json, half_damage_from: json, double_damage_from: json).
+rel type_detail__past_damage_relations__damage_relations(no_damage_to: list(type_detail__past_damage_relations__damage_relations__no_damage_to), half_damage_to: list(type_detail__past_damage_relations__damage_relations__half_damage_to), double_damage_to: list(type_detail__past_damage_relations__damage_relations__double_damage_to), no_damage_from: list(type_detail__past_damage_relations__damage_relations__no_damage_from), half_damage_from: list(type_detail__past_damage_relations__damage_relations__half_damage_from), double_damage_from: list(type_detail__past_damage_relations__damage_relations__double_damage_from)).
 rel type_detail__past_damage_relations__damage_relations__double_damage_from(name: text, url: text).
 rel type_detail__past_damage_relations__damage_relations__double_damage_to(name: text, url: text).
 rel type_detail__past_damage_relations__damage_relations__half_damage_from(name: text, url: text).
