@@ -1030,6 +1030,10 @@ declared_column_type_name(Decls, Name) :-
     member(col_type(_, _, Name), Decls),
     \+ scalar_column_type(Name).
 declared_column_type_name(Decls, Name) :-
+    member(col_type(_, _, Type), Decls),
+    list_element_type_name(Type, Name),
+    \+ scalar_column_type(Name).
+declared_column_type_name(Decls, Name) :-
     member(sh_decl(_, Inputs, Outputs, _), Decls),
     ( member(col(_, Name), Inputs) ; member(col(_, Name), Outputs) ),
     \+ scalar_column_type(Name).
@@ -1044,6 +1048,16 @@ declared_column_type_name(Decls, Name) :-
     member(VariantField, VariantFields),
     VariantField =.. [':', _, Name],
     \+ scalar_column_type(Name).
+
+list_element_type_name(list(Element), Name) :-
+    list_element_type_name(Element, Name).
+list_element_type_name(list_entity_dense_sequence(Element), Name) :-
+    list_element_type_name(Element, Name).
+list_element_type_name(list_interned_set(Element), Name) :-
+    list_element_type_name(Element, Name).
+list_element_type_name(list_entity_linked_sequence(Element), Name) :-
+    list_element_type_name(Element, Name).
+list_element_type_name(Name, Name) :- atom(Name).
 
 scalar_column_type(int).
 scalar_column_type(text).

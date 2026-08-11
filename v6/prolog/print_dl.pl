@@ -317,6 +317,22 @@ print_column_type(json_list(Element), Text) :-
     !,
     print_column_type(Element, InnerText),
     format(atom(Text), "json_list(~w)", [InnerText]).
+print_column_type(list(Element), Text) :-
+    !,
+    print_column_type(Element, InnerText),
+    format(atom(Text), "list(~w)", [InnerText]).
+print_column_type(list_entity_dense_sequence(Element), Text) :-
+    !,
+    print_column_type(Element, InnerText),
+    format(atom(Text), "list_entity_dense_sequence(~w)", [InnerText]).
+print_column_type(list_interned_set(Element), Text) :-
+    !,
+    print_column_type(Element, InnerText),
+    format(atom(Text), "list_interned_set(~w)", [InnerText]).
+print_column_type(list_entity_linked_sequence(Element), Text) :-
+    !,
+    print_column_type(Element, InnerText),
+    format(atom(Text), "list_entity_linked_sequence(~w)", [InnerText]).
 print_column_type(Type, Text) :-
     format(atom(Text), "~w", [Type]).
 
