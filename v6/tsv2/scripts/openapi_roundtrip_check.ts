@@ -262,15 +262,12 @@ function main(): void {
           ref.mismatchRows.push(`${relName}.${prop} src=${srcProp.itemRef} em=${em.itemRef}`);
         }
       }
-      // nullability
+      // nullable lists now emit option(list(..)) / option(json_list(..)), so
+      // the only nullability gap left is a strict-mode ref-target drop (G1).
       if (srcProp.nullable === em.nullable) {
         nul.match++;
       } else {
-        // G2: nullable array dropped
-        if (srcProp.nullable && !em.nullable && (em.kind === "array" || srcProp.kind === "array")) {
-          nul.gap++;
-          nul.gapRows.push(`G2 ${relName}.${prop}`);
-        } else if (isStrictDrop) {
+        if (isStrictDrop) {
           nul.gap++;
           nul.gapRows.push(`G1 ${relName}.${prop}`);
         } else {
@@ -295,7 +292,7 @@ function main(): void {
   lines.push("## KNOWN emitter/compiler gaps (do not fail the gate)");
   lines.push("");
   lines.push("- **G1 ref-target carries generic columns**: the mapping mandates `list(rel_name)` and inline-object LIFT; the tsv2 compiler refuses a rel that is itself a ref TARGET (used as a column type, a list element, or an option element) while carrying generic option()/list() columns — the generic expansion inside that rel can't lower (`unsupported_construct(column_type_unknown(...))`, 0_type_plane.pl:128). Strict mode keeps every other real spelling and drops exactly these columns to the `json` carrier, each attributed in the gap rows below with the throw site; the clean-data rows are proven in the mapping hand fixture.");
-  lines.push("- **G2 nullable arrays**: dl6 has no nullable-array type; `option(list(_))/option(json_list(_))` are refused. Nullability dropped (logged per property).");
+  lines.push("- **G2 nullable arrays**: the `option(list(_))/option(json_list(_))` spelling is emitted; nullable arrays round-trip their nullability instead of dropping it.");
   lines.push("");
 
   const tableHead = (title: string, c: ICatCount): void => {
@@ -335,7 +332,7 @@ function main(): void {
   lines.push(emitStdout.split("\n").filter((l) => /emit-back|Error|error/i.test(l)).join("\n"));
   lines.push("```");
   lines.push("");
-  lines.push(`Converter strict-mode dropped columns (G1) + nullable-array (G2): ${converter.gapList.length} + ${converter.nullableArrayGapList.length}`);
+  lines.push(`Converter strict-mode dropped columns (G1): ${converter.gapList.length}; nullable-array drops (G2): 0 (option(list(..)) spelling emitted)`);
   lines.push("");
   lines.push("## Emit-back receipt");
   lines.push("");

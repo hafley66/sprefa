@@ -142,10 +142,10 @@ rel move_damage_class_name(name: text, language: language_summary).
 rel move_damage_class_summary(name: text, url: text).
 rel move_detail(id: int, name: text, accuracy: option(int), effect_chance: int, pp: option(int), priority: option(int), power: option(int), contest_combos: move_detail__contest_combos, contest_type: contest_type_summary, contest_effect: contest_effect_summary, damage_class: move_damage_class_summary, effect_entries: list(move_detail__effect_entries), effect_changes: list(move_detail__effect_changes), generation: generation_summary, meta: move_meta, names: list(move_name), past_values: list(move_change), stat_changes: list(move_detail__stat_changes), super_contest_effect: super_contest_effect_summary, target: move_target_summary, type: type_summary, machines: list(move_detail__machines), flavor_text_entries: list(move_flavor_text), learned_by_pokemon: list(move_detail__learned_by_pokemon)).
 rel move_detail__contest_combos(normal: move_detail__contest_combos__normal, super: move_detail__contest_combos__super).
-rel move_detail__contest_combos__normal(use_before: list(move_detail__contest_combos__normal__use_before), use_after: list(move_detail__contest_combos__normal__use_after)).
+rel move_detail__contest_combos__normal(use_before: json, use_after: json).
 rel move_detail__contest_combos__normal__use_after(name: text, url: text).
 rel move_detail__contest_combos__normal__use_before(name: text, url: text).
-rel move_detail__contest_combos__super(use_before: list(move_detail__contest_combos__super__use_before), use_after: list(move_detail__contest_combos__super__use_after)).
+rel move_detail__contest_combos__super(use_before: json, use_after: json).
 rel move_detail__contest_combos__super__use_after(name: text, url: text).
 rel move_detail__contest_combos__super__use_before(name: text, url: text).
 rel move_detail__effect_changes(effect_entries: list(move_detail__effect_changes__effect_entries), version_group: move_detail__effect_changes__version_group).
