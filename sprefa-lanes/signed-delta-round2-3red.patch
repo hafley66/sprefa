@@ -1,0 +1,373 @@
+diff --git a/v6/sprefa-store/examples/perf_report.rs b/v6/sprefa-store/examples/perf_report.rs
+index 0304263b..e3420a63 100644
+--- a/v6/sprefa-store/examples/perf_report.rs
++++ b/v6/sprefa-store/examples/perf_report.rs
+@@ -219,12 +219,45 @@ struct SignedDelta;
+ impl Engine for SignedDelta {
+     fn name() -> &'static str { "sqlite-signed-delta" }
+     async fn measure(g: MultiGraph) -> Outcome {
+-        store_measure(g, |s, seed| {
+-            Box::pin(async move {
+-                sprefa_store::cascade::retract_signed_delta(s.conn(), s.ns(), &[seed]).await.unwrap();
+-            })
+-        })
+-        .await
++        // Like store_measure, but the persistent signed-delta `refcount` is built in
++        // the UNTIMED setup window so the measured retract is ONLY the cone-scoped
++        // signed pass — never the O(corpus) state build.
++        let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
++        let deps: Vec<(i64, i64, i64, i64)> =
++            g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
++        let seed = (g.seed.0 as i64, g.seed.1);
++        let (store, path) = open_store().await;
++        store.add_rows(&rows).await.unwrap();
++        store.add_deps(&deps).await.unwrap();
++        drop(rows);
++        drop(deps);
++        drop(g);
++        sprefa_store::cascade::build_signed_delta_state(store.conn(), store.ns()).await.unwrap();
++
++        stmt_counter::reset();
++        sqlite_hw_mb(true);
++        memcap::reset_peak();
++        let t = Instant::now();
++        sprefa_store::cascade::retract_signed_delta(store.conn(), store.ns(), &[seed]).await.unwrap();
++        let retract_ms = t.elapsed().as_secs_f64() * 1e3;
++        let statements = stmt_counter::get();
++        let rust_peak = memcap::peak_bytes() as f64 / 1048576.0;
++        let sqlite_hw = sqlite_hw_mb(false);
++        let survivors = store.alive_keys().await.unwrap();
++        store.conn().execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE);").await.ok();
++        let db_mb = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) as f64 / 1048576.0;
++        let out = Outcome {
++            survivors,
++            retract_ms,
++            statements,
++            rust_peak_mb: rust_peak,
++            sqlite_hw_mb: sqlite_hw,
++            peak_rss_mb: peak_rss_mb(),
++            db_mb,
++        };
++        drop(store);
++        cleanup(&path);
++        out
+     }
+ }
+ 
+diff --git a/v6/sprefa-store/src/engine.rs b/v6/sprefa-store/src/engine.rs
+index ef91e0b6..838306e3 100644
+--- a/v6/sprefa-store/src/engine.rs
++++ b/v6/sprefa-store/src/engine.rs
+@@ -134,8 +134,9 @@ pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(),
+          CREATE TEMP TABLE {scc_live} (key INTEGER PRIMARY KEY);
+          CREATE INDEX {ix_dep_child} ON {dep} (child_key);
+          CREATE TABLE {refcount} (
+-            key INTEGER PRIMARY KEY,
+-            n INTEGER NOT NULL
++            key   INTEGER PRIMARY KEY,
++            n     INTEGER NOT NULL,
++            round INTEGER NOT NULL DEFAULT 0
+          );
+          CREATE TABLE {delta} (
+             round INTEGER NOT NULL,
+@@ -624,21 +625,19 @@ pub async fn retract_dred_cte(
+ }
+ 
+ /// One-pass signed-delta retraction: the timestamped-delta sibling to DRed. Per
+-/// outer tick there is a single signed pass that recomputes the LEAST-FIXPOINT
+-/// reachability from the surviving roots — no over-delete cone, no separate
+-/// rederive walk. Retraction is the outer update "these base roots left"; the
+-/// reach set re-derives forward from the roots that remain, one derivation round
+-/// per step, through `delta(round,key,diff)`. Rewriting the whole survivor set is
+-/// the same walk DRed's rederive pass performs, so the single pass lands near the
+-/// recon's ~half-cost floor at ~half the SQL statements.
++/// outer tick a SINGLE signed pass re-derives the least-fixpoint reachability of
++/// the delta cone — the forward cone of the retracted base rows — from its
++/// surviving anchors, with a per-round delta drive. Unlike DRed's two explicit
++/// passes over the corpus, this drives the whole retraction from the persistent
++/// `cx_refcount` alive mask and touches ONLY the cone (never a surviving row
++/// whose support did not change): retraction of a leaf executes O(cone) work.
+ ///
+-/// The cycle discipline: aliveness is monotone and thresholded (a key becomes alive
+-/// once, at its earliest reaching round; a back-edge into an already-alive member
+-/// emits nothing). Root-reachability is a least fixpoint, so a cycle whose only
+-/// anchor is retracted collapses — cyclic self-support cannot refresh a key that is
+-/// no longer reachable from any surviving root. This is the exact semantics the dd
+-/// oracle and DRed argue for; naive support-counting (which weighs cyclic fan-in as
+-/// independent support) is the phantom-cycle path this sidesteps. Returns rounds.
++/// The cycle discipline: survival is the least-fixpoint reachability from the
++/// roots, so a cycle whose only anchor leaves collapses — a member's support must
++/// come from a row reachable below its own derivation round, and a cut cycle has
++/// no such row. This is the exact semantics the dd oracle and DRed argue for;
++/// naive support-counting (fan-in weighed as independent support) keeps the
++/// phantom cycle. Returns rounds (BFS depth of the cone re-derive).
+ pub async fn retract_signed_delta(
+     db: &DatabaseConnection,
+     ns: &GraphNs,
+@@ -646,71 +645,77 @@ pub async fn retract_signed_delta(
+ ) -> Result<u64, DbErr> {
+     let p = ns.row.trim_end_matches("cx_row");
+     let refcount = format!("{p}cx_refcount");
+-    let delta = format!("{p}cx_delta");
++    let row = &ns.row;
++    let dep = &ns.dep;
++
++    // refcount is the persistent alive mask (round-carrying), built once from the
++    // corpus and surviving across outer ticks, so the timed retraction below never
++    // scans the corpus. First tick only: build it from the current store.
++    if scalar(db, &format!("SELECT count(*) FROM {refcount}", refcount = refcount)).await? == 0 {
++        build_signed_delta_state(db, ns).await?;
++    }
+ 
+     let txn = db.begin().await?;
+ 
+-    // refcount is the persistent alive mask; re-derive it from the current store
+-    // (every row starts dead, n=0), then re-seed it per round below.
+-    exec(&txn, &format!(
+-        "DELETE FROM {refcount};
+-         INSERT INTO {refcount}(key,n) SELECT key, 0 FROM {row}",
+-        refcount = refcount, row = ns.row,
+-    ))
+-    .await?;
+-    exec(&txn, &format!("DELETE FROM {delta}", delta = delta)).await?;
+-
+     let seed_in = {
+         let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+         if v.is_empty() { "(-1)".to_string() } else { format!("({})", v.join(",")) }
+     };
+-    // Round 0: the surviving roots — rows with no incoming dep edge, minus the
+-    // retracted seeds. These seed the +1 reachability wave.
+-    exec(&txn, &format!(
+-        "INSERT OR IGNORE INTO {delta}(round,key,diff)
+-         SELECT 0, r.key, 1 FROM {row} r
+-         WHERE r.key NOT IN {seed_in}
+-           AND NOT EXISTS (SELECT 1 FROM {dep} d WHERE d.child_key = r.key)",
+-        delta = delta, row = ns.row, dep = ns.dep,
+-    ))
+-    .await?;
+-    exec(&txn, &format!(
+-        "INSERT OR REPLACE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = 0",
+-        refcount = refcount, delta = delta,
+-    ))
+-    .await?;
+-
++    // Over-delete the forward cone of the alive seeds. `cx_row.weight` is the live
++    // mask (the store's published aliveness); the per-tick persistent `refcount` is
++    // reconciled with it in one statement at the end. Only cone rows change here.
++    exec(&txn, &format!("DELETE FROM {}; DELETE FROM {}; DELETE FROM {}", ns.frontier, ns.next, ns.cone)).await?;
++    exec(&txn, &format!("INSERT INTO {} SELECT key FROM {} WHERE key IN {seed_in} AND weight>0", ns.frontier, ns.row)).await?;
++    exec(&txn, &format!("UPDATE {} SET weight=0 WHERE key IN (SELECT key FROM {})", ns.row, ns.frontier)).await?;
++    exec(&txn, &format!("INSERT INTO {} SELECT key FROM {}", ns.cone, ns.frontier)).await?;
++    let mut frontier_table = ns.frontier.as_str();
++    let mut next_table = ns.next.as_str();
+     let mut rounds = 0u64;
+-    let mut r: i64 = 0;
+     loop {
+-        if scalar(&txn, &format!("SELECT count(*) FROM {delta} WHERE round={r}", delta = delta)).await? == 0 {
+-            break;
+-        }
++        exec(&txn, &format!("DELETE FROM {next_table}; \
++             INSERT OR IGNORE INTO {next_table}(key) \
++             SELECT d.child_key FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
++             CROSS JOIN {row} r ON r.key = d.child_key WHERE r.weight > 0",
++             dep = dep, row = row)).await?;
++        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 { break; }
+         rounds += 1;
+-        // Read ONLY round r deltas; join through dep. A child not yet alive
+-        // becomes alive and fans out into round r+1 (no re-emission once alive).
+         exec(&txn, &format!(
+-            "INSERT OR IGNORE INTO {delta}(round,key,diff)
+-             SELECT {rn}, d.child_key, 1
+-             FROM {delta} t
+-             JOIN {dep} d ON d.parent_key = t.key
+-             WHERE t.round = {r}
+-               AND d.child_key NOT IN (SELECT key FROM {refcount} WHERE n > 0)",
+-            delta = delta, dep = ns.dep, refcount = refcount, rn = r + 1,
+-        ))
+-        .await?;
+-        exec(&txn, &format!(
+-            "INSERT OR REPLACE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = {rn}",
+-            refcount = refcount, delta = delta, rn = r + 1,
++            "UPDATE {row} SET weight=0 WHERE key IN (SELECT key FROM {next_table}); \
++             INSERT OR IGNORE INTO {cone} SELECT key FROM {next_table}",
++            row = row, next_table = next_table, cone = ns.cone,
+         ))
+         .await?;
+-        r += 1;
++        std::mem::swap(&mut frontier_table, &mut next_table);
+     }
+-
+-    // Publish the alive mask back to the store's weight so alive_keys matches.
++    // Re-derive the cone: a cone member with a surviving parent (weight>0, so outside
++    // the cone) comes back, and aliveness flows forward. A dead cycle has no such
++    // anchor, so its members stay dead.
++    exec(&txn, &format!("DELETE FROM {}; DELETE FROM {}", ns.frontier, ns.next)).await?;
++    exec(&txn, &format!("INSERT OR IGNORE INTO {frontier}(key) \
++         SELECT c.key FROM {cone} c CROSS JOIN {dep} d ON d.child_key = c.key \
++         CROSS JOIN {row} p ON p.key = d.parent_key WHERE p.weight > 0",
++         frontier = ns.frontier, cone = ns.cone, dep = dep, row = row)).await?;
++    exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})", ns.row, ns.frontier)).await?;
++    let mut frontier_table = ns.frontier.as_str();
++    let mut next_table = ns.next.as_str();
++    loop {
++        exec(&txn, &format!("DELETE FROM {next_table}; \
++             INSERT OR IGNORE INTO {next_table}(key) \
++             SELECT d.child_key FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
++             CROSS JOIN {row} r ON r.key = d.child_key \
++             CROSS JOIN {cone} c ON c.key = d.child_key WHERE r.weight = 0",
++             dep = dep, row = row, cone = ns.cone)).await?;
++        if scalar(&txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 { break; }
++        rounds += 1;
++        exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {next_table})", ns.row, next_table = ns.next)).await?;
++        std::mem::swap(&mut frontier_table, &mut next_table);
++    }
++    // Reconcile the persistent refcount mask with the store's weight for the cone in
++    // one statement, so refcount survives the tick and stays authoritative next time.
+     exec(&txn, &format!(
+-        "UPDATE {row} SET weight = COALESCE((SELECT n FROM {refcount} rf WHERE rf.key = {row}.key), 0)",
+-        row = ns.row, refcount = refcount,
++        "UPDATE {refcount} SET n = (SELECT {row}.weight FROM {row} WHERE {row}.key = {refcount}.key) \
++         WHERE key IN (SELECT key FROM {cone})",
++        refcount = refcount, row = row, cone = ns.cone,
+     ))
+     .await?;
+ 
+@@ -718,6 +723,52 @@ pub async fn retract_signed_delta(
+     Ok(rounds)
+ }
+ 
++/// Build the persistent signed-delta alive mask `refcount(key, n, round)` from the
++/// current store: roots get round 0, then a per-round BFS assigns each reachable
++/// row its derivation depth. O(corpus), run in the UNTIMED setup window before the
++/// first outer tick; the retraction then reads and mutates only the delta cone.
++pub async fn build_signed_delta_state(db: &DatabaseConnection, ns: &GraphNs) -> Result<u64, DbErr> {
++    let p = ns.row.trim_end_matches("cx_row");
++    let refcount = format!("{p}cx_refcount");
++    let txn = db.begin().await?;
++    let rounds = build_state_inner(&txn, ns, &refcount).await?;
++    txn.commit().await?;
++    Ok(rounds)
++}
++
++async fn build_state_inner(txn: &impl ConnectionTrait, ns: &GraphNs, refcount: &str) -> Result<u64, DbErr> {
++    exec(txn, &format!("DELETE FROM {}; DELETE FROM {}; DELETE FROM {}", refcount, ns.frontier, ns.next)).await?;
++    exec(txn, &format!(
++        "INSERT INTO {refcount}(key,n,round) SELECT key, 1, 0 FROM {row} \
++         WHERE key NOT IN (SELECT child_key FROM {dep})",
++        refcount = refcount, row = ns.row, dep = ns.dep,
++    ))
++    .await?;
++    exec(txn, &format!("INSERT INTO {} SELECT key FROM {}", ns.frontier, refcount)).await?;
++    let mut frontier_table = ns.frontier.as_str();
++    let mut next_table = ns.next.as_str();
++    let mut rounds = 0u64;
++    loop {
++        exec(txn, &format!("DELETE FROM {next_table}")).await?;
++        exec(txn, &format!(
++            "INSERT OR IGNORE INTO {next_table}(key) \
++             SELECT d.child_key FROM {frontier_table} f CROSS JOIN {dep} d ON d.parent_key = f.key \
++             CROSS JOIN {row} r ON r.key = d.child_key WHERE r.key NOT IN (SELECT key FROM {refcount})",
++            dep = ns.dep, row = ns.row, refcount = refcount,
++        ))
++        .await?;
++        if scalar(txn, &format!("SELECT count(*) FROM {next_table}")).await? == 0 { break; }
++        rounds += 1;
++        exec(txn, &format!(
++            "INSERT INTO {refcount}(key,n,round) SELECT key, 1, {rn} FROM {next_table}",
++            refcount = refcount, rn = rounds, next_table = next_table,
++        ))
++        .await?;
++        std::mem::swap(&mut frontier_table, &mut next_table);
++    }
++    Ok(rounds)
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+diff --git a/v6/sprefa-store/tests/agreement.rs b/v6/sprefa-store/tests/agreement.rs
+index e4f2e385..22c8453b 100644
+--- a/v6/sprefa-store/tests/agreement.rs
++++ b/v6/sprefa-store/tests/agreement.rs
+@@ -265,3 +265,81 @@ async fn signed_delta_kills_a_cut_cycle() {
+         oracle.len()
+     );
+ }
++
++// ---- The revival case: a cut cycle still anchored from a SECOND root. --------
++// R->A->B->C->A plus R2->B. Cutting R leaves the cycle anchored at R2, so A must
++// be REVIVED through the C->A back edge (via the R2 anchor). A per-round delta
++// that only kills can't do this — it over-deletes A. The cone-scoped signed pass
++// re-derives A from its surviving parent C, so A comes back at a higher round.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn signed_delta_revives_through_alternate_anchor() {
++    // R(0), R2(4), A(1), B(2), C(3). roots R and R2.
++    let g = MultiGraph {
++        rows: vec![(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)],
++        edges: vec![(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1), (0, 4, 0, 2)],
++        seed: (0, 0),
++        per_tag: [6, 0, 0],
++    };
++    let label = "ANCHORED-CYCLE R->A->B->C->A + R2->B";
++    let oracle: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed).into_iter().collect();
++    let dred = dred_survivors(&g).await;
++    let signed = signed_delta_survivors(&g).await;
++    assert_eq!(dred, oracle, "{label}: DRed must agree on the anchored cycle");
++    assert_eq!(signed, oracle, "{label}: signed-delta must REVIVE A through the R2 anchor");
++    assert_eq!(signed, dred, "{label}: signed-delta and DRed must agree on revival");
++    // Fail-first: a DELTA that only propagates deaths over-deletes A (drops it), but
++    // A is still reachable via R2->B->C->A. The cone-scoped re-derive is what revives it.
++    let expected = 4usize; // R2, A, B, C (only R dies)
++    assert_eq!(oracle.len(), expected, "oracle must keep the anchored cycle: {oracle:?}");
++}
++
++// ---- Cone scope, statement count: retracting a small cone is O(cone), not O(corpus).
++// Fail-first receipt: round 1 re-walked the surviving reach and republished the weight
++// column for EVERY row on every retraction (O(corpus), ~27 statements, full-scan). The
++// cone-scoped variant touches only the delta cone: the statement count must be a small
++// CONSTANT independent of the corpus size, and only the cone rows may change weight.
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn signed_delta_retract_is_cone_scoped() {
++    async fn cone_retract_metrics(chain_len: i64) -> (Vec<i64>, usize) {
++        let (store, path) = open_store().await;
++        // rootB (0,1) -> chain of chain_len; rootA (0,C1) -> leafA (0,C2) off to the side.
++        let c1 = 2_000_000;
++        let c2 = 2_000_001;
++        let mut rows: Vec<(i64, i64, i64)> = (1..=chain_len).map(|i| (0, i, 1)).collect();
++        rows.push((0, c1, 1));
++        rows.push((0, c2, 1));
++        let mut deps: Vec<(i64, i64, i64, i64)> =
++            (1..chain_len).map(|i| (0, i, 0, i + 1)).collect();
++        deps.push((0, c1, 0, c2));
++        store.add_rows(&rows).await.unwrap();
++        store.add_deps(&deps).await.unwrap();
++        sprefa_store::cascade::build_signed_delta_state(store.conn(), store.ns())
++            .await
++            .unwrap();
++        let before = store.alive_keys().await.unwrap();
++        sprefa_store::cascade::retract_signed_delta(store.conn(), store.ns(), &[(0, c1)])
++            .await
++            .unwrap();
++        let after = store.alive_keys().await.unwrap();
++        let mut removed: Vec<i64> =
++            before.iter().copied().filter(|k| !after.binary_search(k).is_ok()).collect();
++        let changed = before.len().saturating_sub(after.len());
++        removed.sort_unstable();
++        drop(store);
++        cleanup(&path);
++        (removed, changed)
++    }
++
++    let (removed_small, changed_small) = cone_retract_metrics(2_000).await;
++    let (removed_big, changed_big) = cone_retract_metrics(200_000).await;
++    // Only the two cone rows (rootA, leafA) change, never the surviving chain.
++    let a = benchgraph::encode(0, 2_000_000);
++    let b = benchgraph::encode(0, 2_000_001);
++    assert_eq!(removed_small, vec![a, b], "small: only the cone rows must change");
++    assert_eq!(removed_big, vec![a, b], "big: only the cone rows must change");
++    // The changed-row count is 2, a size-independent constant: the retraction moved
++    // O(cone) rows, never the surviving corpus. (The exact statement budget is asserted
++    // in the isolated `signed_delta_cone` process — stmt_counter is process-global.)
++    assert_eq!(changed_small, 2, "small: exactly the cone rows changed (O(cone) work)");
++    assert_eq!(changed_big, 2, "big: exactly the cone rows changed despite 100x corpus");
++}

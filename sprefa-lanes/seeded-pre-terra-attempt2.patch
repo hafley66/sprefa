@@ -1,0 +1,406 @@
+diff --git a/FAILURE-REPORT.md b/FAILURE-REPORT.md
+index 3a682f6b..3c85c2a0 100644
+--- a/FAILURE-REPORT.md
++++ b/FAILURE-REPORT.md
+@@ -1,79 +1,8 @@
+-# FAILURE-REPORT: golden-flex GENERICS section blocked by pre-existing decl-ordering bug
+-
+-Lane `feature/generic-text-door`. Blocked sub-deliverable: the `GENERICS`
+-section in `v6/dl/fixtures/golden-flex.dl6` (one decl per list constructor,
+-arrivals + a retraction).
+-
+-The text-door itself is complete and green: `parse_dl.pl` spells the four
+-constructors, `print_dl.pl` round-trips them, the term-door-only skips in
+-`roundtrip.sh` and `text_door_receipt.pl` are removed, and five new
+-`conformance/TEXT_DOOR` fixtures compile byte-identical on both doors.
+-All validation gates pass without the GENERICS section
+-(conformance / plunit / text-door / roundtrip / sweep / typecheck /
+-tsv2-test / golden-flex).
+-
+-The GENERICS section cannot be added because any program that mixes a
+-relational list constructor (`list(T)`, `list_entity_dense_sequence(T)`,
+-`list_interned_set(T)`, `list_entity_linked_sequence(T)`) with a struct-typed
+-ref column read in a rule fails to compile with a false
+-`relation_column_type_conflict`.
+-
+-## Reproduce
+-
+-`just golden-flex` after adding any relational list column to
+-`golden-flex.dl6` (the file's `tree_label` rule reads the struct column
+-`tree.site`). Minimal standalone program through `compile_dl6`:
+-
+-```
+-rel plot(row: int, col: int).
+-rel patch(label: text, at: plot).
+-rel tree(tree_id: int, species: text, site: patch).
+-rel tree_label(tree_id: int, label: text).
+-tree_label(TreeId, Label) <- tree(TreeId, _Species, Site), decode(Site, {label: Label}).
+-rel box_list(tree_id: int, items: list(text)).
+-```
+-
+-Output (exact):
+-
+-```
+-ERROR: unsupported_construct(at('<prog>',5,relation_column_type_conflict(tree/3,site,patch,tree_label/2,label,text)))
+-```
+-
+-## Root cause
+-
+-`v6/prolog/0_generic_expand.pl:generic_artifact_order/3` runs `msort(Decls, _)`
+-as soon as one generic instance is minted (any relational list column). `msort`
+-scrambles the per-rel column order of every `col_type/3` entry: `rel
+-tree_label(tree_id, label)` becomes `[label, tree_id]` and `rel tree(...)` 
+-becomes `[site, species, tree_id]` (alphabetical, not declaration order).
+-
+-`v6/prolog/0_type_plane.pl:relation_columns_and_types/5` reads column order
+-from the `col_type/3` decl list position, so it sees the scrambled order. For
+-the rule above that makes the `tree_id` variable land in `tree/3.site`
+-(type `patch`) and in `tree_label/2.label` (type `text`) simultaneously, which
+-`v6/prolog/0_program_check.pl:program_violation(relation_column_type_conflict,...)`
+-mistakes for a real type conflict. The two columns are unrelated; it is a false
+-positive.
+-
+-The bug is pre-existing and only reachable now because the text door makes the
+-list constructors spellable (previously bare `list(T)` hit
+-`removed_word(list)`). Fixing it is design work on core files the lane does not
+-own (`0_generic_expand.pl` ordering semantics, `0_type_plane.pl` column-order
+-resolution), which conflicts with the lane's "implements, does not design"
+-mandate.
+-
+-## Notes for the fix
+-
+-- A plain stable partition in `generic_artifact_order` removes the false
+-  conflict but breaks `expansion_order:generic_e2e_declaration_permutation_is_
+-  byte_deterministic` (plunit), which asserts the expanded program is
+-  independent of input decl order including within-rel ordering.
+-- The correct layer is column-order resolution: `relation_columns_and_types`
+-  must not trust the msort-scrambled decl order; declaration order is already
+-  captured by `parse_dl.record_column_order/2` and by the `col_type/3`
+-  column identity. `json_list(T)` and other non-relational types are unaffected.
+-
+-The rel-element fixture (`list(some_rel)`) is also skipped in the
+-conformance/TEXT_DOOR fixtures: the rel-element engine path is still refused
+-on main (`list_of_relation_refs_still_refused`), so only the nested spelling
+-`list(list(text))` is exercised.
++# Failure Report
++
++| Command | Exit | Output |
++|---|---:|---|
++| `cd /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/seeded-pre/v6 && just conformance` | 1 | `FAILURES 5`: `finalize_over_log_fires_on_retention_prune`, `keyed_replace_departs_the_old_row`, `pairwise_reads_state_at_the_departure_tick`, `pairwise_pairs_adjacent_values_when_the_source_idles`, `concat_program_queue`. |
++| `cd /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/seeded-pre/v6 && just plunit` | 1 | `ERROR: [Thread main] 14 tests failed`; includes `catalog_plane_rail:level_plane_family_corpus_counts`, `rel_rule_observers:finalize_departure_frontier`, departure-frontier interning checks, and stored-snapshot checks. |
++| `cd /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/seeded-pre/v6 && just text-door` | 1 | `TEXT_DOOR compiled=260 byte_identical=258 failures=2`; `rel_element_list_round_trips` and `nested_rel_element_list_round_trips` report `unsupported_construct(column_type_unknown(fighter_summary))`. All four added `pre/2` fixtures compiled and were byte-identical. |
++| `cd /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/seeded-pre/v6 && just roundtrip` | 1 | `G1 round-trip: 364 / 367 fixtures pass`; only `rel_element_list_round_trips`, `nested_rel_element_list_round_trips`, and `list_interned_set_relation_element_refused` fail. All four added `pre/2` fixtures pass. |
+diff --git a/v6/prolog/0_body_walk.pl b/v6/prolog/0_body_walk.pl
+index e7bdf8de..04ad8ecb 100644
+--- a/v6/prolog/0_body_walk.pl
++++ b/v6/prolog/0_body_walk.pl
+@@ -205,7 +205,8 @@ body_wrapper_refs(Body, Wrapper, Policy, Ref) :-
+     walk_body(Body, Policy, Events),
+     member(event(_, _, _, Term), Events),
+     nonvar(Term),
+-    functor(Term, Wrapper, 1),
++    functor(Term, Wrapper, Arity),
++    memberchk(Arity, [1, 2]),
+     arg(1, Term, Atom),
+     nonvar(Atom),
+     functor(Atom, Name, Arity),
+diff --git a/v6/prolog/0_dot_expand.pl b/v6/prolog/0_dot_expand.pl
+index 8108c192..54dadbc9 100644
+--- a/v6/prolog/0_dot_expand.pl
++++ b/v6/prolog/0_dot_expand.pl
+@@ -583,6 +583,7 @@ binding_positions(not(_), []) :- !.
+ binding_positions(decode(_, Pattern), [Pattern]) :- !.
+ binding_positions(latest(Atom), [Atom]) :- !.
+ binding_positions(pre(Atom), [Atom]) :- !.
++binding_positions(pre(Atom, _), [Atom]) :- !.
+ binding_positions(finalize(Atom), [Atom]) :- !.
+ binding_positions(next(Atom), [Atom]) :- !.
+ binding_positions(coalesce(Atom, _), [Atom]) :- !.
+diff --git a/v6/prolog/3_clock_check.pl b/v6/prolog/3_clock_check.pl
+index bae0d72b..eeb4ac26 100644
+--- a/v6/prolog/3_clock_check.pl
++++ b/v6/prolog/3_clock_check.pl
+@@ -78,11 +78,14 @@ level_goal_dependency(Decls, Index, HeadRef, latest(Atom), Dependency) :-
+     dependency_from_role(Decls, rule(Index, level, HeadRef), FromRef, HeadRef,
+                          edge_sample, Dependency).
+ level_goal_dependency(Decls, Index, HeadRef, pre(Atom),
+-                      dependency(rule(Index, level, HeadRef), FromRef, HeadRef,
+-                                 b, b, previous, -1, pre_in_level)) :-
++                       dependency(rule(Index, level, HeadRef), FromRef, HeadRef,
++                                  b, b, previous, -1, pre_in_level)) :-
+     !,
+     relation_atom(Atom, FromRef),
+     relation_plane(Decls, HeadRef, b).
++level_goal_dependency(Decls, Index, HeadRef, pre(Atom, _), Dependency) :-
++    !,
++    level_goal_dependency(Decls, Index, HeadRef, pre(Atom), Dependency).
+ level_goal_dependency(Decls, Index, HeadRef, finalize(Atom),
+                       dependency(rule(Index, level, HeadRef), FromRef, HeadRef,
+                                  z, b, negative, 1, finalize_in_level)) :-
+@@ -116,11 +119,16 @@ edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, latest(Atom),
+     dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
+                          edge_sample, Dependency).
+ edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, pre(Atom),
+-                     Dependency) :-
++                      Dependency) :-
+     !,
+     relation_atom(Atom, FromRef),
+     dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
+-                         edge_pre, Dependency).
++                          edge_pre, Dependency).
++edge_goal_dependency(Decls, EdgeHeaded, Index, HeadRef, HasDeparture,
++                     pre(Atom, _), Dependency) :-
++    !,
++    edge_goal_dependency(Decls, EdgeHeaded, Index, HeadRef, HasDeparture,
++                         pre(Atom), Dependency).
+ edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, not(Atom),
+                      Dependency) :-
+     !,
+diff --git a/v6/prolog/analyze.pl b/v6/prolog/analyze.pl
+index 8d3919a0..9aba349b 100644
+--- a/v6/prolog/analyze.pl
++++ b/v6/prolog/analyze.pl
+@@ -933,10 +933,15 @@ edge_sampled_goals([latest(Atom) | Rest], TriggerAtoms, [Atom | SampleAtoms],
+     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
+                        NegAtoms, GuardGoals).
+ edge_sampled_goals([pre(Atom) | Rest], TriggerAtoms, SampleAtoms,
+-                   [Atom | PreAtoms], NegAtoms, GuardGoals) :-
++                    [Atom | PreAtoms], NegAtoms, GuardGoals) :-
+     plain_positive_rel_atom(Atom), !,
+     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
+-                       NegAtoms, GuardGoals).
++                        NegAtoms, GuardGoals).
++edge_sampled_goals([pre(Atom, Seed) | Rest], TriggerAtoms, SampleAtoms,
++                    [pre(Atom, Seed) | PreAtoms], NegAtoms, GuardGoals) :-
++    plain_positive_rel_atom(Atom), !,
++    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
++                        NegAtoms, GuardGoals).
+ edge_sampled_goals([not(Atom) | Rest], TriggerAtoms, SampleAtoms,
+                    PreAtoms, [Atom | NegAtoms], GuardGoals) :-
+     plain_positive_rel_atom(Atom), !,
+diff --git a/v6/prolog/compile/parse_dl.pl b/v6/prolog/compile/parse_dl.pl
+index c1b3ba30..ef9796b0 100644
+--- a/v6/prolog/compile/parse_dl.pl
++++ b/v6/prolog/compile/parse_dl.pl
+@@ -1397,12 +1397,17 @@ body(Body, Vars0, Vars, S0, S) :-
+ body_item(Item, Vars0, Vars, S0, S) :-
+     cst_item(Item, Vars0, Vars, S0, S),
+     !.
++body_item(pre(Atom, Seed), Vars0, Vars, S0, S) :-
++    keyword_call(pre, InnerCodes, S0, S),
++    parse_surface_wrapper(rel_atom_default, 2, InnerCodes, [Atom, Seed],
++                          Vars0, Vars),
++    !.
+ body_item(Item, Vars0, Vars, S0, S) :-
+     surface(Name/Arity, _, AnalyzeRole, LowerRole, Status),
+     wrapper_lower_role(LowerRole, Shape, _),
+     keyword_call(Name, InnerCodes, S0, S),
+-    !,
+     parse_surface_wrapper(Shape, Arity, InnerCodes, Args, Vars0, Vars),
++    !,
+     build_surface_item(Name, AnalyzeRole, Status, Args, Item).
+ 
+ cst_item(cst(Path, Digest, Language, Query), Vars0, Vars, S0, S) :-
+diff --git a/v6/prolog/compile/registry.pl b/v6/prolog/compile/registry.pl
+index bbc33775..c9c43a55 100644
+--- a/v6/prolog/compile/registry.pl
++++ b/v6/prolog/compile/registry.pl
+@@ -69,6 +69,7 @@ surface(not/1,          sign,      arm(neg),                     wrapper(body_it
+ % relation as the sampled reference it is.
+ surface(coalesce/2,     sugar,     refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, expand(coalesce)), live).
+ surface(pre/1,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, lower),              live).
++surface(pre/2,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, lower),      live).
+ surface(seq/1,          sugar,     no_refs,                      wrapper(expr, expand(seq)),           live).
+ % Contextual gate, same shape as latest/1: live around a plain VARIABLE in an
+ % edge body (lowered to a read of the emitted __tick counter); analyze.pl
+diff --git a/v6/prolog/conformance/body.pl b/v6/prolog/conformance/body.pl
+index a7f8a1e2..c59b362e 100644
+--- a/v6/prolog/conformance/body.pl
++++ b/v6/prolog/conformance/body.pl
+@@ -282,6 +282,9 @@ solve((Left, Right), Ctx) :- !, solve(Left, Ctx), solve(Right, Ctx).
+ solve(not(Goal), Ctx) :- !, \+ solve(Goal, Ctx).
+ solve(latest(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), rows_member(Atom, Visible).
+ solve(pre(Atom), Ctx) :- !, Ctx = ctx(_, PreState, _), rows_member(Atom, PreState).
++solve(pre(Atom, Seed), Ctx) :- !,
++    Ctx = ctx(_, PreState, _),
++    ( rows_member(Atom, PreState) -> true ; pre_seed(Atom, Seed) ).
+ solve(now(Tick), Ctx) :- !, Ctx = ctx(_, _, Tick).
+ solve(finalize(_), _) :- !, fail.   % satisfiable only as a trigger (r4)
+ % next/1 and combine are transparent registry-defined splice rows. Their
+@@ -330,6 +333,11 @@ rows_member(Atom, rows_index(Assoc, All)) :-
+     ).
+ rows_member(Atom, Rows) :- member(Atom, Rows).
+ 
++pre_seed(Atom, Seed) :-
++    Atom =.. [_ | Args],
++    include(var, Args, [Before]),
++    Before = Seed.
++
+ % Left to right, backtracking across the whole list, which is what makes a
+ % splice indistinguishable from writing the same goals separated by commas.
+ solve_spliced([], _).
+diff --git a/v6/prolog/conformance/fixtures/merge_family.pl b/v6/prolog/conformance/fixtures/merge_family.pl
+index 4b1e60d9..51337216 100644
+--- a/v6/prolog/conformance/fixtures/merge_family.pl
++++ b/v6/prolog/conformance/fixtures/merge_family.pl
+@@ -130,8 +130,59 @@ fixture(batched_increments_both_count,
+   [ counter(clicks, 0) ],
+   [ [ +increment(clicks, ev1), +increment(clicks, ev2) ] ],
+   [ deltas(counter/2, [ [ -counter(clicks, 0), +counter(clicks, 2) ], [] ]),
++     final(counter/2, [ counter(clicks, 2) ]) ]).
++
++% pre/2 supplies the initial accumulator while preserving pre/1's evolving
++% read after the first occurrence, so this is the one-arm spelling of the
++% seed-and-transition pair above.
++fixture(seeded_one_arm_fold_matches_two_arms,
++  prog([ kind(increment/2, log), keep(increment/2, all),
++         kind(decrement/2, log), keep(decrement/2, all),
++         keyed(counter/2, [1]) ],
++       [ (counter(Name, Next) <+ increment(Name, _),
++                                pre(counter(Name, Total), 0), Next := Total + 1),
++         (counter(Name, Next) <+ decrement(Name, _),
++                                pre(counter(Name, Total), 0), Next := Total - 1) ]),
++  [],
++  [ [ +increment(clicks, ev1) ],
++    [ +increment(clicks, ev2) ],
++    [ +decrement(clicks, ev3) ],
++    [ +increment(clicks, ev4) ] ],
++  [ deltas(counter/2, [ [ +counter(clicks, 1) ],
++                        [ -counter(clicks, 1), +counter(clicks, 2) ],
++                        [ -counter(clicks, 2), +counter(clicks, 1) ],
++                        [ -counter(clicks, 1), +counter(clicks, 2) ], [] ]),
+     final(counter/2, [ counter(clicks, 2) ]) ]).
+ 
++fixture(seeded_pre_reads_a_body_bound_value,
++  prog([ kind(increment/2, log), keep(increment/2, all),
++         keyed(counter/2, [1]) ],
++       [ (counter(Name, Next) <+ increment(Name, Start),
++                                pre(counter(Name, Total), Start), Next := Total + 1) ]),
++  [],
++  [ [ +increment(clicks, 4) ], [ +increment(clicks, 99) ] ],
++  [ final(counter/2, [ counter(clicks, 6) ]) ]).
++
++fixture(seeded_pre_multicolumn_fee_stats_fold,
++  prog([ kind(fee/2, log), keep(fee/2, all),
++         keyed(fee_stats/2, [1]) ],
++       [ (fee_stats(Account, Next) <+ fee(Account, Amount),
++                                      pre(fee_stats(Account, Total), 0),
++                                      Next := Total + Amount) ]),
++  [],
++  [ [ +fee(merchant, 7), +fee(merchant, 5) ] ],
++  [ final(fee_stats/2, [ fee_stats(merchant, 12) ]) ]).
++
++fixture(seeded_pre_text_breadcrumb_fold,
++  prog([ kind(step/2, log), keep(step/2, all),
++         keyed(breadcrumb/2, [1]) ],
++       [ (breadcrumb(Path, Next) <+ step(Path, Piece),
++                                  pre(breadcrumb(Path, SoFar), ''),
++                                  Next := concat([SoFar, Piece])) ]),
++  [],
++  [ [ +step(main, home), +step(main, '/'), +step(main, docs) ] ],
++  [ final(breadcrumb/2, [ breadcrumb(main, 'home/docs') ]) ]).
++
+ % REJECTED READING (merge lab counter_same_tick_conflict): +increment and
+ % +decrement in one tick threw keyed_conflict. Ruled: ordered occurrences,
+ % 0 -> 1 -> 0, and the boundary diff is EMPTY (net-zero fold is silent).
+diff --git a/v6/prolog/conformance/level_eval.pl b/v6/prolog/conformance/level_eval.pl
+index 7774207b..17fb7b04 100644
+--- a/v6/prolog/conformance/level_eval.pl
++++ b/v6/prolog/conformance/level_eval.pl
+@@ -140,6 +140,7 @@ goal_rel_refs(Goal, Pos, Neg) :-
+ goal_rel_refs(latest(Atom), [Ref], []) :- !, rel_ref(Atom, Ref).
+ goal_rel_refs(finalize(_), [], []) :- !.
+ goal_rel_refs(pre(_), [], []) :- !.
++goal_rel_refs(pre(_, _), [], []) :- !.
+ goal_rel_refs(now(_), [], []) :- !.
+ goal_rel_refs(true, [], []) :- !.
+ goal_rel_refs(_ := _, [], []) :- !.
+diff --git a/v6/prolog/conformance/rulings.pl b/v6/prolog/conformance/rulings.pl
+index da90c844..a956aaa2 100644
+--- a/v6/prolog/conformance/rulings.pl
++++ b/v6/prolog/conformance/rulings.pl
+@@ -92,6 +92,9 @@ ruling(r4_departure, departure_body_form_adopted, user,
+ % later occurrences chain). Frozen-snapshot pre is the rejected reading.
+ ruling(r6_pre_visibility, evolving_read, user,
+        'the Q1 fold correctness depends on it').
++% pre/2 adds only the no-prior-row value; its read ring remains R6's b -> b.
++ruling(pre_seed, one_arm_folds, user,
++       'yes, we should be able to ref the pre anywhere, its basically a cached let i spose').
+ 
+ % A6: diag is an ORDINARY rel declared by std/diag; the CLI is a consumer.
+ % The engine never knows the name (the v5 magic-rel ban holds in v6).
+diff --git a/v6/prolog/lower.pl b/v6/prolog/lower.pl
+index 88889703..dbe6482e 100644
+--- a/v6/prolog/lower.pl
++++ b/v6/prolog/lower.pl
+@@ -370,6 +370,15 @@ compile_positive_uses(Mode, RelPlans, Uses, Bound0, Bound, FromParts, WhereTexts
+     maplist(where_text, WhereParts, WhereTexts).
+ 
+ compile_positive_uses(_, _, [], _, Bound, Bound, [], []).
++compile_positive_uses(Mode, RelPlans,
++                      [use(Ref, Args, pos, seeded_pre(Seed)) | Rest], Index,
++                      Bound0, Bound, MoreFrom, WhereParts) :-
++    compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0,
++                           Bound1, HereWhere),
++    NextIndex is Index + 1,
++    compile_positive_uses(Mode, RelPlans, Rest, NextIndex, Bound1, Bound,
++                          MoreFrom, MoreWhere),
++    append(HereWhere, MoreWhere, WhereParts).
+ compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
+     positive_use_table(Source, Ref, Table), quote_ident(Table, QuotedTable),
+     format(atom(Alias), 'b~w', [Index]),
+@@ -386,6 +395,44 @@ compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Inde
+ positive_use_table(pre, Ref, Table) :- !, pre_table_name(Ref, Table).
+ positive_use_table(_, Ref, Table) :- table_name(Ref, Table).
+ 
++compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0, Bound,
++                       WhereParts) :-
++    pre_table_name(Ref, Table), quote_ident(Table, QuotedTable),
++    format(atom(Alias), 'b~w', [Index]),
++    relplan_columns(RelPlans, Ref, Columns),
++    relplan_column_types(RelPlans, Ref, ColumnTypes),
++    seeded_pre_args(Mode, Args, Columns, ColumnTypes, Alias, Bound0,
++                    KeyWhere, Before, BeforeColumn, BeforeType),
++    compile_expr(Mode, value, Seed, Bound0, SeedSql, SeedType, SeedEncoding),
++    ( SeedType == BeforeType -> true
++    ; throw(unsupported_construct(pre_seed_type_mismatch(Seed, SeedType, BeforeType)))
++    ),
++    maplist(where_text, KeyWhere, KeyWhereTexts),
++    ( KeyWhereTexts == [] -> WhereSql = ''
++    ; atomic_list_concat(KeyWhereTexts, ' AND ', Joined),
++      format(atom(WhereSql), ' WHERE ~w', [Joined])
++    ),
++    format(atom(SelectSql), '(SELECT ~w."~w" FROM ~w ~w~w)',
++           [Alias, BeforeColumn, QuotedTable, Alias, WhereSql]),
++    format(atom(ValueSql), 'COALESCE(~w, ~w)', [SelectSql, SeedSql]),
++    Bound = [Before-typed(ValueSql, BeforeType, SeedEncoding) | Bound0],
++    WhereParts = [].
++
++seeded_pre_args(_, [], [], [], _, _, _, _, _, _) :-
++    throw(unsupported_construct(pre_seed_no_value)).
++seeded_pre_args(Mode, [Arg | Args], [Column | Columns], [Type | Types], Alias,
++                Bound0, KeyWhere, Before, BeforeColumn, BeforeType) :-
++    ( var(Arg), \+ bound_lookup(Bound0, Arg, _)
++    -> Args = [], Columns = [], Types = [], KeyWhere = [], Before = Arg,
++       BeforeColumn = Column, BeforeType = Type
++    ; format(atom(ColumnExpr), '~w."~w"', [Alias, Column]),
++      compile_pattern_arg(Mode, Arg, ColumnExpr, Type, Bound0, _,
++                          HereWhere, check),
++      seeded_pre_args(Mode, Args, Columns, Types, Alias, Bound0,
++                      RestWhere, Before, BeforeColumn, BeforeType),
++      append(HereWhere, RestWhere, KeyWhere)
++    ).
++
+ % A public relation that appears as another relation's column domain has a
+ % hidden dense __id. Bind the complete body atom to that endpoint while its
+ % ordinary fields remain bound independently. A head value with the same
+@@ -2985,6 +3032,9 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
+ excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
+ 
+ other_atom_use(Atom, use(Ref, Args, pos, unmarked)) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
++pre_atom_use(pre(Atom, Seed), use(Ref, Args, pos, seeded_pre(Seed))) :- !,
++    rel_ref(Atom, Ref),
++    Atom =.. [_ | Args].
+ pre_atom_use(Atom, use(Ref, Args, pos, pre)) :-
+     rel_ref(Atom, Ref),
+     Atom =.. [_ | Args].

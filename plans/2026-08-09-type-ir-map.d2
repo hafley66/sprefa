@@ -1,0 +1,126 @@
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  code: { style.fill: "#f6f8fa"; style.stroke: "#d0d7de"; style.font-color: "#1f2328" }
+  dies: { style.stroke: "#cf222e"; style.font-color: "#82071e" }
+  keep: { style.stroke: "#0969da"; style.font-color: "#0550ae" }
+}
+
+tier1: "1. TODAY: one rel, four decl records + one inferred + one projection" {
+  col_type: {
+    shape: sql_table
+    "Ref (name/arity)": "which rel"
+    "Column": "which column"
+    "Type": "DECLARED only; absent if no colon" { constraint: unique }
+  }
+  keyed: {
+    shape: sql_table
+    "Ref": "which rel"
+    "KeyPositions": "1-based; PK SQL + h_schema + option key-ban"
+  }
+  kindrec: {
+    shape: sql_table
+    label: "kind/2"
+    "Ref": "which rel"
+    "Kind": "set|log: DDL arm + retraction rules"
+  }
+  type_decl: {
+    shape: sql_table
+    "TypeName": "struct type"
+    "[col(Column,Type)]": "struct shape (dictionaries)"
+  }
+  type_def: {
+    shape: sql_table
+    "Name": "from type_decl"
+    "Columns / ColumnTypes": "split lists, derived"
+  }
+  relplan: {
+    shape: sql_table
+    "Ref": "" { constraint: primary_key }
+    "Kind": "copied from kind/2"
+    "Columns": "resolved names"
+    "KeyOrNone": "copied from keyed/2"
+    "ColumnTypes": "INFERRED: ref(x), json_list(t)..."
+  }
+  plan9: {
+    shape: sql_table
+    label: "plan/9 (post-hoist #72)"
+    "Name, Prog": ""
+    "Types": "hoisted type_def list, 23->17 sites" { constraint: foreign_key }
+    "RelPlans": "the relplan list" { constraint: foreign_key }
+    "...5 more": "arrivals, order, edges, subs, mode"
+  }
+  relrow: {
+    shape: sql_table
+    label: "__rel row/11 (catalog)"
+    "rel_id, parent_id, ordinal": "positional tree"
+    "h_id, h_schema, h_rule": "reload verdicts keep/refill/recreate"
+  }
+
+  why_split: |||md
+    the two planes DISAGREE by design (lane probe):
+
+    | rel | col_type (typed) | relplan (fixpoint) |
+    |---|---|---|
+    | finding/3 | text, span, list(text) | text, ref(span), json_list(text) |
+    | loose/2 | NONE (no colons) | text, int (invented) |
+  ||| { shape: rectangle }
+
+  col_type -> relplan: "type fixpoint"
+  keyed -> relplan: copied
+  kindrec -> relplan: copied
+  type_decl -> type_def: "type_definitions/2"
+  type_def -> plan9: "Types (hoisted)"
+  relplan -> plan9: RelPlans
+  plan9 -> relrow: "catalog_rows"
+  col_type -> why_split: {style.stroke-dash: 3}
+  relplan -> why_split: {style.stroke-dash: 3}
+}
+
+tier2: "2. TARGET: the 3-slot record (fork option 1, recommended)" {
+  rel4: {
+    shape: sql_table
+    label: "rel/4 (the one record)"
+    "Ref": "" { constraint: primary_key }
+    "Kind": "absorbs kind/2"
+    "[col(Name, Decl, Storage)]": "Decl = declared(T) | inferred"
+    "Key": "absorbs keyed/2"
+  }
+  col3: |`prolog
+    % one column, both planes, no emit re-read
+    col(at,    declared(span), ref(span))
+    col(bonus, inferred,       int)
+  `| { class: code }
+
+  verdicts: |||md
+    | fork | ends dup? | blast |
+    |---|---|---|
+    | 1 three-slot | YES | ~146 terms |
+    | 2 parser | half | 5 phases |
+    | 3 plan-only | shim | banned |
+  |||
+
+  open: |||md
+    | survives      | why                             |
+    |---------------|---------------------------------|
+    | type_decl     | structs are not rels (open)     |
+    | plan/9        | rel4 list replaces 2 fields     |
+    | __rel row     | projection, gains declared bit  |
+    | declared-gate | = filter on declared(_), free   |
+  ||| { shape: rectangle }
+
+  rel4 -> col3: {style.stroke-dash: 3}
+}
+
+tier1.col_type -> tier2.rel4: "dies into Decl slot" { class: dies }
+tier1.relplan -> tier2.rel4: "dies into Storage slot" { class: dies }
+tier1.keyed -> tier2.rel4: dies { class: dies }
+tier1.kindrec -> tier2.rel4: dies { class: dies }
+tier1.plan9 -> tier2.rel4: "carries ONE list" { class: keep }

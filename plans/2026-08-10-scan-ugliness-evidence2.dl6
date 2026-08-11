@@ -1,0 +1,72 @@
+# scan evidence v2: tick-ordered folds in the SHIPPED pre/1 form (Lustre pre,
+# R6 evolving read). Order comes from the ambient tick, never from a link column.
+
+rel ship_event(shipment_id: int, kilos: int, fee: int, stop_name: text) log keep(all).
+
+# FOLD 1 running weight. rx: events$.pipe(scan((a,e)=>a+e.kilos, 0))
+rel weight_total(shipment_id: int, kilos_so_far: int) key(1).
+weight_total(ShipmentId, Kilos) <+
+  ship_event(ShipmentId, Kilos, _Fee, _Stop), not(weight_total(ShipmentId, _Seed)).
+weight_total(ShipmentId, KilosSoFar) <+
+  ship_event(ShipmentId, Kilos, _Fee, _Stop),
+  pre(weight_total(ShipmentId, KilosBefore)),
+  KilosSoFar := KilosBefore + Kilos.
+
+# FOLD 2 running fee. rx: scan((a,e)=>a+e.fee, 0)
+rel fee_total(shipment_id: int, fee_so_far: int) key(1).
+fee_total(ShipmentId, Fee) <+
+  ship_event(ShipmentId, _Kilos, Fee, _Stop), not(fee_total(ShipmentId, _Seed)).
+fee_total(ShipmentId, FeeSoFar) <+
+  ship_event(ShipmentId, _Kilos, Fee, _Stop),
+  pre(fee_total(ShipmentId, FeeBefore)),
+  FeeSoFar := FeeBefore + Fee.
+
+# FOLD 3 high-water mark. rx: scan((a,e)=>Math.max(a,e.kilos), 0)
+# The conditional still costs two step arms: no max scalar on the surface.
+rel heaviest(shipment_id: int, max_kilos: int) key(1).
+heaviest(ShipmentId, Kilos) <+
+  ship_event(ShipmentId, Kilos, _Fee, _Stop), not(heaviest(ShipmentId, _Seed)).
+heaviest(ShipmentId, Kilos) <+
+  ship_event(ShipmentId, Kilos, _Fee, _Stop),
+  pre(heaviest(ShipmentId, MaxBefore)), Kilos > MaxBefore.
+heaviest(ShipmentId, MaxBefore) <+
+  ship_event(ShipmentId, Kilos, _Fee, _Stop),
+  pre(heaviest(ShipmentId, MaxBefore)), Kilos =< MaxBefore.
+
+# FOLD 4 hop counter. rx: scan((a,_e)=>a+1, 0)  [the golden-flex pick_count shape]
+rel hop_count(shipment_id: int, hops: int) key(1).
+hop_count(ShipmentId, 1) <+
+  ship_event(ShipmentId, _Kilos, _Fee, _Stop), not(hop_count(ShipmentId, _Seed)).
+hop_count(ShipmentId, HopsSoFar) <+
+  ship_event(ShipmentId, _Kilos, _Fee, _Stop),
+  pre(hop_count(ShipmentId, HopsBefore)),
+  HopsSoFar := HopsBefore + 1.
+
+# FOLD 6 running average. rx: scan(([s,n],e)=>[s+e.fee,n+1]) then map — one pipe.
+# Here: folds 2+4 above plus this combiner; accumulators still cannot share.
+rel avg_fee(shipment_id: int, avg_fee: int).
+avg_fee(ShipmentId, AvgFee) <-
+  fee_total(ShipmentId, FeeSoFar),
+  hop_count(ShipmentId, HopsSoFar),
+  AvgFee := FeeSoFar / HopsSoFar.
+
+? weight_total(_WShipment, _WKilos).
+? fee_total(_FShipment, _FFee).
+? heaviest(_HShipment, _HMax).
+? hop_count(_IShipment, _IHops).
+? avg_fee(_AShipment, _AAvg).
+
+# FOLD 6b: the average as ONE fold — multi-column keyed state carries the pair.
+rel fee_stats(shipment_id: int, fee_sum: int, hops: int) key(1).
+fee_stats(ShipmentId, Fee, 1) <+
+  ship_event(ShipmentId, _Kilos, Fee, _Stop), not(fee_stats(ShipmentId, _S, _H)).
+fee_stats(ShipmentId, FeeSum, Hops) <+
+  ship_event(ShipmentId, _Kilos, Fee, _Stop),
+  pre(fee_stats(ShipmentId, FeeBefore, HopsBefore)),
+  FeeSum := FeeBefore + Fee, Hops := HopsBefore + 1.
+rel avg_fee_one_fold(shipment_id: int, avg_fee: int).
+avg_fee_one_fold(ShipmentId, AvgFee) <-
+  fee_stats(ShipmentId, FeeSum, Hops), AvgFee := FeeSum / Hops.
+
+? fee_stats(_SShipment, _SSum, _SHops).
+? avg_fee_one_fold(_BShipment, _BAvg).

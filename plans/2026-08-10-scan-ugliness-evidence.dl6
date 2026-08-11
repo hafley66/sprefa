@@ -1,0 +1,65 @@
+# scan_surface evidence (user 2026-08-10): six folds in the blessed longhand.
+# Each fold's rx form is one scan() call; the lines between folds are the evidence.
+
+rel shipment(shipment_id: int, label: text).
+rel ship_event(event_id: int, shipment_id: int, prev_event: int, kilos: int,
+               fee: int, stop_name: text, kind: text).
+
+# FOLD 1 running weight. rx: events$.pipe(scan((a,e)=>a+e.kilos, 0))
+rel weight_after(event_id: int, shipment_id: int, kilos_so_far: int).
+weight_after(EventId, ShipmentId, Kilos) <-
+  ship_event(EventId, ShipmentId, 0, Kilos, _Fee, _Stop, _Kind).
+weight_after(EventId, ShipmentId, KilosSoFar) <-
+  ship_event(EventId, ShipmentId, PrevEvent, Kilos, _Fee, _Stop, _Kind),
+  weight_after(PrevEvent, ShipmentId, KilosBefore),
+  KilosSoFar := KilosBefore + Kilos.
+
+# FOLD 2 running fee total. rx: events$.pipe(scan((a,e)=>a+e.fee, 0))
+rel fee_after(event_id: int, shipment_id: int, fee_so_far: int).
+fee_after(EventId, ShipmentId, Fee) <-
+  ship_event(EventId, ShipmentId, 0, _Kilos, Fee, _Stop, _Kind).
+fee_after(EventId, ShipmentId, FeeSoFar) <-
+  ship_event(EventId, ShipmentId, PrevEvent, _Kilos, Fee, _Stop, _Kind),
+  fee_after(PrevEvent, ShipmentId, FeeBefore),
+  FeeSoFar := FeeBefore + Fee.
+
+# FOLD 3 high-water mark. rx: scan((a,e)=>Math.max(a,e.kilos), 0)
+# No max scalar on the surface, so the conditional costs TWO step arms.
+rel heaviest_after(event_id: int, shipment_id: int, max_kilos: int).
+heaviest_after(EventId, ShipmentId, Kilos) <-
+  ship_event(EventId, ShipmentId, 0, Kilos, _Fee, _Stop, _Kind).
+heaviest_after(EventId, ShipmentId, Kilos) <-
+  ship_event(EventId, ShipmentId, PrevEvent, Kilos, _Fee, _Stop, _Kind),
+  heaviest_after(PrevEvent, ShipmentId, MaxBefore),
+  Kilos > MaxBefore.
+heaviest_after(EventId, ShipmentId, MaxBefore) <-
+  ship_event(EventId, ShipmentId, PrevEvent, Kilos, _Fee, _Stop, _Kind),
+  heaviest_after(PrevEvent, ShipmentId, MaxBefore),
+  Kilos =< MaxBefore.
+
+# FOLD 4 hop counter. rx: scan((a,_e)=>a+1, 0)
+rel hop_index(event_id: int, shipment_id: int, hops_so_far: int).
+hop_index(EventId, ShipmentId, 1) <-
+  ship_event(EventId, ShipmentId, 0, _Kilos, _Fee, _Stop, _Kind).
+hop_index(EventId, ShipmentId, HopsSoFar) <-
+  ship_event(EventId, ShipmentId, PrevEvent, _Kilos, _Fee, _Stop, _Kind),
+  hop_index(PrevEvent, ShipmentId, HopsBefore),
+  HopsSoFar := HopsBefore + 1.
+
+# FOLD 5 breadcrumb path lives in 2026-08-10-scan-ugliness-refused.dl6:
+# built_text_in_recursive_head names text folds a TODO at that exact spelling.
+
+# FOLD 6 running average: rx spells scan(([s,n],e)=>[s+e.fee,n+1]) in ONE pipe;
+# longhand recounts folds 2+4 then joins them, six rules plus a combiner.
+rel avg_fee_after(event_id: int, shipment_id: int, avg_fee: int).
+avg_fee_after(EventId, ShipmentId, AvgFee) <-
+  fee_after(EventId, ShipmentId, FeeSoFar),
+  hop_index(EventId, ShipmentId, HopsSoFar),
+  AvgFee := FeeSoFar / HopsSoFar.
+
+? weight_after(_WEvent, _WShipment, _WKilos).
+? fee_after(_FEvent, _FShipment, _FFee).
+? heaviest_after(_HEvent, _HShipment, _HMax).
+? hop_index(_IEvent, _IShipment, _IHops).
+? route_after(_REvent, _RShipment, _RPath).
+? avg_fee_after(_AEvent, _AShipment, _AAvg).
