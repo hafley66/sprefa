@@ -1,30 +1,5 @@
 {
   "$defs": {
-    "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35": {
-      "additionalProperties":false,
-      "properties": {"id": {"type":"integer"}},
-      "required": ["id" ],
-      "type":"object"
-    },
-    "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link": {
-      "additionalProperties":false,
-      "properties": {
-        "after_member_id": {"type":"integer"},
-        "before_member_id": {"type":"integer"}
-      },
-      "required": ["after_member_id", "before_member_id" ],
-      "type":"object"
-    },
-    "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member": {
-      "additionalProperties":false,
-      "properties": {
-        "list_id": {"type":"integer"},
-        "member_id": {"type":"integer"},
-        "value": {"type":"string"}
-      },
-      "required": ["list_id", "member_id", "value" ],
-      "type":"object"
-    },
     "box": {
       "additionalProperties":false,
       "properties": {"id": {"type":"integer"},"items": {"type":"integer"}},

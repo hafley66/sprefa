@@ -1,26 +1,5 @@
 {
   "$defs": {
-    "__host_demand_score": {
-      "additionalProperties":false,
-      "properties": {
-        "identity_digest": {"type":"string"},
-        "path": {"type":"string"},
-        "witness_digest": {"type":"string"}
-      },
-      "required": ["identity_digest", "witness_digest", "path" ],
-      "type":"object"
-    },
-    "__host_response_score": {
-      "additionalProperties":false,
-      "properties": {
-        "ordinal": {"type":"integer"},
-        "path": {"type":"string"},
-        "score": {"type":"integer"},
-        "witness_digest": {"type":"string"}
-      },
-      "required": ["witness_digest", "ordinal", "path", "score" ],
-      "type":"object"
-    },
     "accepted": {
       "additionalProperties":false,
       "properties": {"path": {"type":"string"},"score": {"type":"integer"}},

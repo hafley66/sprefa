@@ -1,28 +1,5 @@
 {
   "$defs": {
-    "__host_demand_tree_sitter": {
-      "additionalProperties":false,
-      "properties": {
-        "file_digest": {"type":"string"},
-        "identity_digest": {"type":"string"},
-        "query": {"type":"string"},
-        "witness_digest": {"type":"string"}
-      },
-      "required": ["identity_digest", "witness_digest", "file_digest", "query" ],
-      "type":"object"
-    },
-    "__host_response_tree_sitter": {
-      "additionalProperties":false,
-      "properties": {
-        "capture": {"type":"string"},
-        "file_digest": {"type":"string"},
-        "ordinal": {"type":"integer"},
-        "query": {"type":"string"},
-        "witness_digest": {"type":"string"}
-      },
-      "required": ["witness_digest", "ordinal", "file_digest", "query", "capture" ],
-      "type":"object"
-    },
     "captured": {
       "additionalProperties":false,
       "properties": {"capture": {"type":"string"}},

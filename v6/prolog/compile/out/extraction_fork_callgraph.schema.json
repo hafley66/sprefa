@@ -1,40 +1,5 @@
 {
   "$defs": {
-    "__host_demand_sg": {
-      "additionalProperties":false,
-      "properties": {
-        "file_digest": {"type":"string"},
-        "identity_digest": {"type":"string"},
-        "query_digest": {"type":"string"},
-        "witness_digest": {"type":"string"}
-      },
-      "required": ["identity_digest", "witness_digest", "file_digest", "query_digest" ],
-      "type":"object"
-    },
-    "__host_response_sg": {
-      "additionalProperties":false,
-      "properties": {
-        "callee": {"type":"string"},
-        "caller": {"type":"string"},
-        "end_byte": {"type":"integer"},
-        "file_digest": {"type":"string"},
-        "ordinal": {"type":"integer"},
-        "query_digest": {"type":"string"},
-        "start_byte": {"type":"integer"},
-        "witness_digest": {"type":"string"}
-      },
-      "required": [
-        "witness_digest",
-        "ordinal",
-        "file_digest",
-        "query_digest",
-        "caller",
-        "callee",
-        "start_byte",
-        "end_byte"
-      ],
-      "type":"object"
-    },
     "call_edge": {
       "additionalProperties":false,
       "properties": {
