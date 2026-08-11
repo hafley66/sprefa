@@ -718,9 +718,10 @@ pub async fn retract_signed_delta(
     Ok(rounds)
 }
 
-/// Probe: compute survivor reachability in one recursive CTE. `(round,key)` does
-/// not terminate cyclic walks under UNION, so round folding remains outside the CTE.
-pub async fn retract_signed_delta_cte(
+/// Recompute the signed survivor set with one distinct recursive walk.
+/// `(round,key)` cannot be carried by the CTE because it defeats `UNION` cycle
+/// suppression, so the CTE owns only survivor reachability.
+pub async fn retract_signed_delta_v2(
     db: &DatabaseConnection,
     ns: &GraphNs,
     seeds: &[(i64, i64)],
@@ -746,6 +747,15 @@ pub async fn retract_signed_delta_cte(
     )).await?;
     txn.commit().await?;
     Ok(0)
+}
+
+/// Compatibility name retained for the recursive-CSE probe.
+pub async fn retract_signed_delta_cte(
+    db: &DatabaseConnection,
+    ns: &GraphNs,
+    seeds: &[(i64, i64)],
+) -> Result<u64, DbErr> {
+    retract_signed_delta_v2(db, ns, seeds).await
 }
 
 /// Probe: append each round to delta and incrementally fold it into refcount.

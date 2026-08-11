@@ -151,7 +151,9 @@ async fn signed_delta_cte_survivors(g: &MultiGraph) -> Vec<i64> {
     let deps: Vec<(i64, i64, i64, i64)> = g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
     store.add_rows(&rows).await.unwrap();
     store.add_deps(&deps).await.unwrap();
-    store.retract_signed_delta_cte(&[(g.seed.0 as i64, g.seed.1)]).await.unwrap();
+    sprefa_store::cascade::retract_signed_delta_v2(store.conn(), store.ns(), &[(g.seed.0 as i64, g.seed.1)])
+        .await
+        .unwrap();
     let keys = store.alive_keys().await.unwrap();
     drop(store);
     cleanup(&path);
@@ -296,4 +298,18 @@ async fn signed_delta_kills_a_cut_cycle() {
         count.len(),
         oracle.len()
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn signed_delta_v2_revives_through_alternate_anchor() {
+    let g = MultiGraph {
+        rows: vec![(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)],
+        edges: vec![(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1), (0, 4, 0, 2)],
+        seed: (0, 0),
+        per_tag: [6, 0, 0],
+    };
+    let oracle: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed).into_iter().collect();
+    assert_eq!(signed_delta_cte_survivors(&g).await, oracle);
+    assert_eq!(dred_survivors(&g).await, oracle);
+    assert_eq!(oracle.len(), 4);
 }
