@@ -46,7 +46,7 @@ impl Harness for Codex {
             .unwrap_or_else(|| format!("boop-{session_id}"));
         let cwd = crate::worktree::prepare_spawn_dir(spec)?;
         let command = launch_command(spec);
-        crate::tmux::new_detached_session(
+        crate::tmux::mux().new_detached_session(
             spec.socket.as_deref(),
             &tmux_name,
             &cwd.display().to_string(),
@@ -72,7 +72,7 @@ impl Harness for Codex {
     fn send(&self, session: &SessionRef, text: &str) -> anyhow::Result<SendOutcome> {
         match &session.tmux {
             Some(tmux) => {
-                crate::tmux::send_keys_literal(session.tmux_socket.as_deref(), tmux, text)?;
+                crate::tmux::mux().send_keys_literal(session.tmux_socket.as_deref(), tmux, text)?;
                 Ok(SendOutcome::Injected)
             }
             None => Ok(SendOutcome::QueuedForNextSpawn),
@@ -81,8 +81,8 @@ impl Harness for Codex {
 
     fn stop(&self, session: &SessionRef) -> anyhow::Result<()> {
         if let Some(tmux) = &session.tmux {
-            if crate::tmux::has_session(session.tmux_socket.as_deref(), tmux)? {
-                crate::tmux::kill_session(session.tmux_socket.as_deref(), tmux)?;
+            if crate::tmux::mux().has_session(session.tmux_socket.as_deref(), tmux)? {
+                crate::tmux::mux().kill_session(session.tmux_socket.as_deref(), tmux)?;
             }
         }
         Ok(())
@@ -692,7 +692,9 @@ mod tests {
     }
 
     fn has_session_on(guard: &TmuxGuard, name: &str) -> bool {
-        crate::tmux::has_session(Some(&guard.socket), name).unwrap_or(false)
+        crate::tmux::mux()
+            .has_session(Some(&guard.socket), name)
+            .unwrap_or(false)
     }
 
     /// A throwaway git repo (one seed commit) plus a worktree path; tests
