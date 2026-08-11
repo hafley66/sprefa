@@ -3,7 +3,8 @@
             emit_jsonschema/3,
             jsonschema_document/3,
             module_defs/4,
-            entry_module_details/4
+            entry_module_details/4,
+            option_rows/3
           ]).
 
 :- use_module(library(http/json)).
@@ -38,9 +39,65 @@ entry_module_details(Name, Rows, ModuleId, Hash) :-
 module_defs(ModuleId, Rows, RefPrefix, Pairs) :-
     findall(RelRow,
             ( member(RelRow, Rows),
-              RelRow = row(_, _, _, _, rel, _, _, ModuleId, _, _, _) ),
+              RelRow = row(_, _, _, LocalName, rel, _, _, ModuleId, _, _, _),
+              \+ compiler_helper_rel(LocalName) ),
             RelRows),
     maplist(rel_def_pair(Rows, RefPrefix), RelRows, Pairs).
+
+% The `__` namespace is compiler-owned (option enums, list companions,
+% ref-option split rels); authors cannot spell it, so the marker identifies a minted helper.
+compiler_helper_rel(LocalName) :-
+    sub_atom(LocalName, _, _, _, '__').
+
+% option_rows(+Decls, +Rows0, -Rows): the catalog lost option(T) when expansion
+% erased it, so fold the author's option columns back into `option` kind rows.
+option_rows(Decls, Rows0, Rows) :-
+    findall(Element,
+            ( member(option_column(_, _, Element), Decls),
+              scalar_option_element(Element) ),
+            Elems0),
+    sort(Elems0, Elems),
+    max_row_id(Rows0, MaxId),
+    option_row_ids(Elems, MaxId, ElementToId, OptionRows),
+    maplist(rewrite_option_column(Decls, Rows0, ElementToId), Rows0, Rewritten),
+    append(Rewritten, OptionRows, Rows).
+
+scalar_option_element(text).
+scalar_option_element(int).
+scalar_option_element(float).
+scalar_option_element(bool).
+scalar_option_element(json).
+
+max_row_id(Rows, MaxId) :-
+    findall(Id, member(row(Id, _, _, _, _, _, _, _, _, _, _), Rows), Ids),
+    max_list(Ids, MaxId).
+
+option_row_ids([], _Id, [], []).
+option_row_ids([Element | Rest], Id0, [Element-Id | Map], [Row | More]) :-
+    Id is Id0 + 1,
+    option_element_id(Element, ElementId),
+    Row = row(Id, 0, 0, Element, option, ElementId, 0, 0, '', '', ''),
+    option_row_ids(Rest, Id, Map, More).
+
+option_element_id(text, 1).
+option_element_id(int, 2).
+option_element_id(float, 3).
+option_element_id(bool, 4).
+option_element_id(json, 5).
+
+rewrite_option_column(Decls, Rows0, ElementToId, Row0, Row) :-
+    Row0 = row(Id, RelId, Ord, Name, column, TypeId, Arity, ModuleId, HId, HS, HR),
+    option_column_element(Decls, Rows0, RelId, Name, Element),
+    memberchk(Element-OptId, ElementToId),
+    !,
+    Row = row(Id, RelId, Ord, Name, column, OptId, Arity, ModuleId, HId, HS, HR).
+rewrite_option_column(_Decls, _Rows0, _ElementToId, Row, Row).
+
+option_column_element(Decls, Rows0, RelId, ColumnName, Element) :-
+    member(option_column(RelName/_, ColumnName, Element), Decls),
+    scalar_option_element(Element),
+    member(row(RelId, _, _, RelName, rel, _, _, _, _, _, _), Rows0).
+
 
 entry_module_row(Rows, Name, Row) :-
     member(Row, Rows),
@@ -82,6 +139,9 @@ column_schema(Rows, RefPrefix, ColumnTypeId, Schema) :-
 kind_schema(_Rows, _Prefix, _Target, Name, primitive, _Element, Schema) :-
     primitive_schema(Name, Schema).
 kind_schema(Rows, Prefix, _Target, _Name, list, ElementTypeId, Schema) :-
+    column_schema(Rows, Prefix, ElementTypeId, ItemSchema),
+    Schema = _{ type: array, items: ItemSchema }.
+kind_schema(Rows, Prefix, _Target, _Name, json_list, ElementTypeId, Schema) :-
     column_schema(Rows, Prefix, ElementTypeId, ItemSchema),
     Schema = _{ type: array, items: ItemSchema }.
 kind_schema(Rows, Prefix, _Target, _Name, option, ElementTypeId, Schema) :-

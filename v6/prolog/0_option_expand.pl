@@ -34,13 +34,17 @@ desugar_option_column(Decls0, Ref, Column, Element, Decls) :-
     -> throw(unsupported_construct(option_in_key_column(Ref, Column)))
     ; true
     ),
+    % option_column/3 survives so the schema emitters can fold the desugared
+    % column back to a nullable anyOf.
     ( scalar_element(Element)
-    -> desugar_scalar_option(Decls0, Ref, Column, Element, Decls)
+    -> desugar_scalar_option(Decls0, Ref, Column, Element, Decls1),
+       append(Decls1, [option_column(Ref, Column, Element)], Decls)
     ; memberchk(enum_decl(Element, _), Decls0)
     -> throw(unsupported_construct(option_of_enum_unsupported(Element)))
     ; declared_rel_element(Decls0, Element)
     -> desugar_reference_option(Decls0, Ref, Column, Element, Position,
-                                Decls)
+                                Decls1),
+       append(Decls1, [option_column(Ref, Column, Element)], Decls)
     ; throw(unsupported_construct(option_element_type_unknown(Element)))
     ).
 

@@ -13,7 +13,7 @@
 :- use_module(compile, [ program_plan/3, default_intern_mode/1 ]).
 :- use_module(lower, [ lower_program/2, boot_statements/7, catalog_decl_rows/6 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
-:- use_module('compile/4_emit_jsonschema', [ jsonschema_text/3 ]).
+:- use_module('compile/4_emit_jsonschema', [ jsonschema_text/3, option_rows/3 ]).
 :- use_module('conformance/body', [ rel_ref/2 ]).
 :- use_module('0_rel_record', [ relplan_column_types/3 ]).
 :- use_module('0_type_plane',
@@ -117,7 +117,8 @@ sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason
           setup_call_cleanup(open(SchedulePath, write, ScheduleStream), format(ScheduleStream, "~w", [ScheduleJson]), close(ScheduleStream)),
           (   catch( ( catalog_decl_rows(Name, Rules, RelPlans, Decls,
                                         SchemaRows, _),
-                       jsonschema_text(Name, SchemaRows, SchemaText) ),
+                       option_rows(Decls, SchemaRows, SchemaRowsOpt),
+                       jsonschema_text(Name, SchemaRowsOpt, SchemaText) ),
                      _SchemaError,
                      fail )
           ->  format(atom(SchemaPath), '~w/~w.schema.json', [OutDir, Name]),
