@@ -946,9 +946,9 @@ parse_surface_wrapper(Shape, Arity, Codes, Args) :-
     wrapper_parser(Shape, Arity, Args, Goal),
     parse_full(Goal, Codes).
 
-wrapper_parser(rel_atom, 1, [Atom], rel_atom_term(Atom)).
-wrapper_parser(body_item, 1, [Item], body_item(Item)).
-wrapper_parser(expr, 1, [E], expr(E)).
+wrapper_parser(Shape, 1, [Arg], call(Parser, Arg)) :-
+    memberchk(Shape-Parser,
+              [rel_atom-rel_atom_term, body_item-body_item, expr-expr]).
 wrapper_parser(expr_pair, 2, [A, B], comma_pair(expr, expr, A, B)).
 wrapper_parser(rel_atom_default, 2, [Atom, D],
                comma_pair(rel_atom_term, expr, Atom, D)).
