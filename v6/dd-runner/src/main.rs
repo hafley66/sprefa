@@ -1,7 +1,10 @@
 use rusqlite::{params, params_from_iter, types::Value as SqlValue, Connection, ToSql};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::{collections::BTreeMap, env, fs, process};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env, error, fs, process,
+};
 
 mod kernel;
 
@@ -14,7 +17,7 @@ struct Plan {
     schedule: Vec<Vec<SignedRow>>,
     tick_order: Vec<String>,
     #[serde(default)]
-    operators: Vec<kernel::Operator>,
+    operators: Vec<Value>,
 }
 
 #[derive(Deserialize)]
@@ -24,7 +27,7 @@ struct Rel {
     select_all: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 struct Rule {
     id: String,
     head: String,
@@ -45,21 +48,90 @@ struct SignedRow {
     row: Row,
 }
 
+/// One `edgestmt/9` arm as the JSON twin carries it. `project_sql` binds the
+/// trigger row positionally; `write_sql` binds the projected head row.
+#[derive(Deserialize)]
+struct EdgeArm {
+    head: String,
+    trigger: String,
+    trigger_kind: String,
+    head_columns: Vec<String>,
+    project_sql: String,
+    write_sql: String,
+}
+
+/// A row presented to the edge arms as a firing, in STORAGE values.
+#[derive(Clone, PartialEq)]
+struct Occurrence {
+    rel: String,
+    values: Vec<Value>,
+}
+
 type Rows = BTreeMap<String, Vec<Value>>;
+type StorageRows = BTreeMap<String, Vec<Vec<Value>>>;
+type Outcome<T> = Result<T, Box<dyn error::Error>>;
+
+/// engine.pl:92 `drain_cap(100)`.
+const DRAIN_CAP: usize = 100;
+/// Matches kernel.rs's fixed-point bound.
+const LEVEL_ROUND_CAP: usize = 10_000;
+
+/// A tick phase whose plan term the dd emitter does not put in the JSON twin,
+/// with the term it wants. A named gap, never a silent skip.
+const PHASE_GAPS: &[(&str, &str)] = &[
+    (
+        "index_delta",
+        "deltastmt/5 DeltaTable; 6_emit_dd_plan.pl:86 keeps SelectAllSql only",
+    ),
+    (
+        "consolidate",
+        "rel frontier + next_frontier table names; rels[] carries name/columns/select_all only",
+    ),
+    (
+        "retain",
+        "retentionstmt/3; 6_emit_dd_plan.pl:609 filters LevelStatements to levelstmt/7",
+    ),
+];
+
+enum Arm {
+    Sqlite,
+    Kernel,
+}
 
 fn main() {
-    let path = env::args().nth(1).unwrap_or_else(|| {
-        println!("usage: dd-runner PLAN.json");
+    let mut path = None;
+    let mut arm = Arm::Sqlite;
+    let mut phases_only = false;
+    for argument in env::args().skip(1) {
+        match argument.as_str() {
+            "--sqlite" => arm = Arm::Sqlite,
+            "--kernel" => arm = Arm::Kernel,
+            "--phases" => phases_only = true,
+            other => path = Some(other.to_owned()),
+        }
+    }
+    let Some(path) = path else {
+        println!("usage: dd-runner PLAN.json [--sqlite|--kernel] [--phases]");
         process::exit(2);
-    });
+    };
     let input = fs::read_to_string(path).unwrap_or_else(|error| fail(error));
     let plan: Plan = serde_json::from_str(&input).unwrap_or_else(|error| fail(error));
-    if plan.operators.is_empty() {
-        let conn = Connection::open_in_memory().unwrap_or_else(|error| fail(error));
-        run(&conn, &plan).unwrap_or_else(|error| fail(error));
-    } else {
-        kernel::run(&plan.rels, &plan.initial, &plan.schedule, &plan.operators)
-            .unwrap_or_else(|error| fail(error));
+    if phases_only {
+        for line in phase_report(&plan) {
+            println!("{line}");
+        }
+        return;
+    }
+    match arm {
+        Arm::Sqlite => {
+            let conn = Connection::open_in_memory().unwrap_or_else(|error| fail(error));
+            run(&conn, &plan).unwrap_or_else(|error| fail(error));
+        }
+        Arm::Kernel => {
+            let operators = kernel_operators(&plan).unwrap_or_else(|error| fail(error));
+            kernel::run(&plan.rels, &plan.initial, &plan.schedule, &operators)
+                .unwrap_or_else(|error| fail(error));
+        }
     }
 }
 
@@ -68,54 +140,359 @@ fn fail(error: impl std::fmt::Display) -> ! {
     process::exit(1);
 }
 
-fn run(conn: &Connection, plan: &Plan) -> rusqlite::Result<()> {
+fn kernel_operators(plan: &Plan) -> Result<Vec<kernel::Operator>, serde_json::Error> {
+    serde_json::from_value(Value::Array(plan.operators.clone()))
+}
+
+/// `operator_payload/3` scopes edgestmt lookup to the HEAD, so every map
+/// operator of a head reports that head's FIRST arm; the repeats are dropped.
+fn edge_arms(plan: &Plan) -> Result<Vec<EdgeArm>, serde_json::Error> {
+    let mut arms: Vec<EdgeArm> = Vec::new();
+    for operator in &plan.operators {
+        if operator.get("classification") != Some(&json!("edge"))
+            || operator.get("kind") != Some(&json!("map"))
+        {
+            continue;
+        }
+        let arm: EdgeArm = serde_json::from_value(operator.clone())?;
+        if !arms.iter().any(|kept| {
+            kept.trigger == arm.trigger
+                && kept.project_sql == arm.project_sql
+                && kept.write_sql == arm.write_sql
+        }) {
+            arms.push(arm);
+        }
+    }
+    Ok(arms)
+}
+
+fn phase_report(plan: &Plan) -> Vec<String> {
+    let arms = edge_arms(plan).unwrap_or_default();
+    let mut lines = Vec::new();
+    for phase in &plan.tick_order {
+        let (status, detail) = match PHASE_GAPS.iter().find(|(name, _)| name == phase) {
+            Some((_, wanted)) => ("no-term", (*wanted).to_owned()),
+            None => match phase.as_str() {
+                "edge_arrivals" | "edge_departures" => {
+                    let kind = if phase == "edge_arrivals" {
+                        "arrival"
+                    } else {
+                        "departure"
+                    };
+                    let count = arms.iter().filter(|arm| arm.trigger_kind == kind).count();
+                    ("ran", format!("{count} {kind} arms"))
+                }
+                "level_before_edges" | "level_after_edges" | "iterate" => (
+                    "ran",
+                    format!("{} level bundles", level_bundles(plan).len()),
+                ),
+                _ => ("ran", String::new()),
+            },
+        };
+        lines.push(format!("{phase}\t{status}\t{detail}"));
+    }
+    let unordered = arms
+        .iter()
+        .filter(|arm| arm.trigger_kind == "ordered_arrival")
+        .count();
+    if unordered > 0 {
+        lines.push(format!(
+            "ordered_arrival\tno-pipeline\t{unordered} arms need the ordered tick (pre/1 snapshot, seq/1 order)"
+        ));
+    }
+    lines
+}
+
+/// `rules[]` repeats a head's bundle once per clause: `operator_payload/3`
+/// hands every map operator of a head the same `levelstmt/7` list.
+fn level_bundles(plan: &Plan) -> Vec<&Rule> {
+    let mut seen: Vec<&Rule> = Vec::new();
+    for rule in &plan.rules {
+        if !seen.iter().any(|kept| kept.head == rule.head) {
+            seen.push(rule);
+        }
+    }
+    seen
+}
+
+fn run(conn: &Connection, plan: &Plan) -> Outcome<()> {
     for ddl in &plan.ddl {
         conn.execute_batch(ddl)?;
     }
     for row in &plan.initial {
         write_row(conn, plan, row, 1)?;
     }
-    execute_rules(conn, plan)?;
-    let mut before = snapshot(conn, plan)?;
-    for (tick, arrivals) in plan.schedule.iter().enumerate() {
-        for arrival in arrivals {
-            write_row(conn, plan, &arrival.row, arrival.sign)?;
-        }
-        // The emission preserves this order. Current map-owned bundles run in
-        // level_before_edges; empty phases deliberately perform no SQL.
+    let arms = edge_arms(plan)?;
+    close_levels(conn, plan)?;
+    let mut text_before = snapshot(conn, plan)?;
+    let mut level_before = storage_snapshot(conn, plan, &level_heads(plan))?;
+    let mut carry: Vec<Occurrence> = Vec::new();
+    let mut drains = 0usize;
+    let mut tick = 0usize;
+    let mut index = 0usize;
+    let no_arrivals: Vec<SignedRow> = Vec::new();
+    loop {
+        let outside = match plan.schedule.get(index) {
+            Some(arrivals) => arrivals,
+            None if carry.is_empty() => break,
+            None => {
+                if drains >= DRAIN_CAP {
+                    return Err(format!("drain_overflow({DRAIN_CAP})").into());
+                }
+                drains += 1;
+                &no_arrivals
+            }
+        };
+        index += 1;
+        tick += 1;
+        let storage_before = storage_snapshot(conn, plan, &all_rels(plan))?;
+        // engine.pl:472 orders carry ahead of arrivals ahead of level rows.
+        let mut occurrences = carry.clone();
+        let mut level_mid = level_before.clone();
+        let mut text_after = text_before.clone();
+        let mut written: Vec<Occurrence> = Vec::new();
         for phase in &plan.tick_order {
-            if phase == "level_before_edges" {
-                execute_rules(conn, plan)?;
+            match phase.as_str() {
+                "absorb_arrivals" => {
+                    occurrences.extend(absorb_arrivals(conn, plan, outside)?);
+                }
+                "index_delta" => (),
+                "level_before_edges" => {
+                    close_levels(conn, plan)?;
+                    level_mid = storage_snapshot(conn, plan, &level_heads(plan))?;
+                    occurrences.extend(new_rows(&level_before, &level_mid));
+                }
+                "edge_arrivals" => {
+                    written.extend(fire_edges(conn, &arms, &occurrences, "arrival")?);
+                }
+                "edge_departures" => {
+                    written.extend(fire_edges(conn, &arms, &occurrences, "departure")?);
+                }
+                "level_after_edges" => {
+                    if !arms.is_empty() {
+                        close_levels(conn, plan)?;
+                    }
+                }
+                "iterate" => {
+                    close_levels(conn, plan)?;
+                }
+                "consolidate" => (),
+                "retain" => (),
+                "boundary" => {
+                    text_after = snapshot(conn, plan)?;
+                }
+                "carry" => {
+                    let level_after = storage_snapshot(conn, plan, &level_heads(plan))?;
+                    let storage_after = storage_snapshot(conn, plan, &all_rels(plan))?;
+                    let mut candidates = written.clone();
+                    candidates.extend(new_rows(&level_mid, &level_after));
+                    carry = carry_out(&arms, &candidates, &storage_before, &storage_after);
+                    level_before = level_after;
+                }
+                "drain" => (),
+                other => return Err(format!("unknown tick phase: {other}").into()),
             }
         }
-        let after = snapshot(conn, plan)?;
-        println!("{}", tick_json(tick + 1, &before, &after));
-        before = after;
+        println!("{}", tick_json(tick, &text_before, &text_after));
+        text_before = text_after;
     }
     Ok(())
 }
 
-fn execute_rules(conn: &Connection, plan: &Plan) -> rusqlite::Result<()> {
-    for rule in &plan.rules {
-        let _ = (&rule.id, &rule.head);
-        conn.execute_batch(&rule.delete)?;
-        for insert in &rule.inserts {
-            conn.execute_batch(insert)?;
+fn all_rels(plan: &Plan) -> Vec<String> {
+    plan.rels.iter().map(|rel| rel.name.clone()).collect()
+}
+
+fn level_heads(plan: &Plan) -> Vec<String> {
+    level_bundles(plan)
+        .iter()
+        .map(|rule| rule.head.clone())
+        .collect()
+}
+
+fn absorb_arrivals(
+    conn: &Connection,
+    plan: &Plan,
+    arrivals: &[SignedRow],
+) -> Outcome<Vec<Occurrence>> {
+    let mut occurrences = Vec::new();
+    for arrival in arrivals {
+        write_row(conn, plan, &arrival.row, arrival.sign)?;
+        if arrival.sign > 0 {
+            occurrences.push(Occurrence {
+                rel: arrival.row.rel.clone(),
+                values: storage_values(conn, &arrival.row.values)?
+                    .iter()
+                    .map(sql_to_json)
+                    .collect(),
+            });
         }
     }
-    Ok(())
+    Ok(occurrences)
+}
+
+/// `delete` runs once, then rounds of `insert` only: a recursive head must grow
+/// across rounds rather than be rebuilt to the same depth each round.
+fn close_levels(conn: &Connection, plan: &Plan) -> Outcome<usize> {
+    let bundles = level_bundles(plan);
+    if bundles.is_empty() {
+        return Ok(0);
+    }
+    for bundle in &bundles {
+        conn.execute_batch(&bundle.delete)?;
+    }
+    let heads = level_heads(plan);
+    let mut previous: Option<StorageRows> = None;
+    for round in 1..=LEVEL_ROUND_CAP {
+        for bundle in &bundles {
+            for insert in &bundle.inserts {
+                conn.execute_batch(insert)?;
+            }
+        }
+        let current = storage_snapshot(conn, plan, &heads)?;
+        if previous.as_ref() == Some(&current) {
+            return Ok(round);
+        }
+        previous = Some(current);
+    }
+    Err(format!("level plane did not close in {LEVEL_ROUND_CAP} rounds").into())
+}
+
+fn fire_edges(
+    conn: &Connection,
+    arms: &[EdgeArm],
+    occurrences: &[Occurrence],
+    kind: &str,
+) -> Outcome<Vec<Occurrence>> {
+    let mut written = Vec::new();
+    for occurrence in occurrences {
+        for arm in arms {
+            if arm.trigger_kind != kind || arm.trigger != occurrence.rel {
+                continue;
+            }
+            for row in project(conn, arm, occurrence)? {
+                let bindings: Vec<SqlValue> = row.iter().map(json_to_sql).collect();
+                let arguments: Vec<&dyn ToSql> =
+                    bindings.iter().map(|value| value as &dyn ToSql).collect();
+                conn.execute(&arm.write_sql, params_from_iter(arguments))?;
+                written.push(Occurrence {
+                    rel: arm.head.clone(),
+                    values: row,
+                });
+            }
+        }
+    }
+    Ok(written)
+}
+
+fn project(conn: &Connection, arm: &EdgeArm, occurrence: &Occurrence) -> Outcome<Vec<Vec<Value>>> {
+    let mut statement = conn.prepare(&arm.project_sql)?;
+    let wanted = statement.parameter_count().min(occurrence.values.len());
+    let bindings: Vec<SqlValue> = occurrence.values[..wanted]
+        .iter()
+        .map(json_to_sql)
+        .collect();
+    let arguments: Vec<&dyn ToSql> = bindings.iter().map(|value| value as &dyn ToSql).collect();
+    let width = arm.head_columns.len();
+    let rows = statement
+        .query_map(params_from_iter(arguments), |row| {
+            (0..width)
+                .map(|column| row.get_ref(column).map(sql_ref_to_json))
+                .collect()
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+/// engine.pl:481-494: a written or post-edge level row carries to T+1 only when
+/// it is a boundary `+delta`; a `-delta` of a departure-listened rel carries.
+fn carry_out(
+    arms: &[EdgeArm],
+    candidates: &[Occurrence],
+    before: &StorageRows,
+    after: &StorageRows,
+) -> Vec<Occurrence> {
+    let mut out: Vec<Occurrence> = Vec::new();
+    for candidate in candidates {
+        let added = new_rows_for(before, after, &candidate.rel)
+            .iter()
+            .any(|row| row == &candidate.values);
+        if added && !out.contains(candidate) {
+            out.push(candidate.clone());
+        }
+    }
+    let departure_rels: BTreeSet<&str> = arms
+        .iter()
+        .filter(|arm| arm.trigger_kind == "departure")
+        .map(|arm| arm.trigger.as_str())
+        .collect();
+    for rel in departure_rels {
+        for row in new_rows_for(after, before, rel) {
+            let occurrence = Occurrence {
+                rel: rel.to_owned(),
+                values: row,
+            };
+            if !out.contains(&occurrence) {
+                out.push(occurrence);
+            }
+        }
+    }
+    out
+}
+
+fn new_rows(before: &StorageRows, after: &StorageRows) -> Vec<Occurrence> {
+    let mut fresh = Vec::new();
+    for (rel, rows) in after {
+        let old = before.get(rel);
+        for row in rows {
+            if !old.is_some_and(|kept| kept.contains(row)) {
+                fresh.push(Occurrence {
+                    rel: rel.clone(),
+                    values: row.clone(),
+                });
+            }
+        }
+    }
+    fresh
+}
+
+fn new_rows_for(before: &StorageRows, after: &StorageRows, rel: &str) -> Vec<Vec<Value>> {
+    let Some(rows) = after.get(rel) else {
+        return Vec::new();
+    };
+    let old = before.get(rel);
+    rows.iter()
+        .filter(|row| !old.is_some_and(|kept| kept.contains(row)))
+        .cloned()
+        .collect()
 }
 
 fn write_row(conn: &Connection, plan: &Plan, row: &Row, sign: i8) -> rusqlite::Result<()> {
-    let rel = plan.rels.iter().find(|rel| rel.name == row.rel).expect("row relation in plan");
+    let rel = plan
+        .rels
+        .iter()
+        .find(|rel| rel.name == row.rel)
+        .expect("row relation in plan");
     let table = row.rel.split('/').next().expect("relation name");
-    let values: Vec<SqlValue> = row.values.iter().map(|value| storage_value(conn, value)).collect::<rusqlite::Result<_>>()?;
-    let placeholders = std::iter::repeat("?").take(values.len()).collect::<Vec<_>>().join(", ");
-    let columns = rel.columns.iter().map(|column| format!("\"{column}\"")).collect::<Vec<_>>().join(", ");
+    let values: Vec<SqlValue> = storage_values(conn, &row.values)?;
+    let placeholders = std::iter::repeat_n("?", values.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let columns = rel
+        .columns
+        .iter()
+        .map(|column| format!("\"{column}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
     let sql = if sign > 0 {
         format!("INSERT OR IGNORE INTO \"{table}\" ({columns}) VALUES ({placeholders})")
     } else {
-        let where_clause = rel.columns.iter().map(|column| format!("\"{column}\" = ?")).collect::<Vec<_>>().join(" AND ");
+        let where_clause = rel
+            .columns
+            .iter()
+            .map(|column| format!("\"{column}\" = ?"))
+            .collect::<Vec<_>>()
+            .join(" AND ");
         format!("DELETE FROM \"{table}\" WHERE {where_clause}")
     };
     let bindings: Vec<&dyn ToSql> = values.iter().map(|value| value as &dyn ToSql).collect();
@@ -123,11 +500,25 @@ fn write_row(conn: &Connection, plan: &Plan, row: &Row, sign: i8) -> rusqlite::R
     Ok(())
 }
 
+fn storage_values(conn: &Connection, values: &[Value]) -> rusqlite::Result<Vec<SqlValue>> {
+    values
+        .iter()
+        .map(|value| storage_value(conn, value))
+        .collect()
+}
+
 fn storage_value(conn: &Connection, value: &Value) -> rusqlite::Result<SqlValue> {
     match value {
         Value::String(text) => {
-            conn.execute("INSERT OR IGNORE INTO \"__str\" (\"content\") VALUES (?1)", params![text])?;
-            let id = conn.query_row("SELECT \"__id\" FROM \"__str\" WHERE \"content\" = ?1", params![text], |row| row.get::<_, i64>(0))?;
+            conn.execute(
+                "INSERT OR IGNORE INTO \"__str\" (\"content\") VALUES (?1)",
+                params![text],
+            )?;
+            let id = conn.query_row(
+                "SELECT \"__id\" FROM \"__str\" WHERE \"content\" = ?1",
+                params![text],
+                |row| row.get::<_, i64>(0),
+            )?;
             Ok(SqlValue::Integer(id))
         }
         Value::Null => Ok(SqlValue::Null),
@@ -143,26 +534,89 @@ fn snapshot(conn: &Connection, plan: &Plan) -> rusqlite::Result<Rows> {
     for rel in &plan.rels {
         let mut statement = conn.prepare(&rel.select_all)?;
         let count = statement.column_count();
-        let rows = statement.query_map([], |row| {
-            let mut values = Vec::with_capacity(count);
-            for column in 0..count {
-                values.push(sql_value(row.get_ref(column)?));
-            }
-            Ok(Value::Array(values))
-        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows = statement
+            .query_map([], |row| {
+                let mut values = Vec::with_capacity(count);
+                for column in 0..count {
+                    values.push(sql_ref_to_json(row.get_ref(column)?));
+                }
+                Ok(Value::Array(values))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         all.insert(rel.name.clone(), sorted(rows));
     }
     Ok(all)
 }
 
-fn sql_value(value: rusqlite::types::ValueRef<'_>) -> Value {
+/// Storage-plane read: interned ids, not the `__txt_` view's decoded text. The
+/// edge arms bind these, so a snapshot the carry set compares must match them.
+fn storage_snapshot(
+    conn: &Connection,
+    plan: &Plan,
+    wanted: &[String],
+) -> rusqlite::Result<StorageRows> {
+    let mut all = StorageRows::new();
+    for rel in plan.rels.iter().filter(|rel| wanted.contains(&rel.name)) {
+        let table = rel.name.split('/').next().expect("relation name");
+        let columns = rel
+            .columns
+            .iter()
+            .map(|column| format!("\"{column}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut statement = conn.prepare(&format!("SELECT {columns} FROM \"{table}\""))?;
+        let width = rel.columns.len();
+        let rows = statement
+            .query_map([], |row| {
+                (0..width)
+                    .map(|column| row.get_ref(column).map(sql_ref_to_json))
+                    .collect()
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        all.insert(rel.name.clone(), rows);
+    }
+    Ok(all)
+}
+
+fn sql_ref_to_json(value: rusqlite::types::ValueRef<'_>) -> Value {
     use rusqlite::types::ValueRef;
     match value {
         ValueRef::Null => Value::Null,
         ValueRef::Integer(value) => json!(value),
-        ValueRef::Real(value) => json!(value),
+        ValueRef::Real(value) => js_number(value),
         ValueRef::Text(value) => Value::String(String::from_utf8_lossy(value).into_owned()),
         ValueRef::Blob(value) => Value::String(String::from_utf8_lossy(value).into_owned()),
+    }
+}
+
+/// The tick log renders a REAL the way ECMAScript `Number::toString` does
+/// (0_type_plane.pl:js_float_text/2), so an integral float loses its `.0`.
+fn js_number(value: f64) -> Value {
+    if value.fract() == 0.0 && value.abs() < 1e21 {
+        json!(value as i64)
+    } else {
+        json!(value)
+    }
+}
+
+fn sql_to_json(value: &SqlValue) -> Value {
+    match value {
+        SqlValue::Null => Value::Null,
+        SqlValue::Integer(number) => json!(number),
+        SqlValue::Real(number) => js_number(*number),
+        SqlValue::Text(text) => Value::String(text.clone()),
+        SqlValue::Blob(bytes) => Value::String(String::from_utf8_lossy(bytes).into_owned()),
+    }
+}
+
+fn json_to_sql(value: &Value) -> SqlValue {
+    match value {
+        Value::Null => SqlValue::Null,
+        Value::Bool(flag) => SqlValue::Integer(i64::from(*flag)),
+        Value::Number(number) if number.is_i64() => SqlValue::Integer(number.as_i64().unwrap()),
+        Value::Number(number) => SqlValue::Real(number.as_f64().unwrap_or_default()),
+        Value::String(text) => SqlValue::Text(text.clone()),
+        other => SqlValue::Text(other.to_string()),
     }
 }
 
@@ -173,13 +627,22 @@ fn sorted(mut rows: Vec<Value>) -> Vec<Value> {
 
 fn tick_json(tick: usize, before: &Rows, after: &Rows) -> String {
     let mut deltas = Vec::new();
-    for name in before.keys().chain(after.keys()).collect::<std::collections::BTreeSet<_>>() {
+    for name in before.keys().chain(after.keys()).collect::<BTreeSet<_>>() {
         let old = before.get(name).cloned().unwrap_or_default();
         let new = after.get(name).cloned().unwrap_or_default();
-        let add: Vec<Value> = new.iter().filter(|row| !old.contains(row)).cloned().collect();
-        let del: Vec<Value> = old.iter().filter(|row| !new.contains(row)).cloned().collect();
+        let add: Vec<Value> = new
+            .iter()
+            .filter(|row| !old.contains(row))
+            .cloned()
+            .collect();
+        let del: Vec<Value> = old
+            .iter()
+            .filter(|row| !new.contains(row))
+            .cloned()
+            .collect();
         if !add.is_empty() || !del.is_empty() {
-            let relation = serde_json::to_string(name.split('/').next().unwrap()).expect("relation JSON");
+            let relation =
+                serde_json::to_string(name.split('/').next().unwrap()).expect("relation JSON");
             let add = serde_json::to_string(&add).expect("add JSON");
             let del = serde_json::to_string(&del).expect("del JSON");
             deltas.push(format!("{relation}:{{\"add\":{add},\"del\":{del}}}"));
