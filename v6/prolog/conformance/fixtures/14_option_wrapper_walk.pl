@@ -162,6 +162,38 @@ fixture(option_of_interned_set_of_rel_is_refused,
   [ throws(unsupported_construct(
              list_interned_set_relation_element(fighter_summary))) ]).
 
+% The reference-option desugar mints `<parent>__<column>` into the author
+% namespace. A program that already declares that name used to surface as a
+% bare rel_arity_collision naming neither the option nor the column.
+fixture(option_companion_name_collision_is_named,
+  prog([ col_type(pair_holder__before/1, probe_value, int),
+         col_type(pair_holder/2, label, text),
+         col_type(pair_holder/2, before, option(pair_holder__before)) ],
+       []),
+  [],
+  [],
+  [ throws(unsupported_construct(
+             option_companion_name_collision(pair_holder__before/1,
+                                             pair_holder/2, before))) ]).
+
+% Every column of a reference target moving to a companion split rel leaves it
+% with no stored columns, and identity is key(...) or the full row, so a
+% zero-column row can never be told from another. Same rel WITHOUT the
+% reference-target use compiles: see option_list_of_rel_round_trips above.
+fixture(reference_target_emptied_by_option_split_is_named,
+  prog([ type_decl(fighter_summary, [col(name, text), col(url, text)]),
+         col_type(fighter_summary/2, name, text),
+         col_type(fighter_summary/2, url, text),
+         type_decl(squad, [col(members, option(list(fighter_summary)))]),
+         col_type(squad/1, members, option(list(fighter_summary))),
+         col_type(roster/2, roster_id, int),
+         col_type(roster/2, at_squad, squad) ],
+       []),
+  [],
+  [],
+  [ throws(unsupported_construct(
+             reference_target_has_no_columns(squad/0))) ]).
+
 % A name no rel declares is still a name no rel declares, at any wrapper depth.
 fixture(option_list_of_unknown_name_keeps_its_stop,
   prog([ col_type(squad/2, id, int),

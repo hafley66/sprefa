@@ -145,11 +145,10 @@ test("openapiToDl6: strict keeps option(<rel>) on a ref target", () => {
   assert.equal(r.code, 0, `strict option-ref compile failed:\n${r.stdout}`);
 });
 
-test("openapiToDl6: strict drops the lifted rel whose name is the option companion's", () => {
-  // A nullable INLINE object lifts to `item__kid`, and the compiler's
-  // reference-option desugar names its companion split rel `item__kid` too, so
-  // the program declares one name at two arities. The sibling option(int) on
-  // the same rel is untouched.
+test("openapiToDl6: a nullable lifted object takes the _object suffix", () => {
+  // Sabotage receipt: asserting the unsuffixed /kid: option\(item__kid\)/
+  // fails, and that spelling stops as
+  // unsupported_construct(option_companion_name_collision(item__kid/1, item/3, kid)).
   const doc = {
     components: {
       schemas: {
@@ -159,6 +158,7 @@ test("openapiToDl6: strict drops the lifted rel whose name is the option compani
           properties: {
             price: { type: "integer", nullable: true },
             kid: { type: "object", nullable: true, properties: { name: { type: "string" } } },
+            sibling: { type: "object", properties: { name: { type: "string" } } },
             name: { type: "string" },
           },
         },
@@ -167,15 +167,53 @@ test("openapiToDl6: strict drops the lifted rel whose name is the option compani
   } as never;
   const strict = new OpenapiToDl6(doc, "strict");
   const prog = strict.convert();
-  assert.match(prog, /rel item\(price: option\(int\), kid: json, name: text\)/);
-  assert.deepEqual(
-    strict.gapList,
-    ["item.kid: option(item__kid) -> json (probe did not compile)"],
-  );
+  assert.match(prog, /kid: option\(item__kid_object\)/);
+  assert.match(prog, /sibling: item__sibling,/);
+  assert.match(prog, /rel item__kid_object\(name: text\)\./);
+  assert.deepEqual(strict.gapList, []);
   const tmp = path.join(os.tmpdir(), "openapi_strict_companion_collision.dl6");
   fs.writeFileSync(tmp, prog);
   const r = compile(tmp);
   assert.equal(r.code, 0, `strict collision compile failed:\n${r.stdout}`);
+});
+
+test("openapiToDl6: strict drops a ref target whose every column is a nullable ref", () => {
+  // Both columns move to companion split rels, so the ref target keeps no
+  // stored columns and no identity:
+  // unsupported_construct(reference_target_has_no_columns(item__pair/0)).
+  const doc = {
+    components: {
+      schemas: {
+        Holder: { type: "object", properties: { item: { $ref: "#/components/schemas/Item" } } },
+        Item: {
+          type: "object",
+          properties: {
+            pair: {
+              type: "object",
+              properties: {
+                before: { type: "array", nullable: true, items: { $ref: "#/components/schemas/Kid" } },
+                after: { type: "array", nullable: true, items: { $ref: "#/components/schemas/Kid" } },
+              },
+            },
+          },
+        },
+        Kid: { type: "object", properties: { name: { type: "string" } } },
+      },
+    },
+  } as never;
+  const strict = new OpenapiToDl6(doc, "strict");
+  const prog = strict.convert();
+  assert.deepEqual(
+    strict.gapList,
+    [
+      "item__pair.before: option(list(kid)) -> json (probe did not compile)",
+      "item__pair.after: option(list(kid)) -> json (probe did not compile)",
+    ],
+  );
+  const tmp = path.join(os.tmpdir(), "openapi_strict_empty_ref_target.dl6");
+  fs.writeFileSync(tmp, prog);
+  const r = compile(tmp);
+  assert.equal(r.code, 0, `strict empty ref target compile failed:\n${r.stdout}`);
 });
 
 test("openapiToDl6: snake_casing name collision refused loudly", () => {

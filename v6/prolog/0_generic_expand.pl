@@ -275,6 +275,13 @@ expanded_relation_specs(Decls, RelName, Specs) :-
               mirror_column_type(Decls, Stored, Type) ),
             Specs),
     length(Specs, Arity).
+% A rel reached in column position needs stored columns: identity is key(...)
+% or the full row, and a zero-column row has neither.
+expanded_relation_specs(Decls, RelName, _) :-
+    \+ member(col_type(RelName/_, _, _), Decls),
+    memberchk(option_column(RelName/_, _, _), Decls),
+    throw(unsupported_construct(
+            reference_target_has_no_columns(RelName/0))).
 
 mirror_column_type(Decls, Type, int) :-
     memberchk(enum_decl(Type, _), Decls),

@@ -63,12 +63,12 @@ source components: 212 | generated component rels: 212 | lifted/enum rels: 161
 
 ```
 wrote /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/pe_pokeapi_gen.ts
-COMPILE-TRACE program=pokeapi_gen parse=1323/7695868 plan=934/8553246 lower=191/834964 boot=3/24292 emit=919/8242972 write=34/271 total=3404/25351613
+COMPILE-TRACE program=pokeapi_gen parse=1450/7711179 plan=962/9063849 lower=195/840598 boot=1/24516 emit=920/8329230 write=34/271 total=3562/25969643
 emit-back wrote /Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1237a7d94bba8cfe/v6/tsv2/gen/pe_emit/schema.json
 emit-back wrote /Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1237a7d94bba8cfe/v6/tsv2/gen/pe_emit/openapi.json
 ```
 
-Converter strict-mode dropped columns (G1): 12; nullable-array drops (G2): 0 (option(list(..)) spelling emitted)
+Converter strict-mode dropped columns (G1): 4; nullable-array drops (G2): 0 (option(list(..)) spelling emitted)
 
 ## Emit-back receipt
 
