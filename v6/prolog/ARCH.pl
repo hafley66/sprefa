@@ -679,9 +679,9 @@ fork('2026-07-29', flagship_pick, callgraph_rail_first_then_flow_interproc, flow
 task(kernel_sql_lowering, done,    []).                  % lower_sql + dl_in_prolog, measured
 task(desugar_machinery,   done,    []).                  % op/3 + term_expansion (rel_island)
 % duplicate clock_check row (labbed, [desugar_machinery]) DELETED 2026-07-30: the self-map rail's task_state_conflict caught two live states; the :active row below (user-ruled 2026-07-30) survives.
-task(init_retention,      labbed,  []).
+task(init_retention,      done,    []).                  % landed: missing_retention analyze.pl:1305, emit_ts.pl:1193-1203; 4 compiled + 3 guard fixtures (manifest 209-223); status audited 2026-08-11
 task(causality_check,     labbed,  []).
-task(envelope_types,      labbed,  []).                  % enum_match
+task(envelope_types,      done,    []).                  % enum_match landed: 0_match_expand.pl:120 match_nonexhaustive + plunit_tests.pl:2432; enum planes compiled (manifest 2-6, 32-37); status audited 2026-08-11
 task(demand_clocking,     labbed,  [kernel_sql_lowering]).
 task(clock_inference,     parked,  [clock_check]).       % swap ground clocks for holes; user-parked 2026-07-27
 task(surface_dcg,         done,    [desugar_machinery, tsv2_pipeline]). % LANDED 2026-07-28 (merge 10053236): parse_dl.pl DCG + print_dl.pl + dl_view/ (109 fixtures as .dl text) + SYNTAX.md; round-trip 109/109, ghcacher.dl/conformance.dl parse with named gaps only. DCG is the CANONICAL parser (langium demoted). NOT yet wired into compile_fixture (term form still the compiler entry; wiring queued behind the latest/combine/zip spelling words). Hosts half of phase D still unbuilt.

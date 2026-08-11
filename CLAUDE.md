@@ -38,7 +38,7 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   say whether it encodes a real impossibility or unfinished work, and fight it.
   "The language does not support X" is a claim that needs the throw site cited.
 - **Comments are not the language** (2026-08-06): "does X compile" is answered by
-  `v6/prolog/compile/out/manifest.json` (306 fixtures, `bucket` +
+  `v6/prolog/compile/out/manifest.json` (366 fixtures as of 2026-08-11, `bucket` +
   `reason` each), never by a header. Grep the manifest FIRST. Measured that day:
   `v6/dl/fixtures/ghcacher.dl6`'s header was wrong four times about its own
   grammar (`->`, `bind`, bare host calls, and "array-explode INEXPRESSIBLE"),
@@ -161,19 +161,29 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
   literal code identifiers and existing doc filenames.
 
 ## Open items
+(Audited 2026-08-11 against manifest/rulings/code; stale entries struck:
+re-eval kickoff executed 55d453b5 + catalog_oracle_meta rulings.pl:634;
+forkJoin fixture exists compiled manifest:309; scope_done is an ordinary
+declared rel, zero literal engine reads; path-prefix unblocked by
+rtrim/replace 3e987dca.)
 **Awaiting user word (v6):** prolog folder names/numbering
 (plans/2026-08-01-flash4-partition-research.md); flash-prolog worktree fate
 (redo in v6/sprefa-extract, keep, or drop); bop-run idle-exit vs rail receipts
-(serve or --forever); refusal re-eval kickoff (plans/2026-08-01-refusal-inventory.md,
-245 decisions / 65% weak-trail); push + tag (bop gate satisfied); extraction ambiguities A4 fence-escape + A14
-comment_span; smaller:
-operators.pl forkJoin fixture, scope_done magic-rel decl, repeat same-tick salt,
-until(F) formula presentation; **string split/substr primitive** (only concat +
-regexp exist, so path-prefix work has no in-language spelling — blocks deriving
-ancestor directories, see conformance/fixtures/9_pr_size.pl where in_dir/2 is
-supplied as facts); **scan-into-json** (pre/1 + `:=` a document is refused by
-json_value_expression; decide whether to lift it or keep json write-only through
-json_group_array).
+(serve or --forever); push + tag (gated on release_gate_v620: ARCH-MAP.md
+from ONE dl6 program, rulings.pl:532); extraction ambiguity A14 comment_span
+(A4's ts_query half landed, manifest:49; regex/glob/ast-grep escape slot
+waits on the general embedded-text literal decision); classic parse_dl.pl
+delete-or-keep (parity harness referees either way); smaller:
+repeat same-tick salt, until(F) formula presentation;
+**string split/substr primitive** (still absent as a primitive, but the
+path-prefix use case landed via rtrim/2 + replace/3, lower.pl:613-614,
+fixture derive_directory_prefix_via_rtrim_replace compiled).
+**Dispatched 2026-08-11 (user word):** scan-into-json candidate C
+(json_group_object aggregate head, plans/2026-08-09-scan-into-json-research.md;
+brace-literal := document stays TODO at lower.pl:559); converter nullable
+arrays (option(list(_)) COMPILES as of 2026-08-11 coordinator probe — the
+"no nullable-array type" prose in POKEAPI_ROUNDTRIP_REPORT.md is stale,
+converter emit + conformance fixture in flight).
 **v5 housekeeping: NEVER ASK (user 2026-08-09, "no more v5 housekeeping,
 stop asking across sessions").** The former ask-list (orphan roots,
 rel_port_of_reach, lazy-rel-tier, filesize rail, dom-match rewrite) wakes
