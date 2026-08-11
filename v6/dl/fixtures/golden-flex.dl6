@@ -63,6 +63,7 @@
 #   zip/2                          reserved.
 #   subscribe/1, unsubscribe/1,    reserved lifecycle wrappers; their kernel
 #   complete/1, error/1            forms are next/finalize on the demand rel.
+#   pre/2                          seeded pre is covered by conformance only.
 #
 #   BRACES AND LIST VALUES         MEASURED writing this file. A braces literal
 #                                  in a head or a `:=` right-hand side is
@@ -290,6 +291,10 @@ bind interval(period: int, bucket: int).
 # decode/2 over a struct-typed column: one hop out of the dictionary.
 rel tree_label(tree_id: int, label: text).
 tree_label(TreeId, Label) <- tree(TreeId, _Species, Site), decode(Site, {label: Label}).
+
+# ═══ GENERICS: four relational list constructors and their row artifacts ════
+# Conformance grades arrivals and retractions for all four relational list
+# constructors, preserving author column order.
 
 # not/1 as a level-body anti-join, plus `\==` (identity comparison), `>`
 # (ordered comparison), and `:=` binding an arithmetic expression that uses

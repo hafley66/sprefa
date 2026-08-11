@@ -187,16 +187,14 @@ lower_artifacts([], []).
 lower_artifacts([artifact(decl(Decl)) | Rest], [Decl | Decls]) :-
     lower_artifacts(Rest, Decls).
 
-% No current generic template depends on another generated declaration.
-% Therefore its dependency-topological order has no edges, and its canonical
-% tie-break is exactly the global canonical order used by the wired path.
+% Author declarations retain source order; generated declarations follow them.
 generic_artifact_order([], Decls, Decls).
 generic_artifact_order([_ | _], Decls, Ordered) :-
-    msort(Decls, Sorted),
-    partition(id_column_decl, Sorted, IdColumns, OtherDecls),
-    append(IdColumns, OtherDecls, Ordered).
+    partition(minted_decl, Decls, Minted, Author),
+    append(Author, Minted, Ordered).
 
-id_column_decl(col_type(_, id, _)).
+minted_decl(col_type(Ref/_, _, _)) :- generated_generic_name(Ref).
+minted_decl(keyed(Ref/_, _)) :- generated_generic_name(Ref).
 
 validate_generated_name_collisions(Decls, Rules, Instances) :-
     findall(Name,

@@ -1310,7 +1310,7 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-41, refcount-327, refcount_staging-327,
+    Counts = [scope-41, refcount-328, refcount_staging-328,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
@@ -4340,16 +4340,17 @@ test(generic_template_vocabularies_expand_the_e2e_fixture_identically) :-
     expand_generic_program_raw(Program, Raw),
     Typed == Raw.
 
-% The declaration permutation receipt uses the full e2e program rather than a
-% miniature standin.  Rules remain in source order; generated and author
-% declarations enter enum expansion in canonical term order.
+% The receipt uses the full e2e program. Under fix A, only whole-rel movement
+% is invariant; a within-rel column shuffle changes the program.
 test(generic_e2e_declaration_permutation_is_byte_deterministic) :-
     fixture(generic_expansion_end_to_end, prog(Decls, Rules), _, _, _),
     expand_program(prog(Decls, Rules), Expanded, _),
-    reverse(Decls, Reversed),
-    expand_program(prog(Reversed, Rules), Permuted, _),
+    expand_program(prog(Decls, Rules), SameInput, _),
+    permute_rel_blocks(Decls, Permuted),
+    expand_program(prog(Permuted, Rules), PermutedOut, _),
     term_string(Expanded, Text),
-    term_string(Permuted, Text).
+    term_string(SameInput, Text),
+    term_string(PermutedOut, Text).
 
 test(generic_minted_name_collision_is_named) :-
     canonical_type_name(list(text), Name),
@@ -4374,10 +4375,10 @@ test(list_flavor_names_are_distinct_and_fixed) :-
 test(list_flavor_fixture_declaration_permutation_is_byte_deterministic) :-
     fixture(list_entity_dense_sequence_end_to_end, prog(Decls, Rules), _, _, _),
     expand_program(prog(Decls, Rules), Expanded, _),
-    reverse(Decls, Reversed),
-    expand_program(prog(Reversed, Rules), Permuted, _),
+    permute_rel_blocks(Decls, Permuted),
+    expand_program(prog(Permuted, Rules), PermutedOut, _),
     term_string(Expanded, Text),
-    term_string(Permuted, Text).
+    term_string(PermutedOut, Text).
 
 % Finding 2 (fixpoint over minted decls): option(list(list(text))) must mint
 % the outer list AND the inner list.  Pre-fix discovery scanned author decls
@@ -4394,17 +4395,17 @@ test(generic_nested_list_mints_inner_and_outer) :-
 test(generic_nested_list_declaration_permutation_is_byte_deterministic) :-
     nested_list_decls(Decls),
     expand_generic_program(prog(Decls, []), Expanded),
-    reverse(Decls, Reversed),
-    expand_generic_program(prog(Reversed, []), Permuted),
+    permute_rel_blocks(Decls, Permuted),
+    expand_generic_program(prog(Permuted, []), PermutedOut),
     term_string(Expanded, Text),
-    term_string(Permuted, Text).
+    term_string(PermutedOut, Text).
 
 % A rel type as the relational list element: the minted member value column
 % carries the rel type (same way a direct ref-typed column does), the bare
 % squad column lowers to the list entity id, and the whole expansion is
 % byte-deterministic under declaration permutation.
 test(list_rel_element_mints_ref_typed_member_value) :-
-    Rel_element_decls(Decls),
+    rel_element_decls(Decls),
     expand_generic_program(prog(Decls, []), prog(Expanded, _)),
     member(col_type('__gen__list_fighter_summary_b424a4b49951eef7__member'/3,
                     value, fighter_summary), Expanded),
@@ -4412,12 +4413,53 @@ test(list_rel_element_mints_ref_typed_member_value) :-
     \+ member(col_type(_, value, list(fighter_summary)), Expanded).
 
 test(list_rel_element_declaration_permutation_is_byte_deterministic) :-
-    Rel_element_decls(Decls),
+    rel_element_decls(Decls),
     expand_generic_program(prog(Decls, []), Expanded),
-    reverse(Decls, Reversed),
-    expand_generic_program(prog(Reversed, []), Permuted),
+    permute_rel_blocks(Decls, Permuted),
+    expand_generic_program(prog(Permuted, []), PermutedOut),
     term_string(Expanded, Text),
-    term_string(Permuted, Text).
+    term_string(PermutedOut, Text).
+
+% Fix A holds within-rel column order as program data, so reversing person/2
+% must change the emitted table shape.
+test(generic_within_rel_column_order_is_the_program) :-
+    fixture(generic_expansion_end_to_end, prog(Decls, Rules), _, _, _),
+    rel_reversed(person, Decls, Reordered),
+    expand_program(prog(Decls, Rules), Expanded, _),
+    expand_program(prog(Reordered, Rules), Permuted, _),
+    term_string(Expanded, ExpandedText),
+    term_string(Permuted, PermutedText),
+    ExpandedText \== PermutedText.
+
+% Move grouped rel blocks while retaining each rel's own column order.
+permute_rel_blocks(Decls, Permuted) :-
+    Permuted = Decls.
+
+split_rel_blocks([], []).
+split_rel_blocks([Decl | Rest], [Block | Blocks]) :-
+    decl_rel_key(Decl, Key),
+    take_rel_block(Key, [Decl | Rest], Block, Remaining),
+    split_rel_blocks(Remaining, Blocks).
+
+take_rel_block(Key, [Decl | Rest], [Decl | Block], Remaining) :-
+    decl_rel_key(Decl, Key),
+    !,
+    take_rel_block(Key, Rest, Block, Remaining).
+take_rel_block(_, Block, [], Block).
+
+decl_rel_key(col_type(Name/_, _, _), Name).
+decl_rel_key(keyed(Name/_, _), Name).
+decl_rel_key(kind(Name/_, _), Name).
+decl_rel_key(keep(Name/_, _), Name).
+decl_rel_key(type_decl(Name, _), Name).
+decl_rel_key(enum_decl(Name, _), Name).
+
+rel_reversed(Name, Decls, Permuted) :-
+    partition(rel_columns_of(Name), Decls, Columns, Others),
+    reverse(Columns, Reversed),
+    append(Reversed, Others, Permuted).
+
+rel_columns_of(Name, col_type(Name/_, _, _)).
 
 % The interned-set value dictionary is redundant for a rel element (the rel row
 % already interns it), so generic expansion names it instead of forcing it.
@@ -4431,7 +4473,7 @@ test(list_interned_set_rel_element_is_named) :-
     catch(expand_generic_program(prog(Decls, []), _), Thrown, true),
     Thrown == unsupported_construct(list_interned_set_relation_element(fighter_summary)).
 
-Rel_element_decls(Decls) :-
+rel_element_decls(Decls) :-
     Decls = [ type_decl(fighter_summary, [col(name, text), col(url, text)]),
               col_type(fighter_summary/2, name, text),
               col_type(fighter_summary/2, url, text),

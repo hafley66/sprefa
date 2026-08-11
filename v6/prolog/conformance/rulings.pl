@@ -724,6 +724,10 @@ ruling(list_bare_default_dense_owned_sequence, bare_list_is_dense_owned_sequence
 ruling(list_flavor_set_v1, four_lab_constructors, user,
        'user 2026-08-10: "Ship the lab''s four constructors: list(T), list_entity_dense_sequence(T), list_interned_set(T), list_entity_linked_sequence(T)". json_list(T) is the inline-JSON term at every layer (main 1d0e294a).').
 
+% 2026-08-10: author column order remains program data through expansion.
+ruling(decl_order_fix_a, author_column_order_is_data, user,
+       'user 2026-08-10: fix A').
+
 % 2026-08-10: JS is never the row engine. The 4a9b45f7 incident (failure-modes
 % entry 45) exposed boundary_delta materializing a 1,069,200-row delta into V8
 % row-by-row; the user ruled the whole shape out, not just the incident. rxjs
