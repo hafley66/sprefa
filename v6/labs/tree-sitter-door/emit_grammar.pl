@@ -38,12 +38,14 @@ main(Argv) :-
                     Rewritten,
                     Rewritten2),
     generated_bodies(Terms, Bodies),
+    ungenerated_shapes(Terms, Blocked),
     rewrite_rule_bodies(Bodies, Rewritten2, FinalGrammar),
     pairs_keys(Bodies, GeneratedNames),
     setup_call_cleanup(
         open(Output, write, Stream, [encoding(utf8)]),
         emit_file(Stream, Input, Registry, Overlay, Operators,
-                  Specializations, UnboundArgs, GeneratedNames, FinalGrammar),
+                  Specializations, UnboundArgs, GeneratedNames, Blocked,
+                  FinalGrammar),
         close(Stream)),
     length(Specializations, SpecializedCount),
     length(UnboundArgs, UnboundCount),
@@ -435,6 +437,14 @@ repetition_shape(Terms, Name/Arity, [Recursive, Base], Item, Separator) :-
     Prefix = [Leading | SeparatorGoals],
     same_shape(Leading, Item),
     separator_goal(Terms, SeparatorGoals, Separator).
+repetition_shape(Terms, Name/Arity, [Recursive, Base], Item, none) :-
+    goal_sequence(Base, []),
+    goal_sequence(Recursive, RecursiveSequence),
+    append(Prefix, [Tail], RecursiveSequence),
+    nonvar(Tail),
+    functor(Tail, Name, Arity),
+    exclude(==(ws), Prefix, [Item]),
+    \+ literal_text(Terms, Item, _).
 repetition_shape(Terms, Name/Arity, [Only], Item, Separator) :-
     goal_sequence(Only, Sequence),
     append(Prefix, [Conditional], Sequence),
@@ -444,8 +454,13 @@ repetition_shape(Terms, Name/Arity, [Only], Item, Separator) :-
     append(_, [Tail], ThenSequence),
     nonvar(Tail),
     functor(Tail, Name, Arity),
-    literal_text(Terms, Guard, Separator),
-    exclude(==(ws), Prefix, [Item]).
+    literal_text(Terms, Guard, Separator0),
+    exclude(==(ws), Prefix, Leading),
+    ( Leading = [Item], Separator = Separator0
+    ; Leading == [],
+      exclude(==(ws), ThenSequence, [Item, _]),
+      Separator = tail(Separator0)
+    ).
 
 same_shape(Left, Right) :-
     nonvar(Left), nonvar(Right),
@@ -456,71 +471,197 @@ separator_goal(Terms, Goals, Separator) :-
     exclude(==(ws), Goals, [Goal]),
     literal_text(Terms, Goal, Separator).
 
-% ------------------------------------------------------------- js rendering
+% Fragments are terms first so field names can be placed and literal
+% alternatives factored before anything becomes JavaScript.
 
-js_string(Text, Js) :- json_atom(Text, Js).
-
-gen_sequence(Terms, Goals, Js) :-
+ir_sequence(Terms, Seen, Goals, Ir) :-
     exclude(==(ws), Goals, Meaningful),
-    maplist(gen_goal(Terms), Meaningful, Parts),
-    ( Parts = [Single]
-    -> Js = Single
-    ; atomic_list_concat(Parts, ', ', Joined),
-      format(string(Js), 'seq(~w)', [Joined])
-    ).
+    maplist(ir_goal(Terms, Seen), Meaningful, Items),
+    ir_flatten_sequence(Items, Ir).
 
-gen_goal(Terms, Goal, Js) :-
-    literal_text(Terms, Goal, Text), !,
-    js_string(Text, Js).
-gen_goal(Terms, Goal, Js) :-
+% seq concatenation is associative, so a nested seq spills into its parent
+ir_flatten_sequence(Items0, Ir) :-
+    foldl(spill_sequence, Items0, Nested, []),
+    append(Nested, Items),
+    ( Items = [Single] -> Ir = Single ; Ir = seq(Items) ).
+
+spill_sequence(seq(Inner), [Inner | Rest], Rest) :- !.
+spill_sequence(Item, [[Item] | Rest], Rest).
+
+ir_branch(Terms, Seen, Branch, Ir) :-
+    goal_sequence(Branch, Sequence),
+    ir_sequence(Terms, Seen, Sequence, Ir).
+
+ir_goal(Terms, _, Goal, lit(Text)) :-
+    literal_text(Terms, Goal, Text), !.
+ir_goal(Terms, Seen, Goal, Ir) :-
     nonvar(Goal),
-    Goal = (Guard -> Then ; Else),
-    !,
+    Goal = (Guard -> Then ; Else), !,
     ( nonvar(Guard), Guard = peek(_), goal_sequence(Then, [])
-    -> goal_sequence(Else, ElseSequence),
-       gen_sequence(Terms, ElseSequence, ElseJs),
-       format(string(Js), 'optional(~w)', [ElseJs])
-    ; goal_sequence(Then, ThenSequence),
-      goal_sequence(Else, ElseSequence),
-      gen_sequence(Terms, ThenSequence, ThenJs),
-      gen_sequence(Terms, ElseSequence, ElseJs),
-      format(string(Js), 'choice(~w, ~w)', [ThenJs, ElseJs])
+    -> ir_branch(Terms, Seen, Else, Inner), Ir = optional(Inner)
+    ; ir_branch(Terms, Seen, (Guard, Then), ThenIr),
+      ir_branch(Terms, Seen, Else, ElseIr),
+      ir_choice([ThenIr, ElseIr], Ir)
     ).
-gen_goal(_, Goal, Js) :-
+ir_goal(Terms, Seen, Goal, Ir) :-
+    nonvar(Goal),
+    Goal = (Guard -> Then), !,
+    ir_branch(Terms, Seen, (Guard, Then), Ir).
+ir_goal(Terms, Seen, Goal, Ir) :-
+    nonvar(Goal),
+    Goal = (Left ; Right), !,
+    ir_branch(Terms, Seen, Left, LeftIr),
+    ir_branch(Terms, Seen, Right, RightIr),
+    ir_choice([LeftIr, RightIr], Ir).
+ir_goal(Terms, Seen, Goal, Ir) :-
+    nonvar(Goal),
+    specialization_call(Goal, Kind, Parser),
+    nonvar(Parser), !,
+    repetition(Terms, sep/2, _, Separator),
+    applied_parser(Parser, ItemGoal),
+    ir_goal(Terms, Seen, ItemGoal, ItemIr),
+    Inner = seq([ItemIr, repeat(seq([lit(Separator), ItemIr]))]),
+    ( Kind == args -> Ir = optional(Inner) ; Ir = Inner ).
+ir_goal(Terms, _, Goal, Ir) :-
     nonvar(Goal),
     functor(Goal, Name, Arity),
-    cst_reference(Name/Arity, Js), !.
-gen_goal(Terms, Goal, Js) :-
+    cst_shape_of(Terms, Name/Arity, Spelling, _), !,
+    ( Spelling = repeat(Rule) -> Ir = repeat(ref(Rule))
+    ; Spelling = ref(Rule) -> Ir = ref(Rule)
+    ; Ir = ref(Spelling)
+    ).
+ir_goal(Terms, Seen, Goal, Ir) :-
     nonvar(Goal),
     functor(Goal, Name, Arity),
-    gen_body(Terms, Name/Arity, Js).
+    \+ memberchk(Name/Arity, Seen),
+    ir_body(Terms, [Name/Arity | Seen], Name/Arity, Ir).
 
-gen_body(Terms, Nonterminal, Js) :-
+applied_parser(Parser, Goal) :-
+    Parser =.. Parts,
+    append(Parts, [_], Applied),
+    Goal =.. Applied.
+
+ir_body(Terms, Seen, Nonterminal, Ir) :-
     repetition(Terms, Nonterminal, Item, Separator), !,
-    gen_goal(Terms, Item, ItemJs),
-    js_string(Separator, SeparatorJs),
-    format(string(Js), 'seq(~w, repeat(seq(~w, ~w)))',
-           [ItemJs, SeparatorJs, ItemJs]).
-gen_body(Terms, Nonterminal, Js) :-
-    findall(Body, dcg_clause(Terms, Nonterminal, Body), [Body]),
-    goal_sequence(Body, Sequence),
-    gen_sequence(Terms, Sequence, Js).
+    ir_goal(Terms, Seen, Item, ItemIr),
+    ( Separator == none
+    -> Ir = repeat(ItemIr)
+    ; Separator = tail(Text)
+    -> Ir = repeat(seq([lit(Text), ItemIr]))
+    ; Ir = seq([ItemIr, repeat(seq([lit(Separator), ItemIr]))])
+    ).
+ir_body(Terms, Seen, Nonterminal, Ir) :-
+    findall(Body, dcg_clause(Terms, Nonterminal, Body), Bodies),
+    Bodies = [_ | _],
+    ( Bodies = [Only]
+    -> ir_branch(Terms, Seen, Only, Ir)
+    ; maplist(ir_branch(Terms, Seen), Bodies, Items),
+      ir_choice(Items, Ir)
+    ).
 
-% Editor node names for DCG nonterminals; every name here is already spelled
-% in the hand grammar and the emitter coins none.
+ir_choice(Items0, Ir) :-
+    flatten_choices(Items0, Items1),
+    ( select(optional(Inner), Items1, Inner, Items2) -> true ; Items2 = Items1 ),
+    ( selectchk(seq([]), Items2, Rest)
+    -> ir_alternatives(Rest, Alternatives), Ir = optional(Alternatives)
+    ; Items1 == Items2
+    -> ir_alternatives(Items2, Ir)
+    ; ir_alternatives(Items2, Alternatives), Ir = optional(Alternatives)
+    ).
 
-cst_reference(ident/1, '$.identifier').
-cst_reference(enum_variant/1, '$.enum_variant').
-cst_reference(brace_pair/1, '$.object_pair').
+flatten_choices([], []).
+flatten_choices([choice(Inner) | Rest], Out) :- !,
+    flatten_choices(Inner, InnerFlat),
+    flatten_choices(Rest, RestFlat),
+    append(InnerFlat, RestFlat, Out).
+flatten_choices([Item | Rest], [Item | Out]) :- flatten_choices(Rest, Out).
 
-cst_rule_body(dotted_path/1, path).
-cst_rule_body(enum_variants/1, enum_variants).
-cst_rule_body(braces_term/1, object_pattern).
+ir_alternatives([Single], Single) :- !.
+ir_alternatives(Items, Ir) :-
+    ( factored_choice(Items, Factored) -> Ir = Factored ; Ir = choice(Items) ).
+
+% alternatives that differ only in a leading literal share one tail
+factored_choice(Items, Ir) :-
+    Items = [_, _ | _],
+    maplist(leading_literal, Items, Literals, Tails),
+    Tails = [Tail | _],
+    forall(member(Other, Tails), Other == Tail),
+    ( Tail == [] -> Ir = choice(Literals) ; Ir = seq([choice(Literals) | Tail]) ).
+
+leading_literal(seq([lit(Text) | Rest]), lit(Text), Rest) :- !.
+leading_literal(lit(Text), lit(Text), []).
+
+% A field name lands on the first reference, alternative set or token still
+% unnamed; '-' spends a slot without naming it and repeats never take one.
+
+place_fields(Fields, Ir0, Ir) :- place_field_list(Ir0, Fields, Ir, []).
+
+place_field_list(Ir, [], Ir, []) :- !.
+place_field_list(lit(Text), Fields, lit(Text), Fields) :- !.
+place_field_list(repeat(Item), Fields, repeat(Item), Fields) :- !.
+place_field_list(seq(Items0), Fields0, seq(Items), Fields) :- !,
+    foldl(place_field_item, Items0, Items, Fields0, Fields).
+place_field_list(optional(Item0), Fields0, optional(Item), Fields) :- !,
+    place_field_list(Item0, Fields0, Item, Fields).
+place_field_list(Node, ['-' | Fields], Node, Fields) :- !.
+place_field_list(Node, [Name | Fields], field(Name, Node), Fields).
+
+place_field_item(Item0, Item, Fields0, Fields) :-
+    place_field_list(Item0, Fields0, Item, Fields).
+
+% --------------------------------------------------------------- rendering
+
+render(lit(Text), Js) :- json_atom(Text, Js).
+render(ref(Rule), Js) :- format(atom(Js), '$.~w', [Rule]).
+render(tok(Regex), Js) :- format(atom(Js), 'token(/~w/)', [Regex]).
+render(immediate(Regex), Js) :-
+    format(atom(Js), 'token.immediate(/~w/)', [Regex]).
+render(field(Name, Item), Js) :-
+    render(Item, Inner),
+    format(atom(Js), 'field("~w", ~w)', [Name, Inner]).
+render(optional(Item), Js) :-
+    render(Item, Inner),
+    format(atom(Js), 'optional(~w)', [Inner]).
+render(repeat(Item), Js) :-
+    render(Item, Inner),
+    format(atom(Js), 'repeat(~w)', [Inner]).
+render(seq(Items), Js) :- render_call(seq, Items, Js).
+render(choice(Items), Js) :- render_call(choice, Items, Js).
+
+render_call(Functor, Items, Js) :-
+    maplist(render, Items, Parts),
+    atomic_list_concat(Parts, ', ', Joined),
+    format(atom(Js), '~w(~w)', [Functor, Joined]).
+
+% Fallback CST names for the phase-1 rules; parse_dl_dcg.pl's own cst_shape/2
+% rows replace these once they exist.
+
+cst_shape_default(ident/1, identifier-[]).
+cst_shape_default(enum_variant/1, enum_variant-[]).
+cst_shape_default(brace_pair/1, object_pair-[]).
+cst_shape_default(dotted_path/1, path-[]).
+cst_shape_default(enum_variants/1, enum_variants-[]).
+cst_shape_default(braces_term/1, object_pattern-[]).
+
+cst_shape_of(Terms, Nonterminal, Rule, Fields) :-
+    ( memberchk(cst_shape(_, _), Terms)
+    -> member(cst_shape(Nonterminal, Rule-Fields), Terms)
+    ; cst_shape_default(Nonterminal, Rule-Fields)
+    ).
+
+rule_of_spelling(_, _, ref(_), _, _) :- !, fail.
+rule_of_spelling(Terms, Nonterminal, repeat(Rule), Rule, Ir) :- !,
+    repetition(Terms, Nonterminal, Item, none),
+    ir_goal(Terms, [Nonterminal], Item, Ir).
+rule_of_spelling(Terms, Nonterminal, Rule, Rule, Ir) :-
+    ir_body(Terms, [Nonterminal], Nonterminal, Ir).
 
 generated_bodies(Terms, Bodies) :-
     findall(Rule-Js,
-            ( cst_rule_body(Nonterminal, Rule),
-              gen_body(Terms, Nonterminal, Js)
+            ( cst_shape_of(Terms, Nonterminal, Spelling, Fields),
+              rule_of_spelling(Terms, Nonterminal, Spelling, Rule, Ir0),
+              place_fields(Fields, Ir0, Ir),
+              render(Ir, Js)
             ),
             Structural),
     findall(Rule-Js,
@@ -531,6 +672,17 @@ generated_bodies(Terms, Bodies) :-
             Tokens),
     append(Structural, Tokens, Pairs),
     keysort(Pairs, Bodies).
+
+ungenerated_shapes(Terms, Blocked) :-
+    findall(Nonterminal,
+            ( cst_shape_of(Terms, Nonterminal, Spelling, Fields),
+              Spelling \= ref(_),
+              \+ ( rule_of_spelling(Terms, Nonterminal, Spelling, _, Ir0),
+                   place_fields(Fields, Ir0, Ir),
+                   render(Ir, _)
+                 )
+            ),
+            Blocked).
 
 rewrite_rule_bodies(Bodies, GrammarIn, GrammarOut) :-
     split_string(GrammarIn, "\n", "", Lines),
@@ -581,7 +733,7 @@ repo_relative(Path, Relative) :-
     ).
 
 emit_file(Stream, Input, Registry, Overlay, Operators,
-          Specializations, UnboundArgs, GeneratedNames, Grammar) :-
+          Specializations, UnboundArgs, GeneratedNames, Blocked, Grammar) :-
     maplist(repo_relative, [Input, Registry, Overlay], [RelIn, RelReg, RelOv]),
     format(Stream, '// Generated by emit_grammar.pl v3.\n', []),
     format(Stream, '// Inputs: ~w ; ~w ; ~w\n', [RelIn, RelReg, RelOv]),
@@ -589,4 +741,5 @@ emit_file(Stream, Input, Registry, Overlay, Operators,
     format(Stream, '// Specialized calls: ~q\n', [Specializations]),
     format(Stream, '// Unbound args/sep calls: ~q\n', [UnboundArgs]),
     format(Stream, '// Generated rule bodies: ~q\n', [GeneratedNames]),
+    format(Stream, '// Shapes the emitter cannot build: ~q\n', [Blocked]),
     format(Stream, '~s', [Grammar]).

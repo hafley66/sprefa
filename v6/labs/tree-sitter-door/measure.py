@@ -58,13 +58,15 @@ def main():
     claimed = GENERATED_HEADER.search(emitted).group(1)
     claimed = [name.strip() for name in claimed.split(",") if name.strip()]
     generated = []
+    diverged = []
     for name in claimed:
         if squeeze(emitted_bodies[name]) != squeeze(hand_bodies[name]):
+            diverged.append(name)
             print(f"GENERATED BODY DIVERGES rule={name}", file=sys.stderr)
             print(f"  emitted {squeeze(emitted_bodies[name])}", file=sys.stderr)
             print(f"  hand    {squeeze(hand_bodies[name])}", file=sys.stderr)
-            return 1
-        generated.append(name)
+        else:
+            generated.append(name)
 
     helpers = sum(len(squeeze(body)) for name, body in emitted_bodies.items()
                   if name not in hand_bodies)
@@ -111,7 +113,7 @@ def main():
     print("rules " + " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     print("basis " + " ".join(f"{k}={v}" for k, v in sorted(bases.items())))
     print("generated " + " ".join(generated))
-    return 0
+    return 1 if diverged else 0
 
 
 if __name__ == "__main__":

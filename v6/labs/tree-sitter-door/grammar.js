@@ -53,14 +53,8 @@ module.exports = grammar({
       ".",
     ),
 
-    bind_declaration: $ => seq(
-      "bind",
-      field("name", $.path),
-      "(", optional(commaSep1($.column)), ")",
-      ".",
-    ),
-
-    declaration_parameter: $ => choice($.column, $.identifier),
+    bind_declaration: $ => seq("bind", field("name", $.identifier), "(", optional(seq($.column, repeat(seq(",", $.column)))), ")", "."),
+    declaration_parameter: $ => seq(field("name", $.identifier), optional(seq(":", field("type", $.type)))),
     column: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
 
     type: $ => seq(
@@ -72,12 +66,7 @@ module.exports = grammar({
     enum_variants: $ => seq($.enum_variant, repeat(seq(";", $.enum_variant))),
     enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),
 
-    relation_modifier: $ => choice(
-      "log",
-      seq("keep", "(", choice("all", seq("count", "(", $.integer, ")")), ")"),
-      seq("key", "(", commaSep1($.integer), ")"),
-    ),
-
+    relation_modifier: $ => choice("log", seq("keep", "(", choice("all", seq("count", "(", $.integer, ")")), ")"), seq("key", "(", $.integer, repeat(seq(",", $.integer)), ")"), "set"),
     rule: $ => seq(
       field("head", $.atom),
       field("arrow", choice("<-", "<+")),
@@ -88,21 +77,8 @@ module.exports = grammar({
     fact: $ => seq($.atom, "."),
     query: $ => seq("?", $.atom, "."),
 
-    match_statement: $ => seq(
-      "match",
-      field("scrutinee", $.atom),
-      "(",
-      repeat1($.match_arm),
-      ")",
-      ".",
-    ),
-    match_arm: $ => seq(
-      ";",
-      field("guard", $.goal_list),
-      field("arrow", choice("|->", "|+>")),
-      field("head", $.atom),
-    ),
-
+    match_statement: $ => seq("match", field("scrutinee", $.atom), "(", optional(";"), $.match_arm, repeat(seq(";", $.match_arm)), ")", "."),
+    match_arm: $ => seq(field("guard", $.goal_list), field("arrow", choice("|->", "|+>")), field("head", $.atom)),
     goal_list: $ => commaSep1($.expression),
 
     expression: $ => choice(

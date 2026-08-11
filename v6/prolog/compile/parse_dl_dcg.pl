@@ -29,6 +29,38 @@
 :- dynamic finding_fact/1, rel_column_order_fact/2,
            host_signature_fact/3, source_statement_fact/3.
 
+% Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
+% bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
+cst_shape(bind_decl_stmt/1, bind_declaration-[name]).
+cst_shape(decl_a_column/1,  declaration_parameter-[name, type]).
+cst_shape(enum_variants/1,  enum_variants-[]).
+cst_shape(rel_modifiers/2,  repeat(relation_modifier)-[]).
+cst_shape(match_stmt/1,     match_statement-[scrutinee]).
+cst_shape(match_arm/1,      match_arm-[guard, arrow, head]).
+cst_shape(braces_term/1,    object_pattern-[]).
+cst_shape(dotted_path/1,    path-[]).
+cst_shape(statement/2,      ref(statement)-[]).
+cst_shape(rel_stmt/1,       ref(relation_declaration)-[]).
+cst_shape(sh_decl_stmt/1,   ref(shell_declaration)-[]).
+cst_shape(typed_col/2,      ref(column)-[]).
+cst_shape(type_expr/1,      ref(type)-[]).
+cst_shape(enum_variant/1,   ref(enum_variant)-[]).
+cst_shape(rule_stmt/1,      ref(rule)-[]).
+cst_shape(query_stmt/1,     ref(query)-[]).
+cst_shape(body/1,           ref(goal_list)-[]).
+cst_shape(expr/1,           ref(expression)-[]).
+cst_shape(head_atom/1,      ref(atom)-[]).
+cst_shape(atom_arg/1,       ref(named_argument)-[]).
+cst_shape(brace_pair/1,     ref(object_pair)-[]).
+cst_shape(list_term/1,      ref(list)-[]).
+cst_shape(int_lit/1,        ref(integer)-[]).
+cst_shape(float_lit/1,      ref(float)-[]).
+cst_shape(string_lit/1,     ref(string)-[]).
+cst_shape(atom_lit/1,       ref(quoted_atom)-[]).
+cst_shape(template_lit/1,   ref(template)-[]).
+cst_shape(bool_lit/1,       ref(boolean)-[]).
+cst_shape(ident/1,          ref(identifier)-[]).
+
 unsupported(Surface) :- assertz(finding_fact(unsupported_surface(Surface))).
 record_cols(Name, Cols) :-
     retractall(rel_column_order_fact(Name, _)),
