@@ -28,9 +28,11 @@ started; this file exists so the requirement is not lost.
 
 ## Where it attaches to what exists today
 
-- `v6/prolog/labs/emit_rust_shootout/emit_rust.pl` already lowers the
-  reachability program to `mono/src/main.rs`, which builds to a standalone
-  binary. That is mode 1 in prototype form, for one hardcoded program.
+- The `mono/` crate (`v6/labs/exec_shootout/mono/src/main.rs`) is the emitted
+  reachability program, a standalone `mono` binary that `just shootout` builds
+  and runs. The `v6/prolog/labs/emit_rust_shootout/emit_rust.pl` that generated
+  it was deleted at `688a7252` (2026-08-10). That is mode 1 in prototype form,
+  for one hardcoded program.
 - The 2026-08-05 finding stands: the dedup structure should be chosen by the
   emitter from a cardinality estimate, not fixed in a runtime
   (`v6/findings/INSIGHTS.md`, the bitmap layout row).

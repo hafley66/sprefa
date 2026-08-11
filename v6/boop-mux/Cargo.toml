@@ -1,0 +1,17 @@
+# Standalone crate: its own [workspace] table keeps cargo from walking up into
+# the v5 root workspace, so `cargo test` here stays isolated from the v5 tree.
+[workspace]
+
+[package]
+name = "boop-mux"
+version = "0.1.0"
+edition = "2021"
+description = "the tmux multiplexer seam boop drives: one trait, one implementation over tmux_interface"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# Application-level errors; the trait methods return these.
+anyhow = "1"
+# Layer 1: typed tmux command argv builder for the one-shot commands.
+tmux_interface = "0.4"

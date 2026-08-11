@@ -69,6 +69,7 @@ name = "boop"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "boop-mux",
  "clap",
  "dirs",
  "peak_alloc",
@@ -77,8 +78,15 @@ dependencies = [
  "serde_json",
  "sysinfo",
  "time",
- "tmux_interface",
  "walkdir",
+]
+
+[[package]]
+name = "boop-mux"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tmux_interface",
 ]
 
 [[package]]

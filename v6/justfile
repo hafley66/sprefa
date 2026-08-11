@@ -407,6 +407,14 @@ bench:
 bench-cli:
     cd {{ v6 }}/bench-cli && bash bench.sh
 
+# the PERF-REPORT matrix: 7 hermetic engines x 10 scales, the DD comparison
+# table. Writes sprefa-store/PERF-REPORT.md; the receipt line is the footer
+# "_Report generated in 958s._" (measured wall at the 471d0be9 refresh).
+# NOT in green or green-all: 958s violates the 10-second law by three orders of
+# magnitude, and this is a reporting matrix, not a gate. Run by hand on demand.
+perf-report:
+    cd {{ v6 }}/sprefa-store && cargo run --quiet --release --example perf_report
+
 # ── the consolidated perf battery ──
 #
 # ONE command that runs every perf bench in the repo, reusing each bench's own
@@ -444,6 +452,8 @@ perf-all:
 	@{ start=$(date +%s); if [ "${RIG_SCALES:-small}" = "full" ]; then {{ capped }} "${PERF_RIG_S:-7200}" just --justfile {{ v6 }}/justfile bench; else {{ capped }} "${PERF_RIG_S:-3600}" env SCALES="2x200" TSV2_SCALES="1x1000" V1_SCALES="1x1000" just --justfile {{ v6 }}/justfile bench; fi; st=$?; end=$(date +%s); echo "==> store-rig wall $((end-start))s (exit $st)"; }
 	@echo "=== profile_dred: single cycle-safe retract, per-phase flame numbers ==="
 	@{ start=$(date +%s); if {{ capped }} "${PERF_PROFILE_S:-3600}" bash -c 'cd {{ v6 }}/sprefa-store && cargo run --quiet --release --example profile_dred'; then st=0; else st=$?; fi; end=$(date +%s); echo "==> profile_dred wall $((end-start))s (exit $st)"; }
+	@echo "=== sqlite_baseline: pure-SQLite closure build, grid_10000 naive (the emitter's ratchet floor) ==="
+	@{ start=$(date +%s); if {{ capped }} "${PERF_SQLITE_BASELINE_S:-3600}" bash -c 'cd {{ v6 }}/labs/exec_shootout/sqlite_baseline && cargo run --quiet --release -- --case grid_10000 --variant naive --runs 3'; then st=0; else st=$?; fi; end=$(date +%s); echo "==> sqlite_baseline wall $((end-start))s (exit $st)"; }
 
 # perf-all, but the store rig runs its FULL scale ladder (all engines over the
 # SCALES=2x200..14x80000 default plus the 9-cell TSV2/V1 ladders); minutes longer.
