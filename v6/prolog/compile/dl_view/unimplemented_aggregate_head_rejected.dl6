@@ -1,0 +1,1 @@
+roster(group_concat(Name)) <- member_of(Name).

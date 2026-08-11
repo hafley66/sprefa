@@ -247,6 +247,7 @@
   {"name":"pairwise_reads_state_at_the_departure_tick","file":"engine_core.pl","bucket":"compiled","reason":""},
   {"name":"pairwise_pairs_adjacent_values_when_the_source_idles","file":"engine_core.pl","bucket":"compiled","reason":""},
   {"name":"set_dedups_log_stacks","file":"engine_core.pl","bucket":"compiled","reason":""},
+  {"name":"mutual_recursion_matches_oracle","file":"engine_core.pl","bucket":"compiled","reason":""},
   {"name":"head_expression_evaluates_derived_column","file":"expressions.pl","bucket":"compiled","reason":""},
   {"name":"comparison_filters_rows","file":"expressions.pl","bucket":"compiled","reason":""},
   {"name":"range_join_over_arithmetic","file":"expressions.pl","bucket":"compiled","reason":""},

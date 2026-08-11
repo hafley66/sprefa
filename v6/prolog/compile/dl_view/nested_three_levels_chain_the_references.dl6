@@ -1,0 +1,12 @@
+rel orchard(orchard_id: int).
+rel orchard.tree(tree_id: int).
+rel orchard.tree.branch(branch_id: int).
+rel grew(orchard_id: int, tree_id: int, branch_id: int).
+
+orchard(OrchardId) <- grew(OrchardId, _, _).
+orchard__tree(TreeId) <-
+  orchard(Oid),
+  grew(Oid, TreeId, _).
+orchard__tree__branch(BranchId) <-
+  orchard__tree(TreeId2),
+  grew(_, TreeId2, BranchId).

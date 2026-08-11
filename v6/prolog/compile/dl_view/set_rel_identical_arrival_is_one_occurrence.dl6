@@ -1,0 +1,3 @@
+rel fired(name) log keep(all).
+
+fired(Name) <+ ev(Name).

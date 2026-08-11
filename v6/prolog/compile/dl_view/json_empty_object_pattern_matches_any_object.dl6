@@ -1,0 +1,5 @@
+rel entry(name: text, value: json).
+
+is_object(Name) <-
+  entry(Name, Value),
+  decode(Value, {}).

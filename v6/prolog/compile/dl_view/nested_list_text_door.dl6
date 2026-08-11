@@ -1,0 +1,3 @@
+rel grid(id: int, rows: list(list(text))) key(1).
+
+carry(Id, Rows) <- grid(Id, Rows).

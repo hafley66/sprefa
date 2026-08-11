@@ -1,0 +1,4 @@
+rel resp(endpoint, col2, tag, stars) log keep(all).
+rel cache_view(endpoint, tag, stars) key(1).
+
+cache_view(Endpoint, Tag, Stars) <+ resp(Endpoint, 200, Tag, Stars).

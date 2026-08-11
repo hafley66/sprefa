@@ -1,0 +1,1 @@
+rel batch(id: int, payloads: json_list(json)).

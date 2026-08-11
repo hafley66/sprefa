@@ -1,0 +1,1 @@
+rel switch(on(is_on: bool) ; off(is_on: bool)).

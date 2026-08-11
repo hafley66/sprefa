@@ -1,0 +1,3 @@
+rel span(lo: int, hi: int).
+rel holder(item: span).
+rel loc(here(at: span) ; elsewhere(note: text)).

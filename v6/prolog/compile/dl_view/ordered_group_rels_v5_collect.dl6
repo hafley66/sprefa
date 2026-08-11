@@ -1,0 +1,1 @@
+group_rels(GroupName, json_group_array(RelationName)) <- rel_catalog(RelationName, GroupName, _ColumnText, _DocumentationText).

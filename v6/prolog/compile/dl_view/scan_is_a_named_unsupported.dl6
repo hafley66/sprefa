@@ -1,0 +1,1 @@
+src(Path, Rev) <- scan('WORK', 'src/**/*.rs', Path, Rev).

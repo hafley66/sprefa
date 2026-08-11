@@ -1,0 +1,3 @@
+kept(Value) <-
+  row(Value),
+  Value =\= 2.

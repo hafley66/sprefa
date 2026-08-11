@@ -1,0 +1,3 @@
+rel span(start: int, end: int).
+rel holder(item: span).
+rel doc(id: int, spans: json_list(span)).

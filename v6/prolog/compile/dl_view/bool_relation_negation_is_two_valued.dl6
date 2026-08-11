@@ -1,0 +1,7 @@
+rel item(name: text).
+rel disabled(name: text, value: bool).
+rel active(name: text).
+
+active(Name) <-
+  item(Name),
+  not(disabled(Name, true)).

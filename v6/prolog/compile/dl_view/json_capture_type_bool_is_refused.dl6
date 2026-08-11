@@ -1,0 +1,5 @@
+rel event(payload: json).
+
+flagged(Value) <-
+  event(Payload),
+  decode(Payload, {ok: Value: bool}).

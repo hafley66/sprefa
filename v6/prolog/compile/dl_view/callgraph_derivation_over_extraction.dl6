@@ -1,0 +1,11 @@
+rel node_fact(path: text, record: text, kind: text, name: text).
+rel call(path: text, callee: text).
+rel def(path: text, name: text, kind: text).
+rel calls(caller: text, callee: text).
+
+def(Path, Name, Kind) <- node_fact(Path, 'node', Kind, Name).
+calls(Caller, Callee) <-
+  def(Path, Caller, _),
+  call(Path, Callee),
+  def(_, Callee, _),
+  Caller \== Callee.

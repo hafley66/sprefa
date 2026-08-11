@@ -1,0 +1,6 @@
+rel raw_doc(body: json).
+rel pair(name: text, value: int).
+
+pair(Key, Value) <-
+  raw_doc(Body),
+  decode(Body, {$Key: Value}).

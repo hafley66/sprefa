@@ -1,0 +1,1 @@
+rel interned_parent(id: int, entries: option(list_interned_set(text))) key(1).

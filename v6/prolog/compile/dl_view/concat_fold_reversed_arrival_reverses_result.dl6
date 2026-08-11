@@ -1,0 +1,7 @@
+rel append_line(channel, piece) log keep(all).
+rel log_text(channel, next) key(1).
+
+log_text(Channel, Next) <+
+  append_line(Channel, Piece),
+  pre(log_text(Channel, SoFar)),
+  Next := concat([SoFar, Piece]).

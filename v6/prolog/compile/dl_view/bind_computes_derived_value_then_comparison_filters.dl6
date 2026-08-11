@@ -1,0 +1,5 @@
+over_budget(Name, Sum) <-
+  seen(Name, Base, _),
+  bump(Name, Extra),
+  Sum := Base + Extra,
+  Sum > 10.

@@ -1,0 +1,11 @@
+rel arrive(id, payload) log keep(all).
+rel thing(id, payload, born, tick) key(1).
+
+thing(Id, Payload, Born, Tick) <+
+  arrive(Id, Payload),
+  now(Tick),
+  pre(thing(Id, _Old, Born, _Was)).
+thing(Id, Payload, Tick, Tick) <+
+  arrive(Id, Payload),
+  now(Tick),
+  not(thing(Id, _AnyPayload, _AnyBorn, _AnyUpdated)).

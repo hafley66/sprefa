@@ -1,0 +1,3 @@
+doc(Value) <-
+  seed(Name),
+  Value := {stars: 4, name: Name}.

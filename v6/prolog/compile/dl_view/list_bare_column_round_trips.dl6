@@ -1,0 +1,1 @@
+rel box(id: int, items: list(text)) key(1).

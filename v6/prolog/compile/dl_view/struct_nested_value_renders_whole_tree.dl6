@@ -1,0 +1,8 @@
+rel span(start: int, end: int).
+rel place(file: text, at: span).
+rel diag(where: place, message: text).
+rel diag_file(file: text).
+
+diag_file(File) <-
+  diag(Where, _Message),
+  decode(Where, {file: File}).

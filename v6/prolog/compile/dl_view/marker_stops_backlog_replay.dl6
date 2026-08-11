@@ -1,0 +1,7 @@
+rel change_ev(item) log keep(all).
+rel subscriber(client) log keep(all).
+rel sent(client, item) log keep(all).
+
+sent(Client, Item) <+
+  change_ev(Item),
+  latest(subscriber(Client)).

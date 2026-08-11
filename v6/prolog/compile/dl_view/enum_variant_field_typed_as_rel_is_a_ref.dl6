@@ -1,0 +1,8 @@
+rel tree(tree_id: int, name: text).
+rel grade(ripe(subject: tree) ; bruised(reason: text)).
+rel graded(id: int, g: grade).
+rel graded_tag(id: int, tag: text).
+
+graded_tag(Id, Tag) <-
+  graded(Id, G),
+  grade_tag(G, Tag).

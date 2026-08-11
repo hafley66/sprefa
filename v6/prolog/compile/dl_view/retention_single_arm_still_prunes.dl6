@@ -1,0 +1,4 @@
+rel ping(payload) log keep(all).
+rel journal(payload) log keep(count(1)).
+
+journal(Payload) <+ ping(Payload).

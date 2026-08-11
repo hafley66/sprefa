@@ -1,0 +1,3 @@
+rel batch(id: int, payloads: json_list(json)).
+
+carry(Id, Payloads) <- batch(Id, Payloads).

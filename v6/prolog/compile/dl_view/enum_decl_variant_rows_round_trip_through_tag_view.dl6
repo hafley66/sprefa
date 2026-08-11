@@ -1,0 +1,1 @@
+rel body(page(view: int) ; redirect(to: text)).

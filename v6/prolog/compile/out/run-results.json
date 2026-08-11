@@ -1190,6 +1190,13 @@
     "final_detail": ""
   },
   {
+    "name": "mutual_recursion_matches_oracle",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "head_expression_evaluates_derived_column",
     "bucket": "identical",
     "detail": "",

@@ -1,0 +1,9 @@
+rel resolved_call_edge(caller_path: text, caller_name: text, callee_path: text, callee_name: text).
+rel flow_edge(from_path: text, from_name: text, to_path: text, to_name: text).
+rel flow_reach(from_path: text, from_name: text, to_path: text, to_name: text).
+
+flow_edge(FromPath, FromName, ToPath, ToName) <- resolved_call_edge(FromPath, FromName, ToPath, ToName).
+flow_reach(FromPath, FromName, ToPath, ToName) <- flow_edge(FromPath, FromName, ToPath, ToName).
+flow_reach(FromPath, FromName, ToPath, ToName) <-
+  flow_reach(FromPath, FromName, MiddlePath, MiddleName),
+  flow_edge(MiddlePath, MiddleName, ToPath, ToName).

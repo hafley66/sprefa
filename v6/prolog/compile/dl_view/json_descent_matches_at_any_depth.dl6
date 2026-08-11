@@ -1,0 +1,5 @@
+rel chart(body: json).
+
+image(Repository, Tag) <-
+  chart(Body),
+  decode(Body, {**: {image: {repository: Repository, tag: Tag}}}).

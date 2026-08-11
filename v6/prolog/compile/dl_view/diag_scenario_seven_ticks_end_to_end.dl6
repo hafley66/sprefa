@@ -1,0 +1,23 @@
+rel ratchet(code, allowed) key(1).
+rel hook_window(turn, since) key(1).
+rel diag_history(path, line, code, opened_at) log keep(all).
+
+diagnostic(Path, Line, Code, 'warning') <-
+  file_line(Path, Line, Code),
+  Code \== 'none'.
+lint_count(Code, count(hit(Path, Line))) <- diagnostic(Path, Line, Code, _).
+violation(Code, Count, Allowed) <-
+  lint_count(Code, Count),
+  ratchet(Code, Allowed),
+  Count > Allowed.
+unratcheted_lint(Code, Count) <-
+  lint_count(Code, Count),
+  not(ratchet(Code, _)).
+diag_history(Path, Line, Code, OpenedAt) <+
+  diagnostic(Path, Line, Code, _),
+  now(OpenedAt).
+turn_diag(Turn, Path, Line, Code, OpenedAt) <-
+  hook_window(Turn, Since),
+  diagnostic(Path, Line, Code, _),
+  diag_history(Path, Line, Code, OpenedAt),
+  OpenedAt > Since.

@@ -1,0 +1,9 @@
+rel node_fact(path: text, record: text, kind: text, name: text).
+rel call(path: text, callee: text).
+rel def(path: text, name: text, kind: text).
+rel unused(name: text).
+
+def(Path, Name, Kind) <- node_fact(Path, 'node', Kind, Name).
+unused(Name) <-
+  def(_, Name, _),
+  not(call(_, Name)).

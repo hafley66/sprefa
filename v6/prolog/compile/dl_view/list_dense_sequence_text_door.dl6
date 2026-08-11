@@ -1,0 +1,3 @@
+rel box(id: int, items: list_entity_dense_sequence(text)) key(1).
+
+carry(Id, Items) <- box(Id, Items).

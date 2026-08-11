@@ -1,0 +1,9 @@
+rel raw_doc(body: json).
+rel found(name: text, value: text).
+
+found('present', Value) <-
+  raw_doc(Body),
+  decode(Body, {present: Value}).
+found('missing', Value) <-
+  raw_doc(Body),
+  decode(Body, {missing: Value}).

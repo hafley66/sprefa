@@ -1,0 +1,3 @@
+sh peek(witness_digest: text) -> (line: text) = `echo {witness_digest}`.
+
+found(Digest, Line) <- peek(Digest, Line).

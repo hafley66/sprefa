@@ -1,0 +1,18 @@
+rel every_300(bucket) log keep(all).
+rel fetch(endpoint, prev_tag, bucket, result) log keep(all).
+rel demand_row(endpoint, result) log keep(all).
+rel folded_row(endpoint, stars) log keep(all).
+rel change_log(endpoint, stars, client) log keep(all).
+
+demand_row(Endpoint, Result) <+
+  watch(Endpoint),
+  cache_tag(Endpoint, PrevTag),
+  every_300(Bucket),
+  fetch(Endpoint, PrevTag, Bucket, Result).
+folded_row(Endpoint, Stars) <+
+  demand_row(Endpoint, Response),
+  decode(Response, fresh(_Tag, Body)),
+  stars_of(Body, Stars).
+change_log(Endpoint, Stars, Client) <+
+  folded_row(Endpoint, Stars),
+  latest(subscribed_to(Client, Endpoint)).

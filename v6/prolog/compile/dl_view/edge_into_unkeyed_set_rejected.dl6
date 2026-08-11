@@ -1,0 +1,3 @@
+rel ping(item) log keep(all).
+
+sink(Item) <+ ping(Item).

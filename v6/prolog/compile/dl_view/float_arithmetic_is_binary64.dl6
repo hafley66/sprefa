@@ -1,0 +1,4 @@
+rel score(name: text, value: float).
+rel adjusted(name: text, value: float).
+
+adjusted(Name, Value + 0.2) <- score(Name, Value).

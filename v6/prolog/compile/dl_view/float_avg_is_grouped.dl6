@@ -1,0 +1,4 @@
+rel score(group: text, value: float).
+rel mean(group: text, value: float).
+
+mean(Group, avg(Value)) <- score(Group, Value).

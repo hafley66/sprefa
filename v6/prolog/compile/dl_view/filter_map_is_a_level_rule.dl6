@@ -1,0 +1,4 @@
+doubled(Name, Out) <-
+  reading(Name, Value),
+  Value >= 10,
+  Out := Value * 2.

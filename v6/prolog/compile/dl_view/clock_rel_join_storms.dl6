@@ -1,0 +1,13 @@
+rel ratchet(col1, col2) key(1).
+rel diag_history(path, line, code, opened_at) log keep(all).
+rel diag_seen(path, line, code, at) log keep(all).
+
+diagnostic(Path, Line, Code, 'warning') <-
+  file_line(Path, Line, Code),
+  Code \== 'none'.
+diag_history(Path, Line, Code, OpenedAt) <+
+  diagnostic(Path, Line, Code, _),
+  now(OpenedAt).
+diag_seen(Path, Line, Code, At) <+
+  diagnostic(Path, Line, Code, _),
+  tick_rel(At).
