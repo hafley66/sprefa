@@ -1,0 +1,9 @@
+rel person(
+name:int,
+label:text
+).
+parent(
+1,
+2
+).
+ancestor(A,B)<-parent(A,B),parent(B,C).
