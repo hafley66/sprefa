@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "grade_bruised": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"reason": {"type":"string"}},
+      "required": ["id", "reason" ],
+      "type":"object"
+    },
+    "grade_ripe": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"subject": {"$ref":"#/$defs/tree"}},
+      "required": ["id", "subject" ],
+      "type":"object"
+    },
+    "grade_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "graded": {
+      "additionalProperties":false,
+      "properties": {"g": {"type":"integer"},"id": {"type":"integer"}},
+      "required": ["id", "g" ],
+      "type":"object"
+    },
+    "graded_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "tree": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "name" ],
+      "type":"object"
+    }
+  },
+  "$id":"enum_variant_field_typed_as_rel_is_a_ref#3ed04a41e5b99a0c",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
