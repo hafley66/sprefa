@@ -7533,6 +7533,40 @@ test(openapi_text_matches_checked_in_fixture) :-
     read_emit_fixture(Path, CheckedIn),
     Text == CheckedIn, !.
 
+% A json_list column renders array-of-integer; without this clause the whole
+% doc is empty (G3). Golden pins the byte output.
+test(json_list_schema_text_matches_checked_in_fixture) :-
+    schema_emit_rows('json_list_columns_emit_array_items.dl6',
+                     json_list_columns_emit_array_items, Rows),
+    test_dir_fact(Dir),
+    atomic_list_concat([Dir, '/emit/schema/json_list_columns_emit_array_items.schema.json'], Path),
+    jsonschema_text(json_list_columns_emit_array_items, Rows, Text),
+    read_emit_fixture(Path, CheckedIn),
+    Text == CheckedIn, !.
+
+% The openapi emitter shares schema_emit's kind_schema/6, so a json_list
+% column renders array items under components.schemas, not an empty document.
+test(json_list_openapi_text_matches_checked_in_fixture) :-
+    schema_emit_rows('json_list_columns_emit_array_items.dl6',
+                     json_list_columns_emit_array_items, Rows),
+    test_dir_fact(Dir),
+    atomic_list_concat([Dir, '/emit/openapi/json_list_columns_emit_array_items.openapi.json'], Path),
+    openapi_text(json_list_columns_emit_array_items, Rows, Text),
+    read_emit_fixture(Path, CheckedIn),
+    Text == CheckedIn, !.
+
+% The array item type is the element's scalar mapping, so int/text/json and a
+% nested list each render their own items schema, not a generic scaffold.
+test(json_list_emits_element_typed_array_items) :-
+    schema_emit_rows('json_list_columns_emit_array_items.dl6',
+                     json_list_columns_emit_array_items, Rows),
+    jsonschema_text(json_list_columns_emit_array_items, Rows, Text),
+    sub_atom(Text, _, _, _, '"ints": {"items": {"type":"integer"},"type":"array"}'),
+    sub_atom(Text, _, _, _, '"texts": {"items": {"type":"string"},"type":"array"}'),
+    sub_atom(Text, _, _, _, '"blobs": {"items": {},"type":"array"}'),
+    sub_atom(Text, _, _, _, '"nested": '),
+    sub_atom(Text, _, _, _, '"items": {"items": {"type":"integer"},"type":"array"}'), !.
+
 :- end_tests(schema_emit).
 
 :- begin_tests(schema_parity_golden).

@@ -1,0 +1,20 @@
+{
+  "$defs": {
+    "sample": {
+      "additionalProperties":false,
+      "properties": {
+        "blobs": {"items": {},"type":"array"},
+        "ints": {"items": {"type":"integer"},"type":"array"},
+        "nested": {
+          "items": {"items": {"type":"integer"},"type":"array"},
+          "type":"array"
+        },
+        "texts": {"items": {"type":"string"},"type":"array"}
+      },
+      "required": ["ints", "texts", "nested", "blobs" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_list_columns_emit_array_items#1d725f393b25142a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
