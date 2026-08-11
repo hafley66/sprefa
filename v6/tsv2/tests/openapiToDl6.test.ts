@@ -73,6 +73,46 @@ test("openapiToDl6: full-mapping output compiles (compile_dl6.sh exit 0)", () =>
   assert.equal(r.code, 0, `compile failed:\n${r.stdout}`);
 });
 
+test("openapiToDl6: strict equals full on the clean hand fixture, compiles, no drops", () => {
+  // The hand fixture is deliberately non-interconnected, so strict mode must
+  // not drop any column (no rel is a ref target carrying generic columns).
+  const strict = new OpenapiToDl6(fixture, "strict");
+  const full = new OpenapiToDl6(fixture, "full");
+  assert.equal(strict.convert(), full.convert());
+  assert.equal(strict.gapList.length, 0);
+  const tmp = path.join(os.tmpdir(), "openapi_hand_strict.dl6");
+  fs.writeFileSync(tmp, strict.convert());
+  const r = compile(tmp);
+  assert.equal(r.code, 0, `strict compile failed:\n${r.stdout}`);
+});
+
+test("openapiToDl6: strict drops a ref-target's generic columns with attribution", () => {
+  // A rel used as a ref target that also carries option/list columns is refused
+  // by the compiler (0_type_plane.pl:128); strict drops exactly those columns.
+  const doc = {
+    components: {
+      schemas: {
+        Holder: { type: "object", properties: { item: { $ref: "#/components/schemas/Item" } } },
+        Item: {
+          type: "object",
+          properties: {
+            price: { type: "integer", nullable: true },
+            kids: { type: "array", items: { $ref: "#/components/schemas/Kid" } },
+            name: { type: "string" },
+          },
+        },
+        Kid: { type: "object", properties: { name: { type: "string" } } },
+      },
+    },
+  } as never;
+  const strict = new OpenapiToDl6(doc, "strict");
+  const prog = strict.convert();
+  assert.match(prog, /rel item\(price: json, kids: json, name: text\)/);
+  assert.ok(strict.gapList.some((g) => g.startsWith("item.price: option(int)")));
+  assert.ok(strict.gapList.some((g) => g.startsWith("item.kids: list(kid)")));
+  assert.ok(strict.gapList.every((g) => g.includes("0_type_plane.pl:128")));
+});
+
 test("openapiToDl6: snake_casing name collision refused loudly", () => {
   const doc = {
     components: {

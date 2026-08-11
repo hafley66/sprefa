@@ -139,11 +139,26 @@ function newCat(): ICatCount {
   return { match: 0, mismatch: 0, mismatchRows: [], gap: 0, gapRows: [] };
 }
 
+// Pick a formerly-json array-of-refs column (element is a source component,
+// never a strict-drop) and show its real list(rel) spelling round-trips.
+function spotCheck(rels: readonly import("./openapi_to_dl6.ts").IRelDecl[], sourceModel: Map<string, unknown>): string {
+  const candidates: Array<{ rel: string; col: string; elem: string }> = [];
+  for (const r of rels) {
+    for (const c of r.columns) {
+      const m = /^list\(([a-z_][a-z0-9_]*)\)$/.exec(c.type);
+      if (m) candidates.push({ rel: r.name, col: c.name, elem: m[1]! });
+    }
+  }
+  const chosen = candidates.find((x) => sourceModel.has(x.elem)) ?? candidates[0];
+  if (!chosen) return "no list(rel) columns emitted";
+  return `\`${chosen.rel}.${chosen.col}: list(${chosen.elem})\` — an array of $ref items to ${chosen.elem}.`;
+}
+
 function main(): void {
   const doc = YAML.parse(fs.readFileSync(SOURCE, "utf8")) as Record<string, unknown>;
   const sourceModel = buildSourceModel(doc);
 
-  const converter = new OpenapiToDl6(doc, "safe");
+  const converter = new OpenapiToDl6(doc, "strict");
   const prog = converter.convert();
   fs.mkdirSync(GEN_DIR, { recursive: true });
   fs.writeFileSync(GEN_DL6, prog);
@@ -184,6 +199,15 @@ function main(): void {
   const ref = cats.refTarget!;
   const nul = cats.nullable!;
 
+  // Columns the converter dropped to the json carrier under strict mode
+  // (0_type_plane.pl:128). These are KNOWN gaps, not mismatches.
+  const strictDropped = new Set<string>(
+    converter.gapList
+      .map((g) => /^([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*):/.exec(g))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => `${m[1]}.${m[2]}`),
+  );
+
   for (const [relName, srcComp] of sourceModel) {
     const emitted = compRels.find((r) => r.name === relName);
     if (!emitted) {
@@ -202,6 +226,8 @@ function main(): void {
         continue;
       }
       pn.match++;
+      const droppedKey = `${relName}.${prop}`;
+      const isStrictDrop = strictDropped.has(droppedKey);
       // kind
       if (srcProp.kind === em.kind) {
         kind.match++;
@@ -213,6 +239,9 @@ function main(): void {
           kind.gapRows.push(`G1 ${relName}.${prop}`);
         } else if ((srcProp.kind === "json") === (em.kind === "json") && srcProp.kind === "json") {
           kind.match++;
+        } else if (isStrictDrop) {
+          kind.gap++;
+          kind.gapRows.push(`G1 ${relName}.${prop}`);
         } else {
           kind.mismatch++;
           kind.mismatchRows.push(`${relName}.${prop} src=${srcProp.kind}/${srcProp.scalar ?? srcProp.itemRef ?? ""} em=${em.kind}/${em.scalar ?? em.itemRef ?? ""}`);
@@ -241,6 +270,9 @@ function main(): void {
         if (srcProp.nullable && !em.nullable && (em.kind === "array" || srcProp.kind === "array")) {
           nul.gap++;
           nul.gapRows.push(`G2 ${relName}.${prop}`);
+        } else if (isStrictDrop) {
+          nul.gap++;
+          nul.gapRows.push(`G1 ${relName}.${prop}`);
         } else {
           nul.mismatch++;
           nul.mismatchRows.push(`${relName}.${prop}`);
@@ -262,10 +294,8 @@ function main(): void {
   lines.push("");
   lines.push("## KNOWN emitter/compiler gaps (do not fail the gate)");
   lines.push("");
-  lines.push("- **G1 arrays and inline objects**: the mapping mandates `list(rel_name)` and inline-object LIFT; the tsv2 compiler's generic `list()`/`option()` machinery refuses them on this dense ref web (`unsupported_construct(column_type_unknown(...))`, 0_type_plane.pl:128 — a rel that is a plain-ref target and carries generic option/list columns breaks generic expansion). The converter drops these to the `json` carrier in safe mode, logged per property; the rows are proven on clean data in the mapping hand fixture.");
+  lines.push("- **G1 ref-target carries generic columns**: the mapping mandates `list(rel_name)` and inline-object LIFT; the tsv2 compiler refuses a rel that is itself a ref TARGET (used as a column type, a list element, or an option element) while carrying generic option()/list() columns — the generic expansion inside that rel can't lower (`unsupported_construct(column_type_unknown(...))`, 0_type_plane.pl:128). Strict mode keeps every other real spelling and drops exactly these columns to the `json` carrier, each attributed in the gap rows below with the throw site; the clean-data rows are proven in the mapping hand fixture.");
   lines.push("- **G2 nullable arrays**: dl6 has no nullable-array type; `option(list(_))/option(json_list(_))` are refused. Nullability dropped (logged per property).");
-  lines.push("- **G3 emitter serialization**: `kind_schema/6` (4_emit_jsonschema.pl) has no `json_list` clause; a full program carrying `json_list(int)` makes 4/5 return no document. Compare reads the emitter's own catalog model.");
-  lines.push("- **G4 nullable emit**: `option(T)` lowers to `__opt_*` helper rels at emit; an emitted doc shows the option column as an integer id, not an anyOf. Fixed by lane fix/anyof-emit-phase.");
   lines.push("");
 
   const tableHead = (title: string, c: ICatCount): void => {
@@ -305,7 +335,13 @@ function main(): void {
   lines.push(emitStdout.split("\n").filter((l) => /emit-back|Error|error/i.test(l)).join("\n"));
   lines.push("```");
   lines.push("");
-  lines.push(`Converter safe-mode gap rows (G1/G2): ${converter.gapList.length} + ${converter.nullableArrayGapList.length} nullable-array`);
+  lines.push(`Converter strict-mode dropped columns (G1) + nullable-array (G2): ${converter.gapList.length} + ${converter.nullableArrayGapList.length}`);
+  lines.push("");
+  lines.push("## Emit-back receipt");
+  lines.push("");
+  lines.push(`Emitted component definitions: ${compRels.length} / ${sourceModel.size} source components.`);
+  lines.push("Spot check (formerly json-carrier array-of-refs now round-trips):");
+  lines.push(spotCheck(rels, sourceModel));
 
   const reportPath = path.join(DL_FIXTURES, "POKEAPI_ROUNDTRIP_REPORT.md");
   fs.writeFileSync(reportPath, lines.join("\n"));

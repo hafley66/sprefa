@@ -23,10 +23,10 @@ export interface IRelColumn {
 }
 
 export interface IRelDecl {
-  readonly name: string;
-  readonly columns: readonly IRelColumn[];
+  name: string;
+  columns: IRelColumn[];
   /** When set, the rel is a payload enum spelled `variant(payload: rel)` entries. */
-  readonly enumVariants?: readonly string[];
+  enumVariants?: readonly string[];
 }
 
 const SCALAR: Record<string, string> = {
@@ -142,10 +142,11 @@ export class OpenapiToDl6 {
   private readonly rels: IRelDecl[] = [];
   private readonly seenNames = new Map<string, string>();
   private readonly nullableArrayGaps: string[] = [];
-  private readonly mode: "full" | "safe";
+  private readonly mode: "full" | "safe" | "strict";
   private readonly gaps: string[] = [];
+  private resolved?: IRelDecl[];
 
-  constructor(doc: IOpenApiV3, mode: "full" | "safe" = "full") {
+  constructor(doc: IOpenApiV3, mode: "full" | "safe" | "strict" = "strict") {
     this.schemas = doc.components?.schemas ?? {};
     this.mode = mode;
     for (const pascal of Object.keys(this.schemas)) {
@@ -165,22 +166,34 @@ export class OpenapiToDl6 {
 
   /** Build the complete program text. */
   convert(): string {
-    for (const pascal of Object.keys(this.schemas)) {
-      this.rels.push(this.buildRel(this.relNameOf(pascal), this.schemas[pascal]!));
-    }
-    const output = this.mode === "safe" ? this.applySafeFalls(): this.rels;
+    const output = this.resolve();
     const order = [...output].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     const lines = order.map(relLine);
     return lines.join("\n") + (lines.length ? "\n" : "");
   }
 
-  /** The declared rels (component + lifted + enum), in emit order (before
-   * safe-mode fallback). */
-  get declaredRels(): readonly IRelDecl[] {
-    return [...this.rels].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  private resolve(): IRelDecl[] {
+    if (this.resolved === undefined) {
+      this.rels.length = 0;
+      for (const pascal of Object.keys(this.schemas)) {
+        this.rels.push(this.buildRel(this.relNameOf(pascal), this.schemas[pascal]!));
+      }
+      this.resolved =
+        this.mode === "safe"
+          ? this.applySafeFalls()
+          : this.mode === "strict"
+            ? this.applyStrictFalls()
+            : this.rels;
+    }
+    return this.resolved;
   }
 
-  /** Compiler gap attribution rows, mode 'safe'. */
+  /** The declared rels (component + lifted + enum), in emit order, after the
+   * mode's fallbacks. */
+  get declaredRels(): readonly IRelDecl[] {
+    return this.resolve();
+  }
+  /** Compiler gap attribution rows, mode 'safe' / 'strict'. */
   get gapList(): readonly string[] {
     return [...this.gaps];
   }
@@ -235,6 +248,40 @@ export class OpenapiToDl6 {
       out.push({ name: r.name, columns: cols });
     }
     return out;
+  }
+
+  // Strict mode: a ref target cannot carry generic option()/list() columns
+  // (0_type_plane.pl:128); those columns fall to json, attributed per property.
+  private applyStrictFalls(): IRelDecl[] {
+    const keep = this.rels.filter((r) => r.enumVariants === undefined);
+    const enums = this.rels.filter((r) => r.enumVariants !== undefined);
+    const byName = new Map(keep.map((r) => [r.name, r]));
+    const refTarget = new Set<string>();
+    for (const r of keep) {
+      for (const col of r.columns) {
+        if (/^[a-z_]/.test(col.type) && byName.has(col.type)) refTarget.add(col.type);
+        const lm = /^list\(([a-z_][a-z0-9_]*)\)$/.exec(col.type);
+        if (lm && lm[1] && byName.has(lm[1])) refTarget.add(lm[1]);
+        const om = /^option\(([a-z_][a-z0-9_]*)\)$/.exec(col.type);
+        if (om && om[1] && byName.has(om[1])) refTarget.add(om[1]);
+      }
+    }
+    const bad = new Set<string>();
+    for (const t of refTarget) {
+      const r = byName.get(t);
+      if (r && r.columns.some((c) => /^(option|list)\(/.test(c.type))) bad.add(t);
+    }
+    const out = keep.map((r) => {
+      const cols = r.columns.map((c) => {
+        if (bad.has(r.name) && /^(option|list)\(/.test(c.type)) {
+          this.gaps.push(`${r.name}.${c.name}: ${c.type} -> json (0_type_plane.pl:128)`);
+          return { name: c.name, type: "json" };
+        }
+        return c;
+      });
+      return { name: r.name, columns: cols };
+    });
+    return [...out, ...enums];
   }
 
   private relNameOf(pascal: string): string {
