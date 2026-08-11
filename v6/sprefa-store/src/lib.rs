@@ -743,6 +743,12 @@ impl RelStore {
     pub async fn retract_dred_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
         cascade::retract_dred_cte(&self.db, &self.ns, seeds).await
     }
+    pub async fn retract_signed_delta_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::retract_signed_delta_cte(&self.db, &self.ns, seeds).await
+    }
+    pub async fn retract_delta_fold(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+        cascade::retract_delta_fold(&self.db, &self.ns, seeds).await
+    }
     /// Count live rows (weight > 0) across all relations.
     pub async fn alive(&self) -> Result<i64, DbErr> {
         use sea_orm::{DatabaseBackend, Statement};

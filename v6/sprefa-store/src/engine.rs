@@ -718,6 +718,83 @@ pub async fn retract_signed_delta(
     Ok(rounds)
 }
 
+/// Probe: compute survivor reachability in one recursive CTE. `(round,key)` does
+/// not terminate cyclic walks under UNION, so round folding remains outside the CTE.
+pub async fn retract_signed_delta_cte(
+    db: &DatabaseConnection,
+    ns: &GraphNs,
+    seeds: &[(i64, i64)],
+) -> Result<u64, DbErr> {
+    let txn = db.begin().await?;
+    let values: Vec<String> = seeds.iter().map(|(tag, id)| key(*tag, *id).to_string()).collect();
+    let seed_in = if values.is_empty() { "(-1)".to_string() } else { format!("({})", values.join(",")) };
+    exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
+    exec(&txn, &format!(
+        "INSERT INTO {frontier}(key)
+         WITH RECURSIVE alive(key) AS (
+            SELECT r.key FROM {row} r
+             WHERE r.key NOT IN {seed_in}
+               AND NOT EXISTS (SELECT 1 FROM {dep} d WHERE d.child_key = r.key)
+            UNION
+            SELECT d.child_key FROM alive JOIN {dep} d ON d.parent_key = alive.key
+         ) SELECT key FROM alive",
+        frontier = ns.frontier, row = ns.row, dep = ns.dep,
+    )).await?;
+    exec(&txn, &format!(
+        "UPDATE {row} SET weight = CASE WHEN key IN (SELECT key FROM {frontier}) THEN 1 ELSE 0 END",
+        row = ns.row, frontier = ns.frontier,
+    )).await?;
+    txn.commit().await?;
+    Ok(0)
+}
+
+/// Probe: append each round to delta and incrementally fold it into refcount.
+pub async fn retract_delta_fold(
+    db: &DatabaseConnection,
+    ns: &GraphNs,
+    seeds: &[(i64, i64)],
+) -> Result<u64, DbErr> {
+    let prefix = ns.row.trim_end_matches("cx_row");
+    let refcount = format!("{prefix}cx_refcount");
+    let delta = format!("{prefix}cx_delta");
+    let txn = db.begin().await?;
+    exec(&txn, &format!("DELETE FROM {refcount}")).await?;
+    exec(&txn, &format!("DELETE FROM {delta}")).await?;
+    let values: Vec<String> = seeds.iter().map(|(tag, id)| key(*tag, *id).to_string()).collect();
+    let seed_in = if values.is_empty() { "(-1)".to_string() } else { format!("({})", values.join(",")) };
+    exec(&txn, &format!(
+        "INSERT OR IGNORE INTO {delta}(round,key,diff)
+         SELECT 0, r.key, 1 FROM {row} r WHERE r.key NOT IN {seed_in}
+           AND NOT EXISTS (SELECT 1 FROM {dep} d WHERE d.child_key = r.key)",
+        row = ns.row, dep = ns.dep,
+    )).await?;
+    exec(&txn, &format!("INSERT OR IGNORE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = 0")).await?;
+    let mut rounds = 0;
+    let mut round = 0i64;
+    loop {
+        if scalar(&txn, &format!("SELECT count(*) FROM {delta} WHERE round={round}")).await? == 0 { break; }
+        rounds += 1;
+        exec(&txn, &format!(
+            "INSERT OR IGNORE INTO {delta}(round,key,diff)
+             SELECT {next_round}, d.child_key, 1 FROM {delta} current
+             JOIN {dep} d ON d.parent_key = current.key WHERE current.round = {round}
+               AND d.child_key NOT IN (SELECT key FROM {refcount})",
+            next_round = round + 1, dep = ns.dep,
+        )).await?;
+        exec(&txn, &format!(
+            "INSERT OR IGNORE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = {}",
+            round + 1,
+        )).await?;
+        round += 1;
+    }
+    exec(&txn, &format!(
+        "UPDATE {row} SET weight = CASE WHEN key IN (SELECT key FROM {refcount}) THEN 1 ELSE 0 END",
+        row = ns.row,
+    )).await?;
+    txn.commit().await?;
+    Ok(rounds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
