@@ -14,7 +14,7 @@
 |---|---|---|
 | Can tree-sitter parse all of dl6? | YES | `golden-flex.dl6 lines=630 errors=0`; `TS_CORPUS total=266 clean=266 errors=0` |
 | Can Topiary format dl6 to the decree? | YES | formatting law + idempotence PASS |
-| Can the DCG be the ONE hand-written description? | **NO** | 108 DCG clauses -> 34 translatable; overlay 3862 chars vs emitted 1407, ratio 2.74, and the overlay grows per construct |
+| Can the DCG be the ONE hand-written description? | **NO** | 103 DCG clauses -> 32 translatable; overlay 3862 chars vs emitted 1304, ratio 2.96, and the overlay grows per construct |
 
 Landed in PR #177 (main `0cc79ca1`). Lab gate: `v6/labs/tree-sitter-door/run-tests.sh`, rc=0, coordinator-rerun.
 
@@ -43,11 +43,20 @@ editor input.
 `v6/labs/tree-sitter-door/emit_grammar.pl` reads `parse_dl_dcg.pl` with a
 `read_term/3` loop and lowers what it mechanically can.
 
+Measured twice, against two parser revisions. The lab branch forked from
+PR #169, so its report cites the pre-opus parser; main's parser is smaller
+and slightly LESS emittable, because the moves that shrank it
+(parameterized nonterminals, table dispatch, sigil operators) are exactly
+the shapes the generator cannot read.
+
+| parser | non-ws chars | clauses | translatable | emitted | overlay ratio |
+|---|---:|---:|---:|---:|---:|
+| PR #169 (lab report) | 29534 | 108 | 34 | 1407 | 2.74 |
+| main, PRs #172+#173 | 26473 | 103 | 32 | 1304 | 2.96 |
+
 ```
-DCG_EMIT clauses=108 translatable=34 rule_names=75
-emitted-grammar.js  non-ws chars: 1407
-grammar.js overlay  non-ws chars: 3862
-ratio 2.74
+$ swipl -q -f emit_grammar.pl -- ../../prolog/compile/parse_dl_dcg.pl out.js
+DCG_EMIT clauses=103 translatable=32 rule_names=70 output=out.js
 ```
 
 | DCG shape | Emits as |

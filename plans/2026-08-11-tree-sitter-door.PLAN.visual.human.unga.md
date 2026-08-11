@@ -104,12 +104,12 @@ The lab ran the generator on the whole parser.
 
 | measure | number |
 |---|---|
-| grammar rules in the parser | 108 |
-| rules the generator could translate | 34 |
-| characters the generator produced | 1407 |
+| grammar rules in the parser | 103 |
+| rules the generator could translate | 32 |
+| characters the generator produced | 1304 |
 | characters of hand-writing still needed | 3862 |
 
-So you would hand-write 2.7 characters for every 1 generated, and worse,
+So you would hand-write 3 characters for every 1 generated, and worse,
 that hand-written part grows every time you add a construct. It is a
 second grammar wearing a disguise.
 
@@ -125,6 +125,19 @@ What defeats it, ranked by how much of the language each one eats:
 
 Exactly the things that made the parser small are the things that cannot
 be read as a grammar.
+
+### The compression made it worse, which proves the point
+
+Run before the parser shrank, and again after:
+
+| parser | size | rules | translatable | you hand-write per generated char |
+|---|---:|---:|---:|---:|
+| this morning's | 29534 | 108 | 34 | 2.7 |
+| today's, after the bake-offs | 26473 | 103 | 32 | 3.0 |
+
+Making the parser smaller made it LESS generatable. The tricks that shrank
+it are the same tricks the generator cannot read. So there is no version
+of the parser that is both small and readable as a grammar.
 
 ## The LSP question
 
