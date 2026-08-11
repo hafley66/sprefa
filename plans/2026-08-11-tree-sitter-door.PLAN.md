@@ -144,10 +144,80 @@ replaces those consumers.
 | Invoke the compiler per document version, or keep a resident SWI process | per-version simplifies cancellation; resident needs versioned state and reset rules |
 | Publish tree-sitter syntax errors beside compiler findings, or compiler findings only | the two parsers recover differently on incomplete text and can report overlapping ranges |
 
+## Round 3: CST/LSP fact tables in the DCG
+
+User word 2026-08-11 opened the round: adding LSP/CST data to the parser is
+allowed. `parse_dl_dcg.pl` gained 48 lines, zero deletions, all inert facts
+(28 `cst_shape/2`, 3 `lex_token/2`, 1 `cst_extra/2`, 5 `cst_origin/2`); no
+predicate in `v6/prolog/**` calls any of them.
+
+| step | change | commit | overlay | emitted | ratio | strict ratio |
+|---|---|---|---:|---:|---:|---:|
+| 0 | round 2 baseline | `b580d627` | 2767 | 1648 | 1.6790 | 2.5532 |
+| 1 | adjacency tokens + repetition pairs, emitter only | `2f0fd660` | 2503 | 1974 | 1.2680 | 2.5532 |
+| 2 | `cst_shape/2` | `4ba09e59` | 2013 | 2580 | 0.7802 | 1.4614 |
+| 3 | `lex_token/2` | `91ac792f` | 1888 | 2705 | 0.6980 | 1.3069 |
+| 4 | `cst_extra/2` | `91ac792f` | 1856 | 2729 | 0.6801 | 1.2754 |
+| 5 | `cst_origin/2` | `a35ef0a3` | 1239 | 3375 | 0.3671 | 0.7339 |
+| 6 | `atom` without the call precedence | `7b9caa91` | 1121 | 3525 | 0.3180 | 0.6528 |
+
+23 of the 43 editor rules moved to `EMITTED-IDENTICAL` and every one is
+machine-checked: `measure.py` diffs the emitted body against `grammar.js` and
+reddens `run-tests.sh` on any drift. The `strict` column counts only those 23;
+round 2's 8 `EMITTED-IDENTICAL` verdicts were written judgments, so its strict
+ratio equals its loose one.
+
+Round 2's predicted floor of two irreducible rules is wrong on both counts.
+`declaration_parameter` is generated: `decl_a_column//1`
+(`parse_dl_dcg.pl:486-488`) itself admits the untyped column through a branch
+that binds `Type = none`. `source_file` carries no recovery at all; its whole
+body is `repeat($.statement)` (35 chars), `grep -n 'ERROR\|recover\|MISSING'`
+over `grammar.js` returns nothing, and tree-sitter recovery is built into the
+generated parser rather than declared. What blocks it is that
+`statements//3` (`:264-274`) puts its recursive call in the `else` branch and
+spells "no statement here" as a throwing side condition, which the emitter
+reads as an empty alternative.
+
+Remaining 1121 chars split three ways: 101 where the editor is deliberately
+wider than the parser (`enum_variant`, `query`), 479 where no DCG nonterminal
+names the node (`expression`, `literal`, `unary_expression`,
+`parenthesized_expression`, `member_expression`), 541 of emitter gaps
+(`source_file`, `relation_declaration`, `shell_declaration`, `column`,
+`type`) needing repetition detection, longest-common-prefix factoring, and
+resolving `call//3` through the specialization inventory. `column`'s two
+concrete type parsers, `decl_b_column_type//3` and `host_col_type//3`, differ
+only in a cut and stay unmerged.
+
+Measured negative result: `atom`'s `prec(PREC.call, ...)` wrapper was doing
+nothing. Removing it leaves `tree-sitter generate` clean and the 272-file
+corpus at 272 clean.
+
+### Round 3 forks awaiting the user
+
+| Fork | Why it needs a decision |
+|---|---|
+| Field names for the `sh` input and output column lists | `grammar.js` names only `name` and `template`; placing `template` needs both lists named or explicitly skipped. Blocks `shell_declaration`, 171 chars |
+| Field names for the `rel` column list and modifier list | the round-3 brief spells these `columns` and `modifiers`; neither string occurs in `grammar.js`. Blocks `relation_declaration`, 166 chars |
+| A field name for a type's trailing `?` | `type` has `name` and `element` only. Blocks `type`, 102 chars |
+| Enum variant field types: full type expression or bare identifier | `enum_field//1` reads the type with `ident//1`; the editor rule uses `$.type`, so the editor is wider. Narrowing removes `list(int)` from enum fields in the editor only |
+| `? name(...)`: keep the `$.atom` node | `query_stmt//1` inlines `ident//1` and `head_args//1` and refuses dotted paths; the editor rule is wider on both counts |
+| Show `set` as a relation modifier in the editor | `rel_modifiers//2` parses `~set` then calls `unsupported(removed_word(set))`; the editor grammar now shows it |
+
+Eleven editor-visible corrections landed under a stated policy: where
+`grammar.js` and the DCG disagreed, the DCG won provided the corpus stayed at
+272/272. Six widened the editor (`member_access` and `capture_key` character
+classes, `enum_variants` `repeat1` to `repeat`, `$.string` object keys, the
+`set` modifier, `arm ; arm` without a leading semicolon), two narrowed it
+(`list` spread only as the whole list, `bind_declaration` name to
+`$.identifier`), three were shape-only.
+
 ## Where the code lives
 
 `v6/labs/tree-sitter-door/` on main: `grammar.js`, `emit_grammar.pl`,
-`emitted-grammar.js`, `queries/formatting.scm`, `languages.ncl`,
-`run-tests.sh`, `REPORT.md` (slice lab), `REPORT2.md` (this arc).
+`emitted-grammar.js`, `measure.py`, `classification.tsv`,
+`queries/formatting.scm`, `languages.ncl`, `run-tests.sh`, `REPORT.md` (slice
+lab), `REPORT2.md`, `REPORT3.md` (round 2), and the round-3 receipts in this
+section. `classification.tsv` is the checked 43-row verdict table that
+`measure.py` reads.
 Lab retirement waits on the user's go/no-go for the full arc, since the
 grammar is the only complete non-DCG description of dl6 that exists.

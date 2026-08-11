@@ -22,16 +22,7 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat($.statement),
 
-    statement: $ => choice(
-      $.relation_declaration,
-      $.shell_declaration,
-      $.bind_declaration,
-      $.match_statement,
-      $.query,
-      $.rule,
-      $.fact,
-    ),
-
+    statement: $ => choice($.bind_declaration, $.relation_declaration, $.shell_declaration, $.query, $.match_statement, $.rule, $.fact),
     relation_declaration: $ => seq(
       "rel",
       field("name", $.path),
@@ -53,14 +44,8 @@ module.exports = grammar({
       ".",
     ),
 
-    bind_declaration: $ => seq(
-      "bind",
-      field("name", $.path),
-      "(", optional(commaSep1($.column)), ")",
-      ".",
-    ),
-
-    declaration_parameter: $ => choice($.column, $.identifier),
+    bind_declaration: $ => seq("bind", field("name", $.identifier), "(", optional(seq($.column, repeat(seq(",", $.column)))), ")", "."),
+    declaration_parameter: $ => seq(field("name", $.identifier), optional(seq(":", field("type", $.type)))),
     column: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
 
     type: $ => seq(
@@ -69,40 +54,16 @@ module.exports = grammar({
       optional("?"),
     ),
 
-    enum_variants: $ => seq($.enum_variant, repeat1(seq(";", $.enum_variant))),
+    enum_variants: $ => seq($.enum_variant, repeat(seq(";", $.enum_variant))),
     enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),
 
-    relation_modifier: $ => choice(
-      "log",
-      seq("keep", "(", choice("all", seq("count", "(", $.integer, ")")), ")"),
-      seq("key", "(", commaSep1($.integer), ")"),
-    ),
-
-    rule: $ => seq(
-      field("head", $.atom),
-      field("arrow", choice("<-", "<+")),
-      field("body", $.goal_list),
-      ".",
-    ),
-
+    relation_modifier: $ => choice("log", seq("keep", "(", choice("all", seq("count", "(", $.integer, ")")), ")"), seq("key", "(", $.integer, repeat(seq(",", $.integer)), ")"), "set"),
+    rule: $ => seq(field("head", $.atom), field("arrow", choice("<-", "<+")), field("body", $.goal_list), "."),
     fact: $ => seq($.atom, "."),
     query: $ => seq("?", $.atom, "."),
 
-    match_statement: $ => seq(
-      "match",
-      field("scrutinee", $.atom),
-      "(",
-      repeat1($.match_arm),
-      ")",
-      ".",
-    ),
-    match_arm: $ => seq(
-      ";",
-      field("guard", $.goal_list),
-      field("arrow", choice("|->", "|+>")),
-      field("head", $.atom),
-    ),
-
+    match_statement: $ => seq("match", field("scrutinee", $.atom), "(", optional(";"), $.match_arm, repeat(seq(";", $.match_arm)), ")", "."),
+    match_arm: $ => seq(field("guard", $.goal_list), field("arrow", choice("|->", "|+>")), field("head", $.atom)),
     goal_list: $ => commaSep1($.expression),
 
     expression: $ => choice(
@@ -138,33 +99,18 @@ module.exports = grammar({
 
     unary_expression: $ => prec(PREC.unary, seq(choice("-", "+"), $.expression)),
     member_expression: $ => prec(PREC.call, seq($.variable, repeat1($.member_access))),
-    member_access: $ => token.immediate(/\.[a-z_][A-Za-z0-9_]*/),
+    member_access: $ => token.immediate(/\.[A-Za-z_][A-Za-z0-9_]*/),
     parenthesized_expression: $ => seq("(", $.expression, ")"),
 
-    atom: $ => prec(PREC.call, seq(
-      field("name", $.path),
-      "(",
-      optional(commaSep1(choice($.named_argument, $.expression))),
-      ")",
-    )),
-    named_argument: $ => seq(
-      field("name", $.identifier),
-      ":",
-      field("value", $.expression),
-    ),
-
-    object_pattern: $ => seq("{", optional(commaSep1($.object_pair)), "}"),
-    object_pair: $ => seq(
-      field("key", choice($.identifier, $.quoted_atom, $.capture_key, "**")),
-      ":",
-      field("value", $.expression),
-      optional(seq(":", field("type", $.identifier))),
-    ),
-    capture_key: $ => /\$[A-Z_][A-Za-z0-9_]*/,
-    list: $ => seq("[", optional(commaSep1(choice($.spread_element, $.expression))), "]"),
+    atom: $ => seq(field("name", $.path), "(", optional(seq(choice($.named_argument, $.expression), repeat(seq(",", choice($.named_argument, $.expression))))), ")"),
+    named_argument: $ => seq(field("name", $.identifier), ":", field("value", $.expression)),
+    object_pattern: $ => seq("{", optional(seq($.object_pair, repeat(seq(",", $.object_pair)))), "}"),
+    object_pair: $ => seq(field("key", choice("**", $.capture_key, $.quoted_atom, $.string, $.identifier)), ":", field("value", $.expression), optional(seq(":", field("type", $.identifier)))),
+    capture_key: $ => token(/\$[A-Za-z_][A-Za-z0-9_]*/),
+    list: $ => seq("[", optional(choice($.spread_element, seq($.expression, repeat(seq(",", $.expression))))), "]"),
     spread_element: $ => seq("...", $.expression),
 
-    path: $ => sep1($.identifier, "."),
+    path: $ => seq($.identifier, repeat(seq(".", $.identifier))),
     literal: $ => choice($.float, $.integer, $.string, $.quoted_atom, $.boolean),
     integer: $ => /[0-9]+/,
     float: $ => /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/,
@@ -174,7 +120,7 @@ module.exports = grammar({
     boolean: $ => choice("true", "false"),
     variable: $ => choice(/[A-Z][A-Za-z0-9_]*/, /_+[A-Z][A-Za-z0-9_]*/, "_"),
     identifier: $ => /_*[a-z][A-Za-z0-9_]*/,
-    comment: $ => token(seq("#", /.*/)),
+    comment: $ => token(/#.*/),
   },
 });
 
@@ -182,6 +128,3 @@ function commaSep1(rule) {
   return seq(rule, repeat(seq(",", rule)));
 }
 
-function sep1(rule, separator) {
-  return seq(rule, repeat(seq(separator, rule)));
-}
