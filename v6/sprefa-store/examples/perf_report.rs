@@ -217,11 +217,11 @@ impl Engine for DredCte {
 
 struct SignedDelta;
 impl Engine for SignedDelta {
-    fn name() -> &'static str { "sqlite-signed-delta" }
+    fn name() -> &'static str { "sqlite-signed-delta-v2" }
     async fn measure(g: MultiGraph) -> Outcome {
         store_measure(g, |s, seed| {
             Box::pin(async move {
-                sprefa_store::cascade::retract_signed_delta(s.conn(), s.ns(), &[seed]).await.unwrap();
+                sprefa_store::cascade::retract_signed_delta_v2(s.conn(), s.ns(), &[seed]).await.unwrap();
             })
         })
         .await
@@ -312,7 +312,7 @@ fn input_hash(g: &MultiGraph) -> String {
     h.finalize().to_hex()[..16].to_string()
 }
 
-const ENGINES: [&str; 7] = ["oracle", "sqlite-count", "sqlite-count-scc", "sqlite-dred-loop", "sqlite-dred-cte", "sqlite-signed-delta", "dd"];
+const ENGINES: [&str; 7] = ["oracle", "sqlite-count", "sqlite-count-scc", "sqlite-dred-loop", "sqlite-dred-cte", "sqlite-signed-delta-v2", "dd"];
 
 async fn run_engine(name: &str, g: MultiGraph) -> Option<Outcome> {
     match name {
@@ -321,7 +321,7 @@ async fn run_engine(name: &str, g: MultiGraph) -> Option<Outcome> {
         "sqlite-count-scc" => Some(CountingScc::measure(g).await),
         "sqlite-dred-loop" => Some(DredLoop::measure(g).await),
         "sqlite-dred-cte" => Some(DredCte::measure(g).await),
-        "sqlite-signed-delta" => Some(SignedDelta::measure(g).await),
+        "sqlite-signed-delta-v2" => Some(SignedDelta::measure(g).await),
         "dd" => Some(Dd::measure(g).await),
         _ => None,
     }
