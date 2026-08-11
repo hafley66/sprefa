@@ -736,3 +736,8 @@ ruling(js_never_the_row_engine, rows_stay_in_sql_rxjs_is_flow_boundary, user,
 % minted tables are author-written. Opt-in library rules stay an open road.
 ruling(generic_template_rules, declarations_only, user,
        'user 2026-08-10: "b" to decls-only vs template-minted rules vs opt-in library rules; unused maintained heads are write amplification per sqlite-costs; upgrade path to opt-in library rules stays open').
+
+% 2026-08-10: payload-enum variant fields may name a declared relation as
+% their type, same as any plain column (oneOf payloads reference relations).
+ruling(enum_variant_rel_payload, variant_fields_can_ref_relations, user,
+       'user 2026-08-10: dispatch "fix/enum-rel-payload": rel-typed variant payload fields in payload enums; oneOf mapping needs variant payloads to reference relations').
