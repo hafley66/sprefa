@@ -29,7 +29,7 @@
            host_signature_fact/3, source_statement_fact/3.
 
 record_finding(F) :- assertz(finding_fact(F)).
-record_column_order(Name, Cols) :-
+record_cols(Name, Cols) :-
     retractall(rel_column_order_fact(Name, _)),
     assertz(rel_column_order_fact(Name, Cols)).
 lookup_column_order(Name, Cols) :- rel_column_order_fact(Name, Cols).
@@ -149,8 +149,9 @@ statement_location_for_reference(Kind, Ref, Line, Col) :-
     !,
     remaining_line_column(Rem, Line, Col).
 
-statement_head_reference((Head <- _), Name/Arity) :- !, functor(Head, Name, Arity).
-statement_head_reference((Head <+ _), Name/Arity) :- functor(Head, Name, Arity).
+statement_head_reference(Rule, Name/Arity) :-
+    Rule =.. [Op, Head, _], memberchk(Op, [<-, <+]), !,
+    functor(Head, Name, Arity).
 
 statement_reference(rule, Rule, Name/Arity) :-
     sub_term(Term, Rule),
@@ -182,10 +183,10 @@ declaration_source_ref(sh_decl(Name, Ins, Outs, _), Name/Arity) :-
 normalize_host_calls(Decls, Rules, Out) :-
     maplist(normalize_host_rule(Decls), Rules, Out).
 
-normalize_host_rule(Decls, (Head <- Body), (Head <- N)) :- !,
-    normalize_host_body(Decls, Body, N).
-normalize_host_rule(Decls, (Head <+ Body), (Head <+ N)) :- !,
-    normalize_host_body(Decls, Body, N).
+normalize_host_rule(Decls, Rule0, Rule) :-
+    Rule0 =.. [Op, Head, Body], memberchk(Op, [<-, <+]), !,
+    normalize_host_body(Decls, Body, N),
+    Rule =.. [Op, Head, N].
 normalize_host_rule(Decls, match(Source, Arms), match(Source, N)) :- !,
     normalize_host_arms(Decls, Arms, N).
 normalize_host_rule(_, Rule, Rule).
@@ -211,7 +212,10 @@ normalize_host_body(Decls, Atom, probe(Name, Ins, Outs, Salts)) :-
     length(Cols, N),
     split_probe_values(N, Values, SurfaceIns, Outs),
     host_input_roles(Name, Cols, Roles),
-    partition_host_input_values(Cols, SurfaceIns, Roles, Ins, Salts).
+    ( same_length(Cols, SurfaceIns)
+    -> partition_hiv(Cols, SurfaceIns, Roles, Ins, Salts)
+    ; Ins = SurfaceIns, Salts = []
+    ).
 normalize_host_body(_, Item, Item).
 
 
@@ -278,12 +282,10 @@ int_lit(Value, S0, S) :-
     mark(S0),
     ( S0 = [0'- | S1] -> Neg = true, S2 = S1 ; Neg = false, S2 = S0 ),
     S2 = [D | _], code_type(D, digit), !,
-    digits(Ds, S2, S),
+    digits0(Ds, S2, S),
+    mark(S),
     number_codes(Mag, Ds),
     ( Neg == true -> Value is -Mag ; Value = Mag ).
-
-digits([C | More]) --> [C], { code_type(C, digit) }, !, digits(More).
-digits([]) --> here(S), { mark(S) }.
 
 float_lit(Value, S0, S) :-
     mark(S0),
@@ -294,29 +296,25 @@ float_lit(Value, S0, S) :-
     memberchk(Class, [normal, subnormal, zero]).
 
 float_codes(Cs) -->
-    minus_opt(Sign), digits1(Int), float_tail(Tail),
+    ( `-` -> { Sign = [0'-] } ; { Sign = [] } ),
+    digits1(Int), float_tail(Tail),
     { append([Sign, Int, Tail], Cs) }.
-
-minus_opt([0'-]) --> `-`, !.
-minus_opt([]) --> [].
 
 digits0([C | More]) --> [C], { code_type(C, digit) }, !, digits0(More).
 digits0([]) --> [].
 digits1([C | More]) --> [C], { code_type(C, digit) }, !, digits0(More).
 
-float_tail(Cs) --> `.`, digits1(F), exp_opt(E), { append([0'. | F], E, Cs) }.
+float_tail(Cs) -->
+    `.`, digits1(F),
+    ( exp(E) -> [] ; { E = [] } ),
+    { append([0'. | F], E, Cs) }.
 float_tail(Cs) --> exp(Cs).
-
-exp_opt(Cs) --> exp(Cs), !.
-exp_opt([]) --> [].
 
 exp([M | Cs]) -->
     [M], { memberchk(M, `eE`) },
-    sign_opt(Sign), digits1(Ds),
+    ( [S], { memberchk(S, `+-`) } -> { Sign = [S] } ; { Sign = [] } ),
+    digits1(Ds),
     { append(Sign, Ds, Cs) }.
-
-sign_opt([S]) --> [S], { memberchk(S, `+-`) }, !.
-sign_opt([]) --> [].
 
 
 atom_lit(Atom, S0, S) :- quoted(0'\', Cs, S0, S), atom_codes(Atom, Cs).
@@ -357,20 +355,14 @@ hole_var(Name, V0, Var, V) :- get_or_make_var(Name, V0, Var, V).
 
 
 use_item(Item) -->
-    ws, use_visibility(Vis), ws, string_lit(Text), ws,
+    ws,
+    ( word(`pub`) -> ws, word(`use`), { F = pub_use } ; word(`use`), { F = use } ),
+    ws, string_lit(Text), ws,
     ( word(`as`), ws, ident(Alias)
-    -> { use_item_term(Vis, Text, Alias, Item) }
-    ; { use_item_term(Vis, Text, none, Item) }
+    -> { Item =.. [F, Text, Alias] }
+    ; { Item =.. [F, Text] }
     ),
     ws, [0'.].
-
-use_visibility(private) --> word(`use`).
-use_visibility(public) --> word(`pub`), ws, word(`use`).
-
-use_item_term(private, Text, none, use(Text)).
-use_item_term(private, Text, Alias, use(Text, Alias)).
-use_item_term(public, Text, none, pub_use(Text)).
-use_item_term(public, Text, Alias, pub_use(Text, Alias)).
 
 
 statement(Kind, Item, V0, V) -->
@@ -408,8 +400,8 @@ decl_a_stmt(Decls) -->
     { length(Specs, Arity),
       module_path_name(Segs, Name),
       Ref = Name/Arity,
-      column_spec_names(Specs, Cols),
-      record_column_order(Name, Cols) },
+      spec_names(Specs, Cols),
+      record_cols(Name, Cols) },
     ws,
     { typed_decl_entries(Ref, Specs, Typed) },
     rel_modifiers(Ref, Mods),
@@ -469,7 +461,7 @@ enum_field(Col:Type) --> ident(Col), tok(`:`), ws, ident(Type).
 
 record_enum_column_orders(Rel, Variants) :-
     tag_rel_name(Rel, Tag),
-    record_column_order(Tag, [id, tag]),
+    record_cols(Tag, [id, tag]),
     forall(enum_decl_variant_term(Variants, V), record_enum_variant(Rel, V)).
 
 enum_decl_variant_term((L ; R), V) :- !,
@@ -480,11 +472,11 @@ record_enum_variant(Rel, Variant) :-
     Variant =.. [Name | Fields],
     maplist([Col:_, Col]>>true, Fields, Cols),
     atomic_list_concat([Rel, Name], '_', VariantRel),
-    record_column_order(VariantRel, [id | Cols]).
+    record_cols(VariantRel, [id | Cols]).
 
 tag_rel_name(Rel, Tag) :- atomic_list_concat([Rel, tag], '_', Tag).
 
-column_spec_names(Specs, Names) :- maplist([column(N, _), N]>>true, Specs, Names).
+spec_names(Specs, Names) :- maplist([column(N, _), N]>>true, Specs, Names).
 
 typed_decl_entries(Ref, Specs, Decls) :-
     findall(col_type(Ref, Col, Type),
@@ -512,8 +504,8 @@ decl_b_stmt(Decls) -->
     decl_b_columns(Name, Specs), tok(`)`), tok(`.`),
     { length(Specs, Arity),
       Ref = Name/Arity,
-      column_spec_names(Specs, Cols),
-      record_column_order(Name, Cols),
+      spec_names(Specs, Cols),
+      record_cols(Name, Cols),
       ( HasRetention == true
       -> record_finding(unsupported_surface(retention_marker(Ref, Ret)))
       ; true
@@ -551,7 +543,7 @@ disambiguate_module_path(Reserved, Name/Arity-Segs, Decls0, Decls) :-
        sub_atom(Sha, 0, 16, _, Digest),
        atomic_list_concat([Name, '__', Digest], Digested),
        ( lookup_column_order(Name, Cols)
-       -> record_column_order(Digested, Cols)
+       -> record_cols(Digested, Cols)
        ; true
        ),
        maplist(rename_decl_ref(Name/Arity, Digested/Arity), Decls0, Decls)
@@ -581,21 +573,19 @@ declared_rel_name(Decls, Name/Arity, Name) :-
 declared_rel_name(Decls, enum_decl(Name), Name) :-
     member(enum_decl(Name, _), Decls).
 
-minted_rel_name(Decls, Companion) :-
-    member(col_type(Parent/_, Col, option(_)), Decls),
-    atomic_list_concat([Parent, '__', Col], Companion).
-minted_rel_name(Decls, EnumName) :-
-    member(col_type(_, _, option(Element)), Decls),
-    atom(Element),
-    atomic_list_concat(['__opt_', Element], EnumName).
-minted_rel_name(Decls, VariantRel) :-
-    member(enum_decl(Rel, Variants), Decls),
-    enum_decl_variant_term(Variants, Variant),
-    Variant =.. [Name | _],
-    atomic_list_concat([Rel, Name], '_', VariantRel).
-minted_rel_name(Decls, Tag) :-
-    member(enum_decl(Rel, _), Decls),
-    tag_rel_name(Rel, Tag).
+minted_rel_name(Decls, Minted) :-
+    ( member(col_type(Parent/_, Col, option(_)), Decls),
+      atomic_list_concat([Parent, '__', Col], Minted)
+    ; member(col_type(_, _, option(Element)), Decls),
+      atom(Element),
+      atomic_list_concat(['__opt_', Element], Minted)
+    ; member(enum_decl(Rel, Variants), Decls),
+      ( enum_decl_variant_term(Variants, Variant),
+        Variant =.. [Name | _],
+        atomic_list_concat([Rel, Name], '_', Minted)
+      ; tag_rel_name(Rel, Minted)
+      )
+    ).
 
 
 normalize_relation_value_decls(Decls0, Decls) :-
@@ -607,21 +597,17 @@ normalize_relation_value_decls(Decls0, Decls) :-
     normalize_relation_value_decls(Decls0, ValueNames, [], Decls).
 
 normalize_relation_value_decls([], _, _, []).
-normalize_relation_value_decls([Head | Rest], ValueNames, Seen,
-                               [type_decl(Name, Specs), Head | More]) :-
-    Head = col_type(Name/Arity, _, _),
-    memberchk(Name, ValueNames),
-    \+ memberchk(Name, Seen),
-    !,
-    relation_schema([Head | Rest], Name, Name/Arity, Specs),
-    normalize_relation_value_decls(Rest, ValueNames, [Name | Seen], More).
-normalize_relation_value_decls([Head | Rest], ValueNames, Seen, [Head | More]) :-
-    Head = col_type(Name/_, _, _),
-    memberchk(Name, ValueNames),
-    !,
-    normalize_relation_value_decls(Rest, ValueNames, Seen, More).
-normalize_relation_value_decls([Decl | Rest], ValueNames, Seen, [Decl | More]) :-
-    normalize_relation_value_decls(Rest, ValueNames, Seen, More).
+normalize_relation_value_decls([Head | Rest], VNames, Seen, Out) :-
+    ( Head = col_type(Name/Arity, _, _), memberchk(Name, VNames)
+    -> ( memberchk(Name, Seen)
+       -> Out = [Head | More], Seen1 = Seen
+       ; relation_schema([Head | Rest], Name, Name/Arity, Specs),
+         Out = [type_decl(Name, Specs), Head | More],
+         Seen1 = [Name | Seen]
+       )
+    ; Out = [Head | More], Seen1 = Seen
+    ),
+    normalize_relation_value_decls(Rest, VNames, Seen1, More).
 
 relation_schema(Decls, Name, Ref, Specs) :-
     once(member(col_type(Name/Arity, _, _), Decls)),
@@ -658,8 +644,8 @@ bind_decl_stmt(bind_decl(Name, Cols)) -->
     word(`bind`), ws, ident(Name), tok(`(`),
     decl_b_columns(Name, Specs), tok(`)`), tok(`.`),
     { specs_to_columns(Specs, Cols),
-      column_spec_names(Specs, Names),
-      record_column_order(Name, Names) }.
+      spec_names(Specs, Names),
+      record_cols(Name, Names) }.
 
 sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
     word(`sh`), ws, ident(Name), tok(`(`),
@@ -670,8 +656,8 @@ sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
     { specs_to_columns(InSpecs, Ins),
       specs_to_columns(OutSpecs, Outs),
       append(InSpecs, OutSpecs, Specs),
-      column_spec_names(Specs, Names),
-      record_column_order(Name, Names),
+      spec_names(Specs, Names),
+      record_cols(Name, Names),
       record_host_signature(Name, Ins, Outs) }.
 
 sh_decl_stmt(unsupported_host_decl(Name, Cols)) -->
@@ -680,8 +666,8 @@ sh_decl_stmt(unsupported_host_decl(Name, Cols)) -->
     lit(`=`), ws, template_lit(_), tok(`.`),
     { specs_to_columns(Specs, Cols),
       length(Cols, Arity),
-      column_spec_names(Specs, Names),
-      record_column_order(Name, Names),
+      spec_names(Specs, Names),
+      record_cols(Name, Names),
       record_finding(unsupported_surface(host_decl_inferred(Name/Arity))) }.
 
 host_output_columns(Rel, Specs) --> args(typed_col(host_col_type(Rel)), Specs).
@@ -733,7 +719,7 @@ match_arm(Arm, V0, V) -->
     body(Guards, V0, V1), ws,
     ( lit(`|->`) -> { Arrow = (<-) } ; lit(`|+>`) -> { Arrow = (<+) } ),
     ws, head_atom(Head, V1, V),
-    { Arrow == (<-) -> Arm = (Head <- Guards) ; Arm = (Head <+ Guards) }.
+    { Arm =.. [Arrow, Head, Guards] }.
 
 rule_stmt(Rule, V0, V) -->
     head_atom(Head, V0, V1), ws,
@@ -888,12 +874,11 @@ cst_block_string([0'"]) --> [0'"], !.
 cst_block_string([0'\\, C | More]) --> [0'\\, C], !, cst_block_string(More).
 cst_block_string([C | More]) --> [C], cst_block_string(More).
 
-annotate_cst_item((Head <- Body), Vars, (Head <- Annotated)) :- !,
-    term_variables((Head, Body), RuleVars),
-    annotate_cst_body(Body, Head, Vars, RuleVars, Annotated).
-annotate_cst_item((Head <+ Body), Vars, (Head <+ Annotated)) :- !,
-    term_variables((Head, Body), RuleVars),
-    annotate_cst_body(Body, Head, Vars, RuleVars, Annotated).
+annotate_cst_item(Rule0, Vars, Rule) :-
+    Rule0 =.. [Op, Head, Body], memberchk(Op, [<-, <+]), !,
+    term_variables((Head, Body), RVars),
+    annotate_cst_body(Body, Head, Vars, RVars, Annotated),
+    Rule =.. [Op, Head, Annotated].
 annotate_cst_item(match(Source, Arms), Vars, match(Source, Annotated)) :- !,
     annotate_cst_arms(Arms, Vars, Annotated).
 annotate_cst_item(Item, _, Item).
@@ -904,27 +889,27 @@ annotate_cst_arms((L ; R), Vars, (AL ; AR)) :- !,
 annotate_cst_arms(Arm, Vars, Annotated) :-
     annotate_cst_item(Arm, Vars, Annotated).
 
-annotate_cst_body((L, R), Head, Vars, RuleVars, (AL, AR)) :- !,
-    annotate_cst_body(L, Head, Vars, RuleVars, AL),
-    annotate_cst_body(R, Head, Vars, RuleVars, AR).
-annotate_cst_body(cst(Path, Digest, Language, Query), Head, Vars, RuleVars,
+annotate_cst_body((L, R), Head, Vars, RVars, (AL, AR)) :- !,
+    annotate_cst_body(L, Head, Vars, RVars, AL),
+    annotate_cst_body(R, Head, Vars, RVars, AR).
+annotate_cst_body(cst(Path, Digest, Language, Query), Head, Vars, RVars,
                   cst(Path, Digest, Language, Query,
-                      cst_bindings(CaptureNames, CandidateNames, RuleNames))) :- !,
-    ts_query_capture_names(Query, CaptureNames),
-    term_variables((Path, Digest), InputVars),
-    cst_variable_names(RuleVars, Vars, RuleNames),
-    cst_variable_names(InputVars, Vars, InputNames),
-    cst_body_variable_names(Head, Path, Digest, Vars, InputNames, CandidateNames).
+                      cst_bindings(Caps, Cands, RNames))) :- !,
+    ts_query_capture_names(Query, Caps),
+    term_variables((Path, Digest), IVars),
+    cst_variable_names(RVars, Vars, RNames),
+    cst_variable_names(IVars, Vars, InNames),
+    cst_body_variable_names(Head, Path, Digest, Vars, InNames, Cands).
 annotate_cst_body(Item, _, _, _, Item).
 
-cst_body_variable_names(Head, Path, Digest, Vars, InputNames, Names) :-
-    term_variables(Head, HeadVars),
-    term_variables((Path, Digest), InputVars),
-    cst_variable_names(HeadVars, Vars, HeadNames),
-    cst_variable_names(InputVars, Vars, InputNames0),
-    append(InputNames, InputNames0, Excluded0),
+cst_body_variable_names(Head, Path, Digest, Vars, InNames, Names) :-
+    term_variables(Head, HVars),
+    term_variables((Path, Digest), IVars),
+    cst_variable_names(HVars, Vars, HNames),
+    cst_variable_names(IVars, Vars, InNames0),
+    append(InNames, InNames0, Excluded0),
     sort(Excluded0, Excluded),
-    subtract(HeadNames, Excluded, WithoutInputs),
+    subtract(HNames, Excluded, WithoutInputs),
     subtract(WithoutInputs, [line, end_line], Names).
 
 cst_variable_names([], _, []).
@@ -976,19 +961,19 @@ rel_atom_term(Term, V0, V) -->
 two_args(A, B, V0, V) -->
     ws, expr(A, V0, V1), tok(`,`), ws, expr(B, V1, V).
 
-parse_surface_wrapper(rel_atom, 1, Codes, [Atom], V0, V) :-
-    parse_full(rel_atom_term(Atom, V0, V), Codes).
 parse_surface_wrapper(atom_list, Arity, Codes, Atoms, V0, V) :-
     parse_full(sepv(rel_atom_term, Atoms, V0, V), Codes),
     ( Arity == variadic -> true ; integer(Arity), length(Atoms, Arity) ).
-parse_surface_wrapper(body_item, 1, Codes, [Inner], V0, V) :-
-    parse_full(body_item(Inner, V0, V), Codes).
-parse_surface_wrapper(expr, 1, Codes, [E], V0, V) :-
-    parse_full(expr(E, V0, V), Codes).
-parse_surface_wrapper(expr_pair, 2, Codes, [A, B], V0, V) :-
-    parse_full(two_args(A, B, V0, V), Codes).
-parse_surface_wrapper(rel_atom_default, 2, Codes, [Atom, Default], V0, V) :-
-    parse_full(rel_atom_default_args(Atom, Default, V0, V), Codes).
+parse_surface_wrapper(Shape, Arity, Codes, Args, V0, V) :-
+    wrapper_parser(Shape, Arity, Args, V0, V, Goal),
+    parse_full(Goal, Codes).
+
+wrapper_parser(rel_atom, 1, [Atom], V0, V, rel_atom_term(Atom, V0, V)).
+wrapper_parser(body_item, 1, [Item], V0, V, body_item(Item, V0, V)).
+wrapper_parser(expr, 1, [E], V0, V, expr(E, V0, V)).
+wrapper_parser(expr_pair, 2, [A, B], V0, V, two_args(A, B, V0, V)).
+wrapper_parser(rel_atom_default, 2, [Atom, D], V0, V,
+               rel_atom_default_args(Atom, D, V0, V)).
 
 rel_atom_default_args(Atom, Default, V0, V) -->
     ws, rel_atom_term(Atom, V0, V1), tok(`,`), ws, expr(Default, V1, V).
@@ -1033,12 +1018,6 @@ split_probe_values(InCount, Values, Ins, Outs) :-
     ; Ins = Values, Outs = []
     ).
 
-partition_host_input_values(Cols, Values, Roles, Ids, Salts) :-
-    ( same_length(Cols, Values)
-    -> partition_hiv(Cols, Values, Roles, Ids, Salts)
-    ; Ids = Values, Salts = []
-    ).
-
 partition_hiv([], [], [], [], []).
 partition_hiv([col(Name, _) | Cols], [V | Vs], [Role | Roles], Ids, Salts) :-
     ( Role == identity -> Ids = [V | Ids1], Salts = Salts1
@@ -1050,19 +1029,16 @@ relatom_item(Item, V0, V) -->
     dotted_path(Segs),
     { last(Segs, Name), module_path_name(Segs, Resolved) },
     ws,
-    ( lit(`!`)
-    -> tok(`(`), head_args(Args, V0, V), tok(`)`),
-       { length(Args, Arity),
+    ( lit(`!`) -> { Mut = true }, ws ; { Mut = false } ),
+    lit(`(`), head_args(Args, V0, V), tok(`)`),
+    { ( Mut == true
+      -> length(Args, Arity),
          record_finding(unsupported_surface(mutation(Name/Arity))),
          resolve_named_args(body, Resolved, Args, Pos),
-         Item =.. [Name | Pos] }
-    ; lit(`(`), head_args(Args, V0, V), tok(`)`),
-      { resolve_named_args(body, Resolved, Args, Pos),
-        ( Segs = [_]
-        -> Item =.. [Name | Pos]
-        ; Item = rel_path(Segs, Pos)
-        ) }
-    ).
+         Item =.. [Name | Pos]
+      ; resolve_named_args(body, Resolved, Args, Pos),
+        ( Segs = [_] -> Item =.. [Name | Pos] ; Item = rel_path(Segs, Pos) )
+      ) }.
 
 
 expr(E, V0, V) --> { arithmetic_tiers(Tiers) }, tier_expr(Tiers, E, V0, V).
@@ -1120,8 +1096,8 @@ dollar_var(Var, V0, V) -->
     [0'$], ident(Name),
     { hole_var(Name, V0, Var, V) }.
 
-bool_lit(bool_lit(true)) --> word(`true`), !.
-bool_lit(bool_lit(false)) --> word(`false`).
+bool_lit(bool_lit(B)) -->
+    { member(B, [true, false]), atom_codes(B, Cs) }, word(Cs), !.
 
 wildcard_var(_) -->
     lit(`_`), here(S),
@@ -1169,10 +1145,7 @@ brace_pairs(Pair, V0, V) --> brace_pair(Pair, V0, V).
 brace_pair(Key:Typed, V0, V) -->
     brace_key(Key, V0, V1), tok(`:`), ws,
     expr(Value, V1, V),
-    brace_value_type(Value, Typed).
-
-brace_value_type(Value, Value:Type) --> tok(`:`), !, ws, ident(Type).
-brace_value_type(Value, Value) --> [].
+    ( tok(`:`) -> ws, ident(Type), { Typed = Value:Type } ; { Typed = Value } ).
 
 brace_key('**', V, V) --> lit(`**`), !.
 brace_key($(Var), V0, V) -->
