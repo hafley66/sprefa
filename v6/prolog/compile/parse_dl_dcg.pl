@@ -55,10 +55,10 @@ cst_shape(brace_pair/1,     ref(object_pair)-[]).
 cst_shape(list_term/1,      ref(list)-[]).
 cst_shape(int_lit/1,        ref(integer)-[]).
 cst_shape(float_lit/1,      ref(float)-[]).
-cst_shape(string_lit/1,     ref(string)-[]).
-cst_shape(atom_lit/1,       ref(quoted_atom)-[]).
-cst_shape(template_lit/1,   ref(template)-[]).
-cst_shape(bool_lit/1,       ref(boolean)-[]).
+cst_shape(string_lit/1,     string-[]).
+cst_shape(atom_lit/1,       quoted_atom-[]).
+cst_shape(template_lit/1,   template-[]).
+cst_shape(bool_lit/1,       boolean-[]).
 cst_shape(ident/1,          ref(identifier)-[]).
 
 unsupported(Surface) :- assertz(finding_fact(unsupported_surface(Surface))).
@@ -271,6 +271,9 @@ attach(rule, I, Ds, Rs, Qs, Ds, [I | Rs], Qs).
 attach(query, I, Ds, Rs, Qs, Ds, Rs, [I | Qs]).
 
 
+% ws//0 eats comments before any consumer sees them; an editor keeps them
+cst_extra(comment, '#.*').
+
 ws(S0, S) :-
     ( S0 = [C | S1], code_type(C, space) -> ws(S1, S)
     ; S0 = [0'# | S1] -> skip_to_eol(S1, S2), ws(S2, S)
@@ -357,6 +360,10 @@ exp([M | Cs]) -->
 
 atom_lit(Atom, S0, S) :- quoted(0'\', Cs, S0, S), atom_codes(Atom, Cs).
 string_lit(Str, S0, S) :- quoted(0'", Cs, S0, S), string_codes(Str, Cs).
+
+% quoted//4 decodes escapes; an editor wants the raw span these patterns match
+lex_token(string_lit/1, '"([^"\\\\]|\\\\.)*"').
+lex_token(atom_lit/1, '\'([^\'\\\\]|\\\\.)*\'').
 
 quoted(Q, Cs, S0, S) :-
     mark(S0),
@@ -719,6 +726,8 @@ host_col_type(Rel, Col, none) -->
 host_col_type(_, _, Type) --> type_expr(Type).
 
 specs_to_columns(Specs, Cols) :- maplist([column(N, T), col(N, T)]>>true, Specs, Cols).
+
+lex_token(template_lit/1, '`([^`\\\\]|\\\\.)*`').
 
 template_lit(Template) -->
     [0'`], !,

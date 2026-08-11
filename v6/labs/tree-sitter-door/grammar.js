@@ -150,7 +150,7 @@ module.exports = grammar({
     boolean: $ => choice("true", "false"),
     variable: $ => choice(/[A-Z][A-Za-z0-9_]*/, /_+[A-Z][A-Za-z0-9_]*/, "_"),
     identifier: $ => /_*[a-z][A-Za-z0-9_]*/,
-    comment: $ => token(seq("#", /.*/)),
+    comment: $ => token(/#.*/),
   },
 });
 

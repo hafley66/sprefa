@@ -14,7 +14,7 @@ from pathlib import Path
 LAB = Path(__file__).resolve().parent
 RULE_KEY = re.compile(r"^    ([a-z_][a-z0-9_]*): \$ =>")
 RULES_END = re.compile(r"^  \},")
-GENERATED_HEADER = re.compile(r"^// Generated rule bodies: \[(.*)\]$", re.M)
+GENERATED_HEADER = re.compile(r"^  generated: \[(.*)\],$", re.M)
 
 
 def rule_bodies(text):
@@ -56,7 +56,8 @@ def main():
         return 1
 
     claimed = GENERATED_HEADER.search(emitted).group(1)
-    claimed = [name.strip() for name in claimed.split(",") if name.strip()]
+    claimed = [name.strip().strip('"') for name in claimed.split(",")
+               if name.strip()]
     generated = []
     diverged = []
     for name in claimed:
