@@ -102,12 +102,7 @@ module.exports = grammar({
     member_access: $ => token.immediate(/\.[A-Za-z_][A-Za-z0-9_]*/),
     parenthesized_expression: $ => seq("(", $.expression, ")"),
 
-    atom: $ => prec(PREC.call, seq(
-      field("name", $.path),
-      "(",
-      optional(commaSep1(choice($.named_argument, $.expression))),
-      ")",
-    )),
+    atom: $ => seq(field("name", $.path), "(", optional(seq(choice($.named_argument, $.expression), repeat(seq(",", choice($.named_argument, $.expression))))), ")"),
     named_argument: $ => seq(field("name", $.identifier), ":", field("value", $.expression)),
     object_pattern: $ => seq("{", optional(seq($.object_pair, repeat(seq(",", $.object_pair)))), "}"),
     object_pair: $ => seq(field("key", choice("**", $.capture_key, $.quoted_atom, $.string, $.identifier)), ":", field("value", $.expression), optional(seq(":", field("type", $.identifier)))),

@@ -4,7 +4,7 @@ const EMITTER_RECEIPT = {
   registry: "operators([:=,is],[\\==,=:=,=\\=,=<,>=,==,<,>],[1-[+,-],2-[mod,*,/]])",
   specializations: "[args-atom_arg,args-decl_a_column,args-enum_field,args-expr,args-typed_col(decl_b_column_type(A)),args-typed_col(host_col_type(B)),sep-atom_arg,sep-decl_a_column,sep-enum_field,sep-expr,sep-int_lit,sep-rel_atom_term,sep-typed_col(decl_b_column_type(C)),sep-typed_col(host_col_type(D))]",
   unbound: "[args-A,sep-A]",
-  generated: ["bind_declaration", "boolean", "capture_key", "comment", "declaration_parameter", "enum_variants", "fact", "list", "match_arm", "match_statement", "member_access", "named_argument", "object_pair", "object_pattern", "path", "quoted_atom", "relation_modifier", "rule", "spread_element", "statement", "string", "template"],
+  generated: ["atom", "bind_declaration", "boolean", "capture_key", "comment", "declaration_parameter", "enum_variants", "fact", "list", "match_arm", "match_statement", "member_access", "named_argument", "object_pair", "object_pattern", "path", "quoted_atom", "relation_modifier", "rule", "spread_element", "statement", "string", "template"],
   blocked: "[]",
 };
 
@@ -112,12 +112,7 @@ module.exports = grammar({
     member_access: $ => token.immediate(/\.[A-Za-z_][A-Za-z0-9_]*/),
     parenthesized_expression: $ => seq("(", $.expression, ")"),
 
-    atom: $ => prec(PREC.call, seq(
-      field("name", $.path),
-      "(",
-      optional(commaSep1(choice($.named_argument, $.expression))),
-      ")",
-    )),
+    atom: $ => seq(field("name", $.path), "(", optional(seq(choice($.named_argument, $.expression), repeat(seq(",", choice($.named_argument, $.expression))))), ")"),
     named_argument: $ => seq(field("name", $.identifier), ":", field("value", $.expression)),
     object_pattern: $ => seq("{", optional(seq($.object_pair, repeat(seq(",", $.object_pair)))), "}"),
     object_pair: $ => seq(field("key", choice("**", $.capture_key, $.quoted_atom, $.string, $.identifier)), ":", field("value", $.expression), optional(seq(":", field("type", $.identifier)))),

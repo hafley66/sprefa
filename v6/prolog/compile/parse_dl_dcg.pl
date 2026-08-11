@@ -49,7 +49,7 @@ cst_shape(rule_stmt/1,      rule-[head, arrow, body]).
 cst_shape(query_stmt/1,     ref(query)-[]).
 cst_shape(body/1,           ref(goal_list)-[]).
 cst_shape(expr/1,           ref(expression)-[]).
-cst_shape(head_atom/1,      ref(atom)-[]).
+cst_shape(head_atom/1,      atom-[name]).
 cst_shape(brace_pair/1,     object_pair-[key, value, type]).
 cst_shape(list_term/1,      list-[]).
 cst_shape(int_lit/1,        ref(integer)-[]).
