@@ -6,12 +6,15 @@ You have several files that each describe dl6. You asked whether the DCG
 parser could be the only hand-written one, with everything else generated
 from it. Then whether that could reach all the way to an LSP.
 
-## The answer so far
+## The answer
 
-Tree-sitter and Topiary: yes, done, working. The generate-it-all
-question: NOT settled. The first attempt failed, but it was a simple
-generator that skipped three obvious tricks, so it measured itself
-rather than the question. Round 2 is running.
+Tree-sitter and Topiary: yes, done, working.
+
+Generate the grammar from the parser: no, and now we know why. The first
+attempt was a lazy generator, so we built a second one that tried the
+three skipped tricks. All three worked. You now hand-write 1.7 characters
+per generated one instead of 3. Still above 1, and the part that stays
+hand-written is the part a compiler never needed.
 
 ```mermaid
 flowchart LR
@@ -139,8 +142,30 @@ tried, each checked against the code:
 | whitespace, digits, letters ("character code, not a shape") | the parser uses exactly FOUR of these. Four hand-written lines, once, covers all of them forever |
 | `sep`, the list combinator ("parser decided at runtime") | its 24 call sites pass 9 known parsers. Make 9 copies, one per caller. Bounded, mechanical |
 
-If all three work, most of the HAND-ONLY column becomes generated, and
-the ratio could flip. Round 2 is measuring it now.
+### Round 2: all three worked
+
+| trick | worked? | hand-writing it removed |
+|---|---|---:|
+| read the precedence table as data | yes | 508 chars |
+| four-row character table | yes | 169 chars |
+| copy the list combinator per caller (14 copies) | yes | 37 chars |
+
+You now hand-write 1.7 characters per generated character, down from 3.
+And the emitted grammar is real: it builds with `tree-sitter generate`.
+
+### What is left, and why it never comes from the parser
+
+| still hand-written | why the parser cannot know it |
+|---|---|
+| where each node starts and ends | your compiler builds its own shapes, not editor shapes |
+| what to call each field | it never needed names; it uses positions |
+| keeping comments | your parser THROWS COMMENTS AWAY. An editor must keep them to colour them |
+| string escape shapes | your parser decodes escapes; an editor displays them |
+| broken half-typed code | your compiler just errors; an editor keeps working |
+
+Every one of those is an editor job, not a compiler job. That is the real
+answer: not "our parser is written wrong" but "an editor needs to know
+things a compiler never has to".
 
 ### The compression made it worse, which proves the point
 

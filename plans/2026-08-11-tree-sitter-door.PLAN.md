@@ -14,7 +14,7 @@
 |---|---|---|
 | Can tree-sitter parse all of dl6? | YES | `golden-flex.dl6 lines=630 errors=0`; `TS_CORPUS total=266 clean=266 errors=0` |
 | Can Topiary format dl6 to the decree? | YES | formatting law + idempotence PASS |
-| Can the DCG be the ONE hand-written description? | **NOT PROVEN** | A naive structural translator reaches 32 of 103 clauses, ratio 2.96. Three bounded techniques were never attempted, so this measures the generator, not the question. Round 2 dispatched. |
+| Can the DCG be the ONE hand-written description? | **NO**, settled in round 2 | All three untried techniques WORKED and moved the ratio 2.96 -> 1.68 (PR #178). What remains is editor-only and was never in a compiler's parser: CST node boundaries and field names, immediate tokens, comment retention, escape-preserving tokens, recovery/root choices = 2767 chars |
 
 Landed in PR #177 (main `0cc79ca1`). Lab gate: `v6/labs/tree-sitter-door/run-tests.sh`, rc=0, coordinator-rerun.
 
@@ -88,8 +88,28 @@ against the code by the coordinator 2026-08-11:
 | Map character classes | every regex token HAND-ONLY | the parser uses four `code_type/2` classes (space :243, alnum :269, alpha :279, digit :290). A four-row mapping is written once and never grows |
 | Specialize parameterized nonterminals | `call(P, X)` fatal | `sep/2` and `args/2` have 24 call sites binding P to 9 concrete parsers (`expr`, `atom_arg`, `typed_col`, `head`, `body`, `decl_a_column`, `enum_field`, `int_lit`, `rel_atom_term`). Partial evaluation emits one rule per binding, bounded by call sites |
 
-Round 2 brief: `sprefa-lanes/tree-sitter-emit-v2.BRIEF.md`. The answer may
-still be no; it has to be no for a reason the code supports.
+Round 2 brief: `sprefa-lanes/tree-sitter-emit-v2.BRIEF.md`. Result, PR #178,
+`v6/labs/tree-sitter-door/REPORT3.md`:
+
+| Technique | Verdict | Hand overlay removed |
+|---|---|---:|
+| registry-driven precedence | WORKED | 508 chars |
+| four-row character-class bridge | WORKED | 169 chars |
+| separator specialization (14 emitted) | WORKED | 37 chars |
+
+`DCG_EMIT_V2 specializations=14 unbound_args=2`; emitted 1648, remaining
+overlay 2767, ratio **1.68**; classification 8 EMITTED-IDENTICAL / 27
+EMITTED-NEEDS-OVERLAY / 8 HAND-ONLY (round 1 had zero identical). Gates:
+`pnpm exec tree-sitter generate emitted-grammar.js` rc=0, `run-tests.sh`
+rc=0, TS_CORPUS 272/272/0.
+
+The verdict is now NO for a reason the code supports. Everything left is an
+editor concern a compiler's parser never carried: where CST nodes begin and
+end, field names, immediate token behavior, comment retention (the parser
+discards comments; the editor grammar must keep them), escape-preserving
+lexical tokens, and error recovery. Brief-vs-lane correction: the brief cited
+24 sep/args call sites from a grep; the lane walked parsed terms and found 12
+occurrences yielding 14 specializations. The lane's count stands.
 
 ## Phase C: LSP candidates and the recommended shot
 
