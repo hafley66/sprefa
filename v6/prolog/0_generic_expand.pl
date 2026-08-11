@@ -26,7 +26,8 @@ expand_generic_program(prog(Decls0, Rules), prog(Decls, Rules)) :-
     validate_generated_name_collisions(Decls0, Rules, Instances),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     generic_artifact_order(Instances, RewrittenDecls, CanonicalDecls),
-    expand_option_decls(CanonicalDecls, Decls).
+    expand_option_decls(CanonicalDecls, OptionDecls),
+    retarget_type_decl_mirrors(OptionDecls, Decls).
 
 % Executable comparison arm, written as a second path so the template and
 % replacement logic cannot drift apart from the wired entry above.
@@ -35,7 +36,8 @@ expand_generic_program_raw(prog(Decls0, Rules), prog(Decls, Rules)) :-
     validate_generated_name_collisions(Decls0, Rules, Instances),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     generic_artifact_order(Instances, RewrittenDecls, CanonicalDecls),
-    expand_option_decls(CanonicalDecls, Decls).
+    expand_option_decls(CanonicalDecls, OptionDecls),
+    retarget_type_decl_mirrors(OptionDecls, Decls).
 
 % A worklist is represented by the canonical sorted instance list.  The four
 % list constructors are term-door-only lab constructors.  No parser spelling
@@ -239,14 +241,36 @@ plain_decl_name(keyed(Name/_, _), Name).
 plain_decl_name(kind(Name/_, _), Name).
 plain_decl_name(keep(Name/_, _), Name).
 
-replace_generic_types([], _, []).
-replace_generic_types([col_type(Ref, Column, Type0) | Rest], Instances,
-                       [col_type(Ref, Column, Type) | Rewritten]) :-
+replace_generic_types(Decls0, Instances, Decls) :-
+    maplist(replace_generic_decl(Instances), Decls0, Decls).
+
+replace_generic_decl(Instances,
+                     col_type(Ref, Column, Type0),
+                     col_type(Ref, Column, Type)) :-
     !,
-    replace_generic_type(Type0, Instances, Type),
-    replace_generic_types(Rest, Instances, Rewritten).
-replace_generic_types([Decl | Rest], Instances, [Decl | Rewritten]) :-
-    replace_generic_types(Rest, Instances, Rewritten).
+    replace_generic_type(Type0, Instances, Type).
+replace_generic_decl(_, Decl, Decl).
+
+retarget_type_decl_mirrors(Decls0, Decls) :-
+    maplist(retarget_type_decl_mirror(Decls0), Decls0, Decls).
+
+retarget_type_decl_mirror(Decls,
+                          type_decl(RelName, Specs0),
+                          type_decl(RelName, Specs)) :-
+    !,
+    maplist(retarget_type_decl_spec(RelName, Decls), Specs0, Specs).
+retarget_type_decl_mirror(_, Decl, Decl).
+
+retarget_type_decl_spec(RelName, Decls, col(Column, _), col(Column, Type)) :-
+    memberchk(col_type(RelName/_, Column, RewrittenType), Decls),
+    mirror_column_type(Decls, RewrittenType, Type),
+    !.
+retarget_type_decl_spec(_, _, Spec, Spec).
+
+mirror_column_type(Decls, Type, int) :-
+    memberchk(enum_decl(Type, _), Decls),
+    !.
+mirror_column_type(_, Type, Type).
 
 replace_generic_type(option(Type0), Instances, option(Name)) :-
     !,
