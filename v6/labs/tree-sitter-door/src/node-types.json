@@ -631,6 +631,34 @@
     "type": "relation_declaration",
     "named": true,
     "fields": {
+      "columns": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "declaration_parameter",
+            "named": true
+          },
+          {
+            "type": "enum_variants",
+            "named": true
+          }
+        ]
+      },
+      "modifiers": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "relation_modifier",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
@@ -641,24 +669,6 @@
           }
         ]
       }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "declaration_parameter",
-          "named": true
-        },
-        {
-          "type": "enum_variants",
-          "named": true
-        },
-        {
-          "type": "relation_modifier",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -720,12 +730,40 @@
     "type": "shell_declaration",
     "named": true,
     "fields": {
+      "inputs": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "column",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,
         "types": [
           {
             "type": "path",
+            "named": true
+          }
+        ]
+      },
+      "outputs": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": ",",
+            "named": false
+          },
+          {
+            "type": "column",
             "named": true
           }
         ]
@@ -740,16 +778,6 @@
           }
         ]
       }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "column",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -843,6 +871,16 @@
           {
             "type": "identifier",
             "named": true
+          }
+        ]
+      },
+      "optional": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "?",
+            "named": false
           }
         ]
       }

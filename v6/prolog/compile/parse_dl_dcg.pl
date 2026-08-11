@@ -40,10 +40,11 @@ cst_shape(match_arm/1,      match_arm-[guard, arrow, head]).
 cst_shape(braces_term/1,    object_pattern-[]).
 cst_shape(dotted_path/1,    path-[]).
 cst_shape(statement/2,      statement-[]).
-cst_shape(rel_stmt/1,       ref(relation_declaration)-[]).
-cst_shape(sh_decl_stmt/1,   ref(shell_declaration)-[]).
+cst_shape(statements/3,     source_file-[]).
+cst_shape(rel_stmt/1,       relation_declaration-[]).
+cst_shape(sh_decl_stmt/1,   shell_declaration-[]).
 cst_shape(typed_col/2,      ref(column)-[]).
-cst_shape(type_expr/1,      ref(type)-[]).
+cst_shape(type_expr/1,      type-[]).
 cst_shape(enum_variant/1,   ref(enum_variant)-[]).
 cst_shape(rule_stmt/1,      rule-[head, arrow, body]).
 cst_shape(query_stmt/1,     ref(query)-[]).
@@ -59,6 +60,11 @@ cst_shape(atom_lit/1,       quoted_atom-[]).
 cst_shape(template_lit/1,   template-[]).
 cst_shape(bool_lit/1,       boolean-[]).
 cst_shape(ident/1,          ref(identifier)-[]).
+% editor nodes the parser folds with no named nonterminal; the emitter
+% renders each from its fixed editor shape (editor_* keys are not parser preds)
+cst_shape(editor_paren/1,   parenthesized_expression-[]).
+cst_shape(editor_literal/1, literal-[]).
+cst_shape(editor_member/1,  member_expression-[]).
 
 % Nodes the parser folds away: Nonterminal-Marker -> Node, inner = the
 % marked branch alone rather than the nonterminal with that branch chosen.
