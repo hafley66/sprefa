@@ -1,0 +1,3 @@
+rel box(id: int, items: list(text)) key(1).
+
+carry(Id, Items) <- box(Id, Items).
