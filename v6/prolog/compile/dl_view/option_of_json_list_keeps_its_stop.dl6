@@ -1,0 +1,1 @@
+rel squad(id: int, ranks: option(json_list(int))) key(1).

@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42":{"add":[[100]],"del":[]},"__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member":{"add":[[100,0,{"name":"ada","url":"ada.io"}]],"del":[]},"fighter_summary":{"add":[["ada","ada.io"]],"del":[]},"squad":{"add":[[1]],"del":[]},"squad__members":{"add":[[1,100]],"del":[]}}}
+{"tick":2,"deltas":{"squad":{"add":[[2]],"del":[]}}}

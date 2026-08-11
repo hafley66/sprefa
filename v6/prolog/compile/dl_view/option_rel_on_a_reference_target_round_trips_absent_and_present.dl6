@@ -1,0 +1,8 @@
+rel person(id: int, name: text) key(1).
+rel commit(id: int, reviewed_by: option(person)).
+rel audit(audit_id: int, at_commit: commit).
+rel reviewed(commit_id: int, reviewer_name: text).
+
+reviewed(CommitId, ReviewerName) <-
+  commit__reviewed_by(CommitId, PersonId),
+  person(PersonId, ReviewerName).
