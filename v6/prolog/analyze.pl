@@ -775,6 +775,9 @@ expression_type(bool_lit(_), _, bool) :- !.
 expression_type(Expr, _, int) :- integer(Expr), !.
 expression_type(Expr, _, float) :- float(Expr), !.
 expression_type(Expr, _, text) :- atomic(Expr), !.
+% Mirrors lower.pl:json_value_expr/1, pinned by json_document_value:
+% braces_literal_column_stores_json.
+expression_type(Expr, _, json) :- json_document_expression(Expr), !.
 expression_type(concat(_), _, text) :- !.
 expression_type(Expr, Environment, text) :-
     text_scalar_expression(Expr, Argument), !,
@@ -786,6 +789,10 @@ expression_type(Expr, Environment, Type) :-
     expression_type(Right, Environment, RightType),
     arithmetic_result_type(Operator, LeftType, RightType, Type).
 expression_type(_, _, text).
+
+json_document_expression(Expr) :- compound(Expr), Expr = {}(_), !.
+json_document_expression(Expr) :- is_list(Expr), Expr \== [], !.
+json_document_expression(Expr) :- compound(Expr), Expr = [_ | _].
 
 % Operator inventory from registry.pl's expression/5 (rank R5 of
 % plans/2026-07-29-prolog-org-review.md), not a local list.

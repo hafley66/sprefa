@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "doc_out": {
+      "additionalProperties":false,
+      "properties": {"col1": {}},
+      "required": ["col1" ],
+      "type":"object"
+    },
+    "seed": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"braces_in_head_position#cdfd569975635a71",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1253,6 +1253,20 @@
     "final_detail": ""
   },
   {
+    "name": "braces_literal_canonicalizes",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "braces_in_head_position",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_array_spread_fans_out_correlated_siblings",
     "bucket": "identical",
     "detail": "",

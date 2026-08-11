@@ -556,7 +556,8 @@ compile_expr(Mode, Demand, Expr, Bound, Sql, Type, Encoding) :-
        arithmetic_result_type(Operator, LeftType, RightType, Type),
        Encoding = direct
     ; json_value_expr(Expr)
-    -> throw(unsupported_construct(json_value_expression(Expr)))
+    -> compile_json_document(Mode, Expr, Bound, Sql),
+       Type = json, Encoding = direct
     ; compound(Expr)
     -> Expr =.. [Functor | SubArgs],
        maplist(compile_term_sub_expr(Mode, Bound), SubArgs, SubSqls),
@@ -617,27 +618,96 @@ text_scalar_rendering(Function, Rendering, ArgumentSqls, Sql) :-
     atomic_list_concat(ArgumentSqls, ', ', ArgsJoined),
     format(atom(Sql), '~w(~w)', [Function, ArgsJoined]).
 
-% The json arm's own VALUE grammar: a braces literal ({}/1) and a list. Both
-% are ordinary compound terms structurally, and the generic compound branch
-% below would happily wrap either in this compiler's json1 tagged-term
-% encoding -- which is NOT what the oracle stores. engine.pl:json_canon/2
-% canonicalizes a braces literal to obj(SortedPairs) and a list to a list,
-% and the shared tick-log encoder then renders those as
-% obj([|](-(name,cli),[|](-(stars,4),[]))) -- right-nested cons text, not a
-% json1 object.
-%
-% MEASURED, not predicted: with only the bind lift in place and no unsupported construct
-% here, json_arm.pl's braces_literal_canonicalizes compiled clean and stored
-% the text "null" where the oracle holds
-% obj([|](-(name,cli),[|](-(stars,4),[]))), and braces_in_head_position (which
-% the sweep has been calling IDENTICAL-but-vacuous since phase C, because its
-% Schedule is empty) stored {}({"fn":":","args":["repo","cli"]}). The
-% final-state leg is what surfaced both. Refused by name until the json arm
-% is lowered as its own class; that is the SAME cons-text encoding gap
-% registry.pl records against json_array/json_object.
+% Without this guard the generic compound branch below wraps a braces literal
+% or a list in the json1 tagged-term encoding, a domain fact's rendering.
 json_value_expr(Expr) :- compound(Expr), Expr = {}(_), !.
 json_value_expr(Expr) :- is_list(Expr), Expr \== [], !.
 json_value_expr(Expr) :- compound(Expr), Expr = [_ | _].
+
+% Keys sort at COMPILE time: json1 keeps argument order and the log contract
+% is sorted keys. A GROUND subtree uses the oracle's own canonicalizer.
+compile_json_document(Mode, Expr, Bound, Sql) :-
+    (   json_document_dup_key(Expr)
+    ->  Sql = 'json(\'json_dup_key\')'
+    ;   ground(Expr)
+    ->  canonical_json_text(Expr, Text), json_document_text_sql(Text, Sql)
+    ;   json_document_pairs(Expr, Pairs)
+    ->  keysort(Pairs, Sorted),
+        maplist(compile_json_entry(Mode, Bound), Sorted, EntrySqls),
+        atomic_list_concat(EntrySqls, ', ', Inner),
+        format(atom(Sql), 'json_object(~w)', [Inner])
+    ;   is_list(Expr)
+    ->  maplist(compile_json_element(Mode, Bound), Expr, ElementSqls),
+        atomic_list_concat(ElementSqls, ', ', Inner),
+        format(atom(Sql), 'json_array(~w)', [Inner])
+    ;   throw(unsupported_construct(json_value_expression(Expr)))
+    ).
+
+json_document_text_sql(Text, Sql) :-
+    sql_literal(Text, Quoted),
+    format(atom(Sql), 'json(~w)', [Quoted]).
+
+compile_json_entry(Mode, Bound, Key-Raw, Sql) :-
+    sql_literal(Key, KeySql),
+    compile_json_element(Mode, Bound, Raw, ValueSql),
+    format(atom(Sql), '~w, ~w', [KeySql, ValueSql]).
+
+compile_json_element(Mode, Bound, Value, Sql) :-
+    (   var(Value)
+    ->  compile_json_operand(Mode, Value, Bound, Sql)
+    ;   compound(Value), bound_lookup(Bound, Value, _)
+    ->  compile_json_operand(Mode, Value, Bound, Sql)
+    ;   ( Value = {}(_) ; Value = [_ | _] )
+    ->  compile_json_document(Mode, Value, Bound, Sql)
+    ;   ground(Value)
+    ->  canonical_json_text(Value, Text), json_document_text_sql(Text, Sql)
+    ;   compile_json_operand(Mode, Value, Bound, Sql)
+    ).
+
+compile_json_operand(Mode, Value, Bound, Sql) :-
+    compile_expr(Mode, value, Value, Bound, ValueSql, ValueType, _Encoding),
+    json_document_operand_sql(ValueType, ValueSql, Sql).
+
+% A ref column carries the dictionary id; json1 would render that id as a
+% number where the oracle renders the struct's document.
+json_document_operand_sql(ref(TypeName), _, _) :- !,
+    throw(unsupported_construct(json_document_ref_operand(TypeName))).
+% SQLite stores a bool column as 0/1 and the tick-log contract is true/false.
+json_document_operand_sql(bool, ValueSql, Sql) :- !,
+    format(atom(Sql), 'json(CASE WHEN ~w THEN \'true\' ELSE \'false\' END)',
+           [ValueSql]).
+json_document_operand_sql(Type, ValueSql, Sql) :-
+    json_group_array_value_sql(Type, ValueSql, Sql).
+
+% Every level, before any subtree renders: canonical_json_text/2 would
+% otherwise throw at COMPILE time where body.pl:json_canon/2 throws at run.
+json_document_dup_key(Expr) :-
+    nonvar(Expr), Expr = {}(_),
+    json_document_pairs(Expr, Pairs),
+    (   pairs_keys(Pairs, Keys),
+        sort(Keys, Distinct),
+        length(Keys, KeyCount), length(Distinct, DistinctCount),
+        KeyCount =\= DistinctCount
+    ->  true
+    ;   member(_-Raw, Pairs), json_document_dup_key(Raw)
+    ),
+    !.
+json_document_dup_key(Expr) :-
+    is_list(Expr),
+    member(Element, Expr),
+    json_document_dup_key(Element),
+    !.
+
+json_document_pairs(Expr, Pairs) :-
+    nonvar(Expr), Expr = {}(Fields),
+    json_document_field_pairs(Fields, Pairs).
+
+json_document_field_pairs(Fields, _) :- var(Fields), !, fail.
+json_document_field_pairs((Left, Right), Pairs) :- !,
+    json_document_field_pairs(Left, LeftPairs),
+    json_document_field_pairs(Right, RightPairs),
+    append(LeftPairs, RightPairs, Pairs).
+json_document_field_pairs(Key: Raw, [Key-Raw]) :- atomic(Key).
 
 compile_int_operand(Mode, Operand, Bound, Whole, Sql) :-
     compile_expr(Mode, identity, Operand, Bound, Sql, Type, _Encoding),

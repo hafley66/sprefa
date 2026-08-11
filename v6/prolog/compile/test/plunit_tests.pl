@@ -7563,6 +7563,111 @@ test(list_of_relation_refs_keeps_its_unsupported) :-
 
 :- end_tests(list_element_widening).
 
+:- begin_tests(json_document_value).
+
+% FAIL-FIRST RECEIPT (json-as-value-in-scan arc). Every test below was RED on
+% base 26f3f25f with `unsupported_construct(json_value_expression(...))` out of
+% lower.pl:559, the arm that stopped a braces literal in value position.
+
+% Keys sort at COMPILE time because a braces literal's keys are literal atoms
+% and json1 keeps its argument order: `name` before `stars` in the SQL text.
+test(braces_literal_value_lowers_to_sorted_json_object) :-
+    Term = fixture(braces_value_sql,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := {stars: 4, name: Name}) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "doc" ("col1") SELECT json_object(\'name\', b0."col1", \'stars\', json(\'4\')) FROM "seed" b0'.
+
+% A head-position braces literal is the same expression compiler, and a fully
+% ground document renders through canonical_json_text/2 in ONE json() call.
+test(braces_head_position_lowers_to_one_ground_document) :-
+    Term = fixture(braces_head_sql,
+                   prog([], [ (doc_out({repo: cli}) <- seed(_Name)) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc_out/1, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "doc_out" ("col1") SELECT json(\'{"repo":"cli"}\') FROM "seed" b0'.
+
+% A list literal in value position is the array carrier, same arm.
+test(list_literal_value_lowers_to_json_array) :-
+    Term = fixture(list_value_sql,
+                   prog([], [ (bag(Elements) <- seed(Name),
+                               Elements := [Name, 7]) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(bag/1, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "bag" ("col1") SELECT json_array(b0."col1", json(\'7\')) FROM "seed" b0'.
+
+% The document's column is json storage, so the delta read passes the stored
+% text through and the tick-log encoder parses it as a document rather than
+% rendering it as a JSON string.
+test(braces_literal_column_stores_json) :-
+    Term = fixture(braces_value_type,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := {stars: 4, name: Name}) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
+    relplan_column_types(RelPlans, doc/1, ColumnTypes),
+    ColumnTypes == [json],
+    lower:canonical_column_expr(col1, json, ReadExpr),
+    ReadExpr == '"col1"'.
+
+% HOUSE PATTERN (lower.pl json_object aggregate arm): a duplicate key emits
+% text that is not valid JSON, so SQLite fails the statement where the oracle
+% throws json_dup_key. No sentinel value, no partial document.
+test(duplicate_key_document_emits_invalid_json) :-
+    Term = fixture(braces_dup_key_sql,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := {name: Name, name: other}) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    sub_atom(InsertSql, _, _, _, 'json(\'json_dup_key\')').
+
+% A duplicate key NESTED under a document that is not ground reaches the same
+% arm: the check walks every level before any subtree renders.
+test(nested_duplicate_key_document_emits_invalid_json) :-
+    Term = fixture(braces_nested_dup_key_sql,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := {outer: Name, inner: {key: 1, key: 2}}) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    sub_atom(InsertSql, _, _, _, 'json(\'json_dup_key\')').
+
+% The arm BELOW the json one is untouched: an unrecognized compound in value
+% position still renders as the json1 tagged term, ids and all.
+test(compound_term_value_still_renders_as_tagged_term) :-
+    Term = fixture(tagged_term_sql,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := route_data(Name)) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "doc" ("col1") SELECT json_object(\'fn\', \'route_data\', \'args\', json_array(b0."col1")) FROM "seed" b0'.
+
+% A partial list keeps the named unsupported construct: cons with an unbound
+% tail is not a json array on either door.
+test(partial_list_value_keeps_its_unsupported,
+     [throws(unsupported_construct(json_value_expression(_)))]) :-
+    Term = fixture(partial_list_sql,
+                   prog([], [ (bag(Elements) <- seed(Name),
+                               Elements := [Name | _Tail]) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, _).
+
+:- end_tests(json_document_value).
+
 % The compile/text-door pipeline that feeds an emitter, shared by the
 % schema_emit and schema_parity_golden units (file scope: no cross-unit calls).
 schema_emit_rows(RelPath, Name, Rows) :- once((
