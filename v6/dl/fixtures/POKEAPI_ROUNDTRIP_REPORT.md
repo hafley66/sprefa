@@ -85,7 +85,7 @@ _201 known-gap rows (sample):_
 
 ```
 wrote /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/pe_pokeapi_gen.ts
-COMPILE-TRACE program=pokeapi_gen parse=413/2568940 plan=109/1064163 lower=51/226810 boot=0/7498 emit=237/2494409 write=9/179 total=819/6361999
+COMPILE-TRACE program=pokeapi_gen parse=498/2568940 plan=109/1064163 lower=50/226810 boot=1/7498 emit=243/2494409 write=10/179 total=911/6361999
 emit-back REFUSED: emitter jsonschema_text on pokeapi_gen
 ERROR: [Thread main] -g main('/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/openapi-to-dl6/v6/tsv2/gen/pokeapi_gen.dl6','/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/openapi-to-dl6/v6/tsv2/gen/pe_emit'): false
 ```
