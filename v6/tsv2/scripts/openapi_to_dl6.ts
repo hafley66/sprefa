@@ -434,7 +434,8 @@ function buildRefTargetProbe(target: IRelDecl, byName: ReadonlyMap<string, IRelD
   }
   const lines = [...placeholders].map((name) => `rel ${name}(probe_value: int).`);
   lines.push(relLine(target));
-  lines.push(`rel __probe_ref(probe_value: ${target.name}).`);
+  // Double-underscore rel names throw reserved_rel_namespace before the type plane runs.
+  lines.push(`rel probe_ref_holder(probe_value: ${target.name}).`);
   return lines.join("\n") + "\n";
 }
 
