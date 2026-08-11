@@ -1310,7 +1310,7 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-41, refcount-320, refcount_staging-320,
+    Counts = [scope-41, refcount-325, refcount_staging-325,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-

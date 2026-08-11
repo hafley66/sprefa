@@ -713,11 +713,25 @@ typed_column_type_base(json_list(Element), S0, S) :-
     ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
     typed_column_type(Element, S4, S5), ws0(S5, S6),
     lit_dcg(`)`, S6, S).
-% Hard rename, no alias: a program writing list(T) gets the named unsupported
-% removed_word(list) finding (the message names json_list as the spelling).
-typed_column_type_base(json_list(Element), S0, S) :-
+% The four list constructors (ruling list_flavor_set_v1); json_list keeps
+% its clause above. Element = any typed type; coherence stays the engine's job.
+typed_column_type_base(list(Element), S0, S) :-
     word(`list`, S0, S1), !,
-    record_finding(unsupported_surface(removed_word(list))),
+    ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
+    typed_column_type(Element, S4, S5), ws0(S5, S6),
+    lit_dcg(`)`, S6, S).
+typed_column_type_base(list_entity_dense_sequence(Element), S0, S) :-
+    word(`list_entity_dense_sequence`, S0, S1), !,
+    ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
+    typed_column_type(Element, S4, S5), ws0(S5, S6),
+    lit_dcg(`)`, S6, S).
+typed_column_type_base(list_interned_set(Element), S0, S) :-
+    word(`list_interned_set`, S0, S1), !,
+    ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
+    typed_column_type(Element, S4, S5), ws0(S5, S6),
+    lit_dcg(`)`, S6, S).
+typed_column_type_base(list_entity_linked_sequence(Element), S0, S) :-
+    word(`list_entity_linked_sequence`, S0, S1), !,
     ws0(S1, S2), lit_dcg(`(`, S2, S3), ws0(S3, S4),
     typed_column_type(Element, S4, S5), ws0(S5, S6),
     lit_dcg(`)`, S6, S).
