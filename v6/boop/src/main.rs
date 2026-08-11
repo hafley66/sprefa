@@ -14,7 +14,7 @@ use boop::bus::Route;
 use boop::event::AgentEvent;
 use boop::proc::ProcReader;
 use boop::registry::Registry;
-use boop::{bus, ident, identity, lane, proc, query, tmux, usage};
+use boop::{bus, config, ident, identity, lane, proc, query, tmux, usage};
 
 const DOCTRINE: &str = "\
 DOCTRINE (this help is the usage contract; agents read it with `boop --help`):
@@ -33,6 +33,7 @@ edge and stay invisible to tracking:
   coordinator, --harness to the one the model spelling names (gpt-* codex,
   provider/model opencode, kimi-* kimi).
   Overrides: --lane <id>, --tmux <name>, --base-sha <sha>, --harness <id>.
+  Model preset: --preset flash4 resolves through the platform config directory's boop/config.json.
   One shot: worktree at base sha + spawn + route registration.
   Always --dry-run first; the printed `cmd:` line is the literal spawn.
 
@@ -246,6 +247,8 @@ enum SubCmd {
         brief: Option<PathBuf>,
         #[arg(long)]
         model: Option<String>,
+        #[arg(long, conflicts_with = "model")]
+        preset: Option<String>,
         #[arg(long)]
         tmux: Option<String>,
         #[arg(long)]
@@ -494,6 +497,7 @@ fn main() -> Result<()> {
             harness,
             brief,
             model,
+            preset,
             tmux,
             parent,
             branch,
@@ -510,6 +514,7 @@ fn main() -> Result<()> {
                 harness,
                 brief,
                 model,
+                preset,
                 tmux,
                 parent,
                 branch,
@@ -1516,16 +1521,13 @@ fn parse_iso_ms(text: &str) -> Option<u64> {
 // lane
 // ---------------------------------------------------------------------------
 
-/// Source of truth for the flash4 lane default; `Opencode::spawn` reads it
-/// via `BOOP_LANE_MODEL`, never hardcodes it.
-const DEFAULT_LANE_MODEL: &str = "openrouter/deepseek/deepseek-v4-flash-0731";
-
 struct LaneArgs {
     name: Option<String>,
     cwd: Option<String>,
     harness: Option<String>,
     brief: Option<PathBuf>,
     model: Option<String>,
+    preset: Option<String>,
     tmux: Option<String>,
     parent: Option<String>,
     branch: Option<String>,
@@ -1541,7 +1543,14 @@ struct LaneArgs {
 /// Register and spawn a lane. No match on harness id here; the adapter's own
 /// `spawn`/`preview_command` decides how `prompt` becomes a real invocation.
 fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
-    let harness_id = lane::harness_for_spawn(args.harness.as_deref(), args.model.as_deref())?;
+    let config_path = config::default_path()?;
+    let config = config::load(&config_path)?;
+    let requested_model = match (args.model, args.preset.as_deref()) {
+        (Some(model), _) => Some(model),
+        (None, Some(preset)) => Some(config::resolve_model(preset, &config_path)?),
+        (None, None) => None,
+    };
+    let harness_id = lane::harness_for_spawn(args.harness.as_deref(), requested_model.as_deref())?;
     let adapter = harness_by_id(registry, &harness_id)?;
     let repo = match &args.cwd {
         Some(cwd) => PathBuf::from(cwd),
@@ -1561,12 +1570,14 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
     if !brief.exists() {
         anyhow::bail!("brief path does not exist: {}", brief.display());
     }
-    // The flash4 default belongs to opencode's spelling; another harness gets
-    // no model rather than one it cannot resolve.
-    let model = match (args.model.clone(), harness_id.as_str()) {
-        (Some(model), _) => Some(model),
-        (None, "opencode") => Some(DEFAULT_LANE_MODEL.to_owned()),
-        (None, _) => None,
+    let model = match (
+        requested_model,
+        harness_id.as_str(),
+        config.default_model_preset.as_deref(),
+    ) {
+        (Some(model), _, _) => Some(model),
+        (None, "opencode", Some(preset)) => Some(config::resolve_model(preset, &config_path)?),
+        (None, _, _) => None,
     };
     let prompt = brief.display().to_string();
     // A worktree branches from origin/main unless pinned; the repo-tree shape
@@ -2623,6 +2634,9 @@ enum LaneCmd {
         harness: Option<String>,
         #[arg(long)]
         model: Option<String>,
+        /// Resolve a named provider/model entry from the platform Boop config.
+        #[arg(long, conflicts_with = "model")]
+        preset: Option<String>,
         /// Block until the lane's on-exit result row lands, then exit with its
         /// rc. Needs a parent, since that hail is what writes the row.
         #[arg(long)]
@@ -3138,6 +3152,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             harness,
             brief,
             model,
+            preset,
             tmux,
             parent,
             branch,
@@ -3156,6 +3171,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 harness,
                 brief,
                 model,
+                preset,
                 tmux,
                 parent,
                 branch,

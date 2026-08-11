@@ -8,6 +8,7 @@
 
 pub mod bus;
 pub mod chat;
+pub mod config;
 pub mod event;
 pub mod harness;
 pub mod ident;
