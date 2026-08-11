@@ -1,5 +1,11 @@
 rel resp_raw(endpoint: text, status: int, tag: text, body: text) log keep(all).
 
-fetch_result_fresh(Endpoint, Tag, Body) <- resp_raw(Endpoint, Status, Tag, Body), Status == 200.
-fetch_result_unchanged(Endpoint) <- resp_raw(Endpoint, Status, Tag, Body), Status == 304.
-fetch_result_error(Endpoint, Status) <- resp_raw(Endpoint, Status, Tag, Body), Status >= 400.
+fetch_result_fresh(Endpoint, Tag, Body) <-
+  resp_raw(Endpoint, Status, Tag, Body),
+  Status == 200.
+fetch_result_unchanged(Endpoint) <-
+  resp_raw(Endpoint, Status, Tag, Body),
+  Status == 304.
+fetch_result_error(Endpoint, Status) <-
+  resp_raw(Endpoint, Status, Tag, Body),
+  Status >= 400.

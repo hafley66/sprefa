@@ -1,3 +1,5 @@
 rel source(text: text).
 
-matched(Text) <- source(Text), regexp(Text, "^a.c$").
+matched(Text) <-
+  source(Text),
+  regexp(Text, "^a.c$").

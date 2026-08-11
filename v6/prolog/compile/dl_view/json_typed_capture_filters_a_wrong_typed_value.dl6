@@ -1,4 +1,6 @@
 rel event(payload: json) log keep(all).
 rel counted(repo: text, stars: int).
 
-counted(Repo, Stars) <- event(Payload), decode(Payload, {repo: Repo: text, stars: Stars: int}).
+counted(Repo, Stars) <-
+  event(Payload),
+  decode(Payload, {repo: Repo: text, stars: Stars: int}).

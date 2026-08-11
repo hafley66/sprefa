@@ -6,14 +6,36 @@ rel open_tab(session_id, tab_id) key(1).
 rel queue_next(session_id, next) key(1).
 rel queue_slot(session_id, next, tab_id) key(1, 2).
 
-open_tab(SessionId, TabId) <+ open_request(SessionId, TabId), not(live_tab(SessionId, _)).
-queue_next(SessionId, Next) <+ open_request(SessionId, TabId), latest(live_tab(SessionId, _)), pre(queue_next(SessionId, SoFar)), Next := SoFar + 1.
-queue_slot(SessionId, Next, TabId) <+ open_request(SessionId, TabId), latest(live_tab(SessionId, _)), pre(queue_next(SessionId, SoFar)), Next := SoFar + 1.
+open_tab(SessionId, TabId) <+
+  open_request(SessionId, TabId),
+  not(live_tab(SessionId, _)).
+queue_next(SessionId, Next) <+
+  open_request(SessionId, TabId),
+  latest(live_tab(SessionId, _)),
+  pre(queue_next(SessionId, SoFar)),
+  Next := SoFar + 1.
+queue_slot(SessionId, Next, TabId) <+
+  open_request(SessionId, TabId),
+  latest(live_tab(SessionId, _)),
+  pre(queue_next(SessionId, SoFar)),
+  Next := SoFar + 1.
 closed(SessionId, TabId) <+ close_request(SessionId, TabId).
-live_tab(SessionId, TabId) <- open_tab(SessionId, TabId), not(closed(SessionId, TabId)).
-queue_head(SessionId, min(Ordinal)) <- queue_slot(SessionId, Ordinal, _), not(drained(SessionId, Ordinal)).
-queue_head_tab(SessionId, TabId) <- queue_head(SessionId, Ordinal), queue_slot(SessionId, Ordinal, TabId).
-drained(SessionId, Ordinal) <+ finalize(live_tab(SessionId, _)), pre(queue_head(SessionId, Ordinal)).
-open_tab(SessionId, TabId) <+ finalize(live_tab(SessionId, _)), pre(queue_head_tab(SessionId, TabId)).
+live_tab(SessionId, TabId) <-
+  open_tab(SessionId, TabId),
+  not(closed(SessionId, TabId)).
+queue_head(SessionId, min(Ordinal)) <-
+  queue_slot(SessionId, Ordinal, _),
+  not(drained(SessionId, Ordinal)).
+queue_head_tab(SessionId, TabId) <-
+  queue_head(SessionId, Ordinal),
+  queue_slot(SessionId, Ordinal, TabId).
+drained(SessionId, Ordinal) <+
+  finalize(live_tab(SessionId, _)),
+  pre(queue_head(SessionId, Ordinal)).
+open_tab(SessionId, TabId) <+
+  finalize(live_tab(SessionId, _)),
+  pre(queue_head_tab(SessionId, TabId)).
 demanded(tab(TabId), SessionId) <- live_tab(SessionId, TabId).
-tab_view(TabId, Body) <- demanded(tab(TabId), _), tab_row(TabId, Body).
+tab_view(TabId, Body) <-
+  demanded(tab(TabId), _),
+  tab_row(TabId, Body).

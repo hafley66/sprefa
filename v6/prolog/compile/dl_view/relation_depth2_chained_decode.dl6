@@ -9,4 +9,7 @@ repo(RepoName) <- raw(RepoName, _, _, _).
 fpath(PathName) <- raw(_, PathName, _, _).
 file(repo(RepoName2), fpath(PathName2)) <- raw(RepoName2, PathName2, _, _).
 span(file(repo(RepoName3), fpath(PathName3)), Start, End) <- raw(RepoName3, PathName3, Start, End).
-dcoord(PathName4, Start2, End2) <- span(File, Start2, End2), decode(File, {at: At}), decode(At, {name: PathName4}).
+dcoord(PathName4, Start2, End2) <-
+  span(File, Start2, End2),
+  decode(File, {at: At}),
+  decode(At, {name: PathName4}).

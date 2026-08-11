@@ -1,4 +1,8 @@
 rel spec(body: json).
 rel hit(item: int, name: text, leaf: int).
 
-hit(Item, Key, Leaf) <- spec(Body), decode(Body, {items: [... {n: Item}]}), decode(Body, {tags: {$Key: _}}), decode(Body, {**: {leaf: Leaf}}).
+hit(Item, Key, Leaf) <-
+  spec(Body),
+  decode(Body, {items: [... {n: Item}]}),
+  decode(Body, {tags: {$Key: _}}),
+  decode(Body, {**: {leaf: Leaf}}).

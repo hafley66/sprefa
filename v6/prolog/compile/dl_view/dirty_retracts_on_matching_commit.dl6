@@ -8,4 +8,8 @@ rel head(repo_id, rev_id) key(1).
 worktree_file(Path, Digest) <+ worktree_edit(Path, Digest).
 tree_file(RevId, Path, Digest) <+ commit_arrival(RevId, Path, Digest).
 head(RepoId, RevId) <+ head_move(RepoId, RevId).
-dirty(Path) <- worktree_file(Path, WorktreeDigest), head(RepoId, RevId), tree_file(RevId, Path, TreeDigest), WorktreeDigest \== TreeDigest.
+dirty(Path) <-
+  worktree_file(Path, WorktreeDigest),
+  head(RepoId, RevId),
+  tree_file(RevId, Path, TreeDigest),
+  WorktreeDigest \== TreeDigest.

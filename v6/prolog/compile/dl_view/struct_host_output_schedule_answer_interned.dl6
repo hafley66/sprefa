@@ -4,7 +4,11 @@ rel host_span(path: text, at: span).
 rel host_start(path: text, start: int).
 sh scan_span(path: text) -> (at: span) = `scan {path}`.
 
-host_span(Path, At) <- source_path(Path), scan_span(Path, At).
-host_start(Path, Start) <- host_span(Path, At), decode(At, {start: Start}).
+host_span(Path, At) <-
+  source_path(Path),
+  scan_span(Path, At).
+host_start(Path, Start) <-
+  host_span(Path, At),
+  decode(At, {start: Start}).
 
 ? host_start(Path, Start).

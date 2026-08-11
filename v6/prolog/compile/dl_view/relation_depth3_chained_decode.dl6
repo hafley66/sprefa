@@ -12,5 +12,11 @@ fpath(PathName) <- rawk(_, PathName, _, _, _).
 file(repo(RepoName2), fpath(PathName2)) <- rawk(RepoName2, PathName2, _, _, _).
 span(file(repo(RepoName3), fpath(PathName3)), Start, End) <- rawk(RepoName3, PathName3, Start, End, _).
 located(span(file(repo(RepoName4), fpath(PathName4)), Start2, End2), Kind) <- rawk(RepoName4, PathName4, Start2, End2, Kind).
-dfound(PathName5, Kind2) <- located(Span, Kind2), decode(Span, {file: File}), decode(File, {at: At}), decode(At, {name: PathName5}).
-nfound(PathName6, Kind3) <- located(Span2, Kind3), decode(Span2, {file: {at: {name: PathName6}}}).
+dfound(PathName5, Kind2) <-
+  located(Span, Kind2),
+  decode(Span, {file: File}),
+  decode(File, {at: At}),
+  decode(At, {name: PathName5}).
+nfound(PathName6, Kind3) <-
+  located(Span2, Kind3),
+  decode(Span2, {file: {at: {name: PathName6}}}).

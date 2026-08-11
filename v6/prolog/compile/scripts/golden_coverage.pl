@@ -55,7 +55,6 @@ expected_absent(subscribe/1,    'reserved lifecycle wrappers').
 expected_absent(unsubscribe/1,  'reserved lifecycle wrappers').
 expected_absent(complete/1,     'reserved lifecycle wrappers').
 expected_absent(error/1,        'reserved lifecycle wrappers').
-expected_absent(pre/2,           'seeded pre is covered by conformance only').
 
 % Registry rows whose presence is checked against the SOURCE TEXT.
 %

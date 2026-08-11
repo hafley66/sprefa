@@ -1,5 +1,10 @@
 rel ping_ordinal(partition: text, ordinal) log keep(all).
 
-ping_ordinal(Partition, Ordinal) <+ ping(Partition), Ordinal := seq('ping').
+ping_ordinal(Partition, Ordinal) <+
+  ping(Partition),
+  Ordinal := seq('ping').
 leg_total(LegId, DispatchId, Kilos) <- dispatch_leg(LegId, DispatchId, 0, Kilos).
-leg_total(LegId, DispatchId, KilosSoFar) <- dispatch_leg(LegId, DispatchId, PreviousLeg, Kilos), leg_total(PreviousLeg, DispatchId, KilosBefore), KilosSoFar := KilosBefore + Kilos.
+leg_total(LegId, DispatchId, KilosSoFar) <-
+  dispatch_leg(LegId, DispatchId, PreviousLeg, Kilos),
+  leg_total(PreviousLeg, DispatchId, KilosBefore),
+  KilosSoFar := KilosBefore + Kilos.

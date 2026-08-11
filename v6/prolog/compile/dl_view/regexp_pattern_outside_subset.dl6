@@ -1,3 +1,5 @@
 rel source(text: text).
 
-matched(Text) <- source(Text), regexp(Text, "a(?=b)").
+matched(Text) <-
+  source(Text),
+  regexp(Text, "a(?=b)").

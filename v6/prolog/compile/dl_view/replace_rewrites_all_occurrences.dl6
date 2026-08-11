@@ -1,1 +1,3 @@
-slashed(Text, Out) <- text(Text), Out := replace(Text, '/', '_').
+slashed(Text, Out) <-
+  text(Text),
+  Out := replace(Text, '/', '_').

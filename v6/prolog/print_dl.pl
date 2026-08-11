@@ -400,11 +400,11 @@ rule_line(Bindings, match(SourceAtom, Arms), Text) :-
 rule_line(Bindings, (Head <- Body), Line) :- !,
     print_goal_term(Head, Bindings, HeadText),
     print_body(Body, Bindings, BodyText),
-    format(atom(Line), "~w <- ~w.~n", [HeadText, BodyText]).
+    format(atom(Line), "~w <-~w.~n", [HeadText, BodyText]).
 rule_line(Bindings, (Head <+ Body), Line) :- !,
     print_goal_term(Head, Bindings, HeadText),
     print_body(Body, Bindings, BodyText),
-    format(atom(Line), "~w <+ ~w.~n", [HeadText, BodyText]).
+    format(atom(Line), "~w <+~w.~n", [HeadText, BodyText]).
 
 % A rel/0 atom is a GOAL and the SAME atom in an argument is a data value, so
 % the `name()` spelling belongs to head and goal positions alone.
@@ -434,21 +434,45 @@ match_arm_terms(Arm, [Arm]).
 print_match_arm(Bindings, (Head <- Guards), Text) :-
     !,
     print_term(Head, Bindings, 0, top, HeadText),
-    print_body(Guards, Bindings, GuardsText),
+    print_body_inline(Guards, Bindings, GuardsText),
     format(atom(Text), "~w |-> ~w", [GuardsText, HeadText]).
 print_match_arm(Bindings, (Head <+ Guards), Text) :-
     print_term(Head, Bindings, 0, top, HeadText),
-    print_body(Guards, Bindings, GuardsText),
+    print_body_inline(Guards, Bindings, GuardsText),
     format(atom(Text), "~w |+> ~w", [GuardsText, HeadText]).
 
-% ═══ body : split the comma-conjunction, print each item, join with ", " ════
+print_body_inline((Left, Right), Bindings, Text) :- !,
+    print_body_item(Left, Bindings, LeftText),
+    print_body_inline(Right, Bindings, RightText),
+    format(atom(Text), "~w, ~w", [LeftText, RightText]).
+print_body_inline(Item, Bindings, Text) :-
+    print_body_item(Item, Bindings, Text).
+
+% ═══ body : one goal per indented line ═══════════════════════════════════════
 
 print_body((Left, Right), Bindings, Text) :- !,
-    print_body_item(Left, Bindings, LeftText),
-    print_body(Right, Bindings, RightText),
-    format(atom(Text), "~w, ~w", [LeftText, RightText]).
+    body_items((Left, Right), Items),
+    maplist(print_body_item_with_bindings(Bindings), Items, ItemTexts),
+    indented_body_lines(ItemTexts, Text).
 print_body(Item, Bindings, Text) :-
+    print_body_item(Item, Bindings, ItemText),
+    format(atom(Text), " ~w", [ItemText]).
+
+body_items((Left, Right), Items) :- !,
+    body_items(Left, LeftItems),
+    body_items(Right, RightItems),
+    append(LeftItems, RightItems, Items).
+body_items(Item, [Item]).
+
+print_body_item_with_bindings(Bindings, Item, Text) :-
     print_body_item(Item, Bindings, Text).
+
+indented_body_lines([], "").
+indented_body_lines([Item], Text) :-
+    format(atom(Text), "\n  ~w", [Item]).
+indented_body_lines([Item | Rest], Text) :-
+    indented_body_lines(Rest, RestText),
+    format(atom(Text), "\n  ~w,~w", [Item, RestText]).
 
 print_body_item(Term, Bindings, Text) :-
     Term = probe(Name, Inputs, Outputs, Salts),

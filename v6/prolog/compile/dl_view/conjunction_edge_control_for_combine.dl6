@@ -1,3 +1,5 @@
 rel pair(left, right) key(1).
 
-pair(Left, Right) <+ source_a(Left), source_b(Right).
+pair(Left, Right) <+
+  source_a(Left),
+  source_b(Right).
