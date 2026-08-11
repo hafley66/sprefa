@@ -198,16 +198,19 @@ body_reserved_word(Body, Policy, Functor/Arity, LowerRole) :-
            Events).
 
 % Every reference carried by one wrapper family, in source order: the argument
-% of each latest/1, pre/1 or finalize/1 the walk reached. This is the shared
+% of each latest/1, pre/1, pre/2 or finalize/1 the walk reached. This is the shared
 % implementation behind four predicates that the review found written twice,
 % once in the oracle and once in the compiler.
 body_wrapper_refs(Body, Wrapper, Policy, Ref) :-
     walk_body(Body, Policy, Events),
     member(event(_, _, _, Term), Events),
     nonvar(Term),
-    functor(Term, Wrapper, Arity),
-    memberchk(Arity, [1, 2]),
+    functor(Term, Wrapper, WrapperArity),
+    wrapper_arity(Wrapper, WrapperArity),
     arg(1, Term, Atom),
     nonvar(Atom),
     functor(Atom, Name, Arity),
     Ref = Name/Arity.
+
+wrapper_arity(pre, Arity) :- !, memberchk(Arity, [1, 2]).
+wrapper_arity(_, 1).

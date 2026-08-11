@@ -407,6 +407,8 @@ compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0, Bound,
     ( SeedType == BeforeType -> true
     ; throw(unsupported_construct(pre_seed_type_mismatch(Seed, SeedType, BeforeType)))
     ),
+    column_encoding(Mode, BeforeType, BeforeEncoding),
+    align_to_encoding(BeforeEncoding, SeedEncoding, SeedSql, AlignedSeedSql),
     maplist(where_text, KeyWhere, KeyWhereTexts),
     ( KeyWhereTexts == [] -> WhereSql = ''
     ; atomic_list_concat(KeyWhereTexts, ' AND ', Joined),
@@ -414,8 +416,8 @@ compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0, Bound,
     ),
     format(atom(SelectSql), '(SELECT ~w."~w" FROM ~w ~w~w)',
            [Alias, BeforeColumn, QuotedTable, Alias, WhereSql]),
-    format(atom(ValueSql), 'COALESCE(~w, ~w)', [SelectSql, SeedSql]),
-    Bound = [Before-typed(ValueSql, BeforeType, SeedEncoding) | Bound0],
+    format(atom(ValueSql), 'COALESCE(~w, ~w)', [SelectSql, AlignedSeedSql]),
+    Bound = [Before-typed(ValueSql, BeforeType, BeforeEncoding) | Bound0],
     WhereParts = [].
 
 seeded_pre_args(_, [], [], [], _, _, _, _, _, _) :-
