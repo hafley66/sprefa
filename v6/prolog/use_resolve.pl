@@ -25,8 +25,8 @@
 
 :- dynamic(parse_count_fact/2).
 
-:- ( getenv('DL_PARSER', 'dcg') -> set_prolog_flag(dl_parser, dcg)
-   ; set_prolog_flag(dl_parser, classic) ).
+:- ( getenv('DL_PARSER', 'classic') -> set_prolog_flag(dl_parser, classic)
+   ; set_prolog_flag(dl_parser, dcg) ).
 
 parse_source(Source, Codes, Program, Bindings, Findings) :-
     ( current_prolog_flag(dl_parser, dcg)
