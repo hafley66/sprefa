@@ -160,7 +160,7 @@ else
   elif ! diff -q "$ARCH_TMP/arch-map.committed" "$ARCH_MAP" >/dev/null 2>&1; then
     fail "v6/ARCH-MAP.md is STALE (checked-in does not match self-map regeneration)"
     printf '  fix: cd %s && just self-map && git add ../ARCH-MAP.md\n' "$V6_DIR" >&2
-    diff "$ARCH_TMP/arch-map.committed" "$ARCH_MAP" 2>&1 | head -40 >&2
+    diff "$ARCH_TMP/arch-map.committed" "$ARCH_MAP" 2>&1 | head -40 >&2 || true
   fi
   # Restore the pre-run bytes so a stale finding leaves no working-tree diff.
   cp "$ARCH_TMP/arch-map.committed" "$ARCH_MAP"
