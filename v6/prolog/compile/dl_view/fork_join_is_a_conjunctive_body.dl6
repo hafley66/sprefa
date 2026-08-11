@@ -1,3 +1,0 @@
-combined(ValueA, ValueB) <-
-  result_a(ValueA),
-  result_b(ValueB).

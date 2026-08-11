@@ -1,1 +1,0 @@
-rel entity_parent(id: int, entries: option(list_entity_dense_sequence(text))) key(1).

@@ -1,5 +1,0 @@
-rel doc(body: json).
-
-found(Value) <-
-  doc(Body),
-  decode(Body, {**: {leaf: Value}}).

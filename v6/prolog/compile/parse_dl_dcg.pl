@@ -17,6 +17,7 @@
 % export list because no name here collides with theirs.
 :- use_module(registry).
 :- use_module('../0_cst_query').
+:- use_module('../0_type_plane', [type_wrapper/2, column_element_type_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -29,6 +30,10 @@
 :- dynamic finding_fact/1, rel_column_order_fact/2,
            host_signature_fact/3, source_statement_fact/3.
 
+% lex_token/2 rows sit beside the escape decoders they mirror, so the clauses
+% are spread across the file on purpose.
+:- discontiguous lex_token/2.
+
 % Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
 % bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
 cst_shape(bind_decl_stmt/1, bind_declaration-[name]).
@@ -40,10 +45,11 @@ cst_shape(match_arm/1,      match_arm-[guard, arrow, head]).
 cst_shape(braces_term/1,    object_pattern-[]).
 cst_shape(dotted_path/1,    path-[]).
 cst_shape(statement/2,      statement-[]).
-cst_shape(rel_stmt/1,       ref(relation_declaration)-[]).
-cst_shape(sh_decl_stmt/1,   ref(shell_declaration)-[]).
+cst_shape(statements/3,     source_file-[]).
+cst_shape(rel_stmt/1,       relation_declaration-[]).
+cst_shape(sh_decl_stmt/1,   shell_declaration-[]).
 cst_shape(typed_col/2,      ref(column)-[]).
-cst_shape(type_expr/1,      ref(type)-[]).
+cst_shape(type_expr/1,      type-[]).
 cst_shape(enum_variant/1,   ref(enum_variant)-[]).
 cst_shape(rule_stmt/1,      rule-[head, arrow, body]).
 cst_shape(query_stmt/1,     ref(query)-[]).
@@ -59,6 +65,11 @@ cst_shape(atom_lit/1,       quoted_atom-[]).
 cst_shape(template_lit/1,   template-[]).
 cst_shape(bool_lit/1,       boolean-[]).
 cst_shape(ident/1,          ref(identifier)-[]).
+% editor nodes the parser folds with no named nonterminal; the emitter
+% renders each from its fixed editor shape (editor_* keys are not parser preds)
+cst_shape(editor_paren/1,   parenthesized_expression-[]).
+cst_shape(editor_literal/1, literal-[]).
+cst_shape(editor_member/1,  member_expression-[]).
 
 % Nodes the parser folds away: Nonterminal-Marker -> Node, inner = the
 % marked branch alone rather than the nonterminal with that branch chosen.
@@ -493,7 +504,7 @@ type_expr(Type) -->
 
 type_base(T) --> { scalar_column_type(T) }, kw(T), !.
 type_base(T) -->
-    { member(W, [option, json_list]) ; list_type_word(W) },
+    { type_wrapper(W, _) ; W = json_list },
     kw(W), !,
     #`(`, ws, type_expr(E), #`)`,
     { T =.. [W, E] }.
@@ -668,7 +679,7 @@ relation_schema(Decls, Name, Ref, Specs) :-
 
 declared_column_type_name(Decls, Name) :-
     ( member(col_type(_, _, Type), Decls),
-      ( Name = Type ; list_element_type_name(Type, Name) )
+      ( Name = Type ; column_element_type_name(Type, Name) )
     ; ( member(sh_decl(_, Ins, Outs, _), Decls), append(Ins, Outs, Cols)
       ; member(bind_decl(_, Cols), Decls)
       ),
@@ -679,17 +690,6 @@ declared_column_type_name(Decls, Name) :-
       member(_:Name, Fields)
     ),
     \+ scalar_column_type(Name).
-
-list_type_word(W) :-
-    member(W, [list, list_entity_dense_sequence, list_interned_set,
-               list_entity_linked_sequence]).
-
-list_element_type_name(Type, Name) :-
-    compound(Type),
-    Type =.. [F, Element],
-    list_type_word(F),
-    list_element_type_name(Element, Name).
-list_element_type_name(Name, Name) :- atom(Name).
 
 scalar_column_type(T) :- member(T, [int, text, json, bool, float]).
 

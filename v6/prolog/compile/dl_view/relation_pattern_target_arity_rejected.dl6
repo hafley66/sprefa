@@ -1,7 +1,0 @@
-rel repo(name: text).
-rel fpath(name: text).
-rel file(repo: repo, at: fpath).
-rel span(file: file, start: int, end: int).
-rel seen(start: int).
-
-seen(Start) <- span(file(repo('acme')), Start, _).

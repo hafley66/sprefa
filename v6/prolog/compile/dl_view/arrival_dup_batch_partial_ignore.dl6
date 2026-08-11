@@ -1,3 +1,0 @@
-rel seen(value: text).
-
-derived(SeenValue) <- seen(SeenValue).

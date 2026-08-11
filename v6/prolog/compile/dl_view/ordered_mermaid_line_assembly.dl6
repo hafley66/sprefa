@@ -1,1 +1,0 @@
-mermaid_text(FileName, group_concat(LineText, "\n", LineOrdinal)) <- mermaid_line(FileName, LineOrdinal, LineText).

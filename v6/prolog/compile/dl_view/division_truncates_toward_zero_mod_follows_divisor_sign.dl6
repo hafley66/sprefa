@@ -1,4 +1,0 @@
-probe(Label, Quotient, Remainder) <-
-  division_input(Label, Numerator, Denominator),
-  Quotient := Numerator / Denominator,
-  Remainder := Numerator mod Denominator.

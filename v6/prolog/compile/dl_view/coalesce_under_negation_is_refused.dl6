@@ -1,5 +1,0 @@
-rel repo(name: text).
-
-odd(Name) <-
-  repo(Name),
-  not(coalesce(latest_commit(Name, _Commit), 'absent')).

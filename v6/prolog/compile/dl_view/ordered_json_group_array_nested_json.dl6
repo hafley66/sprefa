@@ -1,3 +1,0 @@
-rel child(group: text, payload: json).
-
-nested(Group, json_group_array(Payload)) <- child(Group, Payload).

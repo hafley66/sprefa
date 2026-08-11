@@ -1,7 +1,0 @@
-rel pin_extracted(from_span_id, to_repo_id, to_rev_id, to_path, kind) log keep(all).
-rel xref(from_span_id, to_repo_id, to_rev_id, to_path, col5, kind) key(1).
-rel head_move(repo_id, rev_id) log keep(all).
-rel head(repo_id, rev_id) key(1).
-
-xref(FromSpanId, ToRepoId, ToRevId, ToPath, 'none', Kind) <+ pin_extracted(FromSpanId, ToRepoId, ToRevId, ToPath, Kind).
-head(RepoId, RevId) <+ head_move(RepoId, RevId).

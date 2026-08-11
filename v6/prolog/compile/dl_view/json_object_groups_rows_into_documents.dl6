@@ -1,1 +1,0 @@
-metadata(Group, json_object(Key, Value)) <- item(Group, Key, Value).

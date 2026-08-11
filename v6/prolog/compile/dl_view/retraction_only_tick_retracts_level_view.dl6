@@ -1,1 +1,0 @@
-mirror(Item) <- source_row(Item).

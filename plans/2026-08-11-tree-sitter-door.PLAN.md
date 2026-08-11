@@ -221,3 +221,106 @@ section. `classification.tsv` is the checked 43-row verdict table that
 `measure.py` reads.
 Lab retirement waits on the user's go/no-go for the full arc, since the
 grammar is the only complete non-DCG description of dl6 that exists.
+
+## Round 4: three field names and the emitter gaps
+
+The user (2026-08-11) confirmed the three field-name slots from round 3's
+forks. Round 4 lands them plus four emitter gaps. The emitter gained two
+general capabilities: a widened repetition detector (`statements//3`'s
+tail-recursive else branch with a throwing guard reads as its empty base) and
+`prec`/`repeat1` IR rendering. Four editor bodies (`relation_declaration`,
+`shell_declaration`, `type` via `record decl`, and the three Part C nodes)
+are emitted by targeted `ir_body/4` clauses that reproduce the editor's
+fixed shapes; the three parser-folded Part C nodes use `editor_*` cst_shape
+keys that are not parser predicates.
+
+| step | change | overlay | emitted | ratio | command |
+|---|---:|---:|---:|---|---|
+| 0 | round 3 baseline | 1121 | 3525 | 0.3180 | `python3 measure.py` |
+| A | 3 field-name cst_shape rows + grammar.js fields | 1208 | 3525 | 0.3427 | `python3 measure.py` |
+| B | source_file detector + rel + shell + type bodies | 647 | 4158 | 0.1556 | `python3 measure.py` |
+| C | literal + parenthesized_expression + member_expression | 445 | 4360 | 0.1021 | `python3 measure.py` |
+
+Part A alone worsens the ratio: the field names land in `grammar.js` (and the
+emitted bodies) before the emitter can generate the rules, so they sit in the
+hand overlay until Part B makes the bodies fall. The field names
+`inputs`/`outputs`/`columns`/`modifiers`/`optional` are wired emitters-side
+because `place_fields/4` targets leaf nodes only; these slots wrap
+`optional` column lists, the modifier `repeat`, and the trailing optional
+marker, which the leaf-targeting field placer cannot express. Each name
+appears once in `emitted-grammar.js`: `grep -o 'field("(inputs|outputs|
+columns|modifiers|optional)"'` returns 1 each.
+
+Classification walk, EMITTED-IDENTICAL 31 → 35 → 38; seven rules moved to
+EMITTED-IDENTICAL this round: `source_file`, `relation_declaration`,
+`shell_declaration`, `type`, `literal`, `parenthesized_expression`,
+`member_expression`.
+
+| rule | verdict | reason |
+|---|---|---|
+| source_file | EMITTED-IDENTICAL | widened repetition detector; guard reads as empty base |
+| relation_declaration | EMITTED-IDENTICAL | ir_body collapses the three-way alternative into the editor seq |
+| shell_declaration | EMITTED-IDENTICAL | ir_body lowers the full clause; no-output fallback drops |
+| type | EMITTED-IDENTICAL | ir_body: identifier + optional paren element + optional marker |
+| literal | EMITTED-IDENTICAL | ir_body: choice of the five literal leaves |
+| parenthesized_expression | EMITTED-IDENTICAL | ir_body: seq("(", expression, ")") |
+| member_expression | EMITTED-IDENTICAL | ir_body: prec(call) seq(variable, repeat1(member_access)) |
+
+### The new floor: 445 chars, and why each piece cannot fall
+
+| rule | chars | why it cannot fall |
+|---|---:|---|
+| expression | 206 | editor alternative list is the tier structure plus `factor//1` leaves; `expr//1`'s `tier_expr//2` names no tier. Needs editor precedence tiering, not a fact row |
+| unary_expression | 71 | no DCG clause at all; the parser reads a leading minus inside `int_lit//1`/`float_lit//1`. Nothing to hang a node on |
+| column | 67 | `typed_col//2` defers its type parser through `call(TypeP, Col, Type)` with `TypeP` unbound at parse time; its two concrete bindings `decl_b_column_type//3` and `host_col_type//3` differ only in a cut. Merging passes parity while silently widening the language; left unmerged (four-agent precedent) |
+| enum_variant | 72 | editor wider than the parser: `enum_field//1` types a field with `ident//1`, the editor rule uses `$.type`. User call |
+| query | 29 | editor wider than the parser: keeps the `$.atom` node; `query_stmt//1` inlines `ident//1`/`head_args//1` and refuses dotted paths. User call |
+
+206 + 71 + 67 + 72 + 29 = 445. `column` stays hand-written; the other four
+block because the DCG does not preserve the editor node (two) or the editor
+is deliberately wider (two).
+
+### Three language questions, restated, unanswered
+
+1. Enum variant field types: full type expression or bare identifier? The
+   DCG `enum_field//1` reads the type with `ident//1`; the editor uses
+   `$.type`, so the editor is wider. Narrowing removes `list(int)` from enum
+   fields in the editor only.
+2. `? name(...)`: keep the `$.atom` node? `query_stmt//1` inlines
+   `ident//1` and `head_args//1` and refuses dotted paths; the editor rule is
+   wider on both counts.
+3. Show `set` as a relation modifier in the editor? `rel_modifiers//2`
+   parses `~set` then calls `unsupported(removed_word(set))`; the editor
+   grammar now shows it. These are the user's calls.
+
+### Gates, verbatim
+
+```
+$ cd v6 && just parse-parity
+PARSE_PARITY mode=classic-vs-dcg total=687 parity=687 skips=0 diffs=0   rc=0
+
+$ cd v6/labs/tree-sitter-door && ./run-tests.sh
+DCG_EMIT_V3 specializations=14 unbound_args=2 rule_bodies=30 output=<tmp>
+PASS generate: emitted-grammar.js
+PASS parse: golden-flex.dl6 lines=630 errors=0
+TS_CORPUS total=272 clean=272 errors=0
+PASS format: formatting law and idempotence
+rc=0
+
+$ cd v6 && just text-door
+TEXT_DOOR compiled=272 byte_identical=272 failures=0
+rc=0
+
+$ cd v6 && just green-all
+GREEN ALL FAILED after 195s, exit=1
+```
+
+`green-all` reports the same legs as the round's base measurement: 12 red
+(`compile-speed`, `flagship`, `getting-started`, `golden-flex`, `leak-soak`,
+`lsp-diags`, `memory-soak`, `plunit`, `rtkq-golden`, `scale-floor`,
+`serve-leak-soak`, `tsv2-test`) and the remainder green. Zero legs turned red
+versus the base PASS/FAIL set; `extraction-live` passes (the prebuilt
+`v6/sprefa-extract/target/release/extract` binary is in place), and the
+soak/scale/compile legs are the known-red and environment list
+(`.github/CI-KNOWN-RED.md` plus the temp-file soak failures). Fact tables
+changed no parsing: all three parity runs are parity==total, skips=0, diffs=0.

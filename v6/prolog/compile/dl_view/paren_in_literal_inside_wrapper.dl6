@@ -1,3 +1,0 @@
-orphan(Source) <-
-  link(Source, _Target),
-  not(link(Source, 'z)z')).

@@ -1,1 +1,0 @@
-seen(Value) <- subscribe(source(Value)).

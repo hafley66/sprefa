@@ -1,3 +1,0 @@
-rel current_value(key, value) key(1).
-
-current_value(Key, Value) <- source_value(Key, Value).

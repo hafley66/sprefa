@@ -1,8 +1,0 @@
-rel route_change(session_id, route_id) log keep(all).
-rel open_scope(session_id, target) key(1).
-
-open_scope(SessionId, route_data(RouteId)) <+ route_change(SessionId, RouteId).
-demanded(Target, SessionId) <- open_scope(SessionId, Target).
-route_view(RouteId, Body) <-
-  demanded(route_data(RouteId), _),
-  route_row(RouteId, Body).

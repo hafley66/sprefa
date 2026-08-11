@@ -1,1 +1,0 @@
-ordinal_joined(Group, group_concat(Value, " > ", Ordinal)) <- item(Group, Ordinal, Value).

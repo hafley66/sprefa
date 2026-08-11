@@ -1,3 +1,0 @@
-pair(Left, Right) <-
-  source_a(Left),
-  source_b(Right).

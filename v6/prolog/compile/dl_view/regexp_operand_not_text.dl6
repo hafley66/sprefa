@@ -1,5 +1,0 @@
-rel source(value: int).
-
-matched(Value) <-
-  source(Value),
-  regexp(Value, "^1$").

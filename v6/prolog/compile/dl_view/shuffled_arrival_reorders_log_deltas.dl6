@@ -1,3 +1,0 @@
-rel line(_stream_id, path, _name) log keep(all).
-
-seen(Path) <- line(_StreamId, Path, _Name).

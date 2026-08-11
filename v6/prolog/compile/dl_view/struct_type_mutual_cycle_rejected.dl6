@@ -1,2 +1,0 @@
-rel left(other: right).
-rel right(other: left).

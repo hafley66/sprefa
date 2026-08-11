@@ -1,4 +1,0 @@
-rel ev(ordinal, payload) log keep(count(2)).
-rel gone(ordinal, payload) log keep(all).
-
-gone(Ordinal, Payload) <+ finalize(ev(Ordinal, Payload)).

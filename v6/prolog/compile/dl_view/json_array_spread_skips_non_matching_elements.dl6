@@ -1,6 +1,0 @@
-rel resp(body: json).
-rel numbered(number: int).
-
-numbered(Number) <-
-  resp(Body),
-  decode(Body, [... {number: Number}]).

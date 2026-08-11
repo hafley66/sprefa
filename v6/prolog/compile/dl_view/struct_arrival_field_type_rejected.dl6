@@ -1,2 +1,0 @@
-rel span(start: int, end: int).
-rel finding(path: text, at: span).

@@ -1,3 +1,0 @@
-rel probe_in(probe_value) log keep(all).
-
-probe_out(ProbeValue) <- probe_in(ProbeValue).

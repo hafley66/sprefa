@@ -1,3 +1,0 @@
-rel leaf(tree_id: int).
-
-leaf(TreeId) <- orchard.north.tree(TreeId).

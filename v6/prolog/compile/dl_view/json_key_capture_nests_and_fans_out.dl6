@@ -1,5 +1,0 @@
-rel spec(body: json).
-
-operation(Path, Method, Id) <-
-  spec(Body),
-  decode(Body, {paths: {$Path: {$Method: {operationId: Id}}}}).

@@ -1,6 +1,0 @@
-probe(Value) <-
-  raw_doc(Body),
-  decode(Body, {absent_key: Value}).
-probe(Value) <-
-  raw_doc(Body),
-  decode(Body, {nullish: Value}).

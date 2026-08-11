@@ -1,4 +1,0 @@
-rel source(name: text).
-rel classified(name: text, line: int, column: int).
-
-classified(Name, 0, 0) <- source(Name).

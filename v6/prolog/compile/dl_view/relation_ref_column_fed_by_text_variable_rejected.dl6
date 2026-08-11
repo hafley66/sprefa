@@ -1,7 +1,0 @@
-rel repo(name: text).
-rel fpath(name: text).
-rel file(repo: repo, at: fpath).
-rel span(file: file, start: int, end: int).
-rel raw3(file: text, start: int, end: int).
-
-span(File, Start, End) <- raw3(File, Start, End).

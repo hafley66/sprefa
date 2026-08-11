@@ -242,16 +242,11 @@ test(empty_rule_order_falls_back_to_program_rules) :-
     text_plan(Text, dd_plan(_, _, _, operators(Operators), _, _)),
     memberchk(op(map_1, map(copy/1), _, _), Operators).
 
-test(mutual_recursion_is_rejected,
-     [throws(unsupported_construct(mutual_recursion(left/1)))]) :-
-    Program = prog([], [(left(Item) <- source(Item)), (right(Item) <- source(Item))]),
-    program_plan(fixture(mutual_recursion, Program, [], [], [])-[],
-                 plan(Name, prog(Decls, _), Types, RelPlans, ArrivalTargets, _, EdgeRules, SubscribedRels, Mode)),
-    Plan = plan(Name, prog(Decls, [(left(Item) <- right(Item)), (right(Item) <- left(Item))]),
-                Types, RelPlans, ArrivalTargets,
-                [(left(Item) <- right(Item)), (right(Item) <- left(Item))],
-                EdgeRules, SubscribedRels, Mode),
-    dd_plan_text(Plan, _).
+test(mutual_recursion_emits_joint_iterate) :-
+    dd_fixture_file('engine_core.pl', Fixture),
+    fixture_dd_plan_text(Fixture, mutual_recursion_matches_oracle, Text),
+    text_plan(Text, dd_plan(_, _, _, operators(Operators), _, _)),
+    memberchk(op(iterate_1, iterate([even/1, odd/1]), _, _), Operators).
 
 fixture_rules(Fixture, Name, Rules) :-
     read_fixture_term(Fixture, Name, Term, Bindings),

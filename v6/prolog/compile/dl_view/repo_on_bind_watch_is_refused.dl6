@@ -1,3 +1,0 @@
-bind watch(repo: text, glob: text, path: text, digest: text).
-
-file(Repo, Path, Digest) <- watch(Repo, '**/*.ts', Path, Digest).

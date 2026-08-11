@@ -1,2 +1,0 @@
-rel node(next: node).
-rel holder(item: node).

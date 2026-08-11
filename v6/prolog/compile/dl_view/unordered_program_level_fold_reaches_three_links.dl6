@@ -1,5 +1,0 @@
-leg_total(LegId, DispatchId, Kilos) <- dispatch_leg(LegId, DispatchId, 0, Kilos).
-leg_total(LegId, DispatchId, KilosSoFar) <-
-  dispatch_leg(LegId, DispatchId, PreviousLeg, Kilos),
-  leg_total(PreviousLeg, DispatchId, KilosBefore),
-  KilosSoFar := KilosBefore + Kilos.

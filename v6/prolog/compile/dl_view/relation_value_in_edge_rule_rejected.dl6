@@ -1,7 +1,0 @@
-rel repo(name: text).
-rel fpath(name: text).
-rel file(repo: repo, at: fpath).
-rel span(file: file, start: int, end: int) log keep(all).
-rel raw(repo_name: text, path_name: text, start: int, end: int).
-
-span(file(repo('acme'), fpath('src/a.rs')), 10, 20) <+ raw(_, _, _, _).

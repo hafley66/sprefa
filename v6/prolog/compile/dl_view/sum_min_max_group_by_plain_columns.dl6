@@ -1,1 +1,0 @@
-stat(Repo, sum(Stars), min(Stars), max(Stars)) <- star_row(Repo, Stars).

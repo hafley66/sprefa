@@ -1,3 +1,0 @@
-sh look(path: text) -> (ordinal: int) = `echo {path}`.
-
-found(Path, Ordinal) <- look(Path, Ordinal).

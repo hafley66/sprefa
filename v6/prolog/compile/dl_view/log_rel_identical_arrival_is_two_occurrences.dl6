@@ -1,4 +1,0 @@
-rel ev(name) log keep(all).
-rel fired(name) log keep(all).
-
-fired(Name) <+ ev(Name).

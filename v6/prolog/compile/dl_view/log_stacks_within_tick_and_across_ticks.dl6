@@ -1,4 +1,0 @@
-rel heard(item) log keep(all).
-rel heard_count(item) log keep(all).
-
-heard_count(Item) <+ heard(Item).

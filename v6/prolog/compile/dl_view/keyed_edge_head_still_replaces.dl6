@@ -1,4 +1,0 @@
-rel update_value(key, value) log keep(all).
-rel current_value(key, value) key(1).
-
-current_value(Key, Value) <+ update_value(Key, Value).

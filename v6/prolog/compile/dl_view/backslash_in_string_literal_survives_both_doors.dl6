@@ -1,6 +1,0 @@
-rel raw(text_value: text).
-rel hit(text_value: text).
-
-hit(Value) <-
-  raw(Value),
-  Value == 'digit \\d here'.

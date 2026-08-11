@@ -1,3 +1,0 @@
-trimmed(Path, Out) <-
-  path(Path),
-  Out := rtrim(Path, '/').

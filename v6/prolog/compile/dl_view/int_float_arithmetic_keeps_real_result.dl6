@@ -1,4 +1,0 @@
-rel measure(name: text, whole: int, fraction: float).
-rel total(name: text, value: float).
-
-total(Name, Whole + Fraction) <- measure(Name, Whole, Fraction).

@@ -7745,6 +7745,79 @@ test(merge_patch_stops_on_a_nested_json_null_stand_in,
     json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-obj([user-none])])], _).
 
 :- end_tests(json_merge_patch).
+:- begin_tests(type_wrapper_walk).
+
+% FAIL-FIRST RECEIPT (base 48fadfb3): every assertion in this unit that names
+% option in front of a value-storing wrapper failed, because the walk lived
+% twice as list_element_type_name/2 and enumerated the list flavors only.
+
+% One table, and every wrapper in it says where it puts a rel element.
+test(every_wrapper_declares_where_it_stores_its_element) :-
+    findall(Wrapper-Storage, type_plane:type_wrapper(Wrapper, Storage), Rows),
+    msort(Rows, Sorted),
+    Sorted == [ list-value, list_entity_dense_sequence-value,
+                list_entity_linked_sequence-value, list_interned_set-value,
+                option-endpoint ].
+
+% The walk answers the name in COLUMN position, so a value-storing wrapper
+% hands its element over and `option` in front of a bare rel does not.
+test(walk_answers_the_name_a_spelling_puts_in_column_position) :-
+    findall(Type-Name,
+            ( member(Type, [span, list(span), option(list(span)),
+                            option(list_interned_set(span)),
+                            list_entity_dense_sequence(span),
+                            option(list(int))]),
+              type_plane:column_element_type_name(Type, Name) ),
+            Rows),
+    Rows == [ span-span, list(span)-span, option(list(span))-span,
+              option(list_interned_set(span))-span,
+              list_entity_dense_sequence(span)-span,
+              option(list(int))-int ].
+
+% option(<rel>) stores an id endpoint, so the element is NOT in column position
+% and mints no schema mirror; option(list(<rel>)) is, through the member's
+% value column.
+test(option_over_a_bare_rel_answers_no_column_name) :-
+    \+ type_plane:column_element_type_name(option(span), _),
+    \+ type_plane:column_element_type_name(list(option(span)), _),
+    once(type_plane:column_element_type_name(option(list(span)), span)).
+
+% json_list/1 is not a wrapper at any depth: its element domain is the closed
+% scalar set, and walking through it would erase which of the two json_list
+% reasons column_storage/3 names.
+test(json_list_is_not_a_wrapper) :-
+    findall(Wrapper, type_plane:type_wrapper(Wrapper, _), Wrappers),
+    \+ memberchk(json_list, Wrappers),
+    \+ type_plane:column_element_type_name(json_list(span), _),
+    \+ type_plane:column_element_type_name(option(json_list(span)), _).
+
+% The walk terminates on every nesting it accepts: each step descends into a
+% strict subterm, so a finite ground type term has finitely many answers.
+test(walk_terminates_on_deep_nesting) :-
+    Deep = option(list(option(list(list(span))))),
+    findall(Inner, type_plane:unwrapped_column_type(Deep, Inner), Inners),
+    length(Inners, 6),
+    last(Inners, span).
+
+% The mirror states the rel's STORED columns. desugar_reference_option removes
+% the column from col_type and shrinks the parent, so the rebuilt mirror loses
+% it; the scalar-option rename lands by the same read.
+test(mirror_follows_a_deletion_and_a_rename) :-
+    Prog = prog([ col_type(person/2, id, int),
+                  col_type(person/2, name, text),
+                  type_decl(commit, [ col(id, int),
+                                      col(reviewed_by, option(person)),
+                                      col(title, option(text)) ]),
+                  col_type(commit/3, id, int),
+                  col_type(commit/3, reviewed_by, option(person)),
+                  col_type(commit/3, title, option(text)) ],
+                []),
+    expand_generic_program(Prog, prog(Decls, _)),
+    memberchk(type_decl(commit, Specs), Decls),
+    Specs == [col(id, int), col(title, int)],
+    memberchk(col_type(commit__reviewed_by/2, person_id, int), Decls).
+
+:- end_tests(type_wrapper_walk).
 
 % The compile/text-door pipeline that feeds an emitter, shared by the
 % schema_emit and schema_parity_golden units (file scope: no cross-unit calls).

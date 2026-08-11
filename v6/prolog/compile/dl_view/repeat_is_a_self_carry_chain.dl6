@@ -1,8 +1,0 @@
-rel kick(col1) log keep(all).
-rel pulse(next) log keep(all).
-
-pulse(1) <+ kick(_).
-pulse(Next) <+
-  pulse(SoFar),
-  SoFar < 3,
-  Next := SoFar + 1.

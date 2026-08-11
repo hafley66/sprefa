@@ -1,8 +1,0 @@
-unwrap_count(Path, count(LineNo)) <-
-  unwrap_hit(Path, LineNo, _, _),
-  changed_file(Path).
-diag(Path, LineNo, 'warning', "unwrap-budget", concat([Total, " non-test unwraps in a changed file"]), Col, EndCol) <-
-  unwrap_hit(Path, LineNo, Col, EndCol),
-  changed_file(Path),
-  unwrap_count(Path, Total),
-  Total > 10.

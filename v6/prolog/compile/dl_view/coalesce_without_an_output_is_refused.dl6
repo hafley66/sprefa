@@ -1,5 +1,0 @@
-rel repo(name: text).
-
-known(Name) <-
-  repo(Name),
-  coalesce(archived(Name), 'absent').

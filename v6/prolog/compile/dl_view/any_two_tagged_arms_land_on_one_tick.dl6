@@ -1,4 +1,0 @@
-rel dispatch_note(dispatch_id, col2) log keep(all).
-
-dispatch_note(DispatchId, 'acked') <+ dispatch_ack(DispatchId).
-dispatch_note(SealedId, 'sealed') <+ dispatch_seal(SealedId).

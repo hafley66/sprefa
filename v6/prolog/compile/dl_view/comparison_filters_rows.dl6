@@ -1,9 +1,0 @@
-union_size(Left, Right, LeftSize + RightSize - Shared) <-
-  callee_set_size(Left, LeftSize),
-  callee_set_size(Right, RightSize),
-  shared_count(Left, Right, Shared).
-jaccard(Left, Right, Shared * 100 / Union) <-
-  shared_count(Left, Right, Shared),
-  union_size(Left, Right, Union),
-  Union > 0,
-  Shared * 100 / Union >= 40.

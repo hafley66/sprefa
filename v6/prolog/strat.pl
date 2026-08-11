@@ -1,7 +1,7 @@
 % Compute reference stratum groups and the topological rule order required by
 % one-pass SQL emission. Positive cycles within a stratum are refused.
 
-:- module(strat, [ stratum_groups/2, sql_rule_order/2 ]).
+:- module(strat, [ stratum_groups/2, sql_rule_order/2, recursive_stratum_groups/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -94,12 +94,29 @@ topo_order_group(Group, Ordered) :-
     sort(Edges0, Edges),
     kahn_order(HeadRefs, Edges, RefOrder),
     ( length(RefOrder, N), length(HeadRefs, N)
-    -> true
-    ; throw(unsupported_construct(recursive_stratum(HeadRefs)))
-    ),
-    findall(Rule,
-            ( member(Ref, RefOrder), member(Rule, Group), rule_head_ref(Rule, Ref) ),
-            Ordered).
+    -> findall(Rule,
+               ( member(Ref, RefOrder), member(Rule, Group), rule_head_ref(Rule, Ref) ),
+               Ordered)
+    ; Ordered = Group
+    ).
+
+recursive_stratum_groups(Rules, RecursiveGroups) :-
+    stratum_groups(Rules, Groups),
+    include(recursive_stratum_group, Groups, RecursiveGroups).
+
+recursive_stratum_group(Group) :-
+    findall(Ref, ( member(Rule, Group), rule_head_ref(Rule, Ref) ), HeadRefs0),
+    sort(HeadRefs0, HeadRefs),
+    findall(HeadRef-DependsOnRef,
+            ( member(Rule, Group), Rule = (_ <- Body), rule_head_ref(Rule, HeadRef),
+              body_ref_uses(Body, Uses), member(use(DependsOnRef, _, pos, _), Uses),
+              memberchk(DependsOnRef, HeadRefs), DependsOnRef \== HeadRef ),
+            Edges0),
+    sort(Edges0, Edges),
+    kahn_order(HeadRefs, Edges, RefOrder),
+    length(RefOrder, OrderedCount),
+    length(HeadRefs, HeadCount),
+    OrderedCount < HeadCount.
 
 % Kahn's algorithm: emit a ref once every ref it positively depends on
 % (within this group) has already been emitted.

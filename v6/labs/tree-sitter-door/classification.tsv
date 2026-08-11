@@ -1,12 +1,12 @@
 # rule	verdict	reason
-source_file	HAND-ONLY	statements//3 threads three accumulators and calls parse_failure/1 on a failed statement; root repetition and recovery are one clause.
+source_file	EMITTED-IDENTICAL	widened repetition detector reads statements//3's tail-recursive else branch with a throwing guard as its empty base.
 statement	EMITTED-IDENTICAL	cst_shape(statement/2) plus cst_origin fact; the six dispatch branches become the choice.
-relation_declaration	EMITTED-NEEDS-OVERLAY	rel_stmt//1 is a three-way alternative the editor merges into two; the emitter has no longest-common-prefix factoring.
-shell_declaration	EMITTED-NEEDS-OVERLAY	sh_decl_stmt//1 has two clauses sharing the sh_head//2 prefix; same factoring gap plus field slots past two column lists.
+relation_declaration	EMITTED-IDENTICAL	ir_body collapses rel_stmt//1's three-way alternative into the editor's single seq with an optional columns choice and modifier repeat.
+shell_declaration	EMITTED-IDENTICAL	ir_body lowers sh_decl_stmt//1's full clause with inputs/outputs column fields; the no-output fallback clause drops.
 bind_declaration	EMITTED-IDENTICAL	cst_shape(bind_decl_stmt/1) with the name field; args//2 inlining supplies the column list.
 declaration_parameter	EMITTED-IDENTICAL	cst_shape(decl_a_column/1) with name and type; the optional colon comes from the clause.
 column	EMITTED-NEEDS-OVERLAY	typed_col//2 defers its type parser through call//3 with the parser unbound; the two concrete bindings differ only by a cut and must not be merged.
-type	EMITTED-NEEDS-OVERLAY	type_base//1 has three clauses the editor collapses into one identifier plus an optional element.
+type	EMITTED-IDENTICAL	ir_body renders type_expr/1 as identifier, optional paren element, trailing optional marker.
 enum_variants	EMITTED-IDENTICAL	clause-pair repetition with the semicolon separator read off the clause.
 enum_variant	EMITTED-NEEDS-OVERLAY	enum_field//1 types a field with ident//1 while the editor rule uses $.type; the editor rule is wider than the parser.
 relation_modifier	EMITTED-IDENTICAL	cst_shape(rel_modifiers/2) as repeat(relation_modifier); keep_clause//1 and key_clause//1 inline.
@@ -21,9 +21,9 @@ binding_expression	EMITTED-IDENTICAL	bind operator set and right association emi
 comparison_expression	EMITTED-IDENTICAL	guard operator set and left association emitted from registry data.
 binary_expression	EMITTED-IDENTICAL	both arithmetic levels, literal sets, order and left association emitted.
 unary_expression	EMITTED-NEEDS-OVERLAY	no DCG clause; the parser reads a leading minus inside int_lit//1 and float_lit//1.
-member_expression	EMITTED-NEEDS-OVERLAY	dot_chain//2 yields a dot-plus-identifier repetition; the editor folds that pair into one token and requires a $.variable receiver.
+member_expression	EMITTED-IDENTICAL	ir_body renders it as prec(PREC.call) seq of a variable receiver and repeat1(member_access).
 member_access	EMITTED-IDENTICAL	cst_origin(dot_chain/2-dot_get) plus the ws//0-free adjacency between dot_then_ident//0 and ident//1.
-parenthesized_expression	EMITTED-NEEDS-OVERLAY	factor//1's parenthesis branch carries no functor unique to it, so no cst_origin marker exists.
+parenthesized_expression	EMITTED-IDENTICAL	ir_body renders factor//1's parenthesized branch as seq("(", expression, ")").
 atom	EMITTED-IDENTICAL	cst_shape(head_atom/1) with the name field; the call precedence turned out to be unnecessary.
 named_argument	EMITTED-IDENTICAL	cst_origin(atom_arg/1-named) selects the first clause and carries name and value.
 object_pattern	EMITTED-IDENTICAL	braces_term//1's peek branch is the optional; brace_pairs//1 is the comma repetition.
@@ -32,7 +32,7 @@ capture_key	EMITTED-IDENTICAL	cst_origin(brace_key/1-$) plus the dollar-then-ide
 list	EMITTED-IDENTICAL	cst_shape(list_term/1); the spread branch leaves as an inner cst_origin node.
 spread_element	EMITTED-IDENTICAL	cst_origin(list_term/1-spread) as inner, so the branch alone becomes the node.
 path	EMITTED-IDENTICAL	dotted_path//1's if-then-else recursion with the dot separator read off dot_then_ident//0.
-literal	EMITTED-NEEDS-OVERLAY	no DCG nonterminal groups the literal parsers; factor//1 lists them among all other leaves.
+literal	EMITTED-IDENTICAL	ir_body renders the five literal leaves (float, integer, string, quoted_atom, boolean) as a choice.
 integer	EMITTED-IDENTICAL	generated from the digit character class.
 float	EMITTED-IDENTICAL	generated from digit plus the finite decimal and exponent shape.
 string	EMITTED-IDENTICAL	lex_token(string_lit/1).

@@ -1,5 +1,0 @@
-both_ok(BodyA, BodyB) <-
-  outcome_a(ok(BodyA)),
-  outcome_b(ok(BodyB)).
-any_failed(Status) <- outcome_a(error(Status)).
-any_failed(Status) <- outcome_b(error(Status)).

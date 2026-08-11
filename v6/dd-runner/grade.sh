@@ -3,26 +3,88 @@ set -euo pipefail
 
 export LC_ALL=en_US.UTF-8
 root=$(cd "$(dirname "$0")/../.." && pwd)
+here="$root/v6/dd-runner"
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-swipl -q -g run_tests -t halt "$root/v6/prolog/compile/test/plunit_tests.pl"
-cargo build --quiet --manifest-path "$root/v6/dd-runner/Cargo.toml"
+arm=${DD_RUNNER_ARM:---sqlite}
+corpus="$scratch/corpus"
+mkdir -p "$corpus"
 
-grade() {
-  local fixture_file=$1
-  local fixture_name=$2
-  local plan="$scratch/$fixture_name.json"
-  local oracle="$scratch/$fixture_name.oracle.jsonl"
-  local runner="$scratch/$fixture_name.runner.jsonl"
-  swipl -q -l "$root/v6/prolog/compile/6_emit_dd_plan.pl" \
-    -g "emit_dd_plan:emit_fixture_dd_plan_json('$fixture_file',$fixture_name,'$plan')" -g halt
-  swipl -q -l "$root/v6/prolog/conformance/ticklog.pl" -g "emit($fixture_name)" -g halt > "$oracle"
-  "$root/v6/dd-runner/target/debug/dd-runner" "$plan" > "$runner"
-  diff -u "$oracle" "$runner"
-  printf '%s: byte-diff clean\n' "$fixture_name"
-}
+# The emitter's own plunit suite is the `plunit` leg's job; running it here
+# imported that leg's red into this one and stopped the grade under set -e.
+cargo build --quiet --release --manifest-path "$here/Cargo.toml"
+runner="$here/target/release/dd-runner"
 
-grade "$root/v6/prolog/conformance/fixtures/engine_core.pl" retraction_only_tick_retracts_level_view
-grade "$root/v6/prolog/conformance/fixtures/5_value_plane.pl" float_exact_join_has_no_epsilon
-grade "$root/v6/prolog/conformance/fixtures/5_value_plane.pl" float_avg_is_grouped
+swipl -q -l "$root/v6/prolog/compile/6_emit_dd_plan.pl" -l "$here/sweep_plans.pl" \
+  -g "sweep('$root','$corpus','$scratch/plans.tsv')" -g halt
+( cd "$root/v6/prolog/conformance" && swipl -q -l ticklog.pl -l "$here/sweep_oracle.pl" \
+  -g "sweep_oracle('$corpus','$scratch/oracle.tsv')" -g halt )
+
+# Peak RSS is the whole point of the ceiling: in TypeScript an unbounded row
+# unload OOMed and announced itself, in Rust it grows quietly.
+if [ "$(uname -s)" = Darwin ]; then
+  peak_rss_kb() { awk '/maximum resident set size/ { print int($1 / 1024) }' "$1"; }
+  time_cmd=(/usr/bin/time -l)
+else
+  peak_rss_kb() { tail -1 "$1"; }
+  time_cmd=(/usr/bin/time -f %M)
+fi
+
+verdicts="$scratch/verdicts.tsv"
+: >"$verdicts"
+peak_kb=0
+peak_fixture=none
+for plan in "$corpus"/*.json; do
+  name=$(basename "$plan" .json)
+  oracle="$corpus/$name.oracle.jsonl"
+  [ -f "$oracle" ] || continue
+  out="$scratch/$name.out"
+  measured="$scratch/$name.time"
+  if "${time_cmd[@]}" "$runner" "$plan" "$arm" >"$out" 2>"$measured"; then
+    if diff -q "$oracle" "$out" >/dev/null 2>&1; then verdict=clean; else verdict=diff; fi
+  else
+    verdict=error
+  fi
+  rss_kb=$(peak_rss_kb "$measured" 2>/dev/null || echo 0)
+  [ -n "$rss_kb" ] || rss_kb=0
+  if [ "$rss_kb" -gt "$peak_kb" ]; then peak_kb=$rss_kb; peak_fixture=$name; fi
+  printf '%s\t%s\n' "$name" "$verdict" >>"$verdicts"
+done
+
+sort "$verdicts" -o "$verdicts"
+graded="$here/graded.tsv"
+clean_now=$(awk -F'\t' '$2=="clean"' "$verdicts" | wc -l | tr -d ' ')
+graded_total=$(wc -l <"$verdicts" | tr -d ' ')
+
+status=0
+if [ -f "$graded" ]; then
+  lost=$(comm -23 <(awk -F'\t' '$2=="clean" {print $1}' "$graded") \
+                  <(awk -F'\t' '$2=="clean" {print $1}' "$verdicts"))
+  gained=$(comm -13 <(awk -F'\t' '$2=="clean" {print $1}' "$graded") \
+                    <(awk -F'\t' '$2=="clean" {print $1}' "$verdicts"))
+  if [ -n "$lost" ]; then
+    printf 'GRADE REGRESSION, these were byte-clean and are not:\n%s\n' "$lost"
+    status=1
+  fi
+  if [ -n "$gained" ]; then
+    printf 'GRADE RATCHET, newly byte-clean; copy the run into graded.tsv:\n%s\n' "$gained"
+    status=1
+  fi
+else
+  printf 'graded.tsv missing; writing the current run is a human decision\n'
+  status=1
+fi
+[ -n "${DD_RUNNER_WRITE_GRADED:-}" ] && cp "$verdicts" "$graded"
+
+peak_mb=$(( peak_kb / 1024 ))
+ceiling=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['conformance_corpus']['peak_rss_mb_ceiling'])" "$here/budget.json")
+if [ "$peak_mb" -gt "$ceiling" ]; then
+  printf 'RSS CEILING BREACH %s MB > %s MB (worst fixture %s)\n' "$peak_mb" "$ceiling" "$peak_fixture"
+  status=1
+fi
+
+printf 'DD-GRADE arm=%s graded=%s byte-clean=%s peak_rss_mb=%s (%s kB, %s) ceiling=%s\n' \
+  "$arm" "$graded_total" "$clean_now" "$peak_mb" "$peak_kb" "$peak_fixture" "$ceiling"
+[ "$status" = 0 ] && printf 'DD-GRADE HOLDS\n'
+exit "$status"

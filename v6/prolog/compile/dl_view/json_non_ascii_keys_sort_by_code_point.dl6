@@ -1,4 +1,0 @@
-rel raw_doc(body: json).
-rel echoed(body: json).
-
-echoed(Body) <- raw_doc(Body).

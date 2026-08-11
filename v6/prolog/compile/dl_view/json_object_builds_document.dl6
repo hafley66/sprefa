@@ -1,1 +1,0 @@
-repo_meta(Repo, json_object(Key, Value)) <- repo_kv(Repo, Key, Value).

@@ -1,4 +1,0 @@
-rel note(body: text).
-rel seen(body: text).
-
-seen(Body) <- note(Body).

@@ -1,1 +1,0 @@
-rel linked_parent(id: int, entries: option(list_entity_linked_sequence(text))) key(1).

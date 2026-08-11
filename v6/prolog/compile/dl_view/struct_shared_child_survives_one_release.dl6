@@ -1,2 +1,0 @@
-rel span(start: int, end: int).
-rel hit(owner: text, at: span).

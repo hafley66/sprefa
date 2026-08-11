@@ -1,3 +1,0 @@
-rel grid(id: int, rows: json_list(json_list(text))).
-
-carry(Id, Rows) <- grid(Id, Rows).

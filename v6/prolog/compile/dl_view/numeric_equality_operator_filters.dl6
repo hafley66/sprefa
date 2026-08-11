@@ -1,3 +1,0 @@
-matched(Value) <-
-  row(Value),
-  Value =:= 2.

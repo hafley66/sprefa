@@ -1,6 +1,0 @@
-rel orchard.tree(tree_id: int, label: option(text)) key(1).
-rel labelled(tree_id: int, state: text).
-
-labelled(TreeId, State) <-
-  orchard.tree(TreeId, LabelOption),
-  __opt_text_tag(LabelOption, State).

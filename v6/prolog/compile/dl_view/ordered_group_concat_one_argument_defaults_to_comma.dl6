@@ -1,1 +1,0 @@
-simple_joined(Group, group_concat(Value)) <- item(Group, Value).

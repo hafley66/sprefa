@@ -1,7 +1,0 @@
-rel left(name: text, value: float).
-rel right(name: text, value: float).
-rel matched(name: text).
-
-matched(Name) <-
-  left(Name, Value),
-  right(Name, Value).

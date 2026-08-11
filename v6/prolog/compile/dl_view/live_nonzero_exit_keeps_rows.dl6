@@ -1,2 +1,0 @@
-rel stream_item(col1, col2, col3) log keep(all).
-rel stream_end(col1, col2) log keep(all).

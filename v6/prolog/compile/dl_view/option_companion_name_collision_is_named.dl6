@@ -1,0 +1,2 @@
+rel pair_holder__before(probe_value: int).
+rel pair_holder(label: text, before: option(pair_holder__before)).

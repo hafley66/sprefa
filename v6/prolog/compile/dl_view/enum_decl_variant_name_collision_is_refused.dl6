@@ -1,2 +1,0 @@
-rel body(page(view: view) ; redirect(to: text)).
-rel page(id: int).

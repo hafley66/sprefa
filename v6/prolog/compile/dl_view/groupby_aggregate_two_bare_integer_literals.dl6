@@ -1,4 +1,0 @@
-rel source(name: text).
-rel tallied(line: int, column: int, total: int).
-
-tallied(0, 0, count(Name)) <- source(Name).

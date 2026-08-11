@@ -1,3 +1,0 @@
-small(Value) <-
-  row(Value),
-  not(Value > 1).

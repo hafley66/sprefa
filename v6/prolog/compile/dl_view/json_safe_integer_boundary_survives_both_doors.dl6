@@ -1,4 +1,0 @@
-rel measure(name: text, value: int).
-rel carried(name: text, value: int).
-
-carried(Name, Value) <- measure(Name, Value).

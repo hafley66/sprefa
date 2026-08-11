@@ -1,3 +1,0 @@
-latest_copy(Item) <-
-  source_item(Item),
-  latest(source_item(Item)).

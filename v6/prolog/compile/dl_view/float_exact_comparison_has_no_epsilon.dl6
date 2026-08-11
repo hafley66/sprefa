@@ -1,6 +1,0 @@
-rel score(name: text, value: float).
-rel exact(name: text).
-
-exact(Name) <-
-  score(Name, Value),
-  Value == 0.30000000000000004.

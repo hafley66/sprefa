@@ -19,6 +19,7 @@
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
+:- use_module(strat, [recursive_stratum_groups/2]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
 
@@ -2129,6 +2130,17 @@ self_referential_level_refs(Rules, Refs) :-
             Refs0),
     sort(Refs0, Refs).
 
+recursive_level_refs(Rules, Refs) :-
+    self_referential_level_refs(Rules, SelfRefs),
+    recursive_stratum_groups(Rules, RecursiveGroups),
+    findall(Ref,
+            ( member(Group, RecursiveGroups),
+              member(Rule, Group),
+              rule_head_ref(Rule, Ref) ),
+            GroupRefs),
+    append(SelfRefs, GroupRefs, Refs0),
+    sort(Refs0, Refs).
+
 % ═══ build_deltas ═════════════════════════════════════════════════════════════
 
 build_deltas_fn_lines(RelPlans, EdgeStatements, _RetentionStatements,
@@ -2689,7 +2701,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ; HasOrderedProgram = false
     ),
     Plan = plan(_, prog(_, SelfRefScanRules), _, _, _, _, _, _, _),
-    self_referential_level_refs(SelfRefScanRules, SelfReferentialLevelRefs),
+    recursive_level_refs(SelfRefScanRules, SelfReferentialLevelRefs),
     edge_statements_intern(EdgeStatements, HasInternWrite),
     imports_lines(HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
                   HasOrderedProgram, SelfReferentialLevelRefs, HasInternWrite,

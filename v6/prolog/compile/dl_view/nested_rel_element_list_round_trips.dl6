@@ -1,2 +1,0 @@
-rel fighter_summary(name: text, url: text).
-rel squad(id: int, members: list(list(fighter_summary))) key(1).

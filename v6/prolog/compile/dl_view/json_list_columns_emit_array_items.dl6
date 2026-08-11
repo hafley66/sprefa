@@ -1,4 +1,0 @@
-rel sample(ints: json_list(int),
-           texts: json_list(text),
-           nested: json_list(json_list(int)),
-           blobs: json_list(json)).

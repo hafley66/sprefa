@@ -1,3 +1,0 @@
-rel pair(left, right) key(1).
-
-pair(Left, Right) <+ combine(source_a(Left), source_b(Right)).

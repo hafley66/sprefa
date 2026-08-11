@@ -1,6 +1,0 @@
-rel event(payload: json) log keep(all).
-rel seen(value: text).
-
-seen(Value) <-
-  event(Payload),
-  decode(Payload, {stars: Value}).

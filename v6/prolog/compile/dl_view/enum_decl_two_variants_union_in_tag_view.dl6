@@ -1,1 +1,0 @@
-rel result(ok(value: text) ; error(message: text)).

@@ -1,1 +1,0 @@
-ordinal_sorted(Group, json_group_array(Value, Ordinal)) <- item(Group, Ordinal, Value).
