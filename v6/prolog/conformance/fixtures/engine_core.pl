@@ -448,3 +448,15 @@ fixture(set_dedups_log_stacks,
   [ [ +seen(alpha), +seen(alpha), +heard(alpha), +heard(alpha) ] ],
   [ final(seen_count/1,  [ seen_count(alpha) ]),
     final(heard_count/1, [ heard_count(alpha), heard_count(alpha) ]) ]).
+
+fixture(mutual_recursion_matches_oracle,
+  prog([ kind(clock/1, set), kind(seed/1, set) ],
+       [ (even(Value) <- seed(Value)),
+         (even(Value) <- odd(Value)),
+         (odd(Value) <- even(Value)) ]),
+  [],
+  [ [ +clock(go), +seed(0), +seed(3) ] ],
+  [ deltas(even/1, [ [ +even(0), +even(3) ] ]),
+    deltas(odd/1, [ [ +odd(0), +odd(3) ] ]),
+    final(even/1, [ even(0), even(3) ]),
+    final(odd/1, [ odd(0), odd(3) ]) ]).
