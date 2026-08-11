@@ -14,7 +14,7 @@
 |---|---|---|
 | Can tree-sitter parse all of dl6? | YES | `golden-flex.dl6 lines=630 errors=0`; `TS_CORPUS total=266 clean=266 errors=0` |
 | Can Topiary format dl6 to the decree? | YES | formatting law + idempotence PASS |
-| Can the DCG be the ONE hand-written description? | **NO** | 103 DCG clauses -> 32 translatable; overlay 3862 chars vs emitted 1304, ratio 2.96, and the overlay grows per construct |
+| Can the DCG be the ONE hand-written description? | **NOT PROVEN** | A naive structural translator reaches 32 of 103 clauses, ratio 2.96. Three bounded techniques were never attempted, so this measures the generator, not the question. Round 2 dispatched. |
 
 Landed in PR #177 (main `0cc79ca1`). Lab gate: `v6/labs/tree-sitter-door/run-tests.sh`, rc=0, coordinator-rerun.
 
@@ -75,9 +75,21 @@ semantic actions, the runtime operator/precedence registry, and
 variable-identity bookkeeping.
 
 The failure condition the brief named was "does the overlay stay a small
-fixed file, or grow per-construct". It grows per-construct: declarations
-add rules, each expression family adds precedence code, JSON patterns add
-lexical alternatives, statement forms add CST boundaries.
+fixed file, or grow per-construct". Round 1's overlay grows per-construct.
+
+### Why round 1 does not settle the question
+
+Three techniques the round-1 generator never attempted, each verified
+against the code by the coordinator 2026-08-11:
+
+| Technique | Round 1 called it | What the code actually shows |
+|---|---|---|
+| Read the precedence table | "runtime registry data", HAND-ONLY | `infix_op/2` (parse_dl_dcg.pl:967-972) and `tier_operators/2` (:1020) are `findall` goals over `surface/5` and `expression/5` facts; registry.pl holds 76 of them. An emitter that loads registry.pl runs the same query and emits prec declarations |
+| Map character classes | every regex token HAND-ONLY | the parser uses four `code_type/2` classes (space :243, alnum :269, alpha :279, digit :290). A four-row mapping is written once and never grows |
+| Specialize parameterized nonterminals | `call(P, X)` fatal | `sep/2` and `args/2` have 24 call sites binding P to 9 concrete parsers (`expr`, `atom_arg`, `typed_col`, `head`, `body`, `decl_a_column`, `enum_field`, `int_lit`, `rel_atom_term`). Partial evaluation emits one rule per binding, bounded by call sites |
+
+Round 2 brief: `sprefa-lanes/tree-sitter-emit-v2.BRIEF.md`. The answer may
+still be no; it has to be no for a reason the code supports.
 
 ## Phase C: LSP candidates and the recommended shot
 

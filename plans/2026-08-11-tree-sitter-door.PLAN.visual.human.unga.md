@@ -6,10 +6,12 @@ You have several files that each describe dl6. You asked whether the DCG
 parser could be the only hand-written one, with everything else generated
 from it. Then whether that could reach all the way to an LSP.
 
-## The answer
+## The answer so far
 
-Two of three work. The third does not, and we measured it rather than
-guessed.
+Tree-sitter and Topiary: yes, done, working. The generate-it-all
+question: NOT settled. The first attempt failed, but it was a simple
+generator that skipped three obvious tricks, so it measured itself
+rather than the question. Round 2 is running.
 
 ```mermaid
 flowchart LR
@@ -95,8 +97,8 @@ Output, verbatim: `sep: $ => $.sepv` — a name pointing at nothing usable.
 Every list in the language routes through this one clause, so the whole
 comma-list surface has to be hand-written anyway.
 
-That is the shape of the failure. Not "the generator is unfinished": the
-information the grammar needs was never in the file.
+That is the shape of round 1's failure. But "the generator is
+unfinished" is exactly what it turned out to be: see below.
 
 ### The measurement
 
@@ -125,6 +127,20 @@ What defeats it, ranked by how much of the language each one eats:
 
 Exactly the things that made the parser small are the things that cannot
 be read as a grammar.
+
+### What round 1 skipped
+
+You said this sounds unfinished. It is. Three things the generator never
+tried, each checked against the code:
+
+| it gave up on | but actually |
+|---|---|
+| operator precedence ("comes from a runtime table") | that table is 76 plain facts in registry.pl. The parser looks them up with a query; the generator can run the SAME query and print the precedence rules |
+| whitespace, digits, letters ("character code, not a shape") | the parser uses exactly FOUR of these. Four hand-written lines, once, covers all of them forever |
+| `sep`, the list combinator ("parser decided at runtime") | its 24 call sites pass 9 known parsers. Make 9 copies, one per caller. Bounded, mechanical |
+
+If all three work, most of the HAND-ONLY column becomes generated, and
+the ratio could flip. Round 2 is measuring it now.
 
 ### The compression made it worse, which proves the point
 
