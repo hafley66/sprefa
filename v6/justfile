@@ -134,6 +134,11 @@ dl-test:
 store-test:
     cd {{ v6 }}/sprefa-store/js && npm test
 
+# rust x sqlite arm vs the swipl oracle tick log, byte-diff + peak-RSS ceiling
+# (expect: DD-GRADE arm=--sqlite graded=200 byte-clean=131 ... DD-GRADE HOLDS)
+dd-grade:
+    bash {{ v6 }}/dd-runner/grade.sh
+
 # THE END GOAL, executable: kill -9 mid-delay, reboot, value lands exactly once
 endurance:
     bash {{ v6 }}/dl/scripts/goal-endurance.sh
@@ -458,13 +463,13 @@ perf-all-deep:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test
+green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test dd-grade
 
 # everything, phased: scale-floor alone (its verdict is a wall reading), then
 # the memory leak test alone (its flatness check reddens under a load ramp),
-# then the gen-writers serially, then the rest 6-up. Same 31 legs, same
+# then the gen-writers serially, then the rest 6-up. Same 32 legs, same
 # verdicts, one ordered PASS/FAIL table.
-# (expect: GREEN ALL HOLDS: 31 legs, exit 0; ~177s vs ~254s one at a time)
+# (expect: GREEN ALL HOLDS: 32 legs, exit 0; ~177s vs ~254s one at a time)
 green-all:
     bash {{ v6 }}/tools/green-parallel.sh
 
