@@ -95,7 +95,7 @@ fn from_env() -> Option<Identity> {
 /// names the lane that owns that session.
 fn from_pane(routes: &BTreeMap<String, Route>) -> Option<Identity> {
     let pane = std::env::var("TMUX_PANE").ok().filter(|p| !p.is_empty())?;
-    let tmux_session = crate::tmux::session_of_pane(None, &pane)?;
+    let tmux_session = crate::tmux::mux().session_of_pane(None, &pane)?;
     let (lane, route) = routes
         .iter()
         .find(|(_, route)| route.tmux.as_deref() == Some(tmux_session.as_str()))?;

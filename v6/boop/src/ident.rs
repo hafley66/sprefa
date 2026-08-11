@@ -2282,6 +2282,7 @@ mod tests {
     /// The per-transcript cursor surfaces transcript identity for a later
     /// stream: harness, session, path, and the byte offset ingest read to.
     #[test]
+    #[cfg(feature = "agent-read")]
     fn query_cursors_expose_transcript_identity() {
         let db_path = temp_path("curdb");
         let _ = std::fs::remove_file(&db_path);
