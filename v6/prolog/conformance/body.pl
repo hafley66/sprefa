@@ -10,7 +10,11 @@
             % has a clause-for-clause twin in lower.pl and the two doors
             % drifting apart is not something a byte-diff can catch (the
             % compiled side never produces a log to diff when it refuses).
-            json_capture_type/2 ]).
+            json_capture_type/2,
+            % RFC 7396 merge patch, exported for the same reason: the emitted
+            % side renders it as native SQL, so the two doors' agreement is a
+            % unit assertion, not something the byte diff alone can hold.
+            json_scalar_value/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).

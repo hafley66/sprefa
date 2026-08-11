@@ -102,7 +102,9 @@
                 run_program/5 ]).
 :- use_module('../../conformance/level_eval',
               [ goal_rel_refs/3, split_rules/4 ]).
-:- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1, json_capture_type/2 ]).
+:- use_module('../../conformance/body',
+              [ body_atoms/2, comparison_goal/1, json_capture_type/2,
+                json_scalar_value/3 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
 :- ensure_loaded('3_clock_check.test.pl').
 :- ensure_loaded('0_graph.test.pl').
@@ -7616,8 +7618,8 @@ test(braces_literal_column_stores_json) :-
     Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
     relplan_column_types(RelPlans, doc/1, ColumnTypes),
     ColumnTypes == [json],
-    lower:canonical_column_expr(col1, json, ReadExpr),
-    ReadExpr == '"col1"'.
+    column_def(direct, '"col1"', json, Def),
+    sub_atom(Def, _, _, _, 'json_valid("col1")').
 
 % HOUSE PATTERN (lower.pl json_object aggregate arm): a duplicate key emits
 % text that is not valid JSON, so SQLite fails the statement where the oracle
@@ -7714,33 +7716,33 @@ test(text_operand_keeps_its_unsupported,
 
 % RFC 7396 §2 on the oracle's own value terms, one assertion per behavior.
 test(merge_patch_merges_nested_objects_recursively) :-
-    body:json_scalar_value(json_patch,
+    json_scalar_value(json_patch,
                            [obj([cpu-obj([sys-2, user-1])]), obj([cpu-obj([sys-9])])],
                            Out),
     Out == obj([cpu-obj([sys-9, user-1])]).
 
 test(merge_patch_replaces_arrays_and_scalars_wholesale) :-
-    body:json_scalar_value(json_patch, [obj([tags-[red, green]]), obj([tags-[blue]])], Arrays),
+    json_scalar_value(json_patch, [obj([tags-[red, green]]), obj([tags-[blue]])], Arrays),
     Arrays == obj([tags-[blue]]),
-    body:json_scalar_value(json_patch, [obj([cpu-1]), [7, 8]], NonObjectPatch),
+    json_scalar_value(json_patch, [obj([cpu-1]), [7, 8]], NonObjectPatch),
     NonObjectPatch == [7, 8].
 
 test(merge_patch_empties_a_non_object_target) :-
-    body:json_scalar_value(json_patch, [[7, 8], obj([cpu-1])], Out),
+    json_scalar_value(json_patch, [[7, 8], obj([cpu-1])], Out),
     Out == obj([cpu-1]).
 
 test(merge_patch_result_keys_are_sorted) :-
-    body:json_scalar_value(json_patch, [obj([zeta-1]), obj([alpha_key-2])], Out),
+    json_scalar_value(json_patch, [obj([zeta-1]), obj([alpha_key-2])], Out),
     Out == obj([alpha_key-2, zeta-1]).
 
 % The delete clause has no surface spelling on this plane, so it stops.
 test(merge_patch_stops_on_the_json_null_stand_in,
      [throws(json_patch_null_unruled)]) :-
-    body:json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-none])], _).
+    json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-none])], _).
 
 test(merge_patch_stops_on_a_nested_json_null_stand_in,
      [throws(json_patch_null_unruled)]) :-
-    body:json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-obj([user-none])])], _).
+    json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-obj([user-none])])], _).
 
 :- end_tests(json_merge_patch).
 
