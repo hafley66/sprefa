@@ -1,21 +1,5 @@
 {
   "$defs": {
-    "__gen__list_text_df210f232c1299bd": {
-      "additionalProperties":false,
-      "properties": {"id": {"type":"integer"}},
-      "required": ["id" ],
-      "type":"object"
-    },
-    "__gen__list_text_df210f232c1299bd__member": {
-      "additionalProperties":false,
-      "properties": {
-        "idx": {"type":"integer"},
-        "list_id": {"type":"integer"},
-        "value": {"type":"string"}
-      },
-      "required": ["idx", "list_id", "value" ],
-      "type":"object"
-    },
     "box": {
       "additionalProperties":false,
       "properties": {"id": {"type":"integer"},"items": {"type":"integer"}},

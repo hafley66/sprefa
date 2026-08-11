@@ -6,12 +6,6 @@
       "required": ["id" ],
       "type":"object"
     },
-    "commit__reviewed_by": {
-      "additionalProperties":false,
-      "properties": {"commit_id": {"type":"integer"},"person_id": {"type":"integer"}},
-      "required": ["commit_id", "person_id" ],
-      "type":"object"
-    },
     "person": {
       "additionalProperties":false,
       "properties": {"id": {"type":"integer"},"name": {"type":"string"}},

@@ -1,49 +1,13 @@
 {
   "$defs": {
-    "__opt_int_none": {
-      "additionalProperties":false,
-      "properties": {"id": {"type":"integer"}},
-      "required": ["id" ],
-      "type":"object"
-    },
-    "__opt_int_some": {
-      "additionalProperties":false,
-      "properties": {"id": {"type":"integer"},"value": {"type":"integer"}},
-      "required": ["id", "value" ],
-      "type":"object"
-    },
-    "__opt_int_tag": {
-      "additionalProperties":false,
-      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
-      "required": ["id", "tag" ],
-      "type":"object"
-    },
-    "__opt_text_none": {
-      "additionalProperties":false,
-      "properties": {"id": {"type":"integer"}},
-      "required": ["id" ],
-      "type":"object"
-    },
-    "__opt_text_some": {
-      "additionalProperties":false,
-      "properties": {"id": {"type":"integer"},"value": {"type":"string"}},
-      "required": ["id", "value" ],
-      "type":"object"
-    },
-    "__opt_text_tag": {
-      "additionalProperties":false,
-      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
-      "required": ["id", "tag" ],
-      "type":"object"
-    },
     "measurement": {
       "additionalProperties":false,
       "properties": {
-        "label": {"type":"integer"},
-        "reading": {"type":"integer"},
+        "label": {"anyOf": [ {"type":"string"},  {"type":null} ]},
+        "reading": {"anyOf": [ {"type":"integer"},  {"type":null} ]},
         "sensor_id": {"type":"integer"}
       },
-      "required": ["sensor_id", "label", "reading" ],
+      "required": ["sensor_id" ],
       "type":"object"
     }
   },
