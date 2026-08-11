@@ -6,7 +6,7 @@
 
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -258,11 +258,12 @@ fn eval_rows(
     state: &Relations,
     columns: &BTreeMap<String, Vec<String>>,
 ) -> Result<Vec<Tuple>> {
-    let bindings = binding_rows(op, state, columns)?;
-    bindings
+    let query = Query::compile(op, columns)?;
+    let projection = query.projection(&op.projection);
+    binding_rows(&query, state)?
         .into_iter()
-        .filter(|row| matches_predicates(row, &op.predicates))
-        .map(|row| project(&row, &op.projection))
+        .filter(|row| query.holds(row))
+        .map(|row| project(&row, &projection))
         .collect()
 }
 
@@ -275,17 +276,17 @@ fn eval_reduce(
         .aggregate
         .as_ref()
         .ok_or_else(|| format!("{} reduce missing aggregate", op.id))?;
-    let mut groups: BTreeMap<String, Vec<BTreeMap<String, Value>>> = BTreeMap::new();
-    for row in binding_rows(op, state, columns)? {
-        if matches_predicates(&row, &op.predicates) {
-            let key = serde_json::to_string(
-                &aggregate
-                    .group
-                    .iter()
-                    .map(|column| lookup(&row, column))
-                    .collect::<Result<Vec<_>>>()?,
-            )
-            .unwrap();
+    let query = Query::compile(op, columns)?;
+    let projection = query.projection(&op.projection);
+    let grouping = aggregate
+        .group
+        .iter()
+        .map(|column| query.column(column))
+        .collect::<Vec<_>>();
+    let mut groups: BTreeMap<String, Vec<BoundRow>> = BTreeMap::new();
+    for row in binding_rows(&query, state)? {
+        if query.holds(&row) {
+            let key = serde_json::to_string(&project(&row, &grouping)?).unwrap();
             groups.entry(key).or_default().push(row);
         }
     }
@@ -296,16 +297,17 @@ fn eval_reduce(
                 .first()
                 .ok_or_else(|| "empty aggregate group".to_owned())?;
             let mut out = Vec::new();
-            for projection in &op.projection {
-                if let Some(source) = &projection.source {
+            for (index, item) in op.projection.iter().enumerate() {
+                if let Some(source) = &item.source {
                     let col = source.rsplit('.').next().unwrap_or(source);
                     if let Some(position) = aggregate.value.iter().position(|value| value == col) {
-                        out.push(aggregate_value(&aggregate.kind[position], &rows, source)?);
+                        let kind = &aggregate.kind[position];
+                        out.push(aggregate_value(kind, &rows, &projection[index])?);
                     } else {
-                        out.push(lookup(first, source)?);
+                        out.push(lookup(first, &projection[index])?);
                     }
                 } else {
-                    out.push(projection.value.clone().unwrap_or(Value::Null));
+                    out.push(item.value.clone().unwrap_or(Value::Null));
                 }
             }
             Ok(out)
@@ -313,10 +315,10 @@ fn eval_reduce(
         .collect()
 }
 
-fn aggregate_value(kind: &str, rows: &[BTreeMap<String, Value>], source: &str) -> Result<Value> {
+fn aggregate_value(kind: &str, rows: &[BoundRow], column: &Column) -> Result<Value> {
     let values = rows
         .iter()
-        .map(|row| lookup(row, source))
+        .map(|row| lookup(row, column))
         .collect::<Result<Vec<_>>>()?;
     match kind {
         "count" => Ok(json!(values.len() as i64)),
@@ -351,36 +353,201 @@ fn number(value: &Value) -> Result<f64> {
         .ok_or_else(|| format!("aggregate numeric value required: {value}"))
 }
 
-fn binding_rows(
-    op: &Operator,
-    state: &Relations,
-    columns: &BTreeMap<String, Vec<String>>,
-) -> Result<Vec<BTreeMap<String, Value>>> {
-    let mut out = vec![BTreeMap::new()];
-    let bindings = if op.bindings.is_empty() {
-        op.refs
-            .iter()
-            .enumerate()
-            .map(|(i, relation)| (format!("b{i}"), relation.clone()))
-            .collect()
-    } else {
-        op.bindings.clone()
-    };
-    for (alias, relation) in bindings {
-        let fields = columns
-            .get(&relation)
-            .ok_or_else(|| format!("{} references unknown relation {relation}", op.id))?;
-        let source = state
-            .get(&relation)
-            .ok_or_else(|| format!("state has no relation {relation}"))?;
-        let mut expanded = Vec::new();
-        for prior in &out {
-            for tuple in &source.rows {
-                let mut item = prior.clone();
-                for (column, value) in fields.iter().zip(tuple.iter()) {
-                    item.insert(format!("{alias}.{column}"), value.clone());
+/// A bound row is a slot vector, not a name map. `None` is "this binding never
+/// carried the column", which is what an absent map key used to mean.
+type BoundRow = Vec<Option<Value>>;
+
+/// One binding, with the equality predicates that reach it resolved into an
+/// equijoin: `probe` reads prior slots, `key` reads this relation's tuple.
+struct Scan {
+    relation: String,
+    width: usize,
+    probe: Vec<usize>,
+    key: Vec<usize>,
+    filters: Vec<(usize, Value)>,
+}
+
+enum Test {
+    Columns(Option<usize>, Option<usize>),
+    Literal(Option<usize>, Value),
+}
+
+enum Column<'a> {
+    Slot(usize, &'a str),
+    Absent(&'a str),
+    Constant(Option<&'a Value>),
+}
+
+#[derive(Eq)]
+struct JoinKey(Vec<Option<Value>>);
+
+impl PartialEq for JoinKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl Hash for JoinKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for value in &self.0 {
+            match value {
+                Some(item) => hash_value(item, state),
+                None => state.write_u8(8),
+            }
+        }
+    }
+}
+
+struct Query {
+    scans: Vec<Scan>,
+    slots: BTreeMap<String, usize>,
+    tests: Vec<Test>,
+}
+
+impl Query {
+    fn compile(op: &Operator, columns: &BTreeMap<String, Vec<String>>) -> Result<Query> {
+        let bindings = if op.bindings.is_empty() {
+            op.refs
+                .iter()
+                .enumerate()
+                .map(|(index, relation)| (format!("b{index}"), relation.clone()))
+                .collect::<BTreeMap<_, _>>()
+        } else {
+            op.bindings.clone()
+        };
+        let mut query = Query {
+            scans: Vec::new(),
+            slots: BTreeMap::new(),
+            tests: Vec::new(),
+        };
+        let mut width = 0;
+        for (alias, relation) in &bindings {
+            let fields = columns
+                .get(relation)
+                .ok_or_else(|| format!("{} references unknown relation {relation}", op.id))?;
+            let prefix = format!("{alias}.");
+            let position = |name: &String| {
+                name.strip_prefix(&prefix)
+                    .and_then(|column| fields.iter().rposition(|field| field == column))
+            };
+            let mut scan = Scan {
+                relation: relation.clone(),
+                width: fields.len(),
+                probe: Vec::new(),
+                key: Vec::new(),
+                filters: Vec::new(),
+            };
+            for predicate in &op.predicates {
+                if let Some([left, right]) = &predicate.column_equals {
+                    for (bound, arriving) in [(left, right), (right, left)] {
+                        if let (Some(slot), Some(at)) = (query.slots.get(bound), position(arriving))
+                        {
+                            scan.probe.push(*slot);
+                            scan.key.push(at);
+                        }
+                    }
                 }
-                expanded.push(item);
+                if let Some(literal) = &predicate.literal_equals {
+                    if let Some(at) = position(&literal.column) {
+                        scan.filters.push((at, literal.value.clone()));
+                    }
+                }
+            }
+            for (at, column) in fields.iter().enumerate() {
+                query.slots.insert(format!("{alias}.{column}"), width + at);
+            }
+            width += fields.len();
+            query.scans.push(scan);
+        }
+        for predicate in &op.predicates {
+            if let Some([left, right]) = &predicate.column_equals {
+                let sides = (
+                    query.slots.get(left).copied(),
+                    query.slots.get(right).copied(),
+                );
+                query.tests.push(Test::Columns(sides.0, sides.1));
+            }
+            if let Some(literal) = &predicate.literal_equals {
+                let slot = query.slots.get(&literal.column).copied();
+                query.tests.push(Test::Literal(slot, literal.value.clone()));
+            }
+        }
+        Ok(query)
+    }
+
+    fn column<'a>(&self, source: &'a String) -> Column<'a> {
+        match self.slots.get(source) {
+            Some(slot) => Column::Slot(*slot, source),
+            None => Column::Absent(source),
+        }
+    }
+
+    fn projection<'a>(&self, projection: &'a [Projection]) -> Vec<Column<'a>> {
+        projection
+            .iter()
+            .map(|item| match &item.source {
+                Some(source) => self.column(source),
+                None => Column::Constant(item.value.as_ref()),
+            })
+            .collect()
+    }
+
+    fn holds(&self, row: &BoundRow) -> bool {
+        self.tests.iter().all(|test| match test {
+            Test::Columns(left, right) => at(row, *left) == at(row, *right),
+            Test::Literal(slot, value) => at(row, *slot) == Some(value),
+        })
+    }
+}
+
+impl Scan {
+    fn passes(&self, tuple: &Tuple) -> bool {
+        self.filters
+            .iter()
+            .all(|(at, value)| tuple.get(*at) == Some(value))
+    }
+
+    fn extend(&self, prior: &BoundRow, tuple: &Tuple) -> BoundRow {
+        let mut row = prior.clone();
+        row.extend((0..self.width).map(|at| tuple.get(at).cloned()));
+        row
+    }
+}
+
+fn at(row: &BoundRow, slot: Option<usize>) -> Option<&Value> {
+    slot.and_then(|index| row[index].as_ref())
+}
+
+fn binding_rows(query: &Query, state: &Relations) -> Result<Vec<BoundRow>> {
+    let mut out = vec![Vec::new()];
+    for scan in &query.scans {
+        let source = state
+            .get(&scan.relation)
+            .ok_or_else(|| format!("state has no relation {}", scan.relation))?;
+        let mut expanded = Vec::new();
+        if scan.probe.is_empty() {
+            for prior in &out {
+                for tuple in &source.rows {
+                    if scan.passes(tuple) {
+                        expanded.push(scan.extend(prior, tuple));
+                    }
+                }
+            }
+        } else {
+            let mut index: HashMap<JoinKey, Vec<usize>> = HashMap::new();
+            for (position, tuple) in source.rows.iter().enumerate() {
+                if scan.passes(tuple) {
+                    let key = scan.key.iter().map(|at| tuple.get(*at).cloned()).collect();
+                    index.entry(JoinKey(key)).or_default().push(position);
+                }
+            }
+            for prior in &out {
+                let probe = scan.probe.iter().map(|slot| prior[*slot].clone());
+                if let Some(positions) = index.get(&JoinKey(probe.collect())) {
+                    for position in positions {
+                        expanded.push(scan.extend(prior, &source.rows[*position]));
+                    }
+                }
             }
         }
         out = expanded;
@@ -388,35 +555,21 @@ fn binding_rows(
     Ok(out)
 }
 
-fn matches_predicates(row: &BTreeMap<String, Value>, predicates: &[Predicate]) -> bool {
-    predicates.iter().all(|predicate| {
-        predicate
-            .column_equals
-            .as_ref()
-            .map(|[left, right]| row.get(left) == row.get(right))
-            .unwrap_or(true)
-            && predicate
-                .literal_equals
-                .as_ref()
-                .map(|literal| row.get(&literal.column) == Some(&literal.value))
-                .unwrap_or(true)
-    })
-}
-
-fn project(row: &BTreeMap<String, Value>, projection: &[Projection]) -> Result<Tuple> {
+fn project(row: &BoundRow, projection: &[Column]) -> Result<Tuple> {
     projection
         .iter()
-        .map(|item| match &item.source {
-            Some(source) => lookup(row, source),
-            None => Ok(item.value.clone().unwrap_or(Value::Null)),
-        })
+        .map(|column| lookup(row, column))
         .collect()
 }
 
-fn lookup(row: &BTreeMap<String, Value>, source: &str) -> Result<Value> {
-    row.get(source)
-        .cloned()
-        .ok_or_else(|| format!("projection source missing: {source}"))
+fn lookup(row: &BoundRow, column: &Column) -> Result<Value> {
+    match column {
+        Column::Slot(slot, source) => row[*slot]
+            .clone()
+            .ok_or_else(|| format!("projection source missing: {source}")),
+        Column::Absent(source) => Err(format!("projection source missing: {source}")),
+        Column::Constant(value) => Ok(value.cloned().unwrap_or(Value::Null)),
+    }
 }
 
 fn tick_json(tick: usize, before: &Relations, after: &Relations) -> String {
