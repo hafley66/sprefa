@@ -1,0 +1,3 @@
+rel box(id: int, items: list_interned_set(text)) key(1).
+
+carry(Id, Items) <- box(Id, Items).

@@ -1,0 +1,50 @@
+{
+  "$defs": {
+    "__gen__list_list_text_735a7cc11c2152ea": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__gen__list_list_text_735a7cc11c2152ea__member": {
+      "additionalProperties":false,
+      "properties": {
+        "idx": {"type":"integer"},
+        "list_id": {"type":"integer"},
+        "value": {"type":"integer"}
+      },
+      "required": ["idx", "list_id", "value" ],
+      "type":"object"
+    },
+    "__gen__list_text_df210f232c1299bd": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "__gen__list_text_df210f232c1299bd__member": {
+      "additionalProperties":false,
+      "properties": {
+        "idx": {"type":"integer"},
+        "list_id": {"type":"integer"},
+        "value": {"type":"string"}
+      },
+      "required": ["idx", "list_id", "value" ],
+      "type":"object"
+    },
+    "carry": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"rows": {"type":"integer"}},
+      "required": ["id", "rows" ],
+      "type":"object"
+    },
+    "grid": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"rows": {"type":"integer"}},
+      "required": ["id", "rows" ],
+      "type":"object"
+    }
+  },
+  "$id":"nested_list_text_door#3dfd5134bfbeedad",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
