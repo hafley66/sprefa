@@ -135,6 +135,9 @@ Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
 | `>=/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
 | `==/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
 | `\==/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `=:=/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `=\=/2` | `guard` | `no_refs` | `infix(lower)` | `live` |
+| `regexp/2` | `guard` | `no_refs` | `wrapper(expr_pair,lower)` | `live` |
 | `count/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `sum/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `min/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
@@ -146,7 +149,7 @@ Refusals: `coalesce_no_output`, `coalesce_multiple_outputs`,
 | `json_group_array/2` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `group_concat/2` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `group_concat/3` | `aggregate` | `no_refs` | `head(lower)` | `live` |
-| `group_concat/1` | `aggregate` | `no_refs` | `head(refuse(not_implemented))` | `refused` |
+| `group_concat/1` | `aggregate` | `no_refs` | `head(lower)` | `live` |
 | `enum_decl/2` | `decl` | `no_refs` | `decl(enum_variants)` | `live` |
 | `;/2` | `decl` | `no_refs` | `decl(enum_variant_separator)` | `live` |
 | `col_type/3` | `decl` | `no_refs` | `decl(column_type)` | `live` |
@@ -180,7 +183,7 @@ sibling throw shapes -- see `scripts/bop_check.pl`'s own header), 1 broken
 |---|---|---|
 | `bop serve` | `[--port <port>] [--db <url>]` | boot the served tsv2 engine and keep it running (exactly serve/main.ts). |
 | `bop run` | `<file.dl6> [--ticks <n>] [--port <port>]` | compile + load a program on an in-process ephemeral server, stream ticks to stdout until quiescent or --ticks fires, then shut down cleanly. |
-| `bop check` | `<file.dl6>` | validate a program through the text door; no server boots. Exit 0 clean, 2 named-refusal findings, 1 broken (parse/compile error). |
+| `bop check` | `<file.dl6>` | validate a program through the text door; no server boots. Exit 0 clean, 2 named-unsupported construct findings, 1 broken (parse/compile error). |
 | `bop load` | `<file.dl6> [--port <port>]` | POST a compiled program to an already-running bop serve; exit 1 if nothing is listening. |
 | `bop q` | `<rel> [--port <port>] [--json]` | read one rel's current rows from a running bop serve. |
 | `bop stats` | `[--port <port>]` | read process and SQLite storage statistics from a running bop serve. |
