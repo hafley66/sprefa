@@ -91,6 +91,20 @@
     "final_detail": ""
   },
   {
+    "name": "rel_element_list_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_rel_element_list_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "rtrim_strips_trailing_chars",
     "bucket": "identical",
     "detail": "",

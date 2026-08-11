@@ -4399,6 +4399,46 @@ test(generic_nested_list_declaration_permutation_is_byte_deterministic) :-
     term_string(Expanded, Text),
     term_string(Permuted, Text).
 
+% A rel type as the relational list element: the minted member value column
+% carries the rel type (same way a direct ref-typed column does), the bare
+% squad column lowers to the list entity id, and the whole expansion is
+% byte-deterministic under declaration permutation.
+test(list_rel_element_mints_ref_typed_member_value) :-
+    Rel_element_decls(Decls),
+    expand_generic_program(prog(Decls, []), prog(Expanded, _)),
+    member(col_type('__gen__list_fighter_summary_b424a4b49951eef7__member'/3,
+                    value, fighter_summary), Expanded),
+    member(col_type(squad/2, members, int), Expanded),
+    \+ member(col_type(_, value, list(fighter_summary)), Expanded).
+
+test(list_rel_element_declaration_permutation_is_byte_deterministic) :-
+    Rel_element_decls(Decls),
+    expand_generic_program(prog(Decls, []), Expanded),
+    reverse(Decls, Reversed),
+    expand_generic_program(prog(Reversed, []), Permuted),
+    term_string(Expanded, Text),
+    term_string(Permuted, Text).
+
+% The interned-set value dictionary is redundant for a rel element (the rel row
+% already interns it), so generic expansion names it instead of forcing it.
+test(list_interned_set_rel_element_is_named) :-
+    Decls = [ type_decl(fighter_summary, [col(name, text), col(url, text)]),
+              col_type(fighter_summary/2, name, text),
+              col_type(fighter_summary/2, url, text),
+              col_type(squad/2, id, int),
+              col_type(squad/2, members, list_interned_set(fighter_summary)),
+              keyed(squad/2, [1]) ],
+    catch(expand_generic_program(prog(Decls, []), _), Thrown, true),
+    Thrown == unsupported_construct(list_interned_set_relation_element(fighter_summary)).
+
+Rel_element_decls(Decls) :-
+    Decls = [ type_decl(fighter_summary, [col(name, text), col(url, text)]),
+              col_type(fighter_summary/2, name, text),
+              col_type(fighter_summary/2, url, text),
+              col_type(squad/2, id, int),
+              col_type(squad/2, members, list(fighter_summary)),
+              keyed(squad/2, [1]) ].
+
 nested_list_decls(Decls) :-
     Decls = [ col_type(box/2, id, int),
               col_type(box/2, entries, option(list(list(text)))),

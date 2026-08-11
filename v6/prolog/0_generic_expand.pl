@@ -44,7 +44,22 @@ expand_generic_program_raw(prog(Decls0, Rules), prog(Decls, Rules)) :-
 % Discovery fixes over minted decls (an outer member's value column is itself
 % a list), so each pass mints the not-yet-lowered instances and re-scans.
 generic_fixpoint(SourceDecls, Instances, AllDecls) :-
+    check_interned_set_rel_elements(SourceDecls),
     generic_fixpoint_(SourceDecls, [], AllDecls, Instances).
+
+% A rel element does not belong inside the interned-set value dictionary: the
+% rel row already interns it (the rel id IS the interned id). Named here rather
+% than forced through the redundant content-addressed dictionary.
+check_interned_set_rel_elements(SourceDecls) :-
+    declared_type_names(SourceDecls, Names),
+    (   member(col_type(_, _, list_interned_set(Element)), SourceDecls),
+        memberchk(Element, Names)
+    ->  throw(unsupported_construct(list_interned_set_relation_element(Element)))
+    ;   true
+    ).
+
+declared_type_names(Decls, Names) :-
+    findall(Name, member(type_decl(Name, _), Decls), Names).
 
 generic_fixpoint_(Decls, MintedSoFar, AllDecls, Instances) :-
     generic_type_instances(Decls, AllFound),
