@@ -1,0 +1,33 @@
+{
+  "$defs": {
+    "audit": {
+      "additionalProperties":false,
+      "properties": {
+        "at_commit": {"$ref":"#/$defs/commit"},
+        "audit_id": {"type":"integer"}
+      },
+      "required": ["audit_id", "at_commit" ],
+      "type":"object"
+    },
+    "commit": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "person": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["id", "name" ],
+      "type":"object"
+    },
+    "reviewed": {
+      "additionalProperties":false,
+      "properties": {"commit_id": {"type":"integer"},"reviewer_name": {"type":"string"}},
+      "required": ["commit_id", "reviewer_name" ],
+      "type":"object"
+    }
+  },
+  "$id":"option_rel_on_a_reference_target_round_trips_absent_and_present#c7e5744aa108f85e",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

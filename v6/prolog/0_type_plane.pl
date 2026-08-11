@@ -32,6 +32,9 @@
             type_definition/4,
             declared_type_name/2,
             column_storage/3,
+            type_wrapper/2,
+            unwrapped_column_type/2,
+            column_element_type_name/2,
             type_topological_order/2,
             type_cycle_witness/2,
             type_shape_error/4,
@@ -139,6 +142,31 @@ list_element_type(_, float).
 list_element_type(_, json).
 list_element_type(Types, json_list(Inner)) :- list_element_type(Types, Inner).
 
+% Where a wrapper puts a rel element: `value` in a column of the rel it mints
+% (list_flavor_artifacts/2), `endpoint` as an id (companion_rel_decls/4).
+type_wrapper(option, endpoint).
+type_wrapper(list, value).
+type_wrapper(list_entity_dense_sequence, value).
+type_wrapper(list_interned_set, value).
+type_wrapper(list_entity_linked_sequence, value).
+
+% Every type expression a spelling carries, itself first. Each step descends
+% into a strict subterm of a finite ground term, so the walk reaches the leaf.
+unwrapped_column_type(Type, Type).
+unwrapped_column_type(Type, Inner) :-
+    compound(Type),
+    Type =.. [Wrapper, Element],
+    type_wrapper(Wrapper, _),
+    unwrapped_column_type(Element, Inner).
+
+% The rel name a spelling puts in COLUMN position, hence the name that needs a
+% type_decl/2 mirror: the bare name, or the element of a value-storing wrapper.
+column_element_type_name(Name, Name) :- atom(Name).
+column_element_type_name(Type, Name) :-
+    unwrapped_column_type(Type, Inner),
+    Inner =.. [Wrapper, Name],
+    type_wrapper(Wrapper, value),
+    atom(Name).
 
 % The ref columns of one type, as Column-ChildType pairs.
 type_ref_columns(Types, Name, RefColumns) :-

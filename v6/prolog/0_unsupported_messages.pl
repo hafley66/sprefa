@@ -186,6 +186,8 @@ unsupported_source_module(match_expand).
 unsupported_source_module(coalesce_expand).
 unsupported_source_module(ast_expand).
 unsupported_source_module(dot_expand).
+unsupported_source_module(option_expand).
+unsupported_source_module(generic_expand).
 unsupported_source_module(type_plane).
 unsupported_source_module(expansion).
 unsupported_source_module(host_expand).

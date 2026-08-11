@@ -1,0 +1,3 @@
+rel fighter_summary(name: text, url: text).
+rel squad(members: option(list(fighter_summary))).
+rel roster(roster_id: int, at_squad: squad).

@@ -84,6 +84,7 @@ option_enum_name(Element, EnumName) :-
 desugar_reference_option(Decls0, ParentName/Arity, Column, Element, Position,
                          Decls) :-
     NewArity is Arity - 1,
+    check_companion_name_free(Decls0, ParentName/Arity, Column),
     exclude(option_column_entry(ParentName/Arity, Column), Decls0, Kept),
     maplist(shrink_parent_ref(ParentName/Arity, ParentName/NewArity,
                               Position),
@@ -92,6 +93,17 @@ desugar_reference_option(Decls0, ParentName/Arity, Column, Element, Position,
     append(RewrittenDecls, CompanionDecls, Decls).
 
 option_column_entry(Ref, Column, col_type(Ref, Column, option(_))).
+
+% The companion split rel lands in the author namespace, the hazard
+% validate_generated_name_collisions/3 covers for the minted generic names.
+check_companion_name_free(Decls, ParentName/Arity, Column) :-
+    companion_rel_name(ParentName, Column, CompanionName),
+    (   member(col_type(CompanionName/DeclaredArity, _, _), Decls)
+    ->  throw(unsupported_construct(
+                option_companion_name_collision(
+                    CompanionName/DeclaredArity, ParentName/Arity, Column)))
+    ;   true
+    ).
 
 shrink_parent_ref(OldRef, NewRef, _, col_type(OldRef, Column, Type),
                   col_type(NewRef, Column, Type)) :- !.
@@ -116,11 +128,14 @@ renumber_key_position(DroppedPosition, Position, Renumbered) :-
     ; Renumbered = Position
     ).
 
+companion_rel_name(ParentName, Column, CompanionName) :-
+    atomic_list_concat([ParentName, '__', Column], CompanionName).
+
 companion_rel_decls(ParentName, Column, Element,
                     [ col_type(CompanionRef, ParentIdColumn, int),
                       col_type(CompanionRef, ElementIdColumn, int),
                       keyed(CompanionRef, [1]) ]) :-
-    atomic_list_concat([ParentName, '__', Column], CompanionName),
+    companion_rel_name(ParentName, Column, CompanionName),
     CompanionRef = CompanionName/2,
     atom_concat(ParentName, '_id', ParentIdColumn),
     atom_concat(Element, '_id', ElementIdColumn).
