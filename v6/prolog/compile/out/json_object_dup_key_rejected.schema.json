@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "repo_kv": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "repo_meta": {
+      "additionalProperties":false,
+      "properties": {"col1": {}},
+      "required": ["col1" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_object_dup_key_rejected#1076dca9cb95e3e0",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

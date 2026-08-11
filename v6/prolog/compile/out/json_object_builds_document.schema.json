@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "repo_kv": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"repo": {"type":"string"},"value": {}},
+      "required": ["repo", "key", "value" ],
+      "type":"object"
+    },
+    "repo_meta": {
+      "additionalProperties":false,
+      "properties": {"col2": {},"repo": {"type":"string"}},
+      "required": ["repo", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_object_builds_document#0cd17482269d11e7",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

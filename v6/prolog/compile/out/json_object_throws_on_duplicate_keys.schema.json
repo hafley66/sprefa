@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "item": {
+      "additionalProperties":false,
+      "properties": {"key": {"type":"string"},"value": {}},
+      "required": ["key", "value" ],
+      "type":"object"
+    },
+    "metadata": {
+      "additionalProperties":false,
+      "properties": {"col1": {}},
+      "required": ["col1" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_object_throws_on_duplicate_keys#751850b83d739d42",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

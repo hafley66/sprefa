@@ -533,6 +533,8 @@ seed_column_contribution(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
     -> column_type_at_decl(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
                            Position, DeclaredType),
        Seed = frozen(DeclaredType)
+    ; json_object_value_source_position(Rules, Ref, Position)
+    -> Seed = open(json)
     ;  findall(Witness,
                ( column_source_args(Rules, Initial, Schedule, Ref, Args),
                  nth1(Position, Args, Witness),
@@ -556,6 +558,19 @@ seed_column_contribution(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
          Seed = open(WitnessType)
        )
     ).
+
+json_object_value_source_position(Rules, Ref, Position) :-
+    member(Rule, Rules),
+    rule_head(Rule, Head),
+    Head =.. [_ | HeadArgs],
+    member(json_object(_KeyExpr, ValueExpr), HeadArgs),
+    var(ValueExpr),
+    rule_body(Rule, Body),
+    body_ref_uses(Body, Uses),
+    member(use(Ref, SourceArgs, pos, _), Uses),
+    nth1(Position, SourceArgs, SourceValue),
+    SourceValue == ValueExpr,
+    !.
 
 % A rule head position whose variable is exactly the one now/1 binds in that
 % same rule's body. Anything else -- the tick flowing through a `:=`, or
@@ -630,6 +645,8 @@ aggregate_arg_contribution(_, Arg, float) :-
     nonvar(Arg), surface_for_term(Arg, avg/1, aggregate, _, _, _), !.
 aggregate_arg_contribution(_, Arg, json) :-
     nonvar(Arg), surface_for_term(Arg, json_group_array/_, aggregate, _, head(_), live), !.
+aggregate_arg_contribution(_, Arg, json) :-
+    nonvar(Arg), surface_for_term(Arg, json_object/2, aggregate, _, head(_), live), !.
 aggregate_arg_contribution(_, Arg, text) :-
     nonvar(Arg), surface_for_term(Arg, group_concat/_, aggregate, _, head(_), live), !.
 aggregate_arg_contribution(Environment, Arg, Type) :-
