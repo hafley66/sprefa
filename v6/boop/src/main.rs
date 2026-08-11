@@ -941,9 +941,10 @@ fn run_list(mail_dir_arg: Option<&Path>, agent: Option<&str>, all: bool) -> Resu
                 let padded_model = pad(route.model.as_deref().unwrap_or("-"), 46);
                 let padded_tmux = pad(route.tmux.as_deref().unwrap_or("-"), 16);
                 line(&format!(
-                    "{} {} {} {} {} {} {}",
+                    "{} {} {} {} {} {} {} {}",
                     pad(state, 4),
                     padded_name,
+                    pad(&route.kind, 12),
                     padded_harness,
                     padded_mode,
                     padded_model,
@@ -1139,6 +1140,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
     // The route's cwd is where the harness actually runs (the worktree when
     // one was made): session-id resolution joins opencode.db on directory.
     let route = Route {
+        kind: "lane".into(),
         harness: Some(harness_id),
         tmux: session.tmux.clone(),
         cwd: session.cwd.clone().or_else(|| Some(args.cwd.clone())),
@@ -1323,14 +1325,20 @@ fn run_hail(
     };
     append_message_to(&dir, box_name.unwrap_or("bus.ndjson"), &message)?;
     record_control_edge(&message)?;
-    println!("queued {} -> {to}", message.id);
-
     let routes = bus::read_routes(&dir)?;
     let Some(route) = routes.get(to) else {
+        println!("queued {} -> {to}", message.id);
         println!("no registry route for {to}: message stays queued, to_timestamp null");
         return Ok(());
     };
-    let Some(pane) = route.tmux.as_deref() else {
+    let pane = route.tmux.as_deref();
+    let no_pane = pane.is_none() || pane.is_some_and(|target| !tmux::target_alive(socket, target));
+    if no_pane && matches!(route.kind.as_str(), "coordinator" | "native") {
+        println!("queued {} -> {to} (no pane)", message.id);
+        return Ok(());
+    }
+    let Some(pane) = pane else {
+        println!("queued {} -> {to}", message.id);
         println!("{to} has no tmux pane: message stays queued, to_timestamp null");
         return Ok(());
     };
@@ -1547,6 +1555,12 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
     )?;
     let worktree_mode = identity.worktree_dir.is_some();
     let brief = args.brief.clone().unwrap_or_else(|| repo.join("brief.md"));
+    if !brief.is_absolute() {
+        anyhow::bail!("brief path must be absolute: {}", brief.display());
+    }
+    if !brief.exists() {
+        anyhow::bail!("brief path does not exist: {}", brief.display());
+    }
     // The flash4 default belongs to opencode's spelling; another harness gets
     // no model rather than one it cannot resolve.
     let model = match (args.model.clone(), harness_id.as_str()) {
@@ -1711,6 +1725,7 @@ fn run_adopt(
     }
     let dir = mail_dir(mail_dir_arg)?;
     let route = Route {
+        kind: "lane".into(),
         harness: harness.map(str::to_owned),
         tmux: Some(tmux_session.to_owned()),
         cwd: cwd.map(str::to_owned),
@@ -1736,6 +1751,7 @@ fn run_prune(mail_dir_arg: Option<&Path>) -> Result<()> {
     let routes = bus::read_routes(&dir)?;
     let dead: Vec<String> = routes
         .iter()
+        .filter(|(_, route)| route.kind == "lane")
         .filter(|(_, route)| {
             let Some(target) = route.tmux.as_deref() else {
                 return true;
@@ -1765,6 +1781,7 @@ fn write_route(dir: &std::path::Path, lane_id: &str, route: Route) -> Result<()>
 
 fn route_to_json(route: &Route) -> serde_json::Value {
     let mut object = serde_json::Map::new();
+    object.insert("kind".into(), serde_json::json!(route.kind));
     if let Some(harness) = &route.harness {
         object.insert("harness".into(), serde_json::json!(harness));
     }
@@ -1872,6 +1889,7 @@ mod tests {
             &dir,
             "l",
             Route {
+                kind: "lane".into(),
                 harness: Some("claude".into()),
                 tmux: Some("somesession".into()),
                 cwd: None,
@@ -1906,6 +1924,7 @@ mod tests {
 
     fn tmux_route(tmux_name: &str) -> Route {
         Route {
+            kind: "lane".into(),
             harness: Some("claude".into()),
             tmux: Some(tmux_name.to_owned()),
             cwd: None,
@@ -1953,14 +1972,25 @@ mod tests {
         let dir = temp_mail_dir();
         let live_name = unique_name("boop-prune-live");
         let _session = LiveTmuxSession::new(&live_name);
-        write_route(&dir, "dead-lane", tmux_route(&unique_name("boop-prune-dead"))).unwrap();
+        write_route(
+            &dir,
+            "dead-lane",
+            tmux_route(&unique_name("boop-prune-dead")),
+        )
+        .unwrap();
         write_route(&dir, "live-lane", tmux_route(&live_name)).unwrap();
 
         run_lane_prune(Some(&dir), false).unwrap();
 
         let routes = read_routes(&dir).unwrap();
-        assert!(!routes.contains_key("dead-lane"), "a dead row must be pruned");
-        assert!(routes.contains_key("live-lane"), "a live row must survive prune");
+        assert!(
+            !routes.contains_key("dead-lane"),
+            "a dead row must be pruned"
+        );
+        assert!(
+            routes.contains_key("live-lane"),
+            "a live row must survive prune"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1969,12 +1999,20 @@ mod tests {
     #[test]
     fn prune_dry_run_removes_nothing() {
         let dir = temp_mail_dir();
-        write_route(&dir, "dead-lane", tmux_route(&unique_name("boop-prune-dead"))).unwrap();
+        write_route(
+            &dir,
+            "dead-lane",
+            tmux_route(&unique_name("boop-prune-dead")),
+        )
+        .unwrap();
 
         run_lane_prune(Some(&dir), true).unwrap();
 
         let routes = read_routes(&dir).unwrap();
-        assert!(routes.contains_key("dead-lane"), "--dry-run must remove nothing");
+        assert!(
+            routes.contains_key("dead-lane"),
+            "--dry-run must remove nothing"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2000,6 +2038,7 @@ mod tests {
     fn dead_reason_names_no_recorded_session_when_tmux_is_absent() {
         let snapshot = SysinfoSnapshot::capture().unwrap();
         let route = Route {
+            kind: "lane".into(),
             harness: Some("claude".into()),
             tmux: None,
             cwd: None,
@@ -2033,6 +2072,7 @@ mod tests {
 
     fn registered_route(ts: &str) -> Route {
         Route {
+            kind: "lane".into(),
             harness: Some("claude".into()),
             tmux: Some("l".into()),
             cwd: None,
@@ -2244,6 +2284,7 @@ mod tests {
     fn route_goal_round_trips() {
         let dir = temp_mail_dir();
         let route = Route {
+            kind: "lane".into(),
             harness: Some("opencode".into()),
             tmux: Some("lane-x".into()),
             cwd: None,
@@ -2310,6 +2351,7 @@ mod tests {
 
     fn route_with(parent: Option<&str>) -> Route {
         Route {
+            kind: "lane".into(),
             harness: Some("opencode".into()),
             tmux: Some("lane-x".into()),
             cwd: None,
@@ -2427,6 +2469,7 @@ mod tests {
         routes.insert(
             "child".into(),
             Route {
+                kind: "lane".into(),
                 harness: Some("opencode".into()),
                 tmux: Some("lane-x".into()),
                 cwd: None,
@@ -2491,6 +2534,11 @@ enum BeepCmd {
     Lane {
         #[command(subcommand)]
         cmd: LaneCmd,
+    },
+    /// Register pane-less coordinators and native subagents.
+    Agent {
+        #[command(subcommand)]
+        cmd: AgentCmd,
     },
     /// Type into a running agent, and say whether the keystrokes landed.
     Hail {
@@ -2675,6 +2723,28 @@ enum LaneCmd {
         /// Seconds to wait before exiting 124; 0 waits forever.
         #[arg(long, default_value_t = 0)]
         timeout: u64,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentCmd {
+    /// Add a pane-less registry row.
+    Register {
+        name: String,
+        #[arg(long, default_value = "native")]
+        kind: String,
+        #[arg(long)]
+        parent: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
+    /// Append a completion row and remove the registry row.
+    Done {
+        name: String,
+        #[arg(long, default_value_t = 0)]
+        rc: i32,
         #[arg(long)]
         mail_dir: Option<PathBuf>,
     },
@@ -2942,6 +3012,7 @@ fn run_beep(registry: &Registry, cmd: BeepCmd) -> Result<()> {
             HarnessCmd::Get { harness } => run_harness_get(registry, &harness),
         },
         BeepCmd::Lane { cmd } => run_beep_lane(registry, cmd),
+        BeepCmd::Agent { cmd } => run_agent(cmd),
         BeepCmd::Hail {
             lane,
             body,
@@ -2984,6 +3055,73 @@ fn run_beep(registry: &Registry, cmd: BeepCmd) -> Result<()> {
             format,
             mail_dir,
         } => run_pstree(mail_dir.as_deref(), all, format),
+    }
+}
+
+fn run_agent(cmd: AgentCmd) -> Result<()> {
+    match cmd {
+        AgentCmd::Register {
+            name,
+            kind,
+            parent,
+            mail_dir: mail_dir_arg,
+        } => {
+            if !matches!(kind.as_str(), "coordinator" | "native") {
+                anyhow::bail!("agent kind must be coordinator or native")
+            }
+            let dir = mail_dir(mail_dir_arg.as_deref())?;
+            write_route(
+                &dir,
+                &name,
+                Route {
+                    kind,
+                    harness: None,
+                    tmux: None,
+                    cwd: None,
+                    model: None,
+                    mode: None,
+                    session_id: None,
+                    source_path: None,
+                    parent,
+                    goal: None,
+                    registered_at: Some(bus::now_iso()),
+                },
+            )?;
+            println!("registered {name}");
+            Ok(())
+        }
+        AgentCmd::Done {
+            name,
+            rc,
+            mail_dir: mail_dir_arg,
+        } => {
+            let dir = mail_dir(mail_dir_arg.as_deref())?;
+            let routes = bus::read_routes(&dir)?;
+            let parent = routes
+                .get(&name)
+                .and_then(|route| route.parent.as_deref())
+                .unwrap_or("sprefa-coordinator")
+                .to_owned();
+            let message = bus::Message {
+                id: bus::mint_id(),
+                from: name.clone(),
+                to: parent,
+                from_timestamp: bus::now_iso(),
+                to_timestamp: None,
+                kind: "result".into(),
+                reply_to: None,
+                body: format!("lane {name} done rc={rc}"),
+                r#ref: None,
+            };
+            append_message(&dir, &message)?;
+            let path = dir.join("registry.json");
+            bus::cas_update_json(&path, |current| {
+                current.remove(&name);
+                Ok(())
+            })?;
+            println!("{}", message.body);
+            Ok(())
+        }
     }
 }
 
@@ -3126,9 +3264,10 @@ fn run_lane_list(
             }
         }
         line(&format!(
-            "{} {} {} {} {} {} {}",
+            "{} {} {} {} {} {} {} {}",
             pad(state, 4),
             pad(name, 16),
+            pad(&route.kind, 12),
             pad(route.harness.as_deref().unwrap_or("-"), 10),
             pad(route.mode.as_deref().unwrap_or("-"), 6),
             pad(route.model.as_deref().unwrap_or("-"), 46),
@@ -3206,13 +3345,18 @@ fn run_lane_prune(mail_dir_arg: Option<&Path>, dry_run: bool) -> Result<()> {
     let snapshot = proc::SysinfoSnapshot::capture()?;
     let dead: Vec<(String, String, String)> = routes
         .iter()
+        .filter(|(_, route)| route.kind == "lane")
         .filter_map(|(name, route)| {
             let why = dead_reason(route, &snapshot)?;
-            Some((name.clone(), route.tmux.clone().unwrap_or_else(|| "-".into()), why))
+            Some((
+                name.clone(),
+                route.tmux.clone().unwrap_or_else(|| "-".into()),
+                why,
+            ))
         })
         .collect();
     for (name, tmux_name, why) in &dead {
-        line(&format!("{name} {tmux_name} {why}"));
+        line(&format!("lane {name} {tmux_name} {why}"));
     }
     if dry_run {
         line(&format!("{} lane(s) would be pruned (dry run)", dead.len()));

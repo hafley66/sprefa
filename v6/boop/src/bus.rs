@@ -28,6 +28,8 @@ pub struct Message {
 
 #[derive(Clone, Debug)]
 pub struct Route {
+    /// `lane` is the default for registry rows written before kinds existed.
+    pub kind: String,
     pub harness: Option<String>,
     pub tmux: Option<String>,
     pub cwd: Option<String>,
@@ -70,6 +72,7 @@ fn route_from_value(entry: &Value) -> Route {
         // a bare string is a shorthand for a session id route
         None if entry.is_string() => {
             return Route {
+                kind: "lane".into(),
                 session_id: entry.as_str().map(str::to_owned),
                 ..Route::unset()
             };
@@ -77,6 +80,7 @@ fn route_from_value(entry: &Value) -> Route {
         None => return Route::unset(),
     };
     Route {
+        kind: string_field(object, "kind").unwrap_or_else(|| "lane".into()),
         harness: string_field(object, "harness"),
         tmux: string_field(object, "tmux"),
         cwd: string_field(object, "cwd"),
@@ -96,6 +100,7 @@ fn route_from_value(entry: &Value) -> Route {
 impl Route {
     fn unset() -> Self {
         Route {
+            kind: "lane".into(),
             harness: None,
             tmux: None,
             cwd: None,

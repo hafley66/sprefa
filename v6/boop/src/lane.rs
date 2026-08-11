@@ -550,6 +550,7 @@ mod tests {
 
     fn route(tmux: &str) -> Route {
         Route {
+            kind: "lane".into(),
             harness: Some("opencode".into()),
             tmux: Some(tmux.into()),
             cwd: None,
