@@ -1,0 +1,5 @@
+{"tick":1,"deltas":{"grade_ripe":{"add":[[1,{"name":"oak","tree_id":1000}]],"del":[]},"grade_tag":{"add":[[1,"ripe"]],"del":[]},"tree":{"add":[[1000,"oak"]],"del":[]}}}
+{"tick":2,"deltas":{"grade_bruised":{"add":[[2,"bruised"]],"del":[]},"grade_tag":{"add":[[2,"bruised"]],"del":[]}}}
+{"tick":3,"deltas":{"graded":{"add":[[301,1]],"del":[]},"graded_tag":{"add":[[301,"ripe"]],"del":[]}}}
+{"tick":4,"deltas":{"graded":{"add":[[302,2]],"del":[]},"graded_tag":{"add":[[302,"bruised"]],"del":[]}}}
+{"tick":5,"deltas":{"grade_ripe":{"add":[],"del":[[1,{"name":"oak","tree_id":1000}]]},"grade_tag":{"add":[],"del":[[1,"ripe"]]},"graded_tag":{"add":[],"del":[[301,"ripe"]]}}}

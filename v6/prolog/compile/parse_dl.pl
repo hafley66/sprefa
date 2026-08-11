@@ -1037,6 +1037,13 @@ declared_column_type_name(Decls, Name) :-
     member(bind_decl(_, Columns), Decls),
     member(col(_, Name), Columns),
     \+ scalar_column_type(Name).
+declared_column_type_name(Decls, Name) :-
+    member(enum_decl(_, VariantTerms), Decls),
+    enum_decl_variant_term(VariantTerms, Variant),
+    Variant =.. [_ | VariantFields],
+    member(VariantField, VariantFields),
+    VariantField =.. [':', _, Name],
+    \+ scalar_column_type(Name).
 
 scalar_column_type(int).
 scalar_column_type(text).

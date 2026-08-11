@@ -1,0 +1,1 @@
+[[{"rel":"grade_ripe","sign":"add","row":[1,{"name":"oak","tree_id":1000}]}],[{"rel":"grade_bruised","sign":"add","row":[2,"bruised"]}],[{"rel":"graded","sign":"add","row":[301,1]}],[{"rel":"graded","sign":"add","row":[302,2]}],[{"rel":"grade_ripe","sign":"del","row":[1,{"name":"oak","tree_id":1000}]}]]

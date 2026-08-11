@@ -196,6 +196,13 @@
     "final_detail": ""
   },
   {
+    "name": "enum_variant_field_typed_as_rel_is_a_ref",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "match_classify_response",
     "bucket": "identical",
     "detail": "",
