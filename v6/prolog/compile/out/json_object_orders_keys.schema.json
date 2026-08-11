@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "item": {
+      "additionalProperties":false,
+      "properties": {"group": {"type":"string"},"key": {"type":"string"},"value": {}},
+      "required": ["group", "key", "value" ],
+      "type":"object"
+    },
+    "metadata": {
+      "additionalProperties":false,
+      "properties": {"col2": {},"group": {"type":"string"}},
+      "required": ["group", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_object_orders_keys#2d5e21ebebab86af",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

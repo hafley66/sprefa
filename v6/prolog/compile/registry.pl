@@ -168,7 +168,7 @@ surface(avg/1,          aggregate, no_refs,                      head(lower),   
 % the canonical JSON text boundary, so the SQL aggregate result and the tick
 % log carry the same bytes.
 surface(json_array/1,       aggregate, no_refs,                   head(refuse(aggregate)),               refused).
-surface(json_object/2,      aggregate, no_refs,                   head(refuse(aggregate)),               refused).
+surface(json_object/2,      aggregate, no_refs,                   head(lower),                           live).
 surface(json_group_array/1, aggregate, no_refs,                   head(lower),                           live).
 surface(json_group_array/2, aggregate, no_refs,                   head(lower),                           live).
 surface(group_concat/2,     aggregate, no_refs,                   head(lower),                           live).

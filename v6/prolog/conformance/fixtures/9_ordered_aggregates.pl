@@ -76,6 +76,27 @@ fixture(ordered_json_group_array_nested_json,
   [ final(nested/2,
           [ nested(north, [obj([a-2, z-1]), obj([a-3, z-4])]) ]) ]).
 
+fixture(json_object_groups_rows_into_documents,
+  prog([], [ (metadata(Group, json_object(Key, Value)) <- item(Group, Key, Value)) ]),
+  [ item(north, name, pear), item(north, count, 2), item(south, name, apple) ],
+  [],
+  [ final(metadata/2,
+          [ metadata(north, obj([count-2, name-pear])),
+            metadata(south, obj([name-apple])) ]) ]).
+
+fixture(json_object_orders_keys,
+  prog([], [ (metadata(Group, json_object(Key, Value)) <- item(Group, Key, Value)) ]),
+  [ item(north, zebra, 1), item(north, apple, 2), item(north, middle, 3) ],
+  [],
+  [ final(metadata/2,
+          [ metadata(north, obj([apple-2, middle-3, zebra-1])) ]) ]).
+
+fixture(json_object_throws_on_duplicate_keys,
+  prog([], [ (metadata(json_object(Key, Value)) <- item(Key, Value)) ]),
+  [ item(name, pear), item(name, apple) ],
+  [],
+  [ throws(json_object_dup_key([name, name])) ]).
+
 fixture(ordered_mermaid_line_assembly,
   prog([], [ (mermaid_text(FileName, group_concat(LineText, "\n", LineOrdinal)) <-
               mermaid_line(FileName, LineOrdinal, LineText)) ]),

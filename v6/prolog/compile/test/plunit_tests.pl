@@ -1311,7 +1311,7 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-41, refcount-328, refcount_staging-328,
+    Counts = [scope-46, refcount-328, refcount_staging-328,
               expand-8, dred-12, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
@@ -1797,8 +1797,8 @@ test(rejects_ordered_aggregate_wrong_arity,
                       item(Value, Ordinal, Extra)) ]),
     check_supported_subset(Prog).
 
-% json_array/json_object stay refused, and the reason is NOT "not implemented
-% yet": a Prolog list value renders through the shared tick-log encoder
+% json_array stays behind its compiler gate: a Prolog list value renders
+% through the shared tick-log encoder
 % (ticklog.pl term_text/2) as right-nested cons text -- [|](4,[|](4,[|](9,[])))
 % -- and json_object as obj([|](-(k,v),[])). Neither is what
 % json_group_array/json_group_object produce, so no ORDER BY pinning makes
@@ -1809,10 +1809,19 @@ test(rejects_json_array_aggregate_head,
     Prog = prog([], [ (bag(json_array(X)) <- item(X)) ]),
     check_supported_subset(Prog).
 
-test(rejects_json_object_aggregate_head,
-     [throws(unsupported_construct(aggregate_head(_)))]) :-
+test(accepts_json_object_aggregate_head) :-
     Prog = prog([], [ (doc(json_object(Key, Value)) <- pair(Key, Value)) ]),
     check_supported_subset(Prog).
+
+test(json_object_aggregate_lowers_with_order_and_duplicate_key_guard) :-
+    Term = fixture(json_object_aggregate_sql,
+                   prog([], [ (doc(Group, json_object(Key, Value)) <-
+                               pair(Group, Key, Value)) ]),
+                   [ pair(north, name, pear) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/2, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "doc" ("col1", "col2") SELECT b0."col1", CASE WHEN count(DISTINCT json_array(b0."col2", json(b0."col3"))) = count(DISTINCT b0."col2") THEN json_group_object(b0."col2", json(b0."col3") ORDER BY b0."col2") ELSE json(\'json_object_dup_key\') END FROM "pair" b0 GROUP BY b0."col1" HAVING count(*) > 0'.
 
 % An aggregate whose body reads its own head: engine.pl forces Gap=1 for
 % every body ref of an aggregate head (level_eval.pl rule_body_constraint/4),
@@ -4790,11 +4799,10 @@ test(aggregate_axis_carries_two_distinct_roles) :-
 % The both-doors half of this row lives in the cross_plane_check_parity unit,
 % beside every other shared unsupported construct, because door_verdict/3 is that unit's.
 
-% The oracle stays WIDER than the compiler. Both json rows are refused by the
-% compiler and both are still oracle aggregates.
-test(refused_json_aggregates_stay_live_in_the_oracle) :-
-    forall(member(Signature, [json_array/1, json_object/2]),
-           surface(Signature, aggregate, _, head(refuse(aggregate)), refused)),
+% The oracle executes both rows while the compiler now lowers json_object/2.
+test(json_aggregates_stay_live_in_the_oracle) :-
+    surface(json_array/1, aggregate, _, head(refuse(aggregate)), refused),
+    surface(json_object/2, aggregate, _, head(lower), live),
     forall(( member(Name/Arity, [json_array/1, json_object/2]),
              length(Args, Arity),
              AggregateTerm =.. [Name | Args],

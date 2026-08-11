@@ -5012,6 +5012,15 @@ aggregate_select_expr(Mode, agg(min, Expr), Bound, Sql, direct) :- !,
 aggregate_select_expr(Mode, agg(max, Expr), Bound, Sql, direct) :- !,
     compile_aggregate_number_operand(Mode, max, Expr, Bound, InnerSql, _),
     format(atom(Sql), 'max(~w)', [InnerSql]).
+% The ELSE arm RAISES: `json_object_dup_key` is not valid JSON text, so json/1
+% fails the statement with "malformed JSON", matching the oracle's throw.
+aggregate_select_expr(Mode, agg(json_object, KeyExpr-ValueExpr), Bound, Sql, direct) :- !,
+    compile_expr(Mode, value, KeyExpr, Bound, KeySql, _KeyType, _KeyEncoding),
+    compile_expr(Mode, value, ValueExpr, Bound, ValueSql, ValueType, _ValueEncoding),
+    json_group_array_value_sql(ValueType, ValueSql, AggregateValueSql),
+    format(atom(Sql),
+           'CASE WHEN count(DISTINCT json_array(~w, ~w)) = count(DISTINCT ~w) THEN json_group_object(~w, ~w ORDER BY ~w) ELSE json(\'json_object_dup_key\') END',
+           [KeySql, AggregateValueSql, KeySql, KeySql, AggregateValueSql, KeySql]).
 aggregate_select_expr(Mode, agg(json_group_array, Expr), Bound, Sql, direct) :- !,
     compile_expr(Mode, value, Expr, Bound, ValueSql, ValueType, _Encoding),
     json_group_array_value_sql(ValueType, ValueSql, AggregateValueSql),
