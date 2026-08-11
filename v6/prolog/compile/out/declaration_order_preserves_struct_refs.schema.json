@@ -1,0 +1,40 @@
+{
+  "$defs": {
+    "box_list": {
+      "additionalProperties":false,
+      "properties": {"items": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "items" ],
+      "type":"object"
+    },
+    "patch": {
+      "additionalProperties":false,
+      "properties": {"at": {"$ref":"#/$defs/plot"},"label": {"type":"string"}},
+      "required": ["label", "at" ],
+      "type":"object"
+    },
+    "plot": {
+      "additionalProperties":false,
+      "properties": {"col": {"type":"integer"},"row": {"type":"integer"}},
+      "required": ["row", "col" ],
+      "type":"object"
+    },
+    "tree": {
+      "additionalProperties":false,
+      "properties": {
+        "site": {"$ref":"#/$defs/patch"},
+        "species": {"type":"string"},
+        "tree_id": {"type":"integer"}
+      },
+      "required": ["tree_id", "species", "site" ],
+      "type":"object"
+    },
+    "tree_label": {
+      "additionalProperties":false,
+      "properties": {"label": {"type":"string"},"tree_id": {"type":"integer"}},
+      "required": ["tree_id", "label" ],
+      "type":"object"
+    }
+  },
+  "$id":"declaration_order_preserves_struct_refs#2e266876a05c8472",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

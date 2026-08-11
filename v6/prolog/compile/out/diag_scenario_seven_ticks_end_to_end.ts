@@ -634,6 +634,7 @@ function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITi
         map(() => before),
       ),
     ),
+  ).pipe(
     concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
     concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
   );
