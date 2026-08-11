@@ -1,0 +1,4 @@
+rel step(path, piece) log keep(all).
+rel breadcrumb(path, next) key(1).
+
+breadcrumb(Path, Next) <+ step(Path, Piece), pre(breadcrumb(Path, SoFar), ''), Next := concat([SoFar, Piece]).

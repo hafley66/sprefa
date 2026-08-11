@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"counter":{"add":[["clicks",5]],"del":[]},"increment":{"add":[["clicks",4]],"del":[]}}}
+{"tick":2,"deltas":{"counter":{"add":[["clicks",6]],"del":[["clicks",5]]},"increment":{"add":[["clicks",99]],"del":[]}}}
+{"tick":3,"deltas":{}}

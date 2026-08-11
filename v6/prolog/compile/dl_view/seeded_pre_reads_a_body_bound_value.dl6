@@ -1,0 +1,4 @@
+rel increment(name, start) log keep(all).
+rel counter(name, next) key(1).
+
+counter(Name, Next) <+ increment(Name, Start), pre(counter(Name, Total), Start), Next := Total + 1.

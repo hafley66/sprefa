@@ -1,0 +1,4 @@
+rel fee(account, amount) log keep(all).
+rel fee_stats(account, next) key(1).
+
+fee_stats(Account, Next) <+ fee(Account, Amount), pre(fee_stats(Account, Total), 0), Next := Total + Amount.
