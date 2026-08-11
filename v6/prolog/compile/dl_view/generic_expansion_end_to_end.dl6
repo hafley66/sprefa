@@ -11,7 +11,11 @@ rel author_audit(id: int, tag: text).
 rel seen_review(id: int, name: text).
 rel seen_bucket(id: int, list_id: int).
 
-seen_ticket(Id, Tag) <- ticket(Id, Option), __opt_text_tag(Option, Tag).
+seen_ticket(Id, Tag) <-
+  ticket(Id, Option),
+  __opt_text_tag(Option, Tag).
 author_audit(Id, Tag) <- seen_ticket(Id, Tag).
-seen_review(Id, Name) <- review__reviewer(Id, PersonId), person(PersonId, Name).
+seen_review(Id, Name) <-
+  review__reviewer(Id, PersonId),
+  person(PersonId, Name).
 seen_bucket(Id, ListId) <- bucket__entries(Id, ListId).

@@ -1,3 +1,5 @@
 rel repo(name: text).
 
-pair(Name, Commit, Author) <- repo(Name), coalesce(commit_by(Name, Commit, Author), 'absent').
+pair(Name, Commit, Author) <-
+  repo(Name),
+  coalesce(commit_by(Name, Commit, Author), 'absent').

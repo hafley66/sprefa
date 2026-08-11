@@ -5,5 +5,12 @@ rel df_param(path: text, node: text, pos: int, end: int).
 rel flow_param_type(path: text, name: text, pos: int, ty: text).
 rel flow_node_type(node: text, path: text, name: text, ty: text).
 
-flow_param_type(Path, Name, Pos, Ty) <- sink_callee(Path, Name), type_owner(Path, Name, OwnerStart, OwnerEnd), sig(Path, OwnerStart, OwnerEnd, 'param', Pos, Ty).
-flow_node_type(Node, Path, Name, Ty) <- sink_callee(Path, Name), type_owner(Path, Name, OwnerStart, OwnerEnd), df_param(Path, Node, Pos, _), sig(Path, OwnerStart, OwnerEnd, 'param', Pos, Ty).
+flow_param_type(Path, Name, Pos, Ty) <-
+  sink_callee(Path, Name),
+  type_owner(Path, Name, OwnerStart, OwnerEnd),
+  sig(Path, OwnerStart, OwnerEnd, 'param', Pos, Ty).
+flow_node_type(Node, Path, Name, Ty) <-
+  sink_callee(Path, Name),
+  type_owner(Path, Name, OwnerStart, OwnerEnd),
+  df_param(Path, Node, Pos, _),
+  sig(Path, OwnerStart, OwnerEnd, 'param', Pos, Ty).

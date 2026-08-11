@@ -21,9 +21,9 @@
 # golden flexes it. That is the language-kept-in-check mechanism; it is a gate,
 # not a doc.
 #
-# ═══ NAMED REFUSALS (part of the flex; the coverage gate asserts each one) ═══
+# ═══ NAMED UNSUPPORTED CONSTRUCTS (part of the flex; the coverage gate asserts each one) ═══
 # Every line below is a construct or composition this program CANNOT express.
-# None of them is worked around: the refusal name is the record.
+# None of them is worked around: the unsupported name is the record.
 #
 #   json_each/2                    registry status `refused`.
 #   json_array/1, json_object/2    aggregate heads, registry status `refused`
@@ -307,6 +307,51 @@ pickable(TreeId, Species, Lane) <-
   TreeId > 0,
   Lane := (TreeId * 3 + 1) mod 7.
 
+# ═══ MINTED ARTIFACTS: what a nested decl becomes ════════════════════════════
+# A declaration can mint companion relations, enum relations, and member
+# relations. Each example has an existing arrival source and a departure path.
+
+# The grade payload enum mints grade_ripe/2 and grade_bruised/2 variant rels
+# sharing the id space, plus grade_tag/2 as the which-one view. Read one variant
+# and the tag view in ordinary rules.
+rel grade_artifact_read(grade_id: int, tag: text).
+grade_artifact_read(GradeId, Tag) <-
+  grade_ripe(GradeId, _Sugar),
+  grade_tag(GradeId, Tag).
+
+# A variant payload typed as another rel mints a reference-valued field. The
+# ref arrives through pick_event and is read back through the parent relation.
+rel harvest(ripe(site: patch) ; bruised(reason: text)).
+rel harvest_site_read(tree_id: int, label: text).
+harvest_site_read(TreeId, Label) <-
+  harvest_ripe(TreeId, Site),
+  decode(Site, {label: Label}).
+
+# pre/2 is the seeded one-arm spelling beside pick_count/2's older pre/1 fold.
+rel pick_count_seeded(tree_id: int, count: int) key(1).
+pick_count_seeded(TreeId, Count) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar),
+  pre(pick_count_seeded(TreeId, Previous), 0),
+  Count := Previous + 1.
+pick_count_seeded(TreeId, Count) <+
+  retire_event(TreeId),
+  pre(pick_count_seeded(TreeId, Previous), 0),
+  Count := Previous - 1.
+
+# option(T) mints an enum for scalar T; a rel-valued option mints a companion.
+# The scalar id is read back by the ordinary relation path.
+rel optional_picker(tree_id: int, picker: option(text)).
+rel optional_picker_read(tree_id: int, option_id: int).
+optional_picker_read(TreeId, OptionId) <-
+  optional_picker(TreeId, OptionId).
+# list(rel_name) mints a carrier and member rel. Read members through spread
+# and join them to the referenced relation.
+rel tree_bundle(tree_id: int, sites: list(patch)).
+rel tree_bundle_read(tree_id: int, label: text).
+tree_bundle_read(TreeId, Label) <-
+  tree_bundle(TreeId, ListId),
+  __gen__list_patch_ad51169ab9220e8a__member(ListId, _Index, Site),
+  decode(Site, {label: Label}).
 # `is`, the second registered bind operator, carrying `-` and `/`. Kept beside
 # `:=` deliberately: both are live registry rows and the corpus only ever wrote
 # one of them.

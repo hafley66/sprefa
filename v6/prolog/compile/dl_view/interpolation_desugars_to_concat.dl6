@@ -1,1 +1,3 @@
-message(Path, LineNumber, Text) <- eprintln_hit(Path, LineNumber), Text := concat(['eprintln at ', Path, ':', LineNumber, ' is waived']).
+message(Path, LineNumber, Text) <-
+  eprintln_hit(Path, LineNumber),
+  Text := concat(['eprintln at ', Path, ':', LineNumber, ' is waived']).

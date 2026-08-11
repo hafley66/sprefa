@@ -2,6 +2,9 @@ rel fetch_result(endpoint, col2) log keep(all).
 rel cache(endpoint, tag, body) key(1).
 rel retries(endpoint, next) key(1).
 
-retries(Endpoint, Next) <+ fetch_result(Endpoint, error(_)), pre(retries(Endpoint, SoFar)), Next := SoFar + 1.
+retries(Endpoint, Next) <+
+  fetch_result(Endpoint, error(_)),
+  pre(retries(Endpoint, SoFar)),
+  Next := SoFar + 1.
 retries(Endpoint, 0) <+ fetch_result(Endpoint, fresh(_, _)).
 cache(Endpoint, Tag, Body) <+ fetch_result(Endpoint, fresh(Tag, Body)).

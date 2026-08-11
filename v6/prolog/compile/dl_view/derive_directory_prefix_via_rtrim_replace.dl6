@@ -1,1 +1,3 @@
-directory(File, Dir) <- file_path(File), Dir := rtrim(File, replace(File, '/', '')).
+directory(File, Dir) <-
+  file_path(File),
+  Dir := rtrim(File, replace(File, '/', '')).

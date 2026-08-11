@@ -5,4 +5,6 @@ rel span(file: file, start: int, end: int).
 rel raw(repo_name: text, path_name: text, start: int, end: int).
 rel seen(start: int).
 
-seen(Start) <- raw(_, _, Start, _), not(span(file(repo('acme'), fpath('missing.rs')), Start, _)).
+seen(Start) <-
+  raw(_, _, Start, _),
+  not(span(file(repo('acme'), fpath('missing.rs')), Start, _)).

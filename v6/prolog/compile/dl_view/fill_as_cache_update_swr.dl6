@@ -4,4 +4,6 @@ rel cache_row(target, body) key(1).
 
 demanded(Target, SessionId) <- open_feed(SessionId, Target).
 cache_row(Target, Body) <+ fill_arrived(Target, Body).
-feed_view(Target, Body) <- demanded(Target, _), cache_row(Target, Body).
+feed_view(Target, Body) <-
+  demanded(Target, _),
+  cache_row(Target, Body).

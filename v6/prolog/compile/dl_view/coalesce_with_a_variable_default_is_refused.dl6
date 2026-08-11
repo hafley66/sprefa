@@ -1,3 +1,6 @@
 rel repo(name: text).
 
-repo_latest(Name, Commit) <- repo(Name), fallback(Fallback), coalesce(latest_commit(Name, Commit), Fallback).
+repo_latest(Name, Commit) <-
+  repo(Name),
+  fallback(Fallback),
+  coalesce(latest_commit(Name, Commit), Fallback).

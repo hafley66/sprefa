@@ -1,4 +1,6 @@
 rel user_profile(user_id: int, email: option(text)) key(1).
 rel email_state(user_id: int, state: text).
 
-email_state(UserId, State) <- user_profile(UserId, EmailOption), __opt_text_tag(EmailOption, State).
+email_state(UserId, State) <-
+  user_profile(UserId, EmailOption),
+  __opt_text_tag(EmailOption, State).

@@ -1,1 +1,3 @@
-previous_copy(Item) <- source_item(Item), pre(source_item(Item)).
+previous_copy(Item) <-
+  source_item(Item),
+  pre(source_item(Item)).

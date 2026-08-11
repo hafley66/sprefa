@@ -2,4 +2,6 @@ rel ping(tree_id: int) log keep(all).
 rel labelled(tree_id: int, label: text) log keep(all).
 rel name(tree_id: int, label: text).
 
-labelled(TreeId, Label) <+ ping(TreeId), coalesce(name(TreeId, Label), 'unnamed').
+labelled(TreeId, Label) <+
+  ping(TreeId),
+  coalesce(name(TreeId, Label), 'unnamed').

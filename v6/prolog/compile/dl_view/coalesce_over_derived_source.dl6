@@ -3,5 +3,9 @@ rel pick(tree_id: int, kilos: int).
 rel heavy(tree_id: int, kilos: int).
 rel report(tree_id: int, kilos: int).
 
-heavy(TreeId, Kilos) <- pick(TreeId, Kilos), Kilos > 10.
-report(TreeId, Kilos) <- tree(TreeId), coalesce(heavy(TreeId, Kilos), 0).
+heavy(TreeId, Kilos) <-
+  pick(TreeId, Kilos),
+  Kilos > 10.
+report(TreeId, Kilos) <-
+  tree(TreeId),
+  coalesce(heavy(TreeId, Kilos), 0).

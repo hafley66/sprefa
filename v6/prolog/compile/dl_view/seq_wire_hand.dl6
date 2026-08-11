@@ -2,7 +2,17 @@ rel arrival(payload: text).
 rel numbered(ordinal: int, payload: text) log keep(all).
 rel seq_numbered_1(partition: text, at: int) key(1).
 
-seq_numbered_1('q', 1) <+ arrival(Payload), not(seq_numbered_1('q', _)).
-seq_numbered_1('q', Advanced) <+ arrival(Payload), pre(seq_numbered_1('q', At)), Advanced := At + 1.
-numbered(1, Payload) <+ arrival(Payload), not(seq_numbered_1('q', _)).
-numbered(AdvancedOrdinal, Payload) <+ arrival(Payload), pre(seq_numbered_1('q', AtHead)), AdvancedOrdinal := AtHead + 1.
+seq_numbered_1('q', 1) <+
+  arrival(Payload),
+  not(seq_numbered_1('q', _)).
+seq_numbered_1('q', Advanced) <+
+  arrival(Payload),
+  pre(seq_numbered_1('q', At)),
+  Advanced := At + 1.
+numbered(1, Payload) <+
+  arrival(Payload),
+  not(seq_numbered_1('q', _)).
+numbered(AdvancedOrdinal, Payload) <+
+  arrival(Payload),
+  pre(seq_numbered_1('q', AtHead)),
+  AdvancedOrdinal := AtHead + 1.

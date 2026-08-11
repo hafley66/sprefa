@@ -2,6 +2,14 @@ rel increment(name, col2) log keep(all).
 rel decrement(name, col2) log keep(all).
 rel counter(name, next) key(1).
 
-counter(Name, Next) <+ increment(Name, _), pre(counter(Name, Total)), Next := Total + 1.
-counter(Name, Next) <+ decrement(Name, _), pre(counter(Name, Total)), Next := Total - 1.
-hot(Name) <- counter(Name, Total), Total >= 2.
+counter(Name, Next) <+
+  increment(Name, _),
+  pre(counter(Name, Total)),
+  Next := Total + 1.
+counter(Name, Next) <+
+  decrement(Name, _),
+  pre(counter(Name, Total)),
+  Next := Total - 1.
+hot(Name) <-
+  counter(Name, Total),
+  Total >= 2.

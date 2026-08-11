@@ -1,7 +1,9 @@
 rel event(payload: json) log keep(all).
 rel total(repo: text, sum: int) key(1).
 
-star_event(Repo, Stars) <- event(Payload), decode(Payload, {repo: Repo: text, stars: Stars: int}).
+star_event(Repo, Stars) <-
+  event(Payload),
+  decode(Payload, {repo: Repo: text, stars: Stars: int}).
 match star_event(Repo, Stars) (
   ; not(total(Repo, _Prev)) |+> total(Repo, Stars)
   ; pre(total(Repo, Prev)), Next := Prev + Stars |+> total(Repo, Next)

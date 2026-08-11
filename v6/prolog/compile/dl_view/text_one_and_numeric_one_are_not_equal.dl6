@@ -1,4 +1,7 @@
 rel label(value: text).
 rel number(value: int).
 
-matched(Text, Numeric) <- label(Text), number(Numeric), Text == Numeric.
+matched(Text, Numeric) <-
+  label(Text),
+  number(Numeric),
+  Text == Numeric.

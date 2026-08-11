@@ -1,4 +1,8 @@
 rel dispatch_first(dispatch_id, _ack_tag) log keep(all).
 
-dispatch_first(DispatchId, 'acked') <+ dispatch_ack(DispatchId), not(dispatch_first(DispatchId, _AckTag)).
-dispatch_first(SealedId, 'sealed') <+ dispatch_seal(SealedId), not(dispatch_first(SealedId, _SealTag)).
+dispatch_first(DispatchId, 'acked') <+
+  dispatch_ack(DispatchId),
+  not(dispatch_first(DispatchId, _AckTag)).
+dispatch_first(SealedId, 'sealed') <+
+  dispatch_seal(SealedId),
+  not(dispatch_first(SealedId, _SealTag)).

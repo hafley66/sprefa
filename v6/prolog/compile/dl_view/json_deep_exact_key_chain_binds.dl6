@@ -1,4 +1,6 @@
 rel raw_doc(body: json).
 rel found(leaf: int).
 
-found(Leaf) <- raw_doc(Body), decode(Body, {a: {b: {c: {d: {e: {f: {g: {h: Leaf}}}}}}}}).
+found(Leaf) <-
+  raw_doc(Body),
+  decode(Body, {a: {b: {c: {d: {e: {f: {g: {h: Leaf}}}}}}}}).

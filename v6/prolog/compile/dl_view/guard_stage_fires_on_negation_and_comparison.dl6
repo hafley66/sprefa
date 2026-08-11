@@ -3,5 +3,13 @@ rel fetch(endpoint, col2, bucket, result) log keep(all).
 rel demand_row(endpoint, result) log keep(all).
 rel alert(endpoint, stars) log keep(all).
 
-demand_row(Endpoint, Result) <+ watch(Endpoint), every_300(Bucket), fetch(Endpoint, 'no_tag', Bucket, Result).
-alert(Endpoint, Stars) <+ demand_row(Endpoint, Response), decode(Response, fresh(_Tag, Body)), stars_of(Body, Stars), Stars > 100, not(muted(Endpoint)).
+demand_row(Endpoint, Result) <+
+  watch(Endpoint),
+  every_300(Bucket),
+  fetch(Endpoint, 'no_tag', Bucket, Result).
+alert(Endpoint, Stars) <+
+  demand_row(Endpoint, Response),
+  decode(Response, fresh(_Tag, Body)),
+  stars_of(Body, Stars),
+  Stars > 100,
+  not(muted(Endpoint)).

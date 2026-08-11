@@ -3,9 +3,19 @@ rel fetch_result(endpoint, col2) log keep(all).
 rel phase(endpoint, col2) key(1).
 rel open_fetch(endpoint) key(1).
 
-phase(Endpoint, 'fetching') <+ poll_due(Endpoint), pre(phase(Endpoint, 'idle')).
-phase(Endpoint, 'idle') <+ fetch_result(Endpoint, _), pre(phase(Endpoint, 'fetching')).
-open_fetch(Endpoint) <+ poll_due(Endpoint), pre(phase(Endpoint, 'idle')).
-scope_done(Endpoint) <- open_fetch(Endpoint), not(phase(Endpoint, 'fetching')).
-live_fetch(Endpoint) <- open_fetch(Endpoint), not(scope_done(Endpoint)).
+phase(Endpoint, 'fetching') <+
+  poll_due(Endpoint),
+  pre(phase(Endpoint, 'idle')).
+phase(Endpoint, 'idle') <+
+  fetch_result(Endpoint, _),
+  pre(phase(Endpoint, 'fetching')).
+open_fetch(Endpoint) <+
+  poll_due(Endpoint),
+  pre(phase(Endpoint, 'idle')).
+scope_done(Endpoint) <-
+  open_fetch(Endpoint),
+  not(phase(Endpoint, 'fetching')).
+live_fetch(Endpoint) <-
+  open_fetch(Endpoint),
+  not(scope_done(Endpoint)).
 demanded(fetch_of(Endpoint), Endpoint) <- live_fetch(Endpoint).

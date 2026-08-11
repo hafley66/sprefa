@@ -4,5 +4,9 @@ rel planted(orchard_id: int, tree_id: int).
 rel labelled(tree_id: int, state: text).
 
 orchard(OrchardId) <- planted(OrchardId, _).
-orchard__tree(TreeId, 801) <- orchard(Oid), planted(Oid, TreeId).
-labelled(TreeId2, State) <- orchard__tree(TreeId2, LabelOption), __opt_text_tag(LabelOption, State).
+orchard__tree(TreeId, 801) <-
+  orchard(Oid),
+  planted(Oid, TreeId).
+labelled(TreeId2, State) <-
+  orchard__tree(TreeId2, LabelOption),
+  __opt_text_tag(LabelOption, State).
