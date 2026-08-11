@@ -1,0 +1,82 @@
+openapi: 3.1.0
+info:
+  title: openapi-to-dl6 mapping fixture
+  description: Tiny hand doc exercising every mapping row on clean, non-interconnected schemas so the full mapping compiles.
+  version: 1.0.0
+components:
+  schemas:
+    AbilitySummary:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+    MoveSummary:
+      type: object
+      required: [name, url]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+    AbilityDetail:
+      type: object
+      required: [id, name, count]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        rating:
+          type: number
+        active:
+          type: boolean
+        is_main_series:
+          type: boolean
+          nullable: true
+        maybe_score:
+          type: integer
+          nullable: true
+        summary:
+          $ref: "#/components/schemas/AbilitySummary"
+        maybe_summary:
+          oneOf:
+            - $ref: "#/components/schemas/AbilitySummary"
+            - type: "null"
+        tags:
+          type: array
+          items:
+            type: string
+        scores:
+          type: array
+          items:
+            type: integer
+        related:
+          type: array
+          items:
+            $ref: "#/components/schemas/MoveSummary"
+        moves:
+          type: array
+          items:
+            type: object
+            properties:
+              slot:
+                type: integer
+              move:
+                $ref: "#/components/schemas/MoveSummary"
+        meta:
+          type: object
+          properties:
+            slot:
+              type: integer
+            nested:
+              type: object
+              properties:
+                deep:
+                  $ref: "#/components/schemas/AbilitySummary"
+        union:
+          oneOf:
+            - $ref: "#/components/schemas/AbilitySummary"
+            - $ref: "#/components/schemas/MoveSummary"

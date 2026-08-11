@@ -1,0 +1,212 @@
+rel ability_change(version_group: version_group_summary, effect_entries: json).
+rel ability_change_effect_text(effect: text, language: language_summary).
+rel ability_detail(id: int, name: text, is_main_series: bool, generation: generation_summary, names: json, effect_entries: json, effect_changes: json, flavor_text_entries: json, pokemon: json).
+rel ability_effect_text(effect: text, short_effect: text, language: language_summary).
+rel ability_flavor_text(flavor_text: text, language: language_summary, version_group: version_group_summary).
+rel ability_name(name: text, language: language_summary).
+rel ability_summary(name: text, url: text).
+rel berry_detail(id: int, name: text, growth_time: int, max_harvest: int, natural_gift_power: int, size: int, smoothness: int, soil_dryness: int, firmness: berry_firmness_summary, flavors: json, item: item_summary, natural_gift_type: type_summary).
+rel berry_firmness_detail(id: int, name: text, berries: json, names: json).
+rel berry_firmness_name(name: text, language: language_summary).
+rel berry_firmness_summary(name: text, url: text).
+rel berry_flavor_detail(id: int, name: text, berries: json, contest_type: contest_type_summary, names: json).
+rel berry_flavor_name(name: text, language: language_summary).
+rel berry_flavor_summary(name: text, url: text).
+rel berry_summary(name: text, url: text).
+rel characteristic_description(description: text, language: language_summary).
+rel characteristic_detail(id: int, gene_modulo: int, possible_values: json_list(int), highest_stat: stat_summary, descriptions: json).
+rel characteristic_summary(url: text).
+rel contest_effect_detail(id: int, appeal: int, jam: int, effect_entries: json, flavor_text_entries: json).
+rel contest_effect_effect_text(effect: text, language: language_summary).
+rel contest_effect_flavor_text(flavor_text: text, language: language_summary).
+rel contest_effect_summary(url: text).
+rel contest_type_detail(id: int, name: text, berry_flavor: berry_flavor_summary, names: json).
+rel contest_type_name(name: text, color: text, language: language_summary).
+rel contest_type_summary(name: text, url: text).
+rel currency_detail(id: int, name: text, names: json).
+rel currency_name(name: text, language: language_summary).
+rel currency_summary(name: text, url: text).
+rel egg_group_detail(id: int, name: text, names: json, pokemon_species: json).
+rel egg_group_name(name: text, language: language_summary).
+rel egg_group_summary(name: text, url: text).
+rel encounter_condition_detail(id: int, name: text, values: json, names: json).
+rel encounter_condition_name(name: text, language: language_summary).
+rel encounter_condition_summary(name: text, url: text).
+rel encounter_condition_value_detail(id: int, name: text, condition: encounter_condition_summary, names: json).
+rel encounter_condition_value_name(name: text, language: language_summary).
+rel encounter_condition_value_summary(name: text, url: text).
+rel encounter_method_detail(id: int, name: text, order: option(int), names: json).
+rel encounter_method_name(name: text, language: language_summary).
+rel encounter_method_summary(name: text, url: text).
+rel evolution_chain_detail(id: int, baby_trigger_item: item_summary, chain: json).
+rel evolution_chain_summary(url: text).
+rel evolution_trigger_detail(id: int, name: text, names: json, pokemon_species: json).
+rel evolution_trigger_name(name: text, language: language_summary).
+rel evolution_trigger_summary(name: text, url: text).
+rel experience(level: int, experience: int).
+rel gender_detail(id: int, name: text, pokemon_species_details: json, required_for_evolution: json).
+rel gender_summary(name: text, url: text).
+rel generation_detail(id: int, name: text, abilities: json, main_region: region_summary, moves: json, names: json, pokemon_species: json, types: json, version_groups: json).
+rel generation_name(name: text, language: language_summary).
+rel generation_summary(name: text, url: text).
+rel growth_rate_description(description: text, language: language_summary).
+rel growth_rate_detail(id: int, name: text, formula: text, descriptions: json, levels: json, pokemon_species: json).
+rel growth_rate_summary(name: text, url: text).
+rel item_attribute_description(description: text, language: language_summary).
+rel item_attribute_detail(id: int, name: text, descriptions: json, items: json, names: json).
+rel item_attribute_name(name: text, language: language_summary).
+rel item_attribute_summary(name: text, url: text).
+rel item_category_detail(id: int, name: text, items: json, names: json, pocket: item_pocket_summary).
+rel item_category_name(name: text, language: language_summary).
+rel item_category_summary(name: text, url: text).
+rel item_detail(id: int, name: text, fling_power: option(int), fling_effect: item_fling_effect_summary, attributes: json, category: item_category_summary, effect_entries: json, flavor_text_entries: json, game_indices: json, prices: json, names: json, held_by_pokemon: json, sprites: json, baby_trigger_for: json, machines: json).
+rel item_effect_text(effect: text, short_effect: text, language: language_summary).
+rel item_flavor_text(text: text, version_group: version_group_summary, language: language_summary).
+rel item_fling_effect_detail(id: int, name: text, effect_entries: json, items: json).
+rel item_fling_effect_effect_text(effect: text, language: language_summary).
+rel item_fling_effect_summary(name: text, url: text).
+rel item_game_index(game_index: int, generation: generation_summary).
+rel item_name(name: text, language: language_summary).
+rel item_pocket_detail(id: int, name: text, categories: json, names: json).
+rel item_pocket_name(name: text, language: language_summary).
+rel item_pocket_summary(name: text, url: text).
+rel item_price(purchase_price: option(int), sell_price: option(int), currency: currency_summary, version_group: version_group_summary).
+rel item_summary(name: text, url: text).
+rel language_detail(id: int, name: text, official: bool, iso639: text, iso3166: text, names: json).
+rel language_name(name: text, language: language_summary).
+rel language_summary(name: text, url: text).
+rel location_area_detail(id: int, name: text, game_index: int, encounter_method_rates: json, location: location_summary, names: json, pokemon_encounters: json).
+rel location_area_name(name: text, language: language_summary).
+rel location_area_summary(name: text, url: text).
+rel location_detail(id: int, name: text, region: region_summary, names: json, game_indices: json, areas: json).
+rel location_game_index(game_index: int, generation: generation_summary).
+rel location_name(name: text, language: language_summary).
+rel location_summary(name: text, url: text).
+rel machine_detail(id: int, item: item_summary, version_group: version_group_summary, move: move_summary).
+rel machine_summary(url: text).
+rel move_battle_style_detail(id: int, name: text, names: json).
+rel move_battle_style_name(name: text, language: language_summary).
+rel move_battle_style_summary(name: text, url: text).
+rel move_change(accuracy: option(int), power: option(int), pp: option(int), effect_chance: int, effect_entries: json, type: type_summary, version_group: version_group_summary).
+rel move_damage_class_description(description: text, language: language_summary).
+rel move_damage_class_detail(id: int, name: text, descriptions: json, moves: json, names: json).
+rel move_damage_class_name(name: text, language: language_summary).
+rel move_damage_class_summary(name: text, url: text).
+rel move_detail(id: int, name: text, accuracy: option(int), effect_chance: int, pp: option(int), priority: option(int), power: option(int), contest_combos: json, contest_type: contest_type_summary, contest_effect: contest_effect_summary, damage_class: move_damage_class_summary, effect_entries: json, effect_changes: json, generation: generation_summary, meta: json, names: json, past_values: json, stat_changes: json, super_contest_effect: super_contest_effect_summary, target: move_target_summary, type: type_summary, machines: json, flavor_text_entries: json, learned_by_pokemon: json).
+rel move_flavor_text(flavor_text: text, language: language_summary, version_group: version_group_summary).
+rel move_learn_method_description(description: text, language: language_summary).
+rel move_learn_method_detail(id: int, name: text, names: json, descriptions: json, version_groups: json).
+rel move_learn_method_name(name: text, language: language_summary).
+rel move_learn_method_summary(name: text, url: text).
+rel move_meta(ailment: move_meta_ailment_summary, category: move_meta_category_summary, min_hits: option(int), max_hits: option(int), min_turns: option(int), max_turns: option(int), drain: option(int), healing: option(int), crit_rate: option(int), ailment_chance: option(int), flinch_chance: option(int), stat_chance: option(int)).
+rel move_meta_ailment_detail(id: int, name: text, moves: json, names: json).
+rel move_meta_ailment_name(name: text, language: language_summary).
+rel move_meta_ailment_summary(name: text, url: text).
+rel move_meta_category_description(description: text, language: language_summary).
+rel move_meta_category_detail(id: int, name: text, descriptions: json, moves: json).
+rel move_meta_category_summary(name: text, url: text).
+rel move_name(name: text, language: language_summary).
+rel move_summary(name: text, url: text).
+rel move_target_description(description: text, language: language_summary).
+rel move_target_detail(id: int, name: text, descriptions: json, moves: json, names: json).
+rel move_target_name(name: text, language: language_summary).
+rel move_target_summary(name: text, url: text).
+rel nature_battle_style_preference(low_hp_preference: int, high_hp_preference: int, move_battle_style: move_battle_style_summary).
+rel nature_detail(id: int, name: text, decreased_stat: stat_summary, increased_stat: stat_summary, likes_flavor: berry_flavor_summary, hates_flavor: berry_flavor_summary, berries: json, pokeathlon_stat_changes: json, move_battle_style_preferences: json, names: json).
+rel nature_name(name: text, language: language_summary).
+rel nature_summary(name: text, url: text).
+rel paginated_ability_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_berry_firmness_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_berry_flavor_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_berry_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_characteristic_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_contest_effect_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_contest_type_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_currency_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_egg_group_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_encounter_condition_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_encounter_condition_value_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_encounter_method_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_evolution_chain_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_evolution_trigger_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_gender_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_generation_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_growth_rate_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_item_attribute_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_item_category_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_item_fling_effect_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_item_pocket_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_item_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_language_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_location_area_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_location_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_machine_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_move_battle_style_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_move_damage_class_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_move_learn_method_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_move_meta_ailment_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_move_meta_category_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_move_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_move_target_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_nature_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pal_park_area_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pokeathlon_stat_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pokedex_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pokemon_color_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pokemon_form_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pokemon_habitat_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pokemon_shape_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pokemon_species_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_pokemon_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_region_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_stat_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_super_contest_effect_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_type_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_version_group_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel paginated_version_summary_list(count: int, next: option(text), previous: option(text), results: json).
+rel pal_park_area_detail(id: int, name: text, names: json, pokemon_encounters: json).
+rel pal_park_area_name(name: text, language: language_summary).
+rel pal_park_area_summary(name: text, url: text).
+rel pokeathlon_stat_detail(id: int, name: text, affecting_natures: json, names: json).
+rel pokeathlon_stat_name(name: text, language: language_summary).
+rel pokeathlon_stat_summary(name: text, url: text).
+rel pokedex_description(description: text, language: language_summary).
+rel pokedex_detail(id: int, name: text, is_main_series: bool, descriptions: json, names: json, pokemon_entries: json, region: region_summary, version_groups: json).
+rel pokedex_name(name: text, language: language_summary).
+rel pokedex_summary(name: text, url: text).
+rel pokemon_color_detail(id: int, name: text, names: json, pokemon_species: json).
+rel pokemon_color_name(name: text, language: language_summary).
+rel pokemon_color_summary(name: text, url: text).
+rel pokemon_detail(id: int, name: text, base_experience: option(int), height: option(int), is_default: bool, order: option(int), weight: option(int), abilities: json, past_abilities: json, forms: json, game_indices: json, held_items: json, location_area_encounters: text, moves: json, species: pokemon_species_summary, sprites: json, cries: json, stats: json, past_stats: json, types: json, past_types: json).
+rel pokemon_dex_entry(entry_number: int, pokedex: pokedex_summary).
+rel pokemon_form_detail(id: int, name: text, order: option(int), form_order: option(int), is_default: bool, is_battle_only: bool, is_mega: bool, form_name: text, pokemon: pokemon_summary, sprites: json, version_group: version_group_summary, form_names: json, names: json, types: json, trigger_conditions: json).
+rel pokemon_form_summary(name: text, url: text).
+rel pokemon_game_index(game_index: int, version: version_summary).
+rel pokemon_habitat_detail(id: int, name: text, names: json, pokemon_species: json).
+rel pokemon_habitat_name(name: text, language: language_summary).
+rel pokemon_habitat_summary(name: text, url: text).
+rel pokemon_shape_detail(id: int, name: text, awesome_names: json, names: json, pokemon_species: json).
+rel pokemon_shape_summary(name: text, url: text).
+rel pokemon_species_description(description: text, language: language_summary).
+rel pokemon_species_detail(id: int, name: text, order: option(int), gender_rate: option(int), capture_rate: option(int), base_happiness: option(int), is_baby: bool, is_legendary: bool, is_mythical: bool, hatch_counter: option(int), has_gender_differences: bool, forms_switchable: bool, growth_rate: growth_rate_summary, pokedex_numbers: json, egg_groups: json, color: pokemon_color_summary, shape: pokemon_shape_summary, evolves_from_species: pokemon_species_summary, evolution_chain: evolution_chain_summary, habitat: pokemon_habitat_summary, generation: generation_summary, names: json, pal_park_encounters: json, form_descriptions: json, flavor_text_entries: json, genera: json, varieties: json).
+rel pokemon_species_flavor_text(flavor_text: text, language: language_summary, version: version_summary).
+rel pokemon_species_summary(name: text, url: text).
+rel pokemon_stat(base_stat: int, effort: int, stat: stat_summary).
+rel pokemon_summary(name: text, url: text).
+rel region_detail(id: int, name: text, locations: json, main_generation: option(generation_summary), names: json, pokedexes: json, version_groups: json).
+rel region_name(name: text, language: language_summary).
+rel region_summary(name: text, url: text).
+rel stat_detail(id: int, name: text, game_index: int, is_battle_only: bool, affecting_moves: json, affecting_natures: json, affecting_items: json, characteristics: json, move_damage_class: move_damage_class_summary, names: json).
+rel stat_name(name: text, language: language_summary).
+rel stat_summary(name: text, url: text).
+rel super_contest_effect_detail(id: int, appeal: int, flavor_text_entries: json, moves: json).
+rel super_contest_effect_flavor_text(flavor_text: text, language: language_summary).
+rel super_contest_effect_summary(url: text).
+rel type_detail(id: int, name: text, damage_relations: json, past_damage_relations: json, game_indices: json, generation: generation_summary, move_damage_class: move_damage_class_summary, names: json, pokemon: json, moves: json, sprites: json).
+rel type_game_index(game_index: int, generation: generation_summary).
+rel type_summary(name: text, url: text).
+rel version_detail(id: int, name: text, names: json, version_group: version_group_summary).
+rel version_group_detail(id: int, name: text, order: option(int), generation: generation_summary, move_learn_methods: json, pokedexes: json, regions: json, versions: json).
+rel version_group_summary(name: text, url: text).
+rel version_name(name: text, language: language_summary).
+rel version_summary(name: text, url: text).

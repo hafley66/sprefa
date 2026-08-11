@@ -26,6 +26,9 @@ importers:
       sprefa-store-engine:
         specifier: link:../sprefa-store/js
         version: link:../sprefa-store/js
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -406,6 +409,11 @@ packages:
       utf-8-validate:
         optional: true
 
+  yaml@2.9.0:
+    resolution: {integrity: sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
 snapshots:
 
   '@esbuild/aix-ppc64@0.28.1':
@@ -694,3 +702,5 @@ snapshots:
   undici-types@7.18.2: {}
 
   ws@8.21.1: {}
+
+  yaml@2.9.0: {}
