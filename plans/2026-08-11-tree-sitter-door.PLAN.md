@@ -96,7 +96,7 @@ rename, formatting, code actions) x 5 candidates: REPORT2.md.
 Recommendation: Langium as the generated LSP shell, a Phase-B-style
 emitter targeting `.langium`, SWI compiler as semantic backend. Price:
 (1) second emitter target with its own overlay, which needs its own
-measurement before adoption given Phase B's 2.74 ratio; (2) lossless
+measurement before adoption given Phase B's 2.96 ratio; (2) lossless
 AST-to-compiler bridge; (3) finding-to-diagnostic conversion with URI,
 version, UTF-16 ranges, cancellation, stale suppression; (4)
 compiler-backed relation/column indexes; (5) Topiary stays the formatter
