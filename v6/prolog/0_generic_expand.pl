@@ -17,6 +17,7 @@
 :- use_module(library(crypto)).
 :- use_module(library(lists)).
 :- use_module('0_option_expand', [expand_option_decls/2]).
+:- use_module('0_type_plane', [unwrapped_column_type/2]).
 
 expand_generic_in_context(_Context, Program, Expanded) :-
     expand_generic_program(Program, Expanded).
@@ -54,7 +55,8 @@ generic_fixpoint(SourceDecls, Instances, AllDecls) :-
 % than forced through the redundant content-addressed dictionary.
 check_interned_set_rel_elements(SourceDecls) :-
     declared_type_names(SourceDecls, Names),
-    (   member(col_type(_, _, list_interned_set(Element)), SourceDecls),
+    (   member(col_type(_, _, Type), SourceDecls),
+        unwrapped_column_type(Type, list_interned_set(Element)),
         memberchk(Element, Names)
     ->  throw(unsupported_construct(list_interned_set_relation_element(Element)))
     ;   true
@@ -92,8 +94,8 @@ generic_type(list_interned_set(_)).
 generic_type(list_entity_linked_sequence(_)).
 generic_type(option(Type)) :- contains_list_flavor(Type).
 
-contains_list_flavor(Type) :- list_flavor(Type).
-contains_list_flavor(option(Type)) :- contains_list_flavor(Type).
+contains_list_flavor(Type) :-
+    once(( unwrapped_column_type(Type, Inner), list_flavor(Inner) )).
 
 generic_dependency(option(Type), Instance) :-
     generic_dependency(Type, Instance).
@@ -254,18 +256,25 @@ replace_generic_decl(_, Decl, Decl).
 retarget_type_decl_mirrors(Decls0, Decls) :-
     maplist(retarget_type_decl_mirror(Decls0), Decls0, Decls).
 
+% The mirror states the rel's stored columns, so it is re-read whole from the
+% expanded col_type rows: a rename and a drop land by the same read.
 retarget_type_decl_mirror(Decls,
                           type_decl(RelName, Specs0),
                           type_decl(RelName, Specs)) :-
     !,
-    maplist(retarget_type_decl_spec(RelName, Decls), Specs0, Specs).
+    (   expanded_relation_specs(Decls, RelName, Rebuilt)
+    ->  Specs = Rebuilt
+    ;   Specs = Specs0
+    ).
 retarget_type_decl_mirror(_, Decl, Decl).
 
-retarget_type_decl_spec(RelName, Decls, col(Column, _), col(Column, Type)) :-
-    memberchk(col_type(RelName/_, Column, RewrittenType), Decls),
-    mirror_column_type(Decls, RewrittenType, Type),
-    !.
-retarget_type_decl_spec(_, _, Spec, Spec).
+expanded_relation_specs(Decls, RelName, Specs) :-
+    once(member(col_type(RelName/Arity, _, _), Decls)),
+    findall(col(Column, Type),
+            ( member(col_type(RelName/Arity, Column, Stored), Decls),
+              mirror_column_type(Decls, Stored, Type) ),
+            Specs),
+    length(Specs, Arity).
 
 mirror_column_type(Decls, Type, int) :-
     memberchk(enum_decl(Type, _), Decls),
