@@ -69,6 +69,7 @@ surface(not/1,          sign,      arm(neg),                     wrapper(body_it
 % relation as the sampled reference it is.
 surface(coalesce/2,     sugar,     refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, expand(coalesce)), live).
 surface(pre/1,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom, lower),              live).
+surface(pre/2,          sample,    refs_of_arg(1, pos, sampled), wrapper(rel_atom_default, lower),      live).
 surface(seq/1,          sugar,     no_refs,                      wrapper(expr, expand(seq)),           live).
 % Contextual gate, same shape as latest/1: live around a plain VARIABLE in an
 % edge body (lowered to a read of the emitted __tick counter); analyze.pl

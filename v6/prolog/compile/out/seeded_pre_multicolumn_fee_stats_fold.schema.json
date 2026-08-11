@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "fee": {
+      "additionalProperties":false,
+      "properties": {"account": {"type":"string"},"amount": {"type":"integer"}},
+      "required": ["account", "amount" ],
+      "type":"object"
+    },
+    "fee_stats": {
+      "additionalProperties":false,
+      "properties": {"account": {"type":"string"},"next": {"type":"integer"}},
+      "required": ["account", "next" ],
+      "type":"object"
+    }
+  },
+  "$id":"seeded_pre_multicolumn_fee_stats_fold#61500ec5f30479c1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "counter": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"next": {"type":"integer"}},
+      "required": ["name", "next" ],
+      "type":"object"
+    },
+    "decrement": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "col2" ],
+      "type":"object"
+    },
+    "increment": {
+      "additionalProperties":false,
+      "properties": {"col2": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "col2" ],
+      "type":"object"
+    }
+  },
+  "$id":"seeded_one_arm_fold_matches_two_arms#bb53689691b9f7bc",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "breadcrumb": {
+      "additionalProperties":false,
+      "properties": {"next": {"type":"string"},"path": {"type":"string"}},
+      "required": ["path", "next" ],
+      "type":"object"
+    },
+    "step": {
+      "additionalProperties":false,
+      "properties": {"path": {"type":"string"},"piece": {"type":"string"}},
+      "required": ["path", "piece" ],
+      "type":"object"
+    }
+  },
+  "$id":"seeded_pre_text_breadcrumb_fold#846f0a3bae963599",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

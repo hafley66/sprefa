@@ -370,6 +370,15 @@ compile_positive_uses(Mode, RelPlans, Uses, Bound0, Bound, FromParts, WhereTexts
     maplist(where_text, WhereParts, WhereTexts).
 
 compile_positive_uses(_, _, [], _, Bound, Bound, [], []).
+compile_positive_uses(Mode, RelPlans,
+                      [use(Ref, Args, pos, seeded_pre(Seed)) | Rest], Index,
+                      Bound0, Bound, MoreFrom, WhereParts) :-
+    compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0,
+                           Bound1, HereWhere),
+    NextIndex is Index + 1,
+    compile_positive_uses(Mode, RelPlans, Rest, NextIndex, Bound1, Bound,
+                          MoreFrom, MoreWhere),
+    append(HereWhere, MoreWhere, WhereParts).
 compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
     positive_use_table(Source, Ref, Table), quote_ident(Table, QuotedTable),
     format(atom(Alias), 'b~w', [Index]),
@@ -385,6 +394,46 @@ compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Inde
 
 positive_use_table(pre, Ref, Table) :- !, pre_table_name(Ref, Table).
 positive_use_table(_, Ref, Table) :- table_name(Ref, Table).
+
+compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0, Bound,
+                       WhereParts) :-
+    pre_table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    format(atom(Alias), 'b~w', [Index]),
+    relplan_columns(RelPlans, Ref, Columns),
+    relplan_column_types(RelPlans, Ref, ColumnTypes),
+    seeded_pre_args(Mode, Args, Columns, ColumnTypes, Alias, Bound0,
+                    KeyWhere, Before, BeforeColumn, BeforeType),
+    compile_expr(Mode, value, Seed, Bound0, SeedSql, SeedType, SeedEncoding),
+    ( SeedType == BeforeType -> true
+    ; throw(unsupported_construct(pre_seed_type_mismatch(Seed, SeedType, BeforeType)))
+    ),
+    column_encoding(Mode, BeforeType, BeforeEncoding),
+    align_to_encoding(BeforeEncoding, SeedEncoding, SeedSql, AlignedSeedSql),
+    maplist(where_text, KeyWhere, KeyWhereTexts),
+    ( KeyWhereTexts == [] -> WhereSql = ''
+    ; atomic_list_concat(KeyWhereTexts, ' AND ', Joined),
+      format(atom(WhereSql), ' WHERE ~w', [Joined])
+    ),
+    format(atom(SelectSql), '(SELECT ~w."~w" FROM ~w ~w~w)',
+           [Alias, BeforeColumn, QuotedTable, Alias, WhereSql]),
+    format(atom(ValueSql), 'COALESCE(~w, ~w)', [SelectSql, AlignedSeedSql]),
+    Bound = [Before-typed(ValueSql, BeforeType, BeforeEncoding) | Bound0],
+    WhereParts = [].
+
+seeded_pre_args(_, [], [], [], _, _, _, _, _, _) :-
+    throw(unsupported_construct(pre_seed_no_value)).
+seeded_pre_args(Mode, [Arg | Args], [Column | Columns], [Type | Types], Alias,
+                Bound0, KeyWhere, Before, BeforeColumn, BeforeType) :-
+    ( var(Arg), \+ bound_lookup(Bound0, Arg, _)
+    -> Args = [], Columns = [], Types = [], KeyWhere = [], Before = Arg,
+       BeforeColumn = Column, BeforeType = Type
+    ; format(atom(ColumnExpr), '~w."~w"', [Alias, Column]),
+      compile_pattern_arg(Mode, Arg, ColumnExpr, Type, Bound0, _,
+                          HereWhere, check),
+      seeded_pre_args(Mode, Args, Columns, Types, Alias, Bound0,
+                      RestWhere, Before, BeforeColumn, BeforeType),
+      append(HereWhere, RestWhere, KeyWhere)
+    ).
 
 % A public relation that appears as another relation's column domain has a
 % hidden dense __id. Bind the complete body atom to that endpoint while its
@@ -2985,6 +3034,9 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
 
 other_atom_use(Atom, use(Ref, Args, pos, unmarked)) :- rel_ref(Atom, Ref), Atom =.. [_ | Args].
+pre_atom_use(pre(Atom, Seed), use(Ref, Args, pos, seeded_pre(Seed))) :- !,
+    rel_ref(Atom, Ref),
+    Atom =.. [_ | Args].
 pre_atom_use(Atom, use(Ref, Args, pos, pre)) :-
     rel_ref(Atom, Ref),
     Atom =.. [_ | Args].

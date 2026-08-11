@@ -1358,6 +1358,34 @@
     "final_detail": ""
   },
   {
+    "name": "seeded_one_arm_fold_matches_two_arms",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "seeded_pre_reads_a_body_bound_value",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "seeded_pre_multicolumn_fee_stats_fold",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "seeded_pre_text_breadcrumb_fold",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "increment_decrement_same_tick_nets_zero",
     "bucket": "identical",
     "detail": "",

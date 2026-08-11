@@ -583,6 +583,7 @@ binding_positions(not(_), []) :- !.
 binding_positions(decode(_, Pattern), [Pattern]) :- !.
 binding_positions(latest(Atom), [Atom]) :- !.
 binding_positions(pre(Atom), [Atom]) :- !.
+binding_positions(pre(Atom, _), [Atom]) :- !.
 binding_positions(finalize(Atom), [Atom]) :- !.
 binding_positions(next(Atom), [Atom]) :- !.
 binding_positions(coalesce(Atom, _), [Atom]) :- !.

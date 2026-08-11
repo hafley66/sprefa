@@ -67,7 +67,7 @@ ruling(r7_boundary_diff, multiset_on_log_set_on_set, user,
        'occurrence store_deltas; check_eventing #1').
 % equal-row keyed write = no-op (written_at column serves SWR later).
 ruling(r_equal_row_write, noop, user, 'merge ambiguity 1').
-% R1 rider: pre chains across occurrences WITHIN a tick on fold rules (the
+% R1 rider: pre/1 chains across occurrences WITHIN a tick on fold rules (the
 % occurrence lab's semantics; what makes the fold correct).
 ruling(r1_rider_pre_chains, chains_within_tick, user,
        'occurrence_identity.pl apply_occurrence').
@@ -88,10 +88,13 @@ ruling(json_arm, terms_plus_aggregate_heads, user,
 ruling(r4_departure, departure_body_form_adopted, user,
        'user: "is retraction not a built-in event we can match on?"').
 
-% R6: pre reads the EVOLVING store (T-1 exactly when nothing wrote yet;
+% R6: pre/1 reads the EVOLVING store (T-1 exactly when nothing wrote yet;
 % later occurrences chain). Frozen-snapshot pre is the rejected reading.
 ruling(r6_pre_visibility, evolving_read, user,
        'the Q1 fold correctness depends on it').
+% pre/2 adds only the no-prior-row value; its read ring remains R6's b -> b.
+ruling(pre_seed, one_arm_folds, user,
+       'yes, we should be able to ref the pre anywhere, its basically a cached let i spose').
 
 % A6: diag is an ORDINARY rel declared by std/diag; the CLI is a consumer.
 % The engine never knows the name (the v5 magic-rel ban holds in v6).

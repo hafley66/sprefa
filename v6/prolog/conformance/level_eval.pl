@@ -140,6 +140,7 @@ goal_rel_refs(Goal, Pos, Neg) :-
 goal_rel_refs(latest(Atom), [Ref], []) :- !, rel_ref(Atom, Ref).
 goal_rel_refs(finalize(_), [], []) :- !.
 goal_rel_refs(pre(_), [], []) :- !.
+goal_rel_refs(pre(_, _), [], []) :- !.
 goal_rel_refs(now(_), [], []) :- !.
 goal_rel_refs(true, [], []) :- !.
 goal_rel_refs(_ := _, [], []) :- !.

@@ -78,11 +78,14 @@ level_goal_dependency(Decls, Index, HeadRef, latest(Atom), Dependency) :-
     dependency_from_role(Decls, rule(Index, level, HeadRef), FromRef, HeadRef,
                          edge_sample, Dependency).
 level_goal_dependency(Decls, Index, HeadRef, pre(Atom),
-                      dependency(rule(Index, level, HeadRef), FromRef, HeadRef,
-                                 b, b, previous, -1, pre_in_level)) :-
+                       dependency(rule(Index, level, HeadRef), FromRef, HeadRef,
+                                  b, b, previous, -1, pre_in_level)) :-
     !,
     relation_atom(Atom, FromRef),
     relation_plane(Decls, HeadRef, b).
+level_goal_dependency(Decls, Index, HeadRef, pre(Atom, _), Dependency) :-
+    !,
+    level_goal_dependency(Decls, Index, HeadRef, pre(Atom), Dependency).
 level_goal_dependency(Decls, Index, HeadRef, finalize(Atom),
                       dependency(rule(Index, level, HeadRef), FromRef, HeadRef,
                                  z, b, negative, 1, finalize_in_level)) :-
@@ -116,11 +119,16 @@ edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, latest(Atom),
     dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
                          edge_sample, Dependency).
 edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, pre(Atom),
-                     Dependency) :-
+                      Dependency) :-
     !,
     relation_atom(Atom, FromRef),
     dependency_from_role(Decls, rule(Index, edge, HeadRef), FromRef, HeadRef,
-                         edge_pre, Dependency).
+                          edge_pre, Dependency).
+edge_goal_dependency(Decls, EdgeHeaded, Index, HeadRef, HasDeparture,
+                     pre(Atom, _), Dependency) :-
+    !,
+    edge_goal_dependency(Decls, EdgeHeaded, Index, HeadRef, HasDeparture,
+                         pre(Atom), Dependency).
 edge_goal_dependency(Decls, _EdgeHeaded, Index, HeadRef, _, not(Atom),
                      Dependency) :-
     !,

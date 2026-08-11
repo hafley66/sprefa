@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "counter": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"next": {"type":"integer"}},
+      "required": ["name", "next" ],
+      "type":"object"
+    },
+    "increment": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"start": {"type":"integer"}},
+      "required": ["name", "start" ],
+      "type":"object"
+    }
+  },
+  "$id":"seeded_pre_reads_a_body_bound_value#65b6923ee24e3aa4",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
