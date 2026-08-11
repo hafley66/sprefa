@@ -112,6 +112,11 @@ enum SubCmd {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect the boop configuration the CLI reads.
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
     /// List registered harness adapters, one per line. (pass 1)
     #[command(hide = true)]
     Harnesses,
@@ -374,6 +379,15 @@ enum PstreeFormat {
     Ndjson,
 }
 
+#[derive(Subcommand)]
+enum ConfigCmd {
+    /// Print the resolved config path.
+    Path,
+    /// Print the loaded config as pretty JSON, including the defaults a
+    /// missing file produces.
+    Show,
+}
+
 /// Write one line, treating a closed pipe as a normal end. Rust masks SIGPIPE,
 /// so a bare `println!` panics the moment output is piped into `head`.
 fn line(text: &str) {
@@ -562,6 +576,7 @@ fn main() -> Result<()> {
             },
         },
         SubCmd::Whoami { json } => run_whoami(json),
+        SubCmd::Config { cmd } => run_config(cmd),
     }
 }
 
@@ -1570,15 +1585,13 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
     if !brief.exists() {
         anyhow::bail!("brief path does not exist: {}", brief.display());
     }
-    let model = match (
-        requested_model,
-        harness_id.as_str(),
-        config.default_model_preset.as_deref(),
-    ) {
-        (Some(model), _, _) => Some(model),
-        (None, "opencode", Some(preset)) => Some(config::resolve_model(preset, &config_path)?),
-        (None, _, _) => None,
-    };
+    let default_preset = default_preset_for_harness(&config, &config_path, &harness_id)?;
+    let model = config::resolve_spawn_model(
+        requested_model.as_deref(),
+        None,
+        default_preset.as_deref(),
+        &config_path,
+    )?;
     let prompt = brief.display().to_string();
     // A worktree branches from origin/main unless pinned; the repo-tree shape
     // keeps its own HEAD, where a base of origin/main would be a merge.
@@ -1859,8 +1872,8 @@ mod tests {
     use std::process::Command;
 
     use super::{
-        append_message, dead_reason, resolve_dispatch_harness, run_lane_delete, run_lane_prune,
-        session_matches_route, write_route,
+        append_message, config, dead_reason, default_preset_for_harness, resolve_dispatch_harness,
+        run_lane_delete, run_lane_prune, session_matches_route, write_route,
     };
     use boop::bus::{read_routes, Route};
     use boop::proc::SysinfoSnapshot;
@@ -1879,6 +1892,30 @@ mod tests {
         assert!(message.contains("gemini-cli"), "message: {message}");
         assert!(message.contains("claude"), "registered set: {message}");
         assert!(message.contains("opencode"), "registered set: {message}");
+    }
+
+    /// Sabotage receipt: dropping the harness-fit guard makes this assert the
+    /// codex arm, spelling `codex exec -m openrouter/...`, which cannot run.
+    #[test]
+    fn the_default_preset_reaches_only_its_own_harness() {
+        let dir = std::env::temp_dir().join("boop-default-preset-fit");
+        std::fs::create_dir_all(&dir).expect("create the probe directory");
+        let path = dir.join("config.json");
+        std::fs::write(
+            &path,
+            r#"{ "default-model-preset": "flash4",
+                 "model-presets": { "flash4": "openrouter/deepseek/deepseek-v4-flash-0731" } }"#,
+        )
+        .expect("write the probe config");
+        let config = config::load(&path).expect("load the probe config");
+        assert_eq!(
+            default_preset_for_harness(&config, &path, "opencode").unwrap(),
+            Some("flash4".to_owned())
+        );
+        assert_eq!(
+            default_preset_for_harness(&config, &path, "codex").unwrap(),
+            None
+        );
     }
 
     fn temp_mail_dir() -> PathBuf {
@@ -4047,6 +4084,34 @@ fn run_whoami(json: bool) -> Result<()> {
     println!("harness  {}", identity.harness.as_deref().unwrap_or("-"));
     println!("pane     {}", identity.pane.as_deref().unwrap_or("-"));
     println!("rung     {} ({})", rung.as_str(), rung.confidence());
+    Ok(())
+}
+
+/// An opencode route handed to `codex exec -m` is a broken invocation, so a
+/// default preset whose model routes elsewhere goes unused.
+fn default_preset_for_harness(
+    config: &config::Config,
+    config_path: &Path,
+    harness_id: &str,
+) -> Result<Option<String>> {
+    let Some(preset) = config.default_model_preset.as_deref() else {
+        return Ok(None);
+    };
+    let model = config::resolve_model(preset, config_path)?;
+    match lane::harness_for_model(&model)? {
+        Some(owner) if owner == harness_id => Ok(Some(preset.to_owned())),
+        _ => Ok(None),
+    }
+}
+
+/// `boop config path` prints the resolved config path; `boop config show`
+/// prints the loaded config as pretty JSON, including the defaults a missing
+/// file produces.
+fn run_config(cmd: ConfigCmd) -> Result<()> {
+    match cmd {
+        ConfigCmd::Path => line(&config::default_path()?.display().to_string()),
+        ConfigCmd::Show => line(&config::show(&config::default_path()?)?),
+    }
     Ok(())
 }
 
