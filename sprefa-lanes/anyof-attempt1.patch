@@ -1,0 +1,134 @@
+diff --git a/v6/prolog/0_option_expand.pl b/v6/prolog/0_option_expand.pl
+index c87bae70..74a25f24 100644
+--- a/v6/prolog/0_option_expand.pl
++++ b/v6/prolog/0_option_expand.pl
+@@ -34,13 +34,19 @@ desugar_option_column(Decls0, Ref, Column, Element, Decls) :-
+     -> throw(unsupported_construct(option_in_key_column(Ref, Column)))
+     ; true
+     ),
++    % option_column/3 survives the later phases so the schema emitters can
++    % render the desugared column back as a nullable anyOf and hide the
++    % minted helpers. Expansion erases option(T) from col_type; this is the
++    % one record of the author's element type that reaches emission.
+     ( scalar_element(Element)
+-    -> desugar_scalar_option(Decls0, Ref, Column, Element, Decls)
++    -> desugar_scalar_option(Decls0, Ref, Column, Element, Decls1),
++       append(Decls1, [option_column(Ref, Column, Element)], Decls)
+     ; memberchk(enum_decl(Element, _), Decls0)
+     -> throw(unsupported_construct(option_of_enum_unsupported(Element)))
+     ; declared_rel_element(Decls0, Element)
+     -> desugar_reference_option(Decls0, Ref, Column, Element, Position,
+-                                Decls)
++                                Decls1),
++       append(Decls1, [option_column(Ref, Column, Element)], Decls)
+     ; throw(unsupported_construct(option_element_type_unknown(Element)))
+     ).
+ 
+diff --git a/v6/prolog/compile/4_emit_jsonschema.pl b/v6/prolog/compile/4_emit_jsonschema.pl
+index 6bd95109..edbec6f5 100644
+--- a/v6/prolog/compile/4_emit_jsonschema.pl
++++ b/v6/prolog/compile/4_emit_jsonschema.pl
+@@ -3,7 +3,8 @@
+             emit_jsonschema/3,
+             jsonschema_document/3,
+             module_defs/4,
+-            entry_module_details/4
++            entry_module_details/4,
++            option_rows/3
+           ]).
+ 
+ :- use_module(library(http/json)).
+@@ -38,10 +39,69 @@ entry_module_details(Name, Rows, ModuleId, Hash) :-
+ module_defs(ModuleId, Rows, RefPrefix, Pairs) :-
+     findall(RelRow,
+             ( member(RelRow, Rows),
+-              RelRow = row(_, _, _, _, rel, _, _, ModuleId, _, _, _) ),
++              RelRow = row(_, _, _, LocalName, rel, _, _, ModuleId, _, _, _),
++              \+ compiler_helper_rel(LocalName) ),
+             RelRows),
+     maplist(rel_def_pair(Rows, RefPrefix), RelRows, Pairs).
+ 
++% The `__` namespace is compiler-owned (option enums, generic list companions,
++% reference-option split rels), so none of it is public schema.  Authors cannot
++% spell a rel with `__`, and every minted helper carries it.
++compiler_helper_rel(LocalName) :-
++    sub_atom(LocalName, _, _, _, '__').
++
++% option_rows(+Decls, +Rows0, -Rows): fold the option(T) columns the catalog
++% could not carry (expansion erased them to int Storage) back into an `option`
++% kind row each scalar element can point at.  The emitter's kind_schema option
++% clause then renders `anyOf: [<element>, {type: null}]`, and the helper rels
++% stay hidden from module_defs.
++option_rows(Decls, Rows0, Rows) :-
++    findall(Element,
++            ( member(option_column(_, _, Element), Decls),
++              scalar_option_element(Element) ),
++            Elems0),
++    sort(Elems0, Elems),
++    max_row_id(Rows0, MaxId),
++    option_row_ids(Elems, MaxId, ElementToId, OptionRows),
++    maplist(rewrite_option_column(Decls, Rows0, ElementToId), Rows0, Rewritten),
++    append(Rewritten, OptionRows, Rows).
++
++scalar_option_element(text).
++scalar_option_element(int).
++scalar_option_element(float).
++scalar_option_element(bool).
++scalar_option_element(json).
++
++max_row_id(Rows, MaxId) :-
++    findall(Id, member(row(Id, _, _, _, _, _, _, _, _, _, _), Rows), Ids),
++    max_list(Ids, MaxId).
++
++option_row_ids([], Id, [], []).
++option_row_ids([Element | Rest], Id0, [Element-Id | Map], [Row | More]) :-
++    Id is Id0 + 1,
++    option_element_id(Element, ElementId),
++    Row = row(Id, 0, 0, Element, option, ElementId, 0, 0, '', '', ''),
++    option_row_ids(Rest, Id, Map, More).
++
++option_element_id(text, 1).
++option_element_id(int, 2).
++option_element_id(float, 3).
++option_element_id(bool, 4).
++option_element_id(json, 5).
++
++rewrite_option_column(Decls, Rows0, ElementToId, Row0, Row) :-
++    Row0 = row(Id, RelId, Ord, Name, column, TypeId, Arity, ModuleId, HId, Hs, Hr),
++    option_column_element(Decls, Rows0, RelId, Name, Element),
++    memberchk(Element-OptId, ElementToId),
++    !,
++    Row = row(Id, RelId, Ord, Name, column, OptId, Arity, ModuleId, HId, Hs, Hr).
++rewrite_option_column(_Decls, _Rows0, _ElementToId, Row, Row).
++
++option_column_element(Decls, Rows0, RelId, ColumnName, Element) :-
++    member(option_column(Name/_, ColumnName, Element), Decls),
++    scalar_option_element(Element),
++    member(row(RelId, _, _, Name, rel, _, _, _, _, _, _), Rows0).
++
+ entry_module_row(Rows, Name, Row) :-
+     member(Row, Rows),
+     Row = row(_, _, _, Name, module, _, _, _, _, _, _).
+diff --git a/v6/prolog/sweep.pl b/v6/prolog/sweep.pl
+index 10e9708a..94457f86 100644
+--- a/v6/prolog/sweep.pl
++++ b/v6/prolog/sweep.pl
+@@ -13,7 +13,7 @@
+ :- use_module(compile, [ program_plan/3, default_intern_mode/1 ]).
+ :- use_module(lower, [ lower_program/2, boot_statements/7, catalog_decl_rows/6 ]).
+ :- use_module(emit_ts, [ emit_program/5 ]).
+-:- use_module('compile/4_emit_jsonschema', [ jsonschema_text/3 ]).
++:- use_module('compile/4_emit_jsonschema', [ jsonschema_text/3, option_rows/3 ]).
+ :- use_module('conformance/body', [ rel_ref/2 ]).
+ :- use_module('0_rel_record', [ relplan_column_types/3 ]).
+ :- use_module('0_type_plane',
+@@ -117,7 +117,8 @@ sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason
+           setup_call_cleanup(open(SchedulePath, write, ScheduleStream), format(ScheduleStream, "~w", [ScheduleJson]), close(ScheduleStream)),
+           (   catch( ( catalog_decl_rows(Name, Rules, RelPlans, Decls,
+                                         SchemaRows, _),
+-                       jsonschema_text(Name, SchemaRows, SchemaText) ),
++                       option_rows(Decls, SchemaRows, SchemaRowsOpt),
++                       jsonschema_text(Name, SchemaRowsOpt, SchemaText) ),
+                      _SchemaError,
+                      fail )
+           ->  format(atom(SchemaPath), '~w/~w.schema.json', [OutDir, Name]),

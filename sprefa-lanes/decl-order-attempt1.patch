@@ -1,0 +1,147 @@
+diff --git a/v6/prolog/0_generic_expand.pl b/v6/prolog/0_generic_expand.pl
+index 67a00fc8..d0858970 100644
+--- a/v6/prolog/0_generic_expand.pl
++++ b/v6/prolog/0_generic_expand.pl
+@@ -187,16 +187,18 @@ lower_artifacts([], []).
+ lower_artifacts([artifact(decl(Decl)) | Rest], [Decl | Decls]) :-
+     lower_artifacts(Rest, Decls).
+ 
+-% No current generic template depends on another generated declaration.
+-% Therefore its dependency-topological order has no edges, and its canonical
+-% tie-break is exactly the global canonical order used by the wired path.
++% Author declarations keep their source column order end to end: within a rel
++% that order is the program (ruling decl_order_fix_a), not term order.  Minted
++% instance declarations are content-addressed and land after the author
++% declarations in their generation order, which is deterministic from the
++% surface decls.  No template depends on another generated declaration.
+ generic_artifact_order([], Decls, Decls).
+ generic_artifact_order([_ | _], Decls, Ordered) :-
+-    msort(Decls, Sorted),
+-    partition(id_column_decl, Sorted, IdColumns, OtherDecls),
+-    append(IdColumns, OtherDecls, Ordered).
++    partition(minted_decl, Decls, Minted, Author),
++    append(Author, Minted, Ordered).
+ 
+-id_column_decl(col_type(_, id, _)).
++minted_decl(col_type(Ref/_, _, _)) :- generated_generic_name(Ref).
++minted_decl(keyed(Ref/_, _)) :- generated_generic_name(Ref).
+ 
+ validate_generated_name_collisions(Decls, Rules, Instances) :-
+     findall(Name,
+diff --git a/v6/prolog/compile/test/plunit_tests.pl b/v6/prolog/compile/test/plunit_tests.pl
+index 63e2126e..e573f52b 100644
+--- a/v6/prolog/compile/test/plunit_tests.pl
++++ b/v6/prolog/compile/test/plunit_tests.pl
+@@ -4341,15 +4341,19 @@ test(generic_template_vocabularies_expand_the_e2e_fixture_identically) :-
+     Typed == Raw.
+ 
+ % The declaration permutation receipt uses the full e2e program rather than a
+-% miniature standin.  Rules remain in source order; generated and author
+-% declarations enter enum expansion in canonical term order.
++% miniature standin.  Under fix A within-rel column order IS the program, so
++% the invariance is over WHOLE rel movement only (permute_rel_blocks keeps each
++% rel's columns in source order), never a flat reverse that would reorder a
++% rel's columns.  Same input and any whole-rel permutation give identical
++% bytes; a within-rel column shuffle is a different program (covered by
++% generic_within_rel_column_order_is_the_program below).
+ test(generic_e2e_declaration_permutation_is_byte_deterministic) :-
+     fixture(generic_expansion_end_to_end, prog(Decls, Rules), _, _, _),
+     expand_program(prog(Decls, Rules), Expanded, _),
+-    reverse(Decls, Reversed),
+-    expand_program(prog(Reversed, Rules), Permuted, _),
++    permute_rel_blocks(Decls, Permuted),
++    expand_program(prog(Permuted, Rules), PermutedOut, _),
+     term_string(Expanded, Text),
+-    term_string(Permuted, Text).
++    term_string(PermutedOut, Text).
+ 
+ test(generic_minted_name_collision_is_named) :-
+     canonical_type_name(list(text), Name),
+@@ -4374,10 +4378,10 @@ test(list_flavor_names_are_distinct_and_fixed) :-
+ test(list_flavor_fixture_declaration_permutation_is_byte_deterministic) :-
+     fixture(list_entity_dense_sequence_end_to_end, prog(Decls, Rules), _, _, _),
+     expand_program(prog(Decls, Rules), Expanded, _),
+-    reverse(Decls, Reversed),
+-    expand_program(prog(Reversed, Rules), Permuted, _),
++    permute_rel_blocks(Decls, Permuted),
++    expand_program(prog(Permuted, Rules), PermutedOut, _),
+     term_string(Expanded, Text),
+-    term_string(Permuted, Text).
++    term_string(PermutedOut, Text).
+ 
+ % Finding 2 (fixpoint over minted decls): option(list(list(text))) must mint
+ % the outer list AND the inner list.  Pre-fix discovery scanned author decls
+@@ -4394,10 +4398,10 @@ test(generic_nested_list_mints_inner_and_outer) :-
+ test(generic_nested_list_declaration_permutation_is_byte_deterministic) :-
+     nested_list_decls(Decls),
+     expand_generic_program(prog(Decls, []), Expanded),
+-    reverse(Decls, Reversed),
+-    expand_generic_program(prog(Reversed, []), Permuted),
++    permute_rel_blocks(Decls, Permuted),
++    expand_generic_program(prog(Permuted, []), PermutedOut),
+     term_string(Expanded, Text),
+-    term_string(Permuted, Text).
++    term_string(PermutedOut, Text).
+ 
+ % A rel type as the relational list element: the minted member value column
+ % carries the rel type (same way a direct ref-typed column does), the bare
+@@ -4414,10 +4418,56 @@ test(list_rel_element_mints_ref_typed_member_value) :-
+ test(list_rel_element_declaration_permutation_is_byte_deterministic) :-
+     Rel_element_decls(Decls),
+     expand_generic_program(prog(Decls, []), Expanded),
+-    reverse(Decls, Reversed),
+-    expand_generic_program(prog(Reversed, []), Permuted),
++    permute_rel_blocks(Decls, Permuted),
++    expand_generic_program(prog(Permuted, []), PermutedOut),
+     term_string(Expanded, Text),
+-    term_string(Permuted, Text).
++    term_string(PermutedOut, Text).
++
++% Fix A holds within-rel column order as the program: reordering the columns of
++% one rel is a DIFFERENT decl-list, and the expansion must reflect that rather
++% than the old msort flattening it away.  person/2 keeps id-first in the
++% fixture, so reversing its two columns changes the emitted table shape.
++test(generic_within_rel_column_order_is_the_program) :-
++    fixture(generic_expansion_end_to_end, prog(Decls, Rules), _, _, _),
++    rel_reversed(person, Decls, Reordered),
++    expand_program(prog(Decls, Rules), Expanded, _),
++    expand_program(prog(Reordered, Rules), Permuted, _),
++    term_string(Expanded, ExpandedText),
++    term_string(Permuted, PermutedText),
++    ExpandedText \== PermutedText.
++
++% Permute WHOLE rels (move grouped decl blocks) while keeping every rel's own
++% column order, which under fix A is the only order that is invariant.
++permute_rel_blocks(Decls, Permuted) :-
++    split_rel_blocks(Decls, Blocks),
++    reverse(Blocks, Reversed),
++    append(Reversed, Permuted).
++
++split_rel_blocks([], []).
++split_rel_blocks([Decl | Rest], [Block | Blocks]) :-
++    decl_rel_key(Decl, Key),
++    take_rel_block(Key, [Decl | Rest], Block, Remaining),
++    split_rel_blocks(Remaining, Blocks).
++
++take_rel_block(Key, [Decl | Rest], [Decl | Block], Remaining) :-
++    decl_rel_key(Decl, Key),
++    !,
++    take_rel_block(Key, Rest, Block, Remaining).
++take_rel_block(_, Block, [], Block).
++
++decl_rel_key(col_type(Name/_, _, _), Name).
++decl_rel_key(keyed(Name/_, _), Name).
++decl_rel_key(kind(Name/_, _), Name).
++decl_rel_key(keep(Name/_, _), Name).
++decl_rel_key(type_decl(Name, _), Name).
++decl_rel_key(enum_decl(Name, _), Name).
++
++rel_reversed(Name, Decls, Permuted) :-
++    partition(rel_columns_of(Name), Decls, Columns, Others),
++    reverse(Columns, Reversed),
++    append(Reversed, Others, Permuted).
++
++rel_columns_of(Name, col_type(Name/_, _, _)).
+ 
+ % The interned-set value dictionary is redundant for a rel element (the rel row
+ % already interns it), so generic expansion names it instead of forcing it.

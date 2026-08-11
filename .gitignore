@@ -95,3 +95,4 @@ node_modules
 # lane scratch: a tracked BRIEF.md silently replaced a live lane brief
 /BRIEF.md
 /REPORT.md
+.boop-worktrees/

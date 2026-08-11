@@ -1,0 +1,2177 @@
+openapi: 3.1.0
+
+info:
+  title: boop
+  version: 0.1.0
+  summary: Cross-harness agent control and transcript analytics.
+  description: |
+    Two trees over one SQLite store at `~/.agent/boop.db`.
+
+    * **control** (`boop beep ...`): lanes, routes, panes, messages, processes.
+    * **analytics** (`boop db ...`): sessions, turns, typed facts, token usage.
+
+    Every operation maps 1:1 to one clap subcommand path. Path segment order is
+    the CLI noun order; the HTTP method is the CLI verb.
+
+    Collections page with `limit` + `cursor` and answer `{ data, next_cursor }`.
+    Collections that accept `follow=true` upgrade to a live stream whose media
+    type is chosen by `Accept`: `application/x-ndjson` (default) or
+    `text/event-stream`.
+
+    Errors are RFC 7807 `application/problem+json`.
+  license:
+    name: MIT
+    identifier: MIT
+  contact:
+    name: sprefa
+    url: https://github.com/hafley66/sprefa
+
+servers:
+  - url: http://127.0.0.1:8420
+    description: Local boop daemon, started by `boop serve`.
+
+security:
+  - localToken: []
+
+tags:
+  - name: control
+    description: Lane lifecycle, routes, panes, mailbox, processes.
+  - name: harnesses
+    description: Registered harness adapters and their capabilities.
+  - name: sessions
+    description: Agent sessions and their turns.
+  - name: facts
+    description: Typed per-turn fact tables projected from transcripts.
+  - name: usage
+    description: Token usage, cost, billing windows, burn rate.
+  - name: admin
+    description: Ingest control and pricing tables.
+
+paths:
+
+  /harnesses:
+    get:
+      operationId: harnessList
+      summary: List registered harness adapters.
+      description: One row per adapter in the registry, with its capability flags.
+      tags: [harnesses]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of harness adapters.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HarnessPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /harnesses/{harness}:
+    parameters:
+      - $ref: '#/components/parameters/HarnessPath'
+    get:
+      operationId: harnessGet
+      summary: Get one harness adapter.
+      description: Capability flags and transcript root for a single adapter.
+      tags: [harnesses]
+      responses:
+        '200':
+          description: The harness adapter.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Harness'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /lanes:
+    get:
+      operationId: laneList
+      summary: List lanes.
+      description: Registry routes joined to live tmux and process state.
+      tags: [control]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/HarnessFilter'
+        - name: state
+          in: query
+          description: Only lanes in this liveness state.
+          schema:
+            $ref: '#/components/schemas/LaneState'
+      responses:
+        '200':
+          description: A page of lanes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LanePage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: laneCreate
+      summary: Create a lane.
+      description: |
+        Prepares the spawn directory (a git worktree unless `main_tree` is set),
+        spawns the harness through its adapter, writes the registry route and
+        the mailbox row. Refuses a non-fast-forward base.
+      tags: [control]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaneCreateRequest'
+      responses:
+        '201':
+          description: The lane was spawned.
+          headers:
+            Location:
+              description: URL of the created lane.
+              schema:
+                type: string
+                format: uri-reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lane'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: laneDeleteMany
+      summary: Delete every lane matching a filter.
+      description: |
+        Bulk stop plus route removal. `state=dead` is the prune case: lanes whose
+        tmux session is gone. Refuses with 409 when tmux is unreachable, because
+        live cannot then be told from dead.
+      tags: [control]
+      parameters:
+        - name: state
+          in: query
+          required: true
+          description: Delete lanes in this liveness state.
+          schema:
+            $ref: '#/components/schemas/LaneState'
+        - name: max_age_days
+          in: query
+          description: Only lanes idle at least this long.
+          schema:
+            type: integer
+            minimum: 0
+      responses:
+        '200':
+          description: The lanes that were deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LanePage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /lanes/{lane}:
+    parameters:
+      - $ref: '#/components/parameters/LanePath'
+    get:
+      operationId: laneGet
+      summary: Get one lane.
+      description: Route, liveness, harness session id, worktree path.
+      tags: [control]
+      responses:
+        '200':
+          description: The lane.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lane'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+    patch:
+      operationId: lanePatch
+      summary: Rewrite a lane's route.
+      description: |
+        Adopts an already-running pane: rewrites registry fields only and never
+        spawns. Absent fields are left alone.
+      tags: [control]
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: '#/components/schemas/LanePatchRequest'
+      responses:
+        '200':
+          description: The updated lane.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Lane'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+    delete:
+      operationId: laneDelete
+      summary: Delete one lane.
+      description: Idempotent stop through the harness adapter, then route removal.
+      tags: [control]
+      responses:
+        '204':
+          description: The lane is gone.
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /lanes/{lane}/route:
+    parameters:
+      - $ref: '#/components/parameters/LanePath'
+    get:
+      operationId: laneRouteGet
+      summary: Get a lane's route.
+      description: |
+        Resolves the lane name to its harness session id, tmux handle, cwd,
+        model and mode. Waits up to `resolve_wait` seconds for a route that a
+        just-spawned harness has not written yet.
+      tags: [control]
+      parameters:
+        - name: resolve_wait
+          in: query
+          description: Seconds to wait for the route to appear.
+          schema:
+            type: integer
+            minimum: 0
+            default: 3
+      responses:
+        '200':
+          description: The route.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Route'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /lanes/{lane}/pane:
+    parameters:
+      - $ref: '#/components/parameters/LanePath'
+    get:
+      operationId: lanePaneGet
+      summary: Capture a lane's pane.
+      description: The visible terminal buffer, newest last.
+      tags: [control]
+      parameters:
+        - name: lines
+          in: query
+          description: How many trailing lines to capture.
+          schema:
+            type: integer
+            minimum: 1
+            default: 200
+      responses:
+        '200':
+          description: The captured pane.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /lanes/{lane}/messages:
+    parameters:
+      - $ref: '#/components/parameters/LanePath'
+    get:
+      operationId: messageList
+      summary: List a lane's mailbox messages.
+      description: Queued, delivered and acked messages, oldest first.
+      tags: [control]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: acked
+          in: query
+          description: Filter on acknowledgement state.
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: A page of messages.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+    post:
+      operationId: hailCreate
+      summary: Hail a lane.
+      description: |
+        Appends the message to the lane's mailbox and injects it into the live
+        pane through the harness adapter. The response carries the delivery
+        outcome: `injected`, `queued_for_next_spawn` or `unsupported`.
+        Distinct from a plain message create because delivery is a side effect
+        on a running terminal, not a row write.
+      tags: [control]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HailRequest'
+      responses:
+        '201':
+          description: The message was queued, with its delivery outcome.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hail'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /message-acks:
+    post:
+      operationId: messageAckCreate
+      summary: Acknowledge messages.
+      description: |
+        Marks every message matching the selection as acked. Bulk by design:
+        the sweep case acks a whole lane or every lane older than a cutoff.
+      tags: [control]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageAckRequest'
+      responses:
+        '200':
+          description: The messages that were acked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /processes:
+    get:
+      operationId: processList
+      summary: List lane processes.
+      description: Per-lane pid, rss, cpu, uptime and child count.
+      tags: [control]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of processes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProcessPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /processes/{lane}:
+    parameters:
+      - $ref: '#/components/parameters/LanePath'
+    get:
+      operationId: processGet
+      summary: Get one lane's process.
+      description: Live pid, rss, cpu, uptime and child count for a single lane.
+      tags: [control]
+      responses:
+        '200':
+          description: The process.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Process'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /sessions:
+    get:
+      operationId: sessionList
+      summary: List sessions.
+      description: One row per known agent session, newest activity last.
+      tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/HarnessFilter'
+        - $ref: '#/components/parameters/ProjectFilter'
+        - $ref: '#/components/parameters/BranchFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: A page of sessions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /sessions/{sessionId}:
+    parameters:
+      - $ref: '#/components/parameters/SessionPath'
+    get:
+      operationId: sessionGet
+      summary: Get one session.
+      description: Accepts either the harness session id or the lane nickname.
+      tags: [sessions]
+      responses:
+        '200':
+          description: The session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /sessions/{sessionId}/turns/{turn}:
+    parameters:
+      - $ref: '#/components/parameters/SessionPath'
+      - name: turn
+        in: path
+        required: true
+        description: The turn ordinal within the session.
+        schema:
+          type: integer
+          minimum: 0
+    get:
+      operationId: turnGet
+      summary: Get one turn.
+      description: The single turn row addressed by its composite key.
+      tags: [sessions]
+      responses:
+        '200':
+          description: The turn.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Turn'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /turns:
+    get:
+      operationId: turnList
+      summary: List turns across sessions.
+      description: |
+        The raw `agent_turn` projection. With `follow=true` the response is a
+        live stream of new turns instead of a page.
+      tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/HarnessFilter'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/TurnFrom'
+        - $ref: '#/components/parameters/TurnTo'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Follow'
+        - name: role
+          in: query
+          description: Only turns with this role.
+          schema:
+            $ref: '#/components/schemas/TurnRole'
+      responses:
+        '200':
+          description: A page of turns, or a live stream when `follow=true`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TurnPage'
+            application/x-ndjson:
+              schema:
+                $ref: '#/components/schemas/Turn'
+            text/event-stream:
+              schema:
+                type: string
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /chat:
+    get:
+      operationId: chatList
+      summary: List chat-repr turns.
+      description: |
+        The zipf projection: one record per turn with the harness-neutral chat
+        shape. Same filters as `/turns`; different record schema.
+      tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/HarnessFilter'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Follow'
+      responses:
+        '200':
+          description: A page of chat records, or a live stream when `follow=true`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatPage'
+            application/x-ndjson:
+              schema:
+                $ref: '#/components/schemas/ChatRecord'
+            text/event-stream:
+              schema:
+                type: string
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /touches:
+    get:
+      operationId: touchList
+      summary: List file touches.
+      description: One row per file a tool read or wrote, from `agent_touch`.
+      tags: [facts]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+        - name: path
+          in: query
+          description: Glob over the touched path.
+          schema:
+            type: string
+        - name: verb
+          in: query
+          description: Tool name that performed the touch.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of touches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TouchPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /commands:
+    get:
+      operationId: commandList
+      summary: List shell commands.
+      description: One row per Bash tool call, from `agent_cmd`.
+      tags: [facts]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+        - name: program
+          in: query
+          description: First word of the command line.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of commands.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommandPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /fetches:
+    get:
+      operationId: fetchList
+      summary: List web fetches.
+      description: One row per WebFetch tool call, from `agent_fetch`.
+      tags: [facts]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+        - name: domain
+          in: query
+          description: Host of the fetched URL.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of fetches.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FetchPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /skills:
+    get:
+      operationId: skillList
+      summary: List skill invocations.
+      description: One row per Skill tool call, from `agent_skill`.
+      tags: [facts]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: A page of skill invocations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /prs:
+    get:
+      operationId: prList
+      summary: List pull request links.
+      description: One row per native `pr-link` record, from `agent_pr`.
+      tags: [facts]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: A page of pull request links.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /spans:
+    get:
+      operationId: spanList
+      summary: List file spans.
+      description: Line ranges an agent read or edited, from `agent_span`.
+      tags: [facts]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/Order'
+        - name: path
+          in: query
+          description: Glob over the spanned path.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: A page of spans.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpanPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /edges:
+    get:
+      operationId: edgeList
+      summary: List session edges.
+      description: Parent-to-child spawn edges, from `agent_edge`.
+      tags: [facts]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+        - name: direction
+          in: query
+          description: Whether `session` names the parent or the child.
+          schema:
+            type: string
+            enum: [children, parents]
+            default: children
+      responses:
+        '200':
+          description: A page of edges.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgePage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /usage:
+    get:
+      operationId: usageList
+      summary: Aggregate token usage.
+      description: |
+        Sums `agent_usage` over a time range and groups it. `group_by=day` is
+        the daily report; `group_by=session` is the per-session report;
+        `group_by=model` is the model breakdown. With no `group_by` the answer
+        is a single totals row. With `follow=true` the response is a live
+        stream, one aggregate snapshot per tick.
+      tags: [usage]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/HarnessFilter'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/ProjectFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Timezone'
+        - $ref: '#/components/parameters/CostMode'
+        - $ref: '#/components/parameters/Rollup'
+        - $ref: '#/components/parameters/Follow'
+        - name: group_by
+          in: query
+          description: Grouping key. Omit for a single totals row.
+          schema:
+            $ref: '#/components/schemas/UsageGroupBy'
+        - name: model
+          in: query
+          description: Only usage recorded against this model.
+          schema:
+            type: string
+        - name: breakdown
+          in: query
+          description: Attach a per-model breakdown to every group.
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: A page of usage groups, or a live stream when `follow=true`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsagePage'
+            application/x-ndjson:
+              schema:
+                $ref: '#/components/schemas/UsageGroup'
+            text/event-stream:
+              schema:
+                type: string
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /usage/blocks:
+    get:
+      operationId: usageBlockList
+      summary: List billing windows.
+      description: |
+        Splits usage into fixed-length windows. A window opens at the hour floor
+        of its first record and closes when either the window length elapses
+        since it opened or that long passes with no record. Idle stretches are
+        returned as gap rows.
+      tags: [usage]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/ProjectFilter'
+        - $ref: '#/components/parameters/Since'
+        - $ref: '#/components/parameters/Until'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Timezone'
+        - $ref: '#/components/parameters/CostMode'
+        - name: window_hours
+          in: query
+          description: Window length in hours.
+          schema:
+            type: number
+            minimum: 0.25
+            default: 5
+        - name: active
+          in: query
+          description: Only the window that is still open.
+          schema:
+            type: boolean
+            default: false
+        - name: token_limit
+          in: query
+          description: |
+            Token ceiling used for the projection percentage. `p90` derives it
+            from the ninth decile of past windows that reached a known limit.
+          schema:
+            oneOf:
+              - type: integer
+                minimum: 1
+              - type: string
+                enum: [p90, max]
+      responses:
+        '200':
+          description: A page of windows.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageBlockPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /usage/burn-rate:
+    get:
+      operationId: usageBurnRateGet
+      summary: Get the current burn rate.
+      description: |
+        Tokens per minute and cost per hour over a trailing window, plus the
+        projected total for the open billing window.
+      tags: [usage]
+      parameters:
+        - $ref: '#/components/parameters/SessionFilter'
+        - $ref: '#/components/parameters/ProjectFilter'
+        - $ref: '#/components/parameters/CostMode'
+        - $ref: '#/components/parameters/Follow'
+        - name: window_minutes
+          in: query
+          description: Trailing window over which the rate is measured.
+          schema:
+            type: integer
+            minimum: 1
+            default: 60
+      responses:
+        '200':
+          description: The burn rate, or a live stream when `follow=true`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BurnRate'
+            application/x-ndjson:
+              schema:
+                $ref: '#/components/schemas/BurnRate'
+            text/event-stream:
+              schema:
+                type: string
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /pricing/models:
+    get:
+      operationId: priceList
+      summary: List model prices.
+      description: The rate table cost is computed from, one row per model.
+      tags: [admin]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: source
+          in: query
+          description: Only rows from this rate source.
+          schema:
+            $ref: '#/components/schemas/PriceSource'
+      responses:
+        '200':
+          description: A page of model prices.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelPricePage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /pricing/models/{model}:
+    parameters:
+      - name: model
+        in: path
+        required: true
+        description: The model name as it appears in transcripts.
+        schema:
+          type: string
+    put:
+      operationId: priceSet
+      summary: Set one model's price.
+      description: |
+        Writes a `manual` row that wins over the fetched rate table. Idempotent
+        by model name, hence PUT.
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ModelPriceWrite'
+      responses:
+        '200':
+          description: The stored price.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelPrice'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /syncs:
+    post:
+      operationId: syncCreate
+      summary: Run one ingest pass.
+      description: |
+        Tails every harness forward from its stored byte offset into the store
+        and answers the row counts written. Idempotent per byte offset.
+      tags: [admin]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SyncRequest'
+      responses:
+        '201':
+          description: The ingest pass finished.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sync'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+  /sync-cursors:
+    get:
+      operationId: syncCursorList
+      summary: List ingest cursors.
+      description: Per-session transcript path and byte offset already ingested.
+      tags: [admin]
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/SessionFilter'
+      responses:
+        '200':
+          description: A page of cursors.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SyncCursorPage'
+        '4XX':
+          $ref: '#/components/responses/Problem'
+
+components:
+
+  securitySchemes:
+    localToken:
+      type: http
+      scheme: bearer
+      description: |
+        Token from `~/.agent/boop-token`. The daemon binds loopback only; the
+        token stops other local users reaching it.
+
+  parameters:
+
+    Limit:
+      name: limit
+      in: query
+      description: Maximum rows in one page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque cursor from the previous page's `next_cursor`.
+      schema:
+        type: string
+
+    Since:
+      name: since
+      in: query
+      description: Only rows at or after this instant.
+      schema:
+        type: string
+        format: date-time
+
+    Until:
+      name: until
+      in: query
+      description: Only rows strictly before this instant.
+      schema:
+        type: string
+        format: date-time
+
+    Order:
+      name: order
+      in: query
+      description: Sort direction on the row's natural key.
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: asc
+
+    Follow:
+      name: follow
+      in: query
+      description: Stream new rows instead of returning a page.
+      schema:
+        type: boolean
+        default: false
+
+    HarnessFilter:
+      name: harness
+      in: query
+      description: Only rows from this harness adapter.
+      schema:
+        type: string
+
+    SessionFilter:
+      name: session
+      in: query
+      description: Harness session id or lane nickname.
+      schema:
+        type: string
+
+    ProjectFilter:
+      name: project
+      in: query
+      description: Working directory the session ran in.
+      schema:
+        type: string
+
+    BranchFilter:
+      name: branch
+      in: query
+      description: Git branch the session ran on.
+      schema:
+        type: string
+
+    TurnFrom:
+      name: turn_from
+      in: query
+      description: Lowest turn ordinal to include.
+      schema:
+        type: integer
+        minimum: 0
+
+    TurnTo:
+      name: turn_to
+      in: query
+      description: Highest turn ordinal to include.
+      schema:
+        type: integer
+        minimum: 0
+
+    Timezone:
+      name: timezone
+      in: query
+      description: IANA zone the day and hour buckets are cut in.
+      schema:
+        type: string
+        default: UTC
+
+    CostMode:
+      name: cost_mode
+      in: query
+      description: |
+        `calculate` always multiplies tokens by the rate table. `display` only
+        reports a cost the harness itself recorded. `auto` prefers the recorded
+        cost and falls back to the rate table.
+      schema:
+        type: string
+        enum: [auto, calculate, display]
+        default: auto
+
+    Rollup:
+      name: rollup
+      in: query
+      description: |
+        `session` counts each session alone. `subtree` folds every descendant
+        session reached through spawn edges into its root.
+      schema:
+        type: string
+        enum: [session, subtree]
+        default: session
+
+    HarnessPath:
+      name: harness
+      in: path
+      required: true
+      description: Stable harness adapter id.
+      schema:
+        type: string
+
+    LanePath:
+      name: lane
+      in: path
+      required: true
+      description: Lane name in the registry.
+      schema:
+        type: string
+
+    SessionPath:
+      name: sessionId
+      in: path
+      required: true
+      description: Harness session id or lane nickname.
+      schema:
+        type: string
+
+  responses:
+
+    Problem:
+      description: The request failed.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+  schemas:
+
+    Problem:
+      type: object
+      description: RFC 7807 error body.
+      properties:
+        type:
+          type: string
+          format: uri
+          description: Stable identifier for the failure class.
+        title:
+          type: string
+          description: Short human-readable summary.
+        status:
+          type: integer
+          description: HTTP status code.
+        detail:
+          type: string
+          description: What went wrong on this request.
+        instance:
+          type: string
+          format: uri-reference
+          description: The request path that failed.
+      required: [type, title, status]
+
+    PageMeta:
+      type: object
+      description: Cursor pagination footer.
+      properties:
+        next_cursor:
+          type: [string, 'null']
+          description: Cursor for the next page, null at the end.
+        count:
+          type: integer
+          description: Rows in this page.
+      required: [next_cursor, count]
+
+    LaneState:
+      type: string
+      description: Liveness of a lane's tmux session.
+      enum: [live, idle, dead]
+
+    TurnRole:
+      type: string
+      description: Who produced the turn.
+      enum: [user, assistant, tool, system]
+
+    SendOutcome:
+      type: string
+      description: What happened to an injected message.
+      enum: [injected, queued_for_next_spawn, unsupported]
+
+    UsageGroupBy:
+      type: string
+      description: Aggregation key for token usage.
+      enum: [hour, day, week, month, model, session, project, harness]
+
+    PriceSource:
+      type: string
+      description: Where a rate row came from.
+      enum: [litellm, models_dev, manual]
+
+    Capabilities:
+      type: object
+      description: What a harness adapter can be asked to do.
+      properties:
+        send_midflight:
+          type: boolean
+          description: Text can be injected into a running pane.
+        resume:
+          type: boolean
+          description: A stored session id can be resumed.
+        spawn:
+          type: boolean
+          description: A new session can be started by boop.
+        subagent_visible:
+          type: boolean
+          description: Child sessions are readable from disk.
+      required: [send_midflight, resume, spawn, subagent_visible]
+
+    Harness:
+      type: object
+      description: One registered harness adapter.
+      properties:
+        harness:
+          type: string
+          description: Stable adapter id.
+        transcript_root:
+          type: string
+          description: Directory the adapter reads transcripts from.
+        capabilities:
+          $ref: '#/components/schemas/Capabilities'
+      required: [harness, capabilities]
+
+    HarnessPage:
+      type: object
+      description: A page of harness adapters.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Harness'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Route:
+      type: object
+      description: Registry route for a lane.
+      properties:
+        lane:
+          type: string
+          description: Lane name.
+        harness:
+          type: [string, 'null']
+          description: Harness adapter id.
+        tmux:
+          type: [string, 'null']
+          description: tmux target the pane lives at.
+        cwd:
+          type: [string, 'null']
+          description: Working directory of the spawned process.
+        model:
+          type: [string, 'null']
+          description: Model the lane was launched with.
+        mode:
+          type: [string, 'null']
+          description: Permission or launch mode.
+        session_id:
+          type: [string, 'null']
+          description: Harness session id once the harness has written it.
+      required: [lane]
+
+    Lane:
+      type: object
+      description: A lane and its live state.
+      properties:
+        lane:
+          type: string
+          description: Lane name.
+        route:
+          $ref: '#/components/schemas/Route'
+        state:
+          $ref: '#/components/schemas/LaneState'
+        worktree:
+          type: [string, 'null']
+          description: Worktree path created for the spawn.
+        base_sha:
+          type: [string, 'null']
+          description: Commit the worktree was branched from.
+        created_at:
+          type: string
+          format: date-time
+          description: When the lane was registered.
+      required: [lane, route, state]
+
+    LanePage:
+      type: object
+      description: A page of lanes.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Lane'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    LaneCreateRequest:
+      type: object
+      description: Spawn parameters for a new lane.
+      properties:
+        lane:
+          type: string
+          description: Lane name to register.
+        cwd:
+          type: string
+          description: Repository the lane works in.
+        harness:
+          type: string
+          description: Harness adapter id.
+          default: claude
+        command:
+          type: string
+          description: Command line to run in the pane.
+        brief:
+          type: string
+          description: Seed message delivered on spawn.
+        model:
+          type: string
+          description: Model to launch with.
+        mode:
+          type: string
+          description: Permission or launch mode.
+        tmux:
+          type: string
+          description: tmux session name to create.
+        parent:
+          type: string
+          description: Lane that is spawning this one.
+        main_tree:
+          type: boolean
+          description: Spawn in the main tree instead of a worktree.
+          default: false
+        base_sha:
+          type: string
+          description: Commit the worktree branches from.
+        setup:
+          type: array
+          description: Shell steps run in the worktree before the harness starts.
+          items:
+            type: string
+        dry_run:
+          type: boolean
+          description: Report the plan without spawning.
+          default: false
+      required: [lane, cwd]
+
+    LanePatchRequest:
+      type: object
+      description: Route fields to rewrite. Absent fields are left alone.
+      properties:
+        harness:
+          type: string
+          description: Harness adapter id.
+        tmux:
+          type: string
+          description: tmux target.
+        cwd:
+          type: string
+          description: Working directory.
+        model:
+          type: string
+          description: Model name.
+        mode:
+          type: string
+          description: Permission or launch mode.
+        session_id:
+          type: string
+          description: Harness session id.
+
+    HailRequest:
+      type: object
+      description: A message to queue and inject.
+      properties:
+        body:
+          type: string
+          description: Text delivered to the pane.
+        from:
+          type: string
+          description: Sender lane name.
+        kind:
+          type: string
+          description: Message class recorded in the mailbox.
+        ref:
+          type: string
+          description: Correlation id linking a reply to its request.
+      required: [body]
+
+    Hail:
+      type: object
+      description: A queued message and its delivery outcome.
+      properties:
+        message:
+          $ref: '#/components/schemas/Message'
+        outcome:
+          $ref: '#/components/schemas/SendOutcome'
+        pane:
+          type: [string, 'null']
+          description: tmux target the text was injected into.
+      required: [message, outcome]
+
+    Message:
+      type: object
+      description: One mailbox row.
+      properties:
+        id:
+          type: string
+          description: Mailbox message id.
+        lane:
+          type: string
+          description: Recipient lane.
+        from:
+          type: [string, 'null']
+          description: Sender lane.
+        kind:
+          type: [string, 'null']
+          description: Message class.
+        body:
+          type: string
+          description: Message text.
+        ts:
+          type: string
+          format: date-time
+          description: When the message was queued.
+        acked:
+          type: boolean
+          description: Whether the message has been acknowledged.
+      required: [id, lane, body, ts, acked]
+
+    MessagePage:
+      type: object
+      description: A page of mailbox messages.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    MessageAckRequest:
+      type: object
+      description: Selection of messages to acknowledge.
+      properties:
+        lane:
+          type: string
+          description: Only this lane's messages.
+        max_age_days:
+          type: integer
+          minimum: 0
+          description: Only messages at least this old.
+          default: 7
+        close_routeless:
+          type: boolean
+          description: Also ack lanes that have no registry route.
+          default: false
+
+    Process:
+      type: object
+      description: Live process facts for one lane.
+      properties:
+        lane:
+          type: string
+          description: Lane name.
+        pid:
+          type: [integer, 'null']
+          description: Process id of the harness.
+        rss_bytes:
+          type: [integer, 'null']
+          description: Resident set size.
+        cpu_percent:
+          type: [number, 'null']
+          description: Recent CPU share.
+        uptime_seconds:
+          type: [integer, 'null']
+          description: Seconds since the process started.
+        child_count:
+          type: [integer, 'null']
+          description: Direct children of the harness process.
+      required: [lane]
+
+    ProcessPage:
+      type: object
+      description: A page of processes.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Process'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Session:
+      type: object
+      description: One agent session.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        harness:
+          type: string
+          description: Harness adapter id.
+        nickname:
+          type: [string, 'null']
+          description: Lane name the session was spawned as.
+        cwd:
+          type: [string, 'null']
+          description: Working directory.
+        branch:
+          type: [string, 'null']
+          description: Git branch.
+        parent_session:
+          type: [string, 'null']
+          description: Spawning session, when the session is a subagent.
+        started_at:
+          type: [string, 'null']
+          format: date-time
+          description: First recorded activity.
+        last_activity_at:
+          type: [string, 'null']
+          format: date-time
+          description: Most recent recorded activity.
+        turn_count:
+          type: integer
+          description: Turn rows stored for the session.
+      required: [session, harness]
+
+    SessionPage:
+      type: object
+      description: A page of sessions.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Session'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Turn:
+      type: object
+      description: One turn row.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        turn:
+          type: integer
+          description: Turn ordinal within the session.
+        ts:
+          type: string
+          format: date-time
+          description: Record timestamp.
+        role:
+          $ref: '#/components/schemas/TurnRole'
+        said:
+          type: string
+          description: Text content, empty for tool turns.
+      required: [session, turn, role]
+
+    TurnPage:
+      type: object
+      description: A page of turns.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Turn'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    ChatRecord:
+      type: object
+      description: One chat-repr record.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        turn:
+          type: integer
+          description: Turn ordinal.
+        ts:
+          type: string
+          format: date-time
+          description: Record timestamp.
+        role:
+          $ref: '#/components/schemas/TurnRole'
+        text:
+          type: string
+          description: Rendered content.
+        tool:
+          type: [string, 'null']
+          description: Tool name when the record is a tool call.
+      required: [session, turn, role, text]
+
+    ChatPage:
+      type: object
+      description: A page of chat records.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatRecord'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Touch:
+      type: object
+      description: One file touch.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        turn:
+          type: integer
+          description: Turn ordinal.
+        ts:
+          type: string
+          format: date-time
+          description: Record timestamp.
+        path:
+          type: string
+          description: File the tool touched.
+        verb:
+          type: string
+          description: Tool name.
+      required: [session, turn, path, verb]
+
+    TouchPage:
+      type: object
+      description: A page of touches.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Touch'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Command:
+      type: object
+      description: One shell command.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        turn:
+          type: integer
+          description: Turn ordinal.
+        ts:
+          type: string
+          format: date-time
+          description: Record timestamp.
+        program:
+          type: string
+          description: First word of the command line.
+        argline:
+          type: string
+          description: Remainder of the command line.
+      required: [session, turn, program]
+
+    CommandPage:
+      type: object
+      description: A page of commands.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Command'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Fetch:
+      type: object
+      description: One web fetch.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        turn:
+          type: integer
+          description: Turn ordinal.
+        ts:
+          type: string
+          format: date-time
+          description: Record timestamp.
+        url:
+          type: string
+          description: Fetched URL.
+        domain:
+          type: string
+          description: Host of the fetched URL.
+      required: [session, turn, url, domain]
+
+    FetchPage:
+      type: object
+      description: A page of fetches.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Fetch'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Skill:
+      type: object
+      description: One skill invocation.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        turn:
+          type: integer
+          description: Turn ordinal.
+        skill:
+          type: string
+          description: Skill name.
+      required: [session, turn, skill]
+
+    SkillPage:
+      type: object
+      description: A page of skill invocations.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Skill'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Pr:
+      type: object
+      description: One pull request link.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        turn:
+          type: integer
+          description: Turn ordinal.
+        pr_url:
+          type: string
+          description: Pull request URL.
+      required: [session, turn, pr_url]
+
+    PrPage:
+      type: object
+      description: A page of pull request links.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pr'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Span:
+      type: object
+      description: One file span.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        turn:
+          type: integer
+          description: Turn ordinal.
+        path:
+          type: string
+          description: File the span points into.
+        line_start:
+          type: integer
+          description: First line of the span.
+        line_end:
+          type: integer
+          description: Last line of the span.
+      required: [session, turn, path]
+
+    SpanPage:
+      type: object
+      description: A page of spans.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Span'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    Edge:
+      type: object
+      description: One spawn edge between sessions.
+      properties:
+        parent_session:
+          type: string
+          description: Spawning session id.
+        child_session:
+          type: string
+          description: Spawned session id.
+        edge_kind:
+          type: string
+          description: Relationship class.
+        agent_type:
+          type: [string, 'null']
+          description: Subagent type the child was spawned as.
+        model:
+          type: [string, 'null']
+          description: Model the child ran on.
+      required: [parent_session, child_session, edge_kind]
+
+    EdgePage:
+      type: object
+      description: A page of spawn edges.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Edge'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    TokenCounts:
+      type: object
+      description: Token totals for one aggregate.
+      properties:
+        input_tokens:
+          type: integer
+          description: Uncached input tokens.
+        output_tokens:
+          type: integer
+          description: Generated tokens.
+        cache_create_5m_tokens:
+          type: integer
+          description: Input tokens written to the five-minute cache.
+        cache_create_1h_tokens:
+          type: integer
+          description: Input tokens written to the one-hour cache.
+        cache_read_tokens:
+          type: integer
+          description: Input tokens served from cache.
+        total_tokens:
+          type: integer
+          description: Sum of every bucket above.
+      required:
+        - input_tokens
+        - output_tokens
+        - cache_create_5m_tokens
+        - cache_create_1h_tokens
+        - cache_read_tokens
+        - total_tokens
+
+    ModelBreakdown:
+      type: object
+      description: One model's share of an aggregate.
+      properties:
+        model:
+          type: string
+          description: Model name.
+        tokens:
+          $ref: '#/components/schemas/TokenCounts'
+        cost_usd:
+          type: number
+          description: Cost attributed to this model.
+        priced:
+          type: boolean
+          description: False when no rate row matched the model.
+      required: [model, tokens, cost_usd, priced]
+
+    UsageGroup:
+      type: object
+      description: One aggregate row of token usage.
+      properties:
+        key:
+          type: [string, 'null']
+          description: Value of the grouping key, null for the totals row.
+        group_by:
+          type: [string, 'null']
+          description: Which key the row is grouped on.
+        bucket_start:
+          type: [string, 'null']
+          format: date-time
+          description: Start of the time bucket for time groupings.
+        tokens:
+          $ref: '#/components/schemas/TokenCounts'
+        cost_usd:
+          type: number
+          description: Cost over the aggregate.
+        record_count:
+          type: integer
+          description: Deduplicated assistant records in the aggregate.
+        first_activity_at:
+          type: [string, 'null']
+          format: date-time
+          description: Earliest record in the aggregate.
+        last_activity_at:
+          type: [string, 'null']
+          format: date-time
+          description: Latest record in the aggregate.
+        models:
+          type: array
+          description: Models seen in the aggregate.
+          items:
+            type: string
+        model_breakdowns:
+          type: array
+          description: Per-model split, present when `breakdown=true`.
+          items:
+            $ref: '#/components/schemas/ModelBreakdown'
+        unpriced_models:
+          type: array
+          description: Models with no rate row, whose cost is therefore missing.
+          items:
+            type: string
+      required: [key, tokens, cost_usd, record_count]
+
+    UsagePage:
+      type: object
+      description: A page of usage aggregates.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UsageGroup'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    UsageBlock:
+      type: object
+      description: One billing window.
+      properties:
+        id:
+          type: string
+          description: Window identifier, the hour-floored start instant.
+        start_at:
+          type: string
+          format: date-time
+          description: When the window opened.
+        end_at:
+          type: string
+          format: date-time
+          description: When the window closes or closed.
+        is_gap:
+          type: boolean
+          description: True when the row is an idle stretch, not a window.
+        is_active:
+          type: boolean
+          description: True when the window is still open.
+        tokens:
+          $ref: '#/components/schemas/TokenCounts'
+        cost_usd:
+          type: number
+          description: Cost inside the window.
+        models:
+          type: array
+          description: Models seen inside the window.
+          items:
+            type: string
+        burn_rate:
+          oneOf:
+            - $ref: '#/components/schemas/BurnRate'
+            - type: 'null'
+          description: Rate measured inside the window.
+        projection:
+          oneOf:
+            - $ref: '#/components/schemas/Projection'
+            - type: 'null'
+          description: Extrapolation to the window close, active windows only.
+      required: [id, start_at, end_at, is_gap, is_active, tokens, cost_usd]
+
+    UsageBlockPage:
+      type: object
+      description: A page of billing windows.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/UsageBlock'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    BurnRate:
+      type: object
+      description: Consumption rate over a window.
+      properties:
+        window_start_at:
+          type: string
+          format: date-time
+          description: Start of the measured window.
+        window_end_at:
+          type: string
+          format: date-time
+          description: End of the measured window.
+        tokens_per_minute:
+          type: number
+          description: Every token bucket, per minute.
+        billable_tokens_per_minute:
+          type: number
+          description: Input plus output only, per minute.
+        cost_usd_per_hour:
+          type: number
+          description: Cost rate over the window.
+      required:
+        - window_start_at
+        - window_end_at
+        - tokens_per_minute
+        - billable_tokens_per_minute
+        - cost_usd_per_hour
+
+    Projection:
+      type: object
+      description: Extrapolation of the open window to its close.
+      properties:
+        total_tokens:
+          type: integer
+          description: Tokens expected by the window close.
+        total_cost_usd:
+          type: number
+          description: Cost expected by the window close.
+        remaining_minutes:
+          type: integer
+          description: Minutes left in the window.
+        limit_tokens:
+          type: [integer, 'null']
+          description: Ceiling the projection is measured against.
+        limit_percent:
+          type: [number, 'null']
+          description: Projected share of the ceiling.
+      required: [total_tokens, total_cost_usd, remaining_minutes]
+
+    ModelPrice:
+      type: object
+      description: Rate row for one model, in USD per million tokens.
+      properties:
+        model:
+          type: string
+          description: Model name.
+        input_per_mtok:
+          type: number
+          description: Uncached input rate.
+        output_per_mtok:
+          type: number
+          description: Output rate.
+        cache_write_5m_per_mtok:
+          type: number
+          description: Five-minute cache write rate.
+        cache_write_1h_per_mtok:
+          type: number
+          description: One-hour cache write rate.
+        cache_read_per_mtok:
+          type: number
+          description: Cache read rate.
+        source:
+          $ref: '#/components/schemas/PriceSource'
+        fetched_at:
+          type: string
+          format: date-time
+          description: When the row was written.
+      required:
+        - model
+        - input_per_mtok
+        - output_per_mtok
+        - cache_write_5m_per_mtok
+        - cache_write_1h_per_mtok
+        - cache_read_per_mtok
+        - source
+
+    ModelPriceWrite:
+      type: object
+      description: Rate values to store for one model.
+      properties:
+        input_per_mtok:
+          type: number
+          description: Uncached input rate.
+        output_per_mtok:
+          type: number
+          description: Output rate.
+        cache_write_5m_per_mtok:
+          type: number
+          description: Five-minute cache write rate.
+        cache_write_1h_per_mtok:
+          type: number
+          description: One-hour cache write rate.
+        cache_read_per_mtok:
+          type: number
+          description: Cache read rate.
+      required: [input_per_mtok, output_per_mtok]
+
+    ModelPricePage:
+      type: object
+      description: A page of model prices.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelPrice'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]
+
+    SyncRequest:
+      type: object
+      description: Which sessions to ingest.
+      properties:
+        harness:
+          type: string
+          description: Only this harness adapter.
+        session:
+          type: string
+          description: Only this session.
+        rebuild:
+          type: boolean
+          description: Reset cursors to zero and re-read from the top.
+          default: false
+
+    Sync:
+      type: object
+      description: Result of one ingest pass.
+      properties:
+        sessions_read:
+          type: integer
+          description: Transcript files opened.
+        bytes_read:
+          type: integer
+          description: Bytes consumed past the stored offsets.
+        rows_written:
+          type: object
+          description: Row counts per fact table.
+          additionalProperties:
+            type: integer
+        duration_ms:
+          type: integer
+          description: Wall time of the pass.
+      required: [sessions_read, bytes_read, rows_written, duration_ms]
+
+    SyncCursor:
+      type: object
+      description: Ingest position for one session.
+      properties:
+        session:
+          type: string
+          description: Harness session id.
+        path:
+          type: string
+          description: Transcript file the offset belongs to.
+        offset:
+          type: integer
+          description: Bytes already ingested.
+      required: [session, path, offset]
+
+    SyncCursorPage:
+      type: object
+      description: A page of ingest cursors.
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/SyncCursor'
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+      required: [data, meta]

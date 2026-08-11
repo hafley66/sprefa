@@ -1,0 +1,667 @@
+diff --git a/v6/sprefa-store/PROBE-REPORT.md b/v6/sprefa-store/PROBE-REPORT.md
+new file mode 100644
+index 00000000..107a02c2
+--- /dev/null
++++ b/v6/sprefa-store/PROBE-REPORT.md
+@@ -0,0 +1,172 @@
++# PROBE - WITH RECURSIVE round collapser + folded consolidation
++
++Feature branch `feature/sqlite-recursive-probe`. Two questions measured on the
++same fixtures the PERF-REPORT appendix banked: DAG 960k and CYC 960k s7
++(`gen_multi_cyclic(6,160000,{0,7})`, nodes=960002). Every step < 10 s.
++
++- **Q1** - does a recursive CTE collapse the retraction round loop into one VM entry?
++- **Q2** - does an append-only delta + incremental fold cut b-tree writes?
++
++## Contents
++
++- [The one-line answer](#the-one-line-answer)
++- [Q1 · what a recursive CTE can and cannot own](#q1--what-a-recursive-cte-can-and-cannot-own)
++- [Q1 · wall + statement table](#q1--wall--statement-table)
++- [Q2 · folded consolidation](#q2--folded-consolidation)
++- [Did the representation gap move?](#did-the-representation-gap-move)
++- [Measure: b-tree write volume](#measure-b-tree-write-volume)
++- [Receipts and reproduce](#receipts-and-reproduce)
++
++## The one-line answer
++
++A recursive CTE owns the traversal (cone, rederive, reach) in one VM entry each,
++and the unrounded distinct-reach form also wins on wall (RS: 3 stmts, 1133 ms vs
++dred-loop 53/1750, signed-delta 27/1673). The ROUND column is the one thing a
++recursive CTE cannot own: SQLite rejects a second self-reference, and rounding
++breaks the UNION-distinct termination a cycle depends on. So the round loop stays
++in Rust; the CTE absorbs the walk.
++
++## Q1 · what a recursive CTE can and cannot own
++
++```mermaid
++flowchart LR
++    subgraph CTE_OWNS["recursive CTE owns (single self-ref, UNION distinct)"]
++        A[over-delete cone] 
++        B[rederive set]
++        C[reach from roots]
++    end
++    subgraph LOOP_OWNS["stays in Rust (round loop)"]
++        D["per-round delta staging"]
++        E["refcount / seen fold (needs accumulated set)"]
++        F["weight publish"]
++    end
++    CTE_OWNS --> LOOP_OWNS
++```
++
++Empirical walls, verified on sqlite3 3.43 (libsqlite3 bundled):
++
++| form | result |
++|---|---|
++| `WITH RECURSIVE r(d,k) AS (SELECT 0,0 UNION SELECT d+1,e.c ...)` over a cycle | **never terminates** (round column defeats UNION-distinct; (d,k) pairs are all distinct) |
++| adding the guard `... WHERE e.c NOT IN (SELECT k FROM r)` | **rejected**: `multiple recursive references: r` |
++| distinct reach `r(k)` with no round column over a cycle | terminates (0,1,2,3) |
++
++Why the ROUND cannot ride as a CTE column: the recursive term may reference the
++CTE name exactly once (so the accumulated-set guard is impossible), and a round
++column turns every cycle into fresh rows forever. The constraint leaves exactly
++the UNROUNDED distinct walk, which is why the pieces that must see the accumulated
++alive set (delta staging, refcount fold) live outside the CTE, in the Rust round
++loop.
++
++Where each variant does its work (cone, rederive, reach, round loop):
++
++| form | over-delete cone | rederive | reach from roots | round loop |
++|---|---|---|---|---|
++| `retract_dred` (loop) | 1 loop | 1 loop | - | Rust per round |
++| `retract_dred_cte` | 1 CTE | 1 CTE | - | none |
++| `retract_signed_delta` (loop) | - | - | 1 loop | Rust per round |
++| `retract_signed_delta_cte` (RS) | - | - | 1 CTE | none |
++
++RS and `retract_signed_delta` are the same survivor set: the per-round
++"not already alive" guard only stops re-emission, it does not change the
++least-fixpoint result. RS just computes that fixpoint in one distinct walk.
++
++## Q1 · wall + statement table
++
++Same 960k fixtures. `stmts` = SQL statement dispatches in the retract only
++(setup excluded). `new-page MB` = persistent b-tree page growth (see
++[Measure](#measure-b-tree-write-volume)).
++
++### DAG 960k (nodes=960002)
++
++| variant | ms | stmts | survivors | oracle-equal | new-page MB |
++|---|---:|---:|---:|:---:|---:|
++| dred-loop | 1750.2 | 53 | 800002 | yes | 0.00 |
++| dred-cte | 2540.8 | 6 | 800002 | yes | 0.00 |
++| signed-delta | 1672.6 | 27 | 800002 | yes | 19.56 |
++| **signed-delta-cte (RS)** | **1133.0** | **3** | 800002 | yes | 0.00 |
++| delta-fold (FC) | 1228.6 | 27 | 800002 | yes | 18.12 |
++| dd (banked) | 175.4 | 0 | 800002 | yes | - |
++
++### CYC 960k s7 (nodes=960002, 815240 survivors)
++
++| variant | ms | stmts | survivors | oracle-equal | new-page MB |
++|---|---:|---:|---:|:---:|---:|
++| dred-loop | 1908.0 | 53 | 815240 | yes | 0.00 |
++| dred-cte | 2682.2 | 6 | 815240 | yes | 0.00 |
++| signed-delta | 1872.9 | 27 | 815240 | yes | 19.75 |
++| **signed-delta-cte (RS)** | **1304.7** | **3** | 815240 | yes | 0.00 |
++| delta-fold (FC) | 1375.0 | 27 | 815240 | yes | 18.84 |
++| oracle (banked) | 379.4 | 0 | 815240 | ref | - |
++
++Banked cross-check: dred-loop 1753.4 ms / 53 stmts and signed-delta
++1669.7 ms / 27 stmts (PERF-REPORT appendix) reproduce here within noise
++(1750.2 / 53, 1672.6 / 27).
++
++Q1 read on the table:
++
++- Statement crossings collapse: dred 53 -> dred-cte 6 -> RS 3. signed-delta 27 -> RS 3.
++- RS also wins wall: 1133 ms beats dred-loop 1750, dred-cte 2541, signed-delta 1673.
++- dred-cte (6 stmts) is SLOWER than dred-loop (53 stmts) on this wide frontier,
++  per the banked shape rule: a recursive CTE re-walks its whole accumulated set
++  each iteration, so a wide frontier costs more per VM entry than the loop's
++  incremental per-round dispatch. RS beats both because it is one reach walk,
++  not the DRed over-delete cone + rederive pair.
++
++## Q2 · folded consolidation
++
++`retract_delta_fold` (FC) is `retract_signed_delta` with the refcount accumulator
++folded over time: `DELETE` then refill `cx_refcount` from the whole `cx_row` is
++replaced by an append-only accumulator that grows by `INSERT OR IGNORE` each round
++(the running reached set), and the per-round delta fold replaces any periodic
++GROUP BY/HAVING consolidation. No refill of the 960k corpus ever runs.
++
++| variant | statement count | new-page MB (DAG 960k) | survivors |
++|---|---:|---:|---:|
++| signed-delta (refill) | 27 | 19.56 | 800002 |
++| delta-fold (FC) | 27 | 18.12 | 800002 |
++| delta | 0 | -1.44 | - |
++
++The b-tree growth FC removes is the ~160k dead rows the refill materialized into
++`cx_refcount` (160002 rows x ~9 B/row ~ 1.4 MB). The statement count is
++unchanged (27) because the refill was already one fused `DELETE+INSERT` dispatch;
++the saving is write volume, not crossings. `delta` stays append-only for the tick.
++
++## Did the representation gap move?
++
++For a single retraction, the delta/refcount scaffold RS drops buys nothing
++measurable: RS reaches the identical survivor set with fewer statements, less
++wall, and zero new b-tree pages. The scaffold preserves the incremental story
++(the per-round delta is the reuse seam for future ticks), but that seam is not
++exercised by the retract as written, which rebuilds state from scratch each call
++either way. So the gap moved for the single-shot case (RS is the recon floor),
++and the delta tables are currently overhead, not an answer RS lacks.
++
++## Measure: b-tree write volume
++
++`sqlite3_status(SQLITE_STATUS_PAGEWRITE)` is not compiled into the bundled
++libsqlite3: opcode 7 is the deprecated `PAGECACHE_SIZE` memory counter, not a page
++write counter (read from `sqlite3/sqlite3.c` status dispatch). So page WRITE
++counts are proxied by the checkpoint-truncated db+WAL byte delta bracketing the
++retract. That delta only counts NEW pages grown (in-place page rewrites do not
++change file size), so it understates total page writes; it is used as a relative,
++lower-bound proxy. `new-page MB` 0.00 for the dred/RS variants means pure in-place
++weight flips, no new leaf pages.
++
++## Receipts and reproduce
++
++- Byte-identical survivors vs oracle: `tests/agreement.rs` now carries RS
++  (`retract_signed_delta_cte`) and FC (`retract_delta_fold`) across the DAG +
++  cyclic + phantom-cycle matrix; `cargo test --test agreement` is green. Probe
++  `correct=yes` on every row above.
++- Statement counts per variant: the `stmts` column, from `stmt_counter` reset
++  around each measured retract.
++- Reproduce: `cargo run --release --example recursive_probe -- 6 160000 0` (DAG)
++  and `... 6 160000 7` (CYC). New methods: `cascade::retract_signed_delta_cte`,
++  `cascade::retract_delta_fold`, exposed on `RelStore`.
++
++| verify | command | result |
++|---|---|---|
++| agreement (RS + FC in matrix) | `cargo test --test agreement` | 4 passed |
++| cascade unit tests (RS + FC cycle fixtures) | `cargo test --lib cascade` | 9 passed |
++| bench, all steps < 10 s | `cargo run --release --example recursive_probe` | max ~2.7 s |
+diff --git a/v6/sprefa-store/examples/recursive_probe.rs b/v6/sprefa-store/examples/recursive_probe.rs
+new file mode 100644
+index 00000000..5972fdb6
+--- /dev/null
++++ b/v6/sprefa-store/examples/recursive_probe.rs
+@@ -0,0 +1,212 @@
++//! PROBE (feature/sqlite-recursive-probe): the WITH RECURSIVE round collapser and
++//! the folded-consolidation delta.
++//!
++//! Questions, measured head-to-head on the SAME fixtures the appendix banked
++//! (DAG 960k = gen_multi_cyclic(6,160000,0); CYC 960k s7 = ...s7):
++//!
++//!   Q1 - can recursive CTEs collapse the retraction round loop into ONE VM entry?
++//!        * dred-loop (banked 1753.4ms / 53 stmt) vs dred-cte (6 stmt) vs
++//!          signed-delta (27 stmt) vs signed-delta-cte RS (~3 stmt).
++//!   Q2 - fewer b-tree writes via append-only delta + incremental fold?
++//!        * delta-fold FC: same survivors as signed-delta, but cx_refcount grows
++//!          by OR IGNORE per round (an incremental fold) instead of a full
++//!          DELETE+refill from cx_row. b-tree write volume = db/WAL byte delta
++//!          bracketing the retract (sqlite3_status PAGEWRITE is NOT compiled into
++//!          this bundled libsqlite3: opcode 7 is the deprecated PAGECACHE_SIZE
++//!          memory counter, so file bytes are the reachable proxy).
++//!
++//! Every variant is verified byte-identical to the resident oracle's survivor set.
++//!
++//!   cargo run --release --example recursive_probe -- [layers width stride]
++//!   (with args = one fixture; no args = the two 960k fixtures + small sanity set)
++
++use std::time::Instant;
++
++use sea_orm::{ConnectOptions, ConnectionTrait, Database};
++use sprefa_store::{benchgraph, benchgraph::MultiGraph, relstore::RelStore, stmt_counter};
++
++fn fingerprint(keys: &[i64]) -> String {
++    let mut h = blake3::Hasher::new();
++    for k in keys {
++        h.update(&k.to_le_bytes());
++    }
++    h.finalize().to_hex()[..16].to_string()
++}
++
++async fn open_store() -> (RelStore, std::path::PathBuf) {
++    static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
++    let uniq = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
++    let path = std::env::temp_dir().join(format!("probe_{}_{uniq}.sqlite", std::process::id()));
++    let _ = std::fs::remove_file(&path);
++    let mut opt = ConnectOptions::new(format!("sqlite://{}?mode=rwc", path.display()));
++    opt.max_connections(1).min_connections(1);
++    let store = RelStore::attach(Database::connect(opt).await.unwrap())
++        .await
++        .unwrap();
++    (store, path)
++}
++
++fn db_bytes(path: &std::path::Path) -> i64 {
++    std::fs::metadata(path).map(|m| m.len() as i64).unwrap_or(0)
++        + std::fs::metadata(format!("{}-wal", path.display()))
++            .map(|m| m.len() as i64)
++            .unwrap_or(0)
++}
++
++struct Row {
++    variant: &'static str,
++    ms: f64,
++    stmts: u64,
++    survivors: usize,
++    correct: bool,
++    write_mb: f64,
++}
++
++/// Load the graph (untimed), then run `op` timed and gather metrics. WAL is
++/// checkpoint-truncated before and after so `write_mb` = persistent b-tree bytes
++/// written by the retract alone.
++async fn measure<F>(g: &MultiGraph, variant: &'static str, op: F) -> Row
++where
++    F: for<'a> FnOnce(
++        &'a RelStore,
++        (i64, i64),
++    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = u64> + 'a>>,
++{
++    let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
++    let deps: Vec<(i64, i64, i64, i64)> = g
++        .edges
++        .iter()
++        .map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci))
++        .collect();
++    let seed = (g.seed.0 as i64, g.seed.1);
++    let (store, path) = open_store().await;
++    store.add_rows(&rows).await.unwrap();
++    store.add_deps(&deps).await.unwrap();
++    drop(rows);
++    drop(deps);
++    store
++        .conn()
++        .execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE);")
++        .await
++        .ok();
++    let before = db_bytes(&path);
++
++    stmt_counter::reset();
++    let t = Instant::now();
++    op(&store, seed).await;
++    let ms = t.elapsed().as_secs_f64() * 1e3;
++    let stmts = stmt_counter::get();
++
++    store
++        .conn()
++        .execute_unprepared("PRAGMA wal_checkpoint(TRUNCATE);")
++        .await
++        .ok();
++    let after = db_bytes(&path);
++    let survivors = store.alive_keys().await.unwrap();
++    let correct = fingerprint(&survivors) == {
++        // oracle survivor hash for this graph/seed
++        let o: Vec<i64> = benchgraph::oracle_survivors(g, g.seed)
++            .into_iter()
++            .collect();
++        fingerprint(&o)
++    };
++    let write_mb = (after - before) as f64 / 1048576.0;
++    let r = Row {
++        variant,
++        ms,
++        stmts,
++        survivors: survivors.len(),
++        correct,
++        write_mb,
++    };
++    drop(store);
++    let _ = std::fs::remove_file(&path);
++    let _ = std::fs::remove_file(format!("{}-wal", path.display()));
++    let _ = std::fs::remove_file(format!("{}-shm", path.display()));
++    r
++}
++
++async fn dred_loop(s: &RelStore, seed: (i64, i64)) -> u64 {
++    s.retract_dred(&[seed]).await.unwrap()
++}
++async fn dred_cte(s: &RelStore, seed: (i64, i64)) -> u64 {
++    s.retract_dred_cte(&[seed]).await.unwrap()
++}
++async fn signed_delta(s: &RelStore, seed: (i64, i64)) -> u64 {
++    sprefa_store::cascade::retract_signed_delta(s.conn(), s.ns(), &[seed])
++        .await
++        .unwrap()
++}
++async fn signed_delta_cte(s: &RelStore, seed: (i64, i64)) -> u64 {
++    s.retract_signed_delta_cte(&[seed]).await.unwrap()
++}
++async fn delta_fold(s: &RelStore, seed: (i64, i64)) -> u64 {
++    s.retract_delta_fold(&[seed]).await.unwrap()
++}
++
++type VariantFn = for<'a> fn(
++    &'a RelStore,
++    (i64, i64),
++) -> std::pin::Pin<Box<dyn std::future::Future<Output = u64> + 'a>>;
++
++/// Each variant is a multi-statement set (5 store variants; dd/oracle handled
++/// separately in the report via the banked appendix).
++async fn run_fixture(label: &str, l: usize, w: usize, stride: usize) {
++    let g = benchgraph::gen_multi_cyclic(l, w, stride);
++    let nodes = g.rows.len();
++    let oracle: Vec<i64> = benchgraph::oracle_survivors(&g, g.seed)
++        .into_iter()
++        .collect();
++    let oracle_hash = fingerprint(&oracle);
++    println!(
++        "\n## {label} - nodes≈{nodes}, stride={shape}\n",
++        shape = if stride == 0 { "DAG" } else { "CYC" }
++    );
++    println!("oracle survivors={} hash={oracle_hash}\n", oracle.len());
++    println!("| variant | ms | stmts | survivors | correct | new-page MB |");
++    println!("|---|---:|---:|---:|:---:|---:|");
++
++    let fns: Vec<(VariantFn, &'static str)> = vec![
++        (|s, seed| Box::pin(dred_loop(s, seed)), "dred-loop"),
++        (|s, seed| Box::pin(dred_cte(s, seed)), "dred-cte"),
++        (|s, seed| Box::pin(signed_delta(s, seed)), "signed-delta"),
++        (
++            |s, seed| Box::pin(signed_delta_cte(s, seed)),
++            "signed-delta-cte (RS)",
++        ),
++        (|s, seed| Box::pin(delta_fold(s, seed)), "delta-fold (FC)"),
++    ];
++    for (f, name) in fns {
++        let r = measure(&g, name, f).await;
++        println!(
++            "| {} | {:.1} | {} | {} | {} | {:.2} |",
++            r.variant,
++            r.ms,
++            r.stmts,
++            r.survivors,
++            if r.correct { "yes" } else { "**NO**" },
++            r.write_mb
++        );
++    }
++}
++
++#[tokio::main]
++async fn main() {
++    let args: Vec<String> = std::env::args().collect();
++    if args.len() >= 4 {
++        let l: usize = args[1].parse().unwrap();
++        let w: usize = args[2].parse().unwrap();
++        let bs: usize = args[3].parse().unwrap();
++        let label = if bs == 0 {
++            "DAG".to_string()
++        } else {
++            format!("CYC s{bs}")
++        };
++        run_fixture(&format!("{label} l={l} w={w}"), l, w, bs).await;
++        return;
++    }
++    run_fixture("DAG 60k", 6, 10_000, 0).await;
++    run_fixture("DAG 960k", 6, 160_000, 0).await;
++    run_fixture("CYC 960k s7", 6, 160_000, 7).await;
++}
+diff --git a/v6/sprefa-store/src/engine.rs b/v6/sprefa-store/src/engine.rs
+index ef91e0b6..a25f10fb 100644
+--- a/v6/sprefa-store/src/engine.rs
++++ b/v6/sprefa-store/src/engine.rs
+@@ -718,6 +718,135 @@ pub async fn retract_signed_delta(
+     Ok(rounds)
+ }
+ 
++/// PROBE (feature/sqlite-recursive-probe) Q1: the signed-delta survivor
++/// recomputation as ONE recursive CTE. `retract_signed_delta` climbs the reach
++/// wave one round per statement (~26-27 exec dispatches); this collapses the
++/// whole round loop into a single `WITH RECURSIVE alive(key)` reach walk from the
++/// surviving roots, then republishes the store's weight in one more statement.
++/// Byte-identical survivors: the round-per-row guard in the loop form only stops
++/// re-emission; the least-fixpoint reach set is the same set either way.
++///
++/// The probe wall, stated plainly: the ROUND cannot ride as a CTE column. SQLite
++/// rejects a second reference to the recursive CTE in its own recursive term
++/// ("multiple recursive references"), so the accumulated-set guard (`child NOT IN
++/// (SELECT key FROM alive)`) is impossible; and a `(round,key)` column breaks
++/// UNION-distinct termination (each round is a fresh key row, so a cycle never
++/// yields zero new rows). What survives the constraint is exactly the UNROUNDED
++/// distinct reach walk below, which is why the per-round delta/refcount fold (the
++/// half that must see the accumulated alive set) stays outside the CTE, in
++/// `retract_delta_fold` / `retract_signed_delta`.
++pub async fn retract_signed_delta_cte(
++    db: &DatabaseConnection,
++    ns: &GraphNs,
++    seeds: &[(i64, i64)],
++) -> Result<u64, DbErr> {
++    let txn = db.begin().await?;
++    let seed_in = {
++        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
++        if v.is_empty() { "(-1)".to_string() } else { format!("({})", v.join(",")) }
++    };
++    // Sink = the reach set, in cx_frontier. The recursive walk is roots-minus-seeds
++    // then forward over every edge; UNION (distinct) terminates on cycles exactly
++    // like retract_dred_cte's cone.
++    exec(&txn, &format!("DELETE FROM {}", ns.frontier)).await?;
++    exec(&txn, &format!(
++        "INSERT INTO {frontier}(key)
++         WITH RECURSIVE alive(key) AS (
++            SELECT r.key FROM {row} r
++             WHERE r.key NOT IN {seed_in}
++               AND NOT EXISTS (SELECT 1 FROM {dep} d WHERE d.child_key = r.key)
++            UNION
++            SELECT d.child_key FROM alive
++              JOIN {dep} d ON d.parent_key = alive.key
++         )
++         SELECT key FROM alive",
++        frontier = ns.frontier, row = ns.row, dep = ns.dep,
++    ))
++    .await?;
++    exec(&txn, &format!(
++        "UPDATE {row} SET weight = CASE WHEN key IN (SELECT key FROM {frontier}) THEN 1 ELSE 0 END",
++        row = ns.row, frontier = ns.frontier,
++    ))
++    .await?;
++    txn.commit().await?;
++    Ok(0)
++}
++
++/// PROBE (feature/sqlite-recursive-probe) Q2: folded consolidation. Same
++/// least-fixpoint survivors as `retract_signed_delta`, but `cx_refcount` is an
++/// append-only accumulator that GROWS by `INSERT OR IGNORE` each round instead of
++/// being `DELETE`d then refilled from the whole `cx_row` (the 960k-row refill is
++/// the b-tree churn this removes). Consolidation is an incremental fold per round,
++/// never a periodic GROUP BY/HAVING sweep over accumulated deltas. `delta` stays
++/// append-only for the tick. Byte-identical survivors (the fold ends with
++/// refcount = exactly the reach set, n=1, which is what the loop form's refill
++/// plus OR-REPLACE produced).
++pub async fn retract_delta_fold(
++    db: &DatabaseConnection,
++    ns: &GraphNs,
++    seeds: &[(i64, i64)],
++) -> Result<u64, DbErr> {
++    let p = ns.row.trim_end_matches("cx_row");
++    let refcount = format!("{p}cx_refcount");
++    let delta = format!("{p}cx_delta");
++
++    let txn = db.begin().await?;
++    exec(&txn, &format!("DELETE FROM {refcount}", refcount = refcount)).await?;
++    exec(&txn, &format!("DELETE FROM {delta}", delta = delta)).await?;
++
++    let seed_in = {
++        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
++        if v.is_empty() { "(-1)".to_string() } else { format!("({})", v.join(",")) }
++    };
++    // Round 0 fold: surviving roots into the delta, then into the accumulator.
++    exec(&txn, &format!(
++        "INSERT OR IGNORE INTO {delta}(round,key,diff)
++         SELECT 0, r.key, 1 FROM {row} r
++         WHERE r.key NOT IN {seed_in}
++           AND NOT EXISTS (SELECT 1 FROM {dep} d WHERE d.child_key = r.key)",
++        delta = delta, row = ns.row, dep = ns.dep,
++    ))
++    .await?;
++    exec(&txn, &format!(
++        "INSERT OR IGNORE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = 0",
++        refcount = refcount, delta = delta,
++    ))
++    .await?;
++
++    let mut rounds = 0u64;
++    let mut r: i64 = 0;
++    loop {
++        if scalar(&txn, &format!("SELECT count(*) FROM {delta} WHERE round={r}", delta = delta)).await? == 0 {
++            break;
++        }
++        rounds += 1;
++        exec(&txn, &format!(
++            "INSERT OR IGNORE INTO {delta}(round,key,diff)
++             SELECT {rn}, d.child_key, 1
++             FROM {delta} t
++             JOIN {dep} d ON d.parent_key = t.key
++             WHERE t.round = {r}
++               AND d.child_key NOT IN (SELECT key FROM {refcount})",
++            delta = delta, dep = ns.dep, refcount = refcount, rn = r + 1,
++        ))
++        .await?;
++        exec(&txn, &format!(
++            "INSERT OR IGNORE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = {rn}",
++            refcount = refcount, delta = delta, rn = r + 1,
++        ))
++        .await?;
++        r += 1;
++    }
++
++    exec(&txn, &format!(
++        "UPDATE {row} SET weight = CASE WHEN key IN (SELECT key FROM {refcount}) THEN 1 ELSE 0 END",
++        row = ns.row, refcount = refcount,
++    ))
++    .await?;
++    txn.commit().await?;
++    Ok(rounds)
++}
++
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+@@ -811,6 +940,52 @@ mod tests {
+         assert(&db, &ns, &[(0, 0)]).await.unwrap();
+         assert_eq!(alive(&db).await, 3, "R->A->B all alive after assert");
+     }
++
++    // RS (retract_signed_delta_cte): cut the root, whole cycle dies (no anchor).
++    #[tokio::test]
++    async fn retract_signed_delta_cte_kills_a_cut_cycle() {
++        let db = open().await;
++        let ns = GraphNs::default();
++        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1)]).await.unwrap();
++        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)]).await.unwrap();
++        assert_eq!(alive(&db).await, 4);
++        retract_signed_delta_cte(&db, &ns, &[(0, 0)]).await.unwrap();
++        assert_eq!(alive(&db).await, 0, "RS: cutting the root must kill the whole cycle");
++    }
++
++    #[tokio::test]
++    async fn retract_signed_delta_cte_rederives_through_alternate_anchor() {
++        let db = open().await;
++        let ns = GraphNs::default();
++        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)]).await.unwrap();
++        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1), (0, 4, 0, 2)]).await.unwrap();
++        assert_eq!(alive(&db).await, 5);
++        retract_signed_delta_cte(&db, &ns, &[(0, 0)]).await.unwrap();
++        assert_eq!(alive(&db).await, 4, "RS: alternate anchor must rederive the cycle");
++    }
++
++    // FC (retract_delta_fold): cut the root, whole cycle dies (no anchor).
++    #[tokio::test]
++    async fn retract_delta_fold_kills_a_cut_cycle() {
++        let db = open().await;
++        let ns = GraphNs::default();
++        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1)]).await.unwrap();
++        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1)]).await.unwrap();
++        assert_eq!(alive(&db).await, 4);
++        retract_delta_fold(&db, &ns, &[(0, 0)]).await.unwrap();
++        assert_eq!(alive(&db).await, 0, "FC: cutting the root must kill the whole cycle");
++    }
++
++    #[tokio::test]
++    async fn retract_delta_fold_rederives_through_alternate_anchor() {
++        let db = open().await;
++        let ns = GraphNs::default();
++        insert_rows(&db, &ns, &[(0, 0, 1), (0, 1, 1), (0, 2, 1), (0, 3, 1), (0, 4, 1)]).await.unwrap();
++        insert_deps(&db, &ns, &[(0, 0, 0, 1), (0, 1, 0, 2), (0, 2, 0, 3), (0, 3, 0, 1), (0, 4, 0, 2)]).await.unwrap();
++        assert_eq!(alive(&db).await, 5);
++        retract_delta_fold(&db, &ns, &[(0, 0)]).await.unwrap();
++        assert_eq!(alive(&db).await, 4, "FC: alternate anchor must rederive the cycle");
++    }
+ }
+ 
+ }
+diff --git a/v6/sprefa-store/src/lib.rs b/v6/sprefa-store/src/lib.rs
+index d2a1eeda..31412605 100644
+--- a/v6/sprefa-store/src/lib.rs
++++ b/v6/sprefa-store/src/lib.rs
+@@ -743,6 +743,14 @@ impl RelStore {
+     pub async fn retract_dred_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
+         cascade::retract_dred_cte(&self.db, &self.ns, seeds).await
+     }
++    /// PROBE RS: signed-delta survivors as ONE recursive CTE (Q1 round collapser).
++    pub async fn retract_signed_delta_cte(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
++        cascade::retract_signed_delta_cte(&self.db, &self.ns, seeds).await
++    }
++    /// PROBE FC: folded-consolidation signed-delta (Q2, append-only + incremental fold).
++    pub async fn retract_delta_fold(&self, seeds: &[(i64, i64)]) -> Result<u64, DbErr> {
++        cascade::retract_delta_fold(&self.db, &self.ns, seeds).await
++    }
+     /// Count live rows (weight > 0) across all relations.
+     pub async fn alive(&self) -> Result<i64, DbErr> {
+         use sea_orm::{DatabaseBackend, Statement};
+diff --git a/v6/sprefa-store/tests/agreement.rs b/v6/sprefa-store/tests/agreement.rs
+index e4f2e385..aa097fcb 100644
+--- a/v6/sprefa-store/tests/agreement.rs
++++ b/v6/sprefa-store/tests/agreement.rs
+@@ -145,6 +145,34 @@ async fn signed_delta_survivors(g: &MultiGraph) -> Vec<i64> {
+     keys
+ }
+ 
++async fn signed_delta_cte_survivors(g: &MultiGraph) -> Vec<i64> {
++    let (store, path) = open_store().await;
++    let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
++    let deps: Vec<(i64, i64, i64, i64)> =
++        g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
++    store.add_rows(&rows).await.unwrap();
++    store.add_deps(&deps).await.unwrap();
++    store.retract_signed_delta_cte(&[(g.seed.0 as i64, g.seed.1)]).await.unwrap();
++    let keys = store.alive_keys().await.unwrap();
++    drop(store);
++    cleanup(&path);
++    keys
++}
++
++async fn delta_fold_survivors(g: &MultiGraph) -> Vec<i64> {
++    let (store, path) = open_store().await;
++    let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
++    let deps: Vec<(i64, i64, i64, i64)> =
++        g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
++    store.add_rows(&rows).await.unwrap();
++    store.add_deps(&deps).await.unwrap();
++    store.retract_delta_fold(&[(g.seed.0 as i64, g.seed.1)]).await.unwrap();
++    let keys = store.alive_keys().await.unwrap();
++    drop(store);
++    cleanup(&path);
++    keys
++}
++
+ async fn count_scc_survivors(g: &MultiGraph) -> Vec<i64> {
+     let (store, path) = open_store().await;
+     let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
+@@ -164,6 +192,8 @@ async fn assert_agreement(g: &MultiGraph, label: &str) {
+     let oracle: Vec<i64> = benchgraph::oracle_survivors(g, g.seed).into_iter().collect();
+     let dred = dred_survivors(g).await;
+     let signed = signed_delta_survivors(g).await;
++    let rs = signed_delta_cte_survivors(g).await;
++    let fc = delta_fold_survivors(g).await;
+     let edges: Vec<(i64, i64)> = g
+         .edges
+         .iter()
+@@ -175,6 +205,10 @@ async fn assert_agreement(g: &MultiGraph, label: &str) {
+     assert_eq!(dred, dd, "{label}: sqlite-DRed and dd disagreed with each other");
+     assert_eq!(signed, oracle, "{label}: signed-delta disagreed with the oracle");
+     assert_eq!(signed, dred, "{label}: signed-delta and sqlite-DRed disagreed with each other");
++    assert_eq!(rs, oracle, "{label}: signed-delta-CTE (RS) disagreed with the oracle");
++    assert_eq!(rs, dred, "{label}: signed-delta-CTE (RS) and sqlite-DRed disagreed with each other");
++    assert_eq!(fc, oracle, "{label}: delta-fold (FC) disagreed with the oracle");
++    assert_eq!(fc, dred, "{label}: delta-fold (FC) and sqlite-DRed disagreed with each other");
+ }
+ 
+ // ---- DAG matrix: oracle == DRed == dd == counting -----------------------------

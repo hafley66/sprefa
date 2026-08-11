@@ -1,0 +1,15 @@
+# FOLD 5 breadcrumb path, rx: scan((a,e)=>a+'/'+e.stop, ''). This file is KEPT
+# FAILING as evidence: built_text_in_recursive_head refuses the step arm.
+
+rel ship_event(event_id: int, shipment_id: int, prev_event: int, kilos: int,
+               fee: int, stop_name: text, kind: text).
+
+rel route_after(event_id: int, shipment_id: int, path_so_far: text).
+route_after(EventId, ShipmentId, StopName) <-
+  ship_event(EventId, ShipmentId, 0, _Kilos, _Fee, StopName, _Kind).
+route_after(EventId, ShipmentId, PathSoFar) <-
+  ship_event(EventId, ShipmentId, PrevEvent, _Kilos, _Fee, StopName, _Kind),
+  route_after(PrevEvent, ShipmentId, PathBefore),
+  PathSoFar := concat([PathBefore, '/', StopName]).
+
+? route_after(_REvent, _RShipment, _RPath).

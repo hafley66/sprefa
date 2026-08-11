@@ -1,0 +1,396 @@
+direction: right
+
+title: |md
+  # `sprefa-extract` path candidates and root-bounded resolution
+
+  Parse path-shaped text from Markdown first, retain exact byte spans, resolve relative to the
+  containing document, then search only inside the nearest Git checkout or linked-worktree
+  root. One target becomes an automatic link. Multiple targets remain an explicit ambiguous
+  result for a host chooser or the CLI's FZF adapter.
+|
+
+laws: {
+  label: "0. Boundary laws"
+
+  extract: {
+    label: |md
+      ## Extract records what is written
+
+      A language extractor emits path-shaped text, its source span, syntactic context, and
+      normalization hints. It does not read the filesystem, invoke Git, run FZF, select a
+      target, or rewrite Markdown.
+    |
+    shape: document
+  }
+
+  resolve: {
+    label: |md
+      ## Resolve consults one bounded file universe
+
+      Resolution receives an explicit document path and root. The CLI may discover that root
+      through `git rev-parse --show-toplevel`. In a linked worktree this returns the worktree
+      root. In a main checkout it returns the main checkout root. Resolution never climbs or
+      searches above that boundary.
+    |
+    shape: document
+  }
+
+  present: {
+    label: |md
+      ## Hosts decide presentation
+
+      A single exact target can render as a link. Multiple or approximate targets render as
+      an intercepted link whose activation opens a chooser. Source text remains unchanged
+      unless a separate explicit rewrite command is introduced later.
+    |
+    shape: document
+  }
+}
+
+types: {
+  label: "1. Rust type surface"
+
+  candidate: {
+    label: ||md
+      ```rust
+      pub struct PathCandidate {
+          pub span: Span,
+          pub raw: String,
+          pub path_text: String,
+          pub suffix: Option<PathSuffix>,
+          pub context: PathContext,
+      }
+
+      pub enum PathContext {
+          MarkdownLinkDestination,
+          MarkdownAutolink,
+          InlineCode,
+          CodeBlock,
+          Prose,
+          LanguageSpecific(String),
+      }
+
+      pub enum PathSuffix {
+          Line { line: u32 },
+          LineColumn { line: u32, column: u32 },
+          Fragment { text: String },
+      }
+      ```
+    ||
+    shape: document
+  }
+
+  language: {
+    label: ||md
+      ```rust
+      pub trait PathCandidateSource: Sync {
+          fn language(&self) -> &'static str;
+          fn matches(&self, path: &str) -> bool;
+          fn candidates(&self, path: &str, content: &[u8]) -> Vec<PathCandidate>;
+      }
+
+      pub struct MarkdownPathCandidates;
+
+      impl PathCandidateSource for MarkdownPathCandidates {
+          fn language(&self) -> &'static str;
+          fn matches(&self, path: &str) -> bool;
+          fn candidates(&self, path: &str, content: &[u8]) -> Vec<PathCandidate>;
+      }
+      ```
+
+      The trait permits later candidate sources for comments, diagnostics, terminal output,
+      D2 labels, JSON strings, or another syntax without moving filesystem policy into their
+      parsers.
+    ||
+    shape: document
+  }
+
+  resolution: {
+    label: ||md
+      ```rust
+      pub struct PathResolveRequest<'a> {
+          pub root: &'a Path,
+          pub document: &'a Path,
+          pub candidate: &'a PathCandidate,
+          pub files: &'a FileIndex,
+          pub approximate_limit: usize,
+      }
+
+      pub enum PathResolution {
+          Exact(ResolvedPath),
+          Ambiguous(Vec<ResolvedPath>),
+          Approximate(Vec<ResolvedPath>),
+          Missing,
+          Unsupported(PathRejectReason),
+      }
+
+      pub struct ResolvedPath {
+          pub relative: PathBuf,
+          pub absolute: PathBuf,
+          pub evidence: PathEvidence,
+          pub suffix: Option<PathSuffix>,
+      }
+
+      pub enum PathEvidence {
+          DocumentRelative,
+          RootRelative,
+          UniqueSuffix,
+          Approximate { score: i64 },
+      }
+
+      pub fn resolve_path(request: PathResolveRequest<'_>) -> PathResolution;
+      ```
+    ||
+    shape: document
+  }
+
+  index: {
+    label: ||md
+      ```rust
+      pub struct FileIndex {
+          root: PathBuf,
+          relative_paths: Vec<PathBuf>,
+          by_suffix: HashMap<PathBuf, Vec<usize>>,
+          by_basename: HashMap<OsString, Vec<usize>>,
+      }
+
+      impl FileIndex {
+          pub fn build(root: &Path, policy: WalkPolicy) -> io::Result<Self>;
+          pub fn exact(&self, relative: &Path) -> Option<&Path>;
+          pub fn suffix(&self, suffix: &Path) -> &[PathBuf];
+          pub fn approximate(&self, query: &str, limit: usize) -> Vec<ScoredPath>;
+      }
+      ```
+
+      Build once per root scan. Reuse for every candidate in every supplied document. Ignore
+      rules, hidden-file policy, and symlink policy are explicit `WalkPolicy` inputs.
+    ||
+    shape: document
+  }
+}
+
+markdown: {
+  label: "2. Markdown-first extraction"
+
+  syntax: {
+    label: |md
+      ## Tree-sitter Markdown pass
+
+      Reuse the crate's existing `tree-sitter-md` block and inline grammars. Emit explicit
+      Markdown link destinations and autolinks from syntax nodes. Scan visible text, inline
+      code, and optionally fenced-code contents for additional path-shaped tokens while
+      retaining the enclosing node kind as `PathContext`.
+    |
+    shape: document
+  }
+
+  token: {
+    label: |md
+      ## Path-shaped token rules
+
+      Accept relative paths, root-relative paths, dot segments, common filename extensions,
+      and optional `:line`, `:line:column`, or `#fragment` suffixes. Strip paired quotes,
+      brackets, Markdown delimiters, and sentence punctuation without moving the recorded
+      source span beyond the actual path text.
+
+      Reject URL schemes, email addresses, shell flags, bare punctuation, empty paths,
+      directory traversal outside the root after normalization, and NUL-containing text.
+      Existence and uniqueness remain resolution facts rather than extraction gates.
+    |
+    shape: document
+  }
+
+  output: {
+    label: ||md
+      ```json
+      {"kind":"path_candidate","path":"docs/guide.md","start":418,"end":431,"context":"prose","line":12}
+      {"kind":"path_resolution","source":"README.md","start":418,"query":"docs/guide.md","status":"exact","target":"docs/guide.md","evidence":"document_relative"}
+      {"kind":"path_resolution","source":"README.md","start":802,"query":"model.ts","status":"ambiguous","targets":["src/model.ts","src/mdview/model.ts"]}
+      ```
+    ||
+    shape: document
+  }
+}
+
+algorithm: {
+  label: "3. Resolution sequence"
+
+  a0: { label: "normalize token\nseparate line/column/fragment suffix" }
+  a1: { label: "document-relative exact\ndocument.parent.join(query)" }
+  a2: { label: "root-relative exact\nroot.join(query without leading slash)" }
+  a3: { label: "suffix index\nall paths ending in query" }
+  a4: { label: "approximate ranking\nroot-bounded file index" }
+  a5: { label: "result\nexact / ambiguous / approximate / missing" }
+  a0 -> a1 -> a2 -> a3 -> a4 -> a5
+
+  note: {
+    label: |md
+      Stop at the first tier producing one exact target. Preserve every target when a tier is
+      ambiguous. Approximate ranking runs only when exact and suffix tiers produce zero
+      targets. Ranking is deterministic in the library; FZF is an optional interactive
+      selector over the returned or complete root-bounded file list.
+    |
+    shape: document
+  }
+}
+
+cli: {
+  label: "4. CLI surface"
+
+  extract: {
+    label: |md
+      ```bash
+      extract paths README.md
+      extract paths README.md --project-root /repo
+      extract paths README.md --project-root /repo --resolve
+      extract paths README.md --project-root /repo --resolve --format jsonl
+      ```
+
+      `extract paths` calls public library functions. The bin owns argument parsing and
+      streaming only. `--project-root` is explicit for library-parity tests. When omitted,
+      the CLI asks Git for the nearest checkout/worktree root.
+    |
+    shape: document
+  }
+
+  fzf: {
+    label: |md
+      ```bash
+      extract paths README.md --project-root /repo --choose
+      ```
+
+      `--choose` invokes `fzf` only for ambiguous or approximate rows, sends newline-delimited
+      root-relative candidates over stdin, and emits the chosen resolution as JSONL. Cancel
+      emits the original unresolved row and exits without rewriting the document. The library
+      never spawns FZF.
+    |
+    shape: document
+  }
+}
+
+host: {
+  label: "5. Host-neutral consumer boundary"
+
+  bridge: {
+    label: ||md
+      ```ts
+      type PathLink = {
+        source: SourceSpan
+        text: string
+        resolution:
+          | { status: "exact"; target: FileTarget }
+          | { status: "ambiguous" | "approximate"; targets: FileTarget[] }
+          | { status: "missing" }
+      }
+
+      interface PathResolutionAdapter {
+        resolve(documentPath: string, markdown: string): Promise<PathLink[]>
+      }
+      ```
+    ||
+    shape: document
+  }
+
+  behavior: {
+    label: |md
+      ## Rendering behavior
+
+      A consumer receives span-addressed rows and decides how to display or activate them.
+      Exact, ambiguous, approximate, and missing remain data states. Opening files, presenting
+      a chooser, hover UI, editor integration, file watching, and document rerendering stay
+      outside `sprefa-extract` and outside this slice.
+    |
+    shape: document
+  }
+}
+
+lifetimes: {
+  label: "6. Instance timelines"
+
+  detail: {
+    label: |md
+      - `MarkdownPathCandidates` is static and stateless.
+      - One tree-sitter block parser and inline parser live for one document extraction call.
+      - `PathCandidate` rows live with one immutable content revision.
+      - `FileIndex` lives for one root snapshot and is shared across document resolutions.
+      - `PathResolution` rows live until document content or the root file set changes.
+      - An FZF process lives for one explicit ambiguous-link selection.
+      - A host interaction, when one exists, owns its own activation lifetime.
+    |
+    shape: document
+  }
+}
+
+storage: {
+  label: "7. Storage, reads, writes, uniqueness"
+
+  detail: {
+    label: |md
+      1. Read one document revision and emit candidates keyed by source blob plus byte span.
+      2. Discover or receive one root; walk it once into a normalized relative-path index.
+      3. Resolve all candidates in document order against the same index snapshot.
+      4. Emit candidate and resolution JSONL. The extractor writes no database and no source.
+      5. A store or host persists rows keyed by source revision, span, query, and root identity.
+      6. File-set change replaces the index snapshot and resolution rows; candidate rows remain
+         reusable while source content is unchanged.
+
+      Candidate uniqueness is `(source_blob, span.start, span.end)`. Target uniqueness is the
+      normalized root-relative path. Resolution uniqueness is `(candidate, root_snapshot)`.
+      Candidate ordering is source-span order. Target ordering is evidence tier, score
+      descending, then root-relative path byte order.
+    |
+    shape: document
+  }
+}
+
+slice: {
+  label: "8. First implementation slice"
+
+  files: {
+    label: |md
+      Proposed dependency order inside `v6/sprefa-extract/src`:
+
+      - `0_path_candidate.rs`: public candidate types, suffix parser, Markdown candidate source.
+      - `1_path_resolve.rs`: root-bounded `FileIndex`, exact/suffix/approximate resolution.
+      - `lib.rs`: module declarations and public re-exports.
+      - `bin/extract.rs`: `paths` subcommand dispatch only.
+      - `tests/10_path_candidates_cli.rs`: library/CLI parity and JSONL snapshots.
+
+      No changes to `FamilyMask`, `ExtractOutput`, the four existing analysis families, or
+      `dispatch`. Path candidates form an adjacent document-reference surface because their
+      resolution needs a root file set while phase-1 family extraction remains per-file.
+    |
+    shape: document
+  }
+
+  gates: {
+    label: |md
+      Deterministic fixtures cover explicit Markdown links, prose paths, inline code,
+      punctuation stripping, line/column suffixes, document-relative wins, linked-worktree
+      root discovery, duplicate basenames, unique suffixes, approximate ordering, traversal
+      rejection, FZF cancellation protocol, and library/CLI JSONL parity.
+
+      Gate: `cargo test --features cli` inside `v6/sprefa-extract`. Snapshot updates remain
+      forbidden unless the implementation brief explicitly declares the new path-row snapshots.
+    |
+    shape: document
+  }
+}
+
+laws.extract -> types.candidate
+types.candidate -> types.language
+types.candidate -> types.resolution
+types.index -> types.resolution
+types.language -> markdown.syntax
+markdown.syntax -> markdown.token
+markdown.token -> markdown.output
+types.resolution -> algorithm.a0
+algorithm.a5 -> markdown.output
+markdown.output -> cli.extract
+cli.extract -> cli.fzf
+markdown.output -> host.bridge
+host.bridge -> host.behavior
+types.language -> lifetimes.detail
+types.resolution -> storage.detail
+storage.detail -> slice.files
+slice.files -> slice.gates
