@@ -29,6 +29,55 @@ parse_dl_source(_Source, Codes, Program, Bindings, []) :-
     ; phrase(unmigrated_statement, Codes)
     ).
 
+unmigrated_statement(Codes, Rest) :-
+    contains_statement_start(`bind`, Codes),
+    !,
+    bind_declaration(Codes, Rest).
+unmigrated_statement(Codes, Rest) :-
+    contains_statement_start(`sh`, Codes),
+    !,
+    shell_declaration(Codes, Rest).
+unmigrated_statement(Codes, Rest) :-
+    contains_statement_start(`?`, Codes),
+    !,
+    query_statement(Codes, Rest).
+unmigrated_statement(Codes, Rest) :-
+    contains_statement_start(`match`, Codes),
+    !,
+    match_statement(Codes, Rest).
+unmigrated_statement(Codes, Rest) :-
+    contains_codes(`;`, Codes),
+    contains_statement_start(`rel`, Codes),
+    !,
+    enum_declaration(Codes, Rest).
+unmigrated_statement(Codes, Rest) :-
+    contains_codes(`rel (`, Codes),
+    !,
+    retention_declaration(Codes, Rest).
+unmigrated_statement(Codes, Rest) :-
+    contains_statement_start(`use`, Codes),
+    !,
+    use_declaration(Codes, Rest).
+unmigrated_statement(Codes, Rest) :-
+    structured_rule_statement(Codes, Rest).
+
+contains_statement_start(Token, Codes) :-
+    append(Prefix, Suffix, Codes),
+    append(Token, AfterToken, Suffix),
+    statement_boundary_before(Prefix),
+    keyword_boundary(AfterToken, AfterToken),
+    !.
+
+statement_boundary_before([]).
+statement_boundary_before(Prefix) :-
+    last(Prefix, Code),
+    ( code_type(Code, space) ; Code == 0'. ).
+
+contains_codes(Needle, Codes) :-
+    append(_, Suffix, Codes),
+    append(Needle, _, Suffix),
+    !.
+
 bindings(Variables, Bindings) :-
     reverse(Variables, Ordered),
     maplist(variable_binding, Ordered, Bindings).
