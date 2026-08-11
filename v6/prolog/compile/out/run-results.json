@@ -217,6 +217,34 @@
     "final_detail": ""
   },
   {
+    "name": "option_list_of_rel_round_trips_absent_and_present",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "option_rel_on_a_reference_target_round_trips_absent_and_present",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "option_dense_sequence_of_rel_round_trips_absent_and_present",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "option_list_of_scalar_and_of_rel_in_one_rel",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "match_classify_response",
     "bucket": "identical",
     "detail": "",

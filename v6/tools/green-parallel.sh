@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# green-parallel.sh -- green-all's 31 legs, phased. `just green-all-serial` is
+# green-parallel.sh -- green-all's 32 legs, phased. `just green-all-serial` is
 # the one-at-a-time fallback.
 #
 # A leg may only join the parallel phase if load cannot move its verdict:
@@ -31,6 +31,7 @@ PHASE_B=(
   "endurance:TSV2_ENDURANCE_PORT=17802"
   "flagship:TSV2_FLAGSHIP_PORT=17808 TSV2_FLAGSHIP_FLOW_PORT=17809"
   "store-test"
+  "dd-grade"
   "files:TSV2_FILES_PORT=17807"
   "extraction-live:TSV2_EXTRACTION_PORT=17806"
   "dl-test"

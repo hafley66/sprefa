@@ -80,6 +80,7 @@
                 wrapper_lower_role/3, host_input_roles/3, expression/5 ]).
 :- use_module('../0_cst_query',
               [ parse_cst_query/2, ts_query_capture_names/2 ]).
+:- use_module('../0_type_plane', [column_element_type_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -1031,7 +1032,7 @@ declared_column_type_name(Decls, Name) :-
     \+ scalar_column_type(Name).
 declared_column_type_name(Decls, Name) :-
     member(col_type(_, _, Type), Decls),
-    list_element_type_name(Type, Name),
+    column_element_type_name(Type, Name),
     \+ scalar_column_type(Name).
 declared_column_type_name(Decls, Name) :-
     member(sh_decl(_, Inputs, Outputs, _), Decls),
@@ -1048,16 +1049,6 @@ declared_column_type_name(Decls, Name) :-
     member(VariantField, VariantFields),
     VariantField =.. [':', _, Name],
     \+ scalar_column_type(Name).
-
-list_element_type_name(list(Element), Name) :-
-    list_element_type_name(Element, Name).
-list_element_type_name(list_entity_dense_sequence(Element), Name) :-
-    list_element_type_name(Element, Name).
-list_element_type_name(list_interned_set(Element), Name) :-
-    list_element_type_name(Element, Name).
-list_element_type_name(list_entity_linked_sequence(Element), Name) :-
-    list_element_type_name(Element, Name).
-list_element_type_name(Name, Name) :- atom(Name).
 
 scalar_column_type(int).
 scalar_column_type(text).

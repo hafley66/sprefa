@@ -17,6 +17,7 @@
 % export list because no name here collides with theirs.
 :- use_module(registry).
 :- use_module('../0_cst_query').
+:- use_module('../0_type_plane', [type_wrapper/2, column_element_type_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -28,6 +29,10 @@
 
 :- dynamic finding_fact/1, rel_column_order_fact/2,
            host_signature_fact/3, source_statement_fact/3.
+
+% lex_token/2 rows sit beside the escape decoders they mirror, so the clauses
+% are spread across the file on purpose.
+:- discontiguous lex_token/2.
 
 % Editor CST boundaries this parser erases: Nonterminal -> Node-FieldNames,
 % bare = shape from clauses, ref = name only, repeat = item only, '-' = unnamed.
@@ -499,7 +504,7 @@ type_expr(Type) -->
 
 type_base(T) --> { scalar_column_type(T) }, kw(T), !.
 type_base(T) -->
-    { member(W, [option, json_list]) ; list_type_word(W) },
+    { type_wrapper(W, _) ; W = json_list },
     kw(W), !,
     #`(`, ws, type_expr(E), #`)`,
     { T =.. [W, E] }.
@@ -674,7 +679,7 @@ relation_schema(Decls, Name, Ref, Specs) :-
 
 declared_column_type_name(Decls, Name) :-
     ( member(col_type(_, _, Type), Decls),
-      ( Name = Type ; list_element_type_name(Type, Name) )
+      ( Name = Type ; column_element_type_name(Type, Name) )
     ; ( member(sh_decl(_, Ins, Outs, _), Decls), append(Ins, Outs, Cols)
       ; member(bind_decl(_, Cols), Decls)
       ),
@@ -685,17 +690,6 @@ declared_column_type_name(Decls, Name) :-
       member(_:Name, Fields)
     ),
     \+ scalar_column_type(Name).
-
-list_type_word(W) :-
-    member(W, [list, list_entity_dense_sequence, list_interned_set,
-               list_entity_linked_sequence]).
-
-list_element_type_name(Type, Name) :-
-    compound(Type),
-    Type =.. [F, Element],
-    list_type_word(F),
-    list_element_type_name(Element, Name).
-list_element_type_name(Name, Name) :- atom(Name).
 
 scalar_column_type(T) :- member(T, [int, text, json, bool, float]).
 
