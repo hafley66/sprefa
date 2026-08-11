@@ -7,7 +7,6 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use crate::{Rel, Row, SignedRow};
@@ -48,70 +47,10 @@ impl Relation {
     }
 }
 
-#[derive(Clone, Eq)]
+/// serde_json's own Hash is the one that agrees with its Eq: `Value` compares
+/// f64 with `==`, and hashing 0.0 and -0.0 alike is what keeps them one key.
+#[derive(Clone, Eq, PartialEq, Hash)]
 struct RowKey(Rc<Tuple>);
-
-impl PartialEq for RowKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Hash for RowKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        for value in self.0.iter() {
-            hash_value(value, state);
-        }
-    }
-}
-
-/// Agrees with `Value`'s equality, which compares f64 with `==`: -0.0 and 0.0
-/// are one key, and an integer variant never equals a float one.
-fn hash_value<H: Hasher>(value: &Value, state: &mut H) {
-    match value {
-        Value::Null => state.write_u8(0),
-        Value::Bool(flag) => {
-            state.write_u8(1);
-            state.write_u8(u8::from(*flag));
-        }
-        Value::Number(number) => match (number.as_u64(), number.as_i64()) {
-            (Some(whole), _) => {
-                state.write_u8(2);
-                state.write_u64(whole);
-            }
-            (None, Some(signed)) => {
-                state.write_u8(3);
-                state.write_i64(signed);
-            }
-            _ => {
-                let float = number.as_f64().unwrap_or_default();
-                state.write_u8(4);
-                state.write_u64(if float == 0.0 { 0 } else { float.to_bits() });
-            }
-        },
-        Value::String(text) => {
-            state.write_u8(5);
-            state.write(text.as_bytes());
-            state.write_u8(0xff);
-        }
-        Value::Array(items) => {
-            state.write_u8(6);
-            state.write_usize(items.len());
-            for item in items {
-                hash_value(item, state);
-            }
-        }
-        Value::Object(entries) => {
-            state.write_u8(7);
-            state.write_usize(entries.len());
-            for (key, item) in entries {
-                state.write(key.as_bytes());
-                state.write_u8(0xff);
-                hash_value(item, state);
-            }
-        }
-    }
-}
 
 #[derive(Clone, Deserialize)]
 pub struct Operator {
@@ -467,25 +406,8 @@ enum Column<'a> {
     Constant(Option<&'a Value>),
 }
 
-#[derive(Eq)]
+#[derive(Eq, PartialEq, Hash)]
 struct JoinKey(Vec<Option<Value>>);
-
-impl PartialEq for JoinKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Hash for JoinKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        for value in &self.0 {
-            match value {
-                Some(item) => hash_value(item, state),
-                None => state.write_u8(8),
-            }
-        }
-    }
-}
 
 struct Query {
     scans: Vec<Scan>,
