@@ -10,7 +10,11 @@
             % has a clause-for-clause twin in lower.pl and the two doors
             % drifting apart is not something a byte-diff can catch (the
             % compiled side never produces a log to diff when it refuses).
-            json_capture_type/2 ]).
+            json_capture_type/2,
+            % RFC 7396 merge patch, exported for the same reason: the emitted
+            % side renders it as native SQL, so the two doors' agreement is a
+            % unit assertion, not something the byte diff alone can hold.
+            json_scalar_value/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -55,6 +59,16 @@ eval_expr(Term, Out) :-
     Term =.. [_ | Args],
     maplist(eval_expr, Args, Values),
     text_scalar_value(Rendering, Values, Out).
+% Same registry dispatch, json operands: the arguments canonicalize first, so
+% a braces literal reaches the patch algebra as obj(SortedPairs).
+eval_expr(Term, Out) :-
+    nonvar(Term),
+    expression_for_term(Term, json_scalar, _, Rendering, _),
+    !,
+    Term =.. [_ | Args],
+    maplist(eval_expr, Args, Raw),
+    maplist(json_canon, Raw, Values),
+    json_scalar_value(Rendering, Values, Out).
 % The empty object is the ATOM `{}` on both doors, so it canonicalizes here
 % beside its arity-1 sibling; without this clause a stored `{}` stays an atom
 % and every object pattern over it fails as if the value were a scalar.
@@ -173,6 +187,50 @@ braces_pairs((Left, Right), Pairs) :- !,
     braces_pairs(Left, LeftPairs), braces_pairs(Right, RightPairs),
     append(LeftPairs, RightPairs, Pairs).
 braces_pairs(Key: Raw, [Key-Value]) :- json_canon(Raw, Value).
+
+% ── RFC 7396 JSON Merge Patch ───────────────────────────────────────────────
+%
+% RFC 7396 §2 is the whole algorithm, four behaviors:
+%   §2 `if Patch is an Object` / `else: return Patch`
+%       a non-object patch replaces the target entire (§1 says the same in
+%       prose: "if the patch is anything other than an object, the result
+%       will always be to replace the entire target with the entire patch").
+%       An array is not an object, so arrays replace wholesale.
+%   §2 `if Target is not an Object: Target = {}`
+%       a non-object target's contents are discarded, never merged into.
+%   §2 `Target[Name] = MergePatch(Target[Name], Value)`
+%       objects merge recursively, key by key.
+%   §1/§2 `if Value is null: remove the Name/Value pair from Target`
+%       NOT IMPLEMENTED, and stopped rather than guessed: this language has
+%       no term that renders as JSON null. 0_json_arrival.pl:92 folds null
+%       onto the atom `none` and canonical_json_text/2 renders `none` as the
+%       string "none", so the delete clause has no surface spelling. Picking
+%       one is a language decision, so a patch carrying the json-null
+%       stand-in throws here and fails its statement on the compiled side.
+json_scalar_value(json_patch, [Target, Patch], Out) :-
+    (   json_patch_carries_null(Patch)
+    ->  throw(json_patch_null_unruled)
+    ;   json_merge_patch(Target, Patch, Out)
+    ).
+
+json_merge_patch(Target, Patch, obj(Sorted)) :-
+    nonvar(Patch), Patch = obj(PatchPairs), !,
+    ( nonvar(Target), Target = obj(TargetPairs) -> true ; TargetPairs = [] ),
+    foldl(json_merge_patch_pair, PatchPairs, TargetPairs, Merged),
+    keysort(Merged, Sorted).
+json_merge_patch(_, Patch, Patch).
+
+% A key the target lacks recurses against `absent`, which is not an object,
+% so an object value there reduces to the value itself.
+json_merge_patch_pair(Key-Value, Pairs0, [Key-Merged | Rest]) :-
+    ( selectchk(Key-Prior, Pairs0, Rest) -> true ; Prior = absent, Rest = Pairs0 ),
+    json_merge_patch(Prior, Value, Merged).
+
+json_patch_carries_null(Value) :- Value == none, !.
+json_patch_carries_null(obj(Pairs)) :- is_list(Pairs), !,
+    member(_-Child, Pairs), json_patch_carries_null(Child), !.
+json_patch_carries_null(Values) :- is_list(Values),
+    member(Child, Values), json_patch_carries_null(Child), !.
 
 % decode: open object patterns, holes bind canonical values.
 %

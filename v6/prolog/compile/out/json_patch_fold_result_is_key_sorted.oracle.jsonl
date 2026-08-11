@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"alpha_key":2,"zeta":1}]],"del":[["alpha",{"zeta":1}]]},"metric_sample":{"add":[["alpha",{"alpha_key":2}]],"del":[]}}}
+{"tick":2,"deltas":{}}

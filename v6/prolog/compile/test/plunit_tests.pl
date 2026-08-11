@@ -102,7 +102,9 @@
                 run_program/5 ]).
 :- use_module('../../conformance/level_eval',
               [ goal_rel_refs/3, split_rules/4 ]).
-:- use_module('../../conformance/body', [ body_atoms/2, comparison_goal/1, json_capture_type/2 ]).
+:- use_module('../../conformance/body',
+              [ body_atoms/2, comparison_goal/1, json_capture_type/2,
+                json_scalar_value/3 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
 :- ensure_loaded('3_clock_check.test.pl').
 :- ensure_loaded('0_graph.test.pl').
@@ -4554,6 +4556,7 @@ expected_row('=\\='/2,   ordered_comparison, 0, infix('<>'),           both_numb
 expected_row(norm/1,    text_scalar,         3, ascii_alnum_lower,    text_only).
 expected_row(rtrim/2,   text_scalar,         3, rtrim,                text_only).
 expected_row(replace/3, text_scalar,         3, replace,              text_only).
+expected_row(json_patch/2, json_scalar,      3, json_patch,           json_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
     findall(Signature-Family-Precedence-Sql-Type,
@@ -7563,6 +7566,185 @@ test(list_of_relation_refs_keeps_its_unsupported) :-
 
 :- end_tests(list_element_widening).
 
+:- begin_tests(json_document_value).
+
+% FAIL-FIRST RECEIPT (json-as-value-in-scan arc). Every test below was RED on
+% base 26f3f25f with `unsupported_construct(json_value_expression(...))` out of
+% lower.pl:559, the arm that stopped a braces literal in value position.
+
+% Keys sort at COMPILE time because a braces literal's keys are literal atoms
+% and json1 keeps its argument order: `name` before `stars` in the SQL text.
+test(braces_literal_value_lowers_to_sorted_json_object) :-
+    Term = fixture(braces_value_sql,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := {stars: 4, name: Name}) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "doc" ("col1") SELECT json_object(\'name\', b0."col1", \'stars\', json(\'4\')) FROM "seed" b0'.
+
+% A head-position braces literal is the same expression compiler, and a fully
+% ground document renders through canonical_json_text/2 in ONE json() call.
+test(braces_head_position_lowers_to_one_ground_document) :-
+    Term = fixture(braces_head_sql,
+                   prog([], [ (doc_out({repo: cli}) <- seed(_Name)) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc_out/1, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "doc_out" ("col1") SELECT json(\'{"repo":"cli"}\') FROM "seed" b0'.
+
+% A list literal in value position is the array carrier, same arm.
+test(list_literal_value_lowers_to_json_array) :-
+    Term = fixture(list_value_sql,
+                   prog([], [ (bag(Elements) <- seed(Name),
+                               Elements := [Name, 7]) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(bag/1, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "bag" ("col1") SELECT json_array(b0."col1", json(\'7\')) FROM "seed" b0'.
+
+% The document's column is json storage, so the delta read passes the stored
+% text through and the tick-log encoder parses it as a document rather than
+% rendering it as a JSON string.
+test(braces_literal_column_stores_json) :-
+    Term = fixture(braces_value_type,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := {stars: 4, name: Name}) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
+    relplan_column_types(RelPlans, doc/1, ColumnTypes),
+    ColumnTypes == [json],
+    column_def(direct, '"col1"', json, Def),
+    sub_atom(Def, _, _, _, 'json_valid("col1")').
+
+% HOUSE PATTERN (lower.pl json_object aggregate arm): a duplicate key emits
+% text that is not valid JSON, so SQLite fails the statement where the oracle
+% throws json_dup_key. No sentinel value, no partial document.
+test(duplicate_key_document_emits_invalid_json) :-
+    Term = fixture(braces_dup_key_sql,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := {name: Name, name: other}) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    sub_atom(InsertSql, _, _, _, 'json(\'json_dup_key\')').
+
+% A duplicate key NESTED under a document that is not ground reaches the same
+% arm: the check walks every level before any subtree renders.
+test(nested_duplicate_key_document_emits_invalid_json) :-
+    Term = fixture(braces_nested_dup_key_sql,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := {outer: Name, inner: {key: 1, key: 2}}) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    sub_atom(InsertSql, _, _, _, 'json(\'json_dup_key\')').
+
+% The arm BELOW the json one is untouched: an unrecognized compound in value
+% position still renders as the json1 tagged term, ids and all.
+test(compound_term_value_still_renders_as_tagged_term) :-
+    Term = fixture(tagged_term_sql,
+                   prog([], [ (doc(Document) <- seed(Name),
+                               Document := route_data(Name)) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(doc/1, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "doc" ("col1") SELECT json_object(\'fn\', \'route_data\', \'args\', json_array(b0."col1")) FROM "seed" b0'.
+
+% A partial list keeps the named unsupported construct: cons with an unbound
+% tail is not a json array on either door.
+test(partial_list_value_keeps_its_unsupported,
+     [throws(unsupported_construct(json_value_expression(_)))]) :-
+    Term = fixture(partial_list_sql,
+                   prog([], [ (bag(Elements) <- seed(Name),
+                               Elements := [Name | _Tail]) ]),
+                   [ seed(cli) ], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, _).
+
+:- end_tests(json_document_value).
+
+:- begin_tests(json_merge_patch).
+
+% FAIL-FIRST RECEIPT (json-as-value-in-scan arc, piece 2). On base 26f3f25f
+% json_patch/2 had no registry row, so both doors were SILENTLY WRONG rather
+% than stopped: the oracle left json_patch(Prior, Patch) unevaluated and the
+% emitter wrapped the same call in the json1 tagged-term encoding. All seven
+% json_patch_fold.pl fixtures were `fail` under swipl conformance.
+
+% The null guard renders BEFORE the patch call and reads the patch operand
+% only: a target's own null is data RFC 7396 never touches.
+test(json_patch_lowers_with_the_null_stand_in_guard) :-
+    Term = fixture(json_patch_sql,
+                   prog([ col_type(sample/2, session, text),
+                          col_type(sample/2, patch, json),
+                          col_type(prior_doc/2, session, text),
+                          col_type(prior_doc/2, prior, json),
+                          col_type(snapshot_doc/2, session, text),
+                          col_type(snapshot_doc/2, doc, json) ],
+                        [ (snapshot_doc(SessionId, Next) <-
+                             sample(SessionId, Patch),
+                             prior_doc(SessionId, Prior),
+                             Next := json_patch(Prior, Patch)) ]),
+                   [], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(snapshot_doc/2, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "snapshot_doc" ("session", "doc") SELECT b0."session", CASE WHEN EXISTS (SELECT 1 FROM json_tree(json(b0."patch")) WHERE "type" = \'null\' OR "atom" = \'none\') THEN json(\'json_patch_null_unruled\') ELSE json_patch(json(b1."prior"), json(b0."patch")) END FROM "sample" b0, "prior_doc" b1 WHERE b1."session" = b0."session"'.
+
+% A text operand is a named stop, not a silent parse of whatever the text
+% happens to be: the tagged-term encoding lives in text columns.
+test(text_operand_keeps_its_unsupported,
+     [throws(unsupported_construct(json_operand_not_json(_, _, text)))]) :-
+    Term = fixture(json_patch_text_operand,
+                   prog([ col_type(sample/2, session, text),
+                          col_type(sample/2, patch, json) ],
+                        [ (snapshot_doc(SessionId, Next) <-
+                             sample(SessionId, Patch),
+                             label(SessionId, Tag),
+                             Next := json_patch(Tag, Patch)) ]),
+                   [], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, _).
+
+% RFC 7396 §2 on the oracle's own value terms, one assertion per behavior.
+test(merge_patch_merges_nested_objects_recursively) :-
+    json_scalar_value(json_patch,
+                           [obj([cpu-obj([sys-2, user-1])]), obj([cpu-obj([sys-9])])],
+                           Out),
+    Out == obj([cpu-obj([sys-9, user-1])]).
+
+test(merge_patch_replaces_arrays_and_scalars_wholesale) :-
+    json_scalar_value(json_patch, [obj([tags-[red, green]]), obj([tags-[blue]])], Arrays),
+    Arrays == obj([tags-[blue]]),
+    json_scalar_value(json_patch, [obj([cpu-1]), [7, 8]], NonObjectPatch),
+    NonObjectPatch == [7, 8].
+
+test(merge_patch_empties_a_non_object_target) :-
+    json_scalar_value(json_patch, [[7, 8], obj([cpu-1])], Out),
+    Out == obj([cpu-1]).
+
+test(merge_patch_result_keys_are_sorted) :-
+    json_scalar_value(json_patch, [obj([zeta-1]), obj([alpha_key-2])], Out),
+    Out == obj([alpha_key-2, zeta-1]).
+
+% The delete clause has no surface spelling on this plane, so it stops.
+test(merge_patch_stops_on_the_json_null_stand_in,
+     [throws(json_patch_null_unruled)]) :-
+    json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-none])], _).
+
+test(merge_patch_stops_on_a_nested_json_null_stand_in,
+     [throws(json_patch_null_unruled)]) :-
+    json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-obj([user-none])])], _).
+
+:- end_tests(json_merge_patch).
 :- begin_tests(type_wrapper_walk).
 
 % FAIL-FIRST RECEIPT (base 48fadfb3): every assertion in this unit that names

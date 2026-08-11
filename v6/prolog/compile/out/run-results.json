@@ -1190,6 +1190,13 @@
     "final_detail": ""
   },
   {
+    "name": "mutual_recursion_matches_oracle",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "head_expression_evaluates_derived_column",
     "bucket": "identical",
     "detail": "",
@@ -1275,6 +1282,20 @@
   },
   {
     "name": "paren_in_literal_inside_wrapper",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "braces_literal_canonicalizes",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "braces_in_head_position",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",
@@ -1384,6 +1405,55 @@
     "detail": "",
     "final_bucket": "final_identical",
     "final_detail": ""
+  },
+  {
+    "name": "json_patch_fold_merges_arrival_documents",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "json_patch_fold_result_is_key_sorted",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "json_patch_merges_nested_objects_recursively",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "json_patch_replaces_arrays_wholesale",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "json_patch_non_object_patch_replaces_the_document",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "json_patch_non_object_target_becomes_empty",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "json_patch_null_stand_in_stops_both_doors",
+    "bucket": "rejection",
+    "detail": "SQLITE_ERROR: malformed JSON",
+    "final_bucket": "no_oracle_final",
+    "final_detail": "oracle threw on this schedule too; no final state to diff"
   },
   {
     "name": "merge_batches_per_tick",

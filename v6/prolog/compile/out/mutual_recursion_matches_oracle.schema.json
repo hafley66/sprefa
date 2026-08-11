@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "clock": {
+      "additionalProperties":false,
+      "properties": {"col1": {"type":"string"}},
+      "required": ["col1" ],
+      "type":"object"
+    },
+    "even": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "odd": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "seed": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"mutual_recursion_matches_oracle#b092d940c5966261",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
