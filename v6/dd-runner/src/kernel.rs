@@ -209,74 +209,163 @@ fn settle(
     columns: &BTreeMap<String, Vec<String>>,
     operators: &[Operator],
 ) -> Result<()> {
-    // Re-evaluation is from the relation descriptions each round. A bounded
-    // monotone fixed point covers recursive positive rules; retractions begin
-    // each tick from the supplied base state and derived heads are rebuilt.
+    // A bounded monotone fixed point covers recursive positive rules;
+    // retractions begin each tick from the supplied base state.
     let heads = operators
         .iter()
         .map(|op| op.head.clone())
         .collect::<BTreeSet<_>>();
-    let base = state.clone();
-    for head in &heads {
-        state.insert(head.clone(), Relation::default());
-    }
-    for _ in 0..10_000 {
-        let old = state.clone();
-        let mut next = base.clone();
-        for head in &heads {
-            next.insert(head.clone(), Relation::default());
-        }
-        for op in operators {
-            if op.kind == "map"
-                && !operators
-                    .iter()
-                    .any(|other| other.kind == "reduce" && other.head == op.head)
-            {
-                insert_rows(&mut next, op, eval_rows(op, &old, columns)?);
+    let base = std::mem::take(state);
+    let mut queries: Vec<Option<Query>> = operators.iter().map(|_| None).collect();
+    let mut rows: Vec<Vec<Rc<Tuple>>> = operators.iter().map(|_| Vec::new()).collect();
+    let mut change: BTreeMap<String, Change> = BTreeMap::new();
+    let mut old = cleared(&base, &heads);
+    for round in 0..10_000 {
+        let mut next = cleared(&base, &heads);
+        for (index, op) in operators.iter().enumerate() {
+            if !evaluated(op, operators) {
+                continue;
             }
-            if op.kind == "reduce" {
-                insert_rows(&mut next, op, eval_reduce(op, &old, columns)?);
+            if queries[index].is_none() {
+                queries[index] = Some(Query::compile(op, columns)?);
             }
+            let query = queries[index].as_ref().expect("compiled query");
+            match work(op, query, &change, round) {
+                Work::Reuse => {}
+                Work::Append(prefix) => {
+                    let tail = &old[&query.scans[0].relation].rows[prefix..];
+                    rows[index].extend(eval(op, query, &old, Some(tail))?);
+                }
+                Work::Full => rows[index] = eval(op, query, &old, None)?,
+            }
+            insert_rows(&mut next, op, &rows[index]);
         }
-        if next == old {
+        change = changes(&old, &next);
+        if change.values().all(|item| matches!(item, Change::Same)) {
+            *state = next;
             return Ok(());
         }
-        *state = next;
+        old = next;
     }
     Err("recursive plan did not reach a fixed point in 10000 rounds".into())
 }
 
-fn insert_rows(state: &mut Relations, op: &Operator, rows: Vec<Tuple>) {
+/// Base relations do not move inside a settle, so only the heads are reset.
+fn cleared(base: &Relations, heads: &BTreeSet<String>) -> Relations {
+    let mut out = base.clone();
+    for head in heads {
+        out.insert(head.clone(), Relation::default());
+    }
+    out
+}
+
+fn evaluated(op: &Operator, operators: &[Operator]) -> bool {
+    match op.kind.as_str() {
+        "reduce" => true,
+        "map" => !operators
+            .iter()
+            .any(|other| other.kind == "reduce" && other.head == op.head),
+        _ => false,
+    }
+}
+
+enum Change {
+    Same,
+    Appended(usize),
+    Rebuilt,
+}
+
+enum Work {
+    Reuse,
+    Append(usize),
+    Full,
+}
+
+/// Appending is sound only for the outermost binding: the nested loop over it
+/// extends by exactly the rows its tail derives, leaving earlier rows in place.
+fn work(op: &Operator, query: &Query, change: &BTreeMap<String, Change>, round: usize) -> Work {
+    if round == 0 {
+        return Work::Full;
+    }
+    let mut moved = Vec::new();
+    for (index, scan) in query.scans.iter().enumerate() {
+        match change.get(&scan.relation) {
+            Some(Change::Same) => {}
+            Some(other) => moved.push((index, other)),
+            None => moved.push((index, &Change::Rebuilt)),
+        }
+    }
+    match moved.as_slice() {
+        [] => Work::Reuse,
+        [(0, Change::Appended(prefix))] if op.kind == "map" => Work::Append(*prefix),
+        _ => Work::Full,
+    }
+}
+
+fn changes(old: &Relations, next: &Relations) -> BTreeMap<String, Change> {
+    let mut out = BTreeMap::new();
+    for name in old.keys().chain(next.keys()).collect::<BTreeSet<_>>() {
+        let change = match (old.get(name), next.get(name)) {
+            (Some(before), Some(after)) => compare(before, after),
+            (None, None) => Change::Same,
+            _ => Change::Rebuilt,
+        };
+        out.insert(name.clone(), change);
+    }
+    out
+}
+
+fn compare(before: &Relation, after: &Relation) -> Change {
+    let held = before.rows.len();
+    if before.rows == after.rows {
+        Change::Same
+    } else if after.rows.len() > held && after.rows[..held] == before.rows[..] {
+        Change::Appended(held)
+    } else {
+        Change::Rebuilt
+    }
+}
+
+fn eval(
+    op: &Operator,
+    query: &Query,
+    state: &Relations,
+    tail: Option<&[Rc<Tuple>]>,
+) -> Result<Vec<Rc<Tuple>>> {
+    let rows = if op.kind == "reduce" {
+        eval_reduce(op, query, state)?
+    } else {
+        eval_rows(op, query, state, tail)?
+    };
+    Ok(rows.into_iter().map(Rc::new).collect())
+}
+
+fn insert_rows(state: &mut Relations, op: &Operator, rows: &[Rc<Tuple>]) {
     let target = state.entry(op.head.clone()).or_default();
     for row in rows {
-        target.insert(Rc::new(row));
+        target.insert(Rc::clone(row));
     }
 }
 
 fn eval_rows(
     op: &Operator,
+    query: &Query,
     state: &Relations,
-    columns: &BTreeMap<String, Vec<String>>,
+    tail: Option<&[Rc<Tuple>]>,
 ) -> Result<Vec<Tuple>> {
-    let query = Query::compile(op, columns)?;
     let projection = query.projection(&op.projection);
-    binding_rows(&query, state)?
+    binding_rows(query, state, tail)?
         .into_iter()
         .filter(|row| query.holds(row))
         .map(|row| project(&row, &projection))
         .collect()
 }
 
-fn eval_reduce(
-    op: &Operator,
-    state: &Relations,
-    columns: &BTreeMap<String, Vec<String>>,
-) -> Result<Vec<Tuple>> {
+fn eval_reduce(op: &Operator, query: &Query, state: &Relations) -> Result<Vec<Tuple>> {
     let aggregate = op
         .aggregate
         .as_ref()
         .ok_or_else(|| format!("{} reduce missing aggregate", op.id))?;
-    let query = Query::compile(op, columns)?;
     let projection = query.projection(&op.projection);
     let grouping = aggregate
         .group
@@ -284,7 +373,7 @@ fn eval_reduce(
         .map(|column| query.column(column))
         .collect::<Vec<_>>();
     let mut groups: BTreeMap<String, Vec<BoundRow>> = BTreeMap::new();
-    for row in binding_rows(&query, state)? {
+    for row in binding_rows(query, state, None)? {
         if query.holds(&row) {
             let key = serde_json::to_string(&project(&row, &grouping)?).unwrap();
             groups.entry(key).or_default().push(row);
@@ -518,16 +607,24 @@ fn at(row: &BoundRow, slot: Option<usize>) -> Option<&Value> {
     slot.and_then(|index| row[index].as_ref())
 }
 
-fn binding_rows(query: &Query, state: &Relations) -> Result<Vec<BoundRow>> {
+fn binding_rows(
+    query: &Query,
+    state: &Relations,
+    tail: Option<&[Rc<Tuple>]>,
+) -> Result<Vec<BoundRow>> {
     let mut out = vec![Vec::new()];
-    for scan in &query.scans {
+    for (index, scan) in query.scans.iter().enumerate() {
         let source = state
             .get(&scan.relation)
             .ok_or_else(|| format!("state has no relation {}", scan.relation))?;
+        let rows = match tail {
+            Some(rows) if index == 0 => rows,
+            _ => &source.rows,
+        };
         let mut expanded = Vec::new();
         if scan.probe.is_empty() {
             for prior in &out {
-                for tuple in &source.rows {
+                for tuple in rows {
                     if scan.passes(tuple) {
                         expanded.push(scan.extend(prior, tuple));
                     }
