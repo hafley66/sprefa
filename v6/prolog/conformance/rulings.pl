@@ -92,6 +92,9 @@ ruling(r4_departure, departure_body_form_adopted, user,
 % later occurrences chain). Frozen-snapshot pre is the rejected reading.
 ruling(r6_pre_visibility, evolving_read, user,
        'the Q1 fold correctness depends on it').
+% pre/2 adds only the no-prior-row value; its read ring remains R6's b -> b.
+ruling(pre_seed, one_arm_folds, user,
+       'yes, we should be able to ref the pre anywhere, its basically a cached let i spose').
 
 % A6: diag is an ORDINARY rel declared by std/diag; the CLI is a consumer.
 % The engine never knows the name (the v5 magic-rel ban holds in v6).

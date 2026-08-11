@@ -282,6 +282,9 @@ solve((Left, Right), Ctx) :- !, solve(Left, Ctx), solve(Right, Ctx).
 solve(not(Goal), Ctx) :- !, \+ solve(Goal, Ctx).
 solve(latest(Atom), Ctx) :- !, Ctx = ctx(Visible, _, _), rows_member(Atom, Visible).
 solve(pre(Atom), Ctx) :- !, Ctx = ctx(_, PreState, _), rows_member(Atom, PreState).
+solve(pre(Atom, Seed), Ctx) :- !,
+    Ctx = ctx(_, PreState, _),
+    ( rows_member(Atom, PreState) -> true ; pre_seed(Atom, Seed) ).
 solve(now(Tick), Ctx) :- !, Ctx = ctx(_, _, Tick).
 solve(finalize(_), _) :- !, fail.   % satisfiable only as a trigger (r4)
 % next/1 and combine are transparent registry-defined splice rows. Their
@@ -329,6 +332,11 @@ rows_member(Atom, rows_index(Assoc, All)) :-
         member(Atom, Rows)
     ).
 rows_member(Atom, Rows) :- member(Atom, Rows).
+
+pre_seed(Atom, Seed) :-
+    Atom =.. [_ | Args],
+    include(var, Args, [Before]),
+    Before = Seed.
 
 % Left to right, backtracking across the whole list, which is what makes a
 % splice indistinguishable from writing the same goals separated by commas.

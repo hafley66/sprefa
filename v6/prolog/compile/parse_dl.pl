@@ -1397,12 +1397,17 @@ body(Body, Vars0, Vars, S0, S) :-
 body_item(Item, Vars0, Vars, S0, S) :-
     cst_item(Item, Vars0, Vars, S0, S),
     !.
+body_item(pre(Atom, Seed), Vars0, Vars, S0, S) :-
+    keyword_call(pre, InnerCodes, S0, S),
+    parse_surface_wrapper(rel_atom_default, 2, InnerCodes, [Atom, Seed],
+                          Vars0, Vars),
+    !.
 body_item(Item, Vars0, Vars, S0, S) :-
     surface(Name/Arity, _, AnalyzeRole, LowerRole, Status),
     wrapper_lower_role(LowerRole, Shape, _),
     keyword_call(Name, InnerCodes, S0, S),
-    !,
     parse_surface_wrapper(Shape, Arity, InnerCodes, Args, Vars0, Vars),
+    !,
     build_surface_item(Name, AnalyzeRole, Status, Args, Item).
 
 cst_item(cst(Path, Digest, Language, Query), Vars0, Vars, S0, S) :-

@@ -933,10 +933,15 @@ edge_sampled_goals([latest(Atom) | Rest], TriggerAtoms, [Atom | SampleAtoms],
     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
                        NegAtoms, GuardGoals).
 edge_sampled_goals([pre(Atom) | Rest], TriggerAtoms, SampleAtoms,
-                   [Atom | PreAtoms], NegAtoms, GuardGoals) :-
+                    [Atom | PreAtoms], NegAtoms, GuardGoals) :-
     plain_positive_rel_atom(Atom), !,
     edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
-                       NegAtoms, GuardGoals).
+                        NegAtoms, GuardGoals).
+edge_sampled_goals([pre(Atom, Seed) | Rest], TriggerAtoms, SampleAtoms,
+                    [pre(Atom, Seed) | PreAtoms], NegAtoms, GuardGoals) :-
+    plain_positive_rel_atom(Atom), !,
+    edge_sampled_goals(Rest, TriggerAtoms, SampleAtoms, PreAtoms,
+                        NegAtoms, GuardGoals).
 edge_sampled_goals([not(Atom) | Rest], TriggerAtoms, SampleAtoms,
                    PreAtoms, [Atom | NegAtoms], GuardGoals) :-
     plain_positive_rel_atom(Atom), !,

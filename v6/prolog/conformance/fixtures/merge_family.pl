@@ -130,7 +130,58 @@ fixture(batched_increments_both_count,
   [ counter(clicks, 0) ],
   [ [ +increment(clicks, ev1), +increment(clicks, ev2) ] ],
   [ deltas(counter/2, [ [ -counter(clicks, 0), +counter(clicks, 2) ], [] ]),
+     final(counter/2, [ counter(clicks, 2) ]) ]).
+
+% pre/2 supplies the initial accumulator while preserving pre/1's evolving
+% read after the first occurrence, so this is the one-arm spelling of the
+% seed-and-transition pair above.
+fixture(seeded_one_arm_fold_matches_two_arms,
+  prog([ kind(increment/2, log), keep(increment/2, all),
+         kind(decrement/2, log), keep(decrement/2, all),
+         keyed(counter/2, [1]) ],
+       [ (counter(Name, Next) <+ increment(Name, _),
+                                pre(counter(Name, Total), 0), Next := Total + 1),
+         (counter(Name, Next) <+ decrement(Name, _),
+                                pre(counter(Name, Total), 0), Next := Total - 1) ]),
+  [],
+  [ [ +increment(clicks, ev1) ],
+    [ +increment(clicks, ev2) ],
+    [ +decrement(clicks, ev3) ],
+    [ +increment(clicks, ev4) ] ],
+  [ deltas(counter/2, [ [ +counter(clicks, 1) ],
+                        [ -counter(clicks, 1), +counter(clicks, 2) ],
+                        [ -counter(clicks, 2), +counter(clicks, 1) ],
+                        [ -counter(clicks, 1), +counter(clicks, 2) ], [] ]),
     final(counter/2, [ counter(clicks, 2) ]) ]).
+
+fixture(seeded_pre_reads_a_body_bound_value,
+  prog([ kind(increment/2, log), keep(increment/2, all),
+         keyed(counter/2, [1]) ],
+       [ (counter(Name, Next) <+ increment(Name, Start),
+                                pre(counter(Name, Total), Start), Next := Total + 1) ]),
+  [],
+  [ [ +increment(clicks, 4) ], [ +increment(clicks, 99) ] ],
+  [ final(counter/2, [ counter(clicks, 6) ]) ]).
+
+fixture(seeded_pre_multicolumn_fee_stats_fold,
+  prog([ kind(fee/2, log), keep(fee/2, all),
+         keyed(fee_stats/2, [1]) ],
+       [ (fee_stats(Account, Next) <+ fee(Account, Amount),
+                                      pre(fee_stats(Account, Total), 0),
+                                      Next := Total + Amount) ]),
+  [],
+  [ [ +fee(merchant, 7), +fee(merchant, 5) ] ],
+  [ final(fee_stats/2, [ fee_stats(merchant, 12) ]) ]).
+
+fixture(seeded_pre_text_breadcrumb_fold,
+  prog([ kind(step/2, log), keep(step/2, all),
+         keyed(breadcrumb/2, [1]) ],
+       [ (breadcrumb(Path, Next) <+ step(Path, Piece),
+                                  pre(breadcrumb(Path, SoFar), ''),
+                                  Next := concat([SoFar, Piece])) ]),
+  [],
+  [ [ +step(main, home), +step(main, '/'), +step(main, docs) ] ],
+  [ final(breadcrumb/2, [ breadcrumb(main, 'home/docs') ]) ]).
 
 % REJECTED READING (merge lab counter_same_tick_conflict): +increment and
 % +decrement in one tick threw keyed_conflict. Ruled: ordered occurrences,
