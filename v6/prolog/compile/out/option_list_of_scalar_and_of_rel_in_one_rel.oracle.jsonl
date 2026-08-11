@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__gen__list_int_798e673312e7575f":{"add":[[200]],"del":[]},"__gen__list_int_798e673312e7575f__member":{"add":[[200,0,3]],"del":[]},"squad":{"add":[[1]],"del":[]},"squad__ranks":{"add":[[1,200]],"del":[]}}}
+{"tick":2,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","url":"ada.io"}]],"del":[]},"fighter_summary":{"add":[["ada","ada.io"]],"del":[]},"squad":{"add":[[2]],"del":[]},"squad__members":{"add":[[2,100]],"del":[]}}}

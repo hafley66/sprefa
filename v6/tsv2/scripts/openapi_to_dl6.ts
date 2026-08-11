@@ -274,7 +274,7 @@ export class OpenapiToDl6 {
       const dropped = drop.get(r.name);
       const cols = r.columns.map((c) => {
         if (dropped !== undefined && dropped.has(c.name)) {
-          this.gaps.push(`${r.name}.${c.name}: ${c.type} -> json (0_program_check.pl:342)`);
+          this.gaps.push(`${r.name}.${c.name}: ${c.type} -> json (probe did not compile)`);
           return { name: c.name, type: "json" };
         }
         return c;
@@ -306,7 +306,7 @@ export class OpenapiToDl6 {
 
   private propertyType(parent: string, prop: string, schema: IJsonSchema): string {
     const { inner, nullable } = unwrapNullable(schema);
-    const base = this.emitShape(parent, prop, inner);
+    const base = this.emitShape(parent, prop, inner, nullable);
     if (nullable) {
       if (!base.startsWith("option(")) {
         return `option(${base})`;
@@ -315,7 +315,7 @@ export class OpenapiToDl6 {
     return base;
   }
 
-  private emitShape(parent: string, prop: string, s: IJsonSchema): string {
+  private emitShape(parent: string, prop: string, s: IJsonSchema, nullable: boolean): string {
     const ref = refTarget(s);
     if (ref !== null) {
       return this.resolveRef(ref);
@@ -348,7 +348,7 @@ export class OpenapiToDl6 {
           this.gaps.push(`${parent}.${prop}: array(inline) -> json`);
           return "json";
         }
-        return `list(${this.liftObject(parent, prop, item)})`;
+        return `list(${this.liftObject(parent, prop, item, nullable)})`;
       }
       return "json";
     }
@@ -357,7 +357,7 @@ export class OpenapiToDl6 {
         this.gaps.push(`${parent}.${prop}: inline object -> json`);
         return "json";
       }
-      return this.liftObject(parent, prop, s);
+      return this.liftObject(parent, prop, s, nullable);
     }
     if (typeof t === "string" && SCALAR[t] !== undefined) {
       return SCALAR[t]!;
@@ -365,10 +365,11 @@ export class OpenapiToDl6 {
     return "json";
   }
 
-  /** Mint a lifted inline-object rel `<parent>__<prop>` carrying the object's
-   * own columns, and return its name. Nested inline objects lift recursively. */
-  private liftObject(parent: string, prop: string, objectSchema: IJsonSchema): string {
-    const name = `${parent}__${columnName(prop)}`;
+  /** Mint a lifted inline-object rel. A NULLABLE property takes `_object`; the
+   * unsuffixed name is its option companion's (companion_rel_decls/4). */
+  private liftObject(parent: string, prop: string, objectSchema: IJsonSchema, nullable: boolean): string {
+    const stem = `${parent}__${columnName(prop)}`;
+    const name = nullable ? `${stem}_object` : stem;
     this.claimName(name, `lifted@${parent}#${prop}`);
     const lifted = this.buildRel(name, objectSchema);
     this.rels.push(lifted);

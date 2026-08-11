@@ -14,6 +14,7 @@
 :- use_module('../analyze', [body_ref_uses/2, rule_head_ref/2,
                               rule_is_aggregate/1,
                               aggregate_head_template/2]).
+:- use_module('../strat', [recursive_stratum_groups/2]).
 :- use_module('../0_rel_record', [relplan_parts/6, relplan_columns/3]).
 :- use_module('../lower', [lower_program/2]).
 :- use_module(library(http/json), [json_write_dict/3]).
@@ -192,17 +193,23 @@ json_operator(_OrderedRules, _Arrangements, Operators,
              predicates:SemanticsJson.predicates,
              projection:SemanticsJson.projection}.
 json_operator(_OrderedRules, _Arrangements, Operators,
-              op(Id, iterate(Ref), sqlite(_Refs, Payload), Semantics), Dict) :-
+              op(Id, iterate(Refs), sqlite(_Refs, Payload), Semantics), Dict) :-
     atom_string(Id, IdText),
     operator_owner_meta(Payload, Operators, HeadRef, Classification),
     ref_name(HeadRef, Head),
-    ref_name(Ref, Iterated),
+    iterate_ref_names(Refs, Iterated),
     op_semantics_json(Semantics, SemanticsJson),
-    Dict = _{id:IdText, kind:iterate, head:Head, refs:[Iterated],
+    Dict = _{id:IdText, kind:iterate, head:Head, refs:Iterated,
              classification:Classification,
              bindings:SemanticsJson.bindings,
              predicates:SemanticsJson.predicates,
              projection:SemanticsJson.projection}.
+
+iterate_ref_names(Refs, Names) :-
+    is_list(Refs),
+    !,
+    ref_name_list(Refs, Names).
+iterate_ref_names(Ref, [Name]) :- ref_name(Ref, Name).
 
 op_semantics_json(semantics(Bindings, Predicates, Projection), Dict) :-
     bindings_json(Bindings, BindingsJson),
@@ -301,8 +308,8 @@ dd_plan_term(plan(Name, prog(_, Rules), _, RelPlans, _, RuleOrder, _, _, _),
     maplist(rel_term, RelPlans, Rels),
     ordered_rules(RuleOrder, Rules, OrderedRules),
     arrangement_terms(RelPlans, OrderedRules, Arrangements),
-    rule_operators(OrderedRules, Lowered, RelPlans, Operators),
-    rule_wires(OrderedRules, Wires),
+    rule_operators(OrderedRules, OrderedRules, Lowered, RelPlans, Operators),
+    rule_wires(OrderedRules, OrderedRules, Wires),
     tick_order(TickOrder).
 
 ordered_rules([], Rules, Rules) :-
@@ -446,43 +453,17 @@ argument_position(Argument, [_ | Rest], Position) :-
 rule_head_arguments((Head <- _), Arguments) :- Head =.. [_ | Arguments].
 rule_head_arguments((Head <+ _), Arguments) :- Head =.. [_ | Arguments].
 
-rule_operators(Rules, Lowered, RelPlans, Operators) :-
-    rule_operators(Rules, Lowered, RelPlans, 1, Operators).
+rule_operators(Rules, AllRules, Lowered, RelPlans, Operators) :-
+    rule_operators(Rules, AllRules, Lowered, RelPlans, 1, Operators).
 
-rule_operators([], _, _, _, []).
-rule_operators([Rule | Rest], Lowered, RelPlans, Number, Operators) :-
-    reject_mutual_recursion(Rule, [Rule | Rest]),
-    rule_operator_terms(Rule, Lowered, RelPlans, Number, Current),
+rule_operators([], _, _, _, _, []).
+rule_operators([Rule | Rest], AllRules, Lowered, RelPlans, Number, Operators) :-
+    rule_operator_terms(Rule, AllRules, Lowered, RelPlans, Number, Current),
     Next is Number + 1,
-    rule_operators(Rest, Lowered, RelPlans, Next, More),
+    rule_operators(Rest, AllRules, Lowered, RelPlans, Next, More),
     append(Current, More, Operators).
 
-reject_mutual_recursion(Rule, Rules) :-
-    rule_head_ref(Rule, HeadRef),
-    rule_body_uses(Rule, Uses),
-    (   member(use(HeadRef, _, pos, _), Uses)
-    ->  true
-    ;   member(use(BodyRef, _, pos, _), Uses),
-        BodyRef \== HeadRef,
-        rules_reach_ref(BodyRef, HeadRef, Rules)
-    ->  throw(unsupported_construct(mutual_recursion(HeadRef)))
-    ;   true
-    ).
-
-rules_reach_ref(From, To, Rules) :-
-    rules_reach_ref(From, To, Rules, []).
-
-rules_reach_ref(From, To, Rules, Seen) :-
-    member(Rule, Rules),
-    rule_head_ref(Rule, From),
-    rule_body_uses(Rule, Uses),
-    member(use(Next, _, pos, _), Uses),
-    (   Next == To
-    ;   \+ memberchk(Next, Seen),
-        rules_reach_ref(Next, To, Rules, [From | Seen])
-    ).
-
-rule_operator_terms(Rule, Lowered, RelPlans, Number, Operators) :-
+rule_operator_terms(Rule, AllRules, Lowered, RelPlans, Number, Operators) :-
     rule_head_ref(Rule, HeadRef),
     rule_body_uses(Rule, Uses),
     include(positive_use, Uses, PositiveUses),
@@ -499,7 +480,7 @@ rule_operator_terms(Rule, Lowered, RelPlans, Number, Operators) :-
     filter_operators(Uses, Number, Owner, Bindings, Predicates, Filters),
     reduce_operators(Rule, Number, Owner, Bindings, Predicates,
                      ReduceProjection, Reduces),
-    iterate_operators(HeadRef, Uses, Number, Owner, Bindings, Predicates,
+    iterate_operators(HeadRef, Uses, AllRules, Number, Owner, Bindings, Predicates,
                       Iterates),
     append([[Map], Joins, Filters, Reduces, Iterates], Operators).
 
@@ -660,13 +641,23 @@ reduce_operators(Rule, Number, Payload, Bindings, Predicates,
     format(atom(Arrangement), 'arr_~w_~w_~w', [Name, Arity, Id]).
 reduce_operators(_, _, _, _, _, _, []).
 
-iterate_operators(HeadRef, Uses, Number, Payload, Bindings, Predicates,
+iterate_operators(HeadRef, _Uses, AllRules, Number, Payload, Bindings, Predicates,
+                  [op(Id, iterate(HeadRefs), Payload,
+                      semantics(Bindings, Predicates, []))]) :-
+    recursive_stratum_groups(AllRules, RecursiveGroups),
+    member(Group, RecursiveGroups),
+    findall(Ref, ( member(Rule, Group), rule_head_ref(Rule, Ref) ), HeadRefs0),
+    sort(HeadRefs0, HeadRefs),
+    HeadRefs = [HeadRef | _],
+    !,
+    operator_id(iterate, Number, Id).
+iterate_operators(HeadRef, Uses, _, Number, Payload, Bindings, Predicates,
                   [op(Id, iterate(HeadRef), Payload,
                       semantics(Bindings, Predicates, []))]) :-
     member(use(HeadRef, _, pos, _), Uses),
     !,
     operator_id(iterate, Number, Id).
-iterate_operators(_, _, _, _, _, _, []).
+iterate_operators(_, _, _, _, _, _, _, []).
 
 operator_id(Kind, Number, Id) :-
     number_atom(Number, Suffix),
@@ -675,23 +666,23 @@ operator_id(Kind, Number, Id) :-
 number_atom(Left-Right, Atom) :- !, format(atom(Atom), '~w_~w', [Left, Right]).
 number_atom(Number, Atom) :- format(atom(Atom), '~w', [Number]).
 
-rule_wires(Rules, Wires) :-
-    rule_wires(Rules, 1, Wires).
+rule_wires(Rules, AllRules, Wires) :-
+    rule_wires(Rules, AllRules, 1, Wires).
 
-rule_wires([], _, []).
-rule_wires([Rule | Rest], Number, Wires) :-
+rule_wires([], _, _, []).
+rule_wires([Rule | Rest], AllRules, Number, Wires) :-
     rule_head_ref(Rule, HeadRef),
     rule_body_uses(Rule, Uses),
-    rule_wires_for_operators(Rule, Uses, Number, HeadRef, Current),
+    rule_wires_for_operators(Rule, Uses, AllRules, Number, HeadRef, Current),
     Next is Number + 1,
-    rule_wires(Rest, Next, More),
+    rule_wires(Rest, AllRules, Next, More),
     append(Current, More, Wires).
 
-rule_wires_for_operators(Rule, Uses, Number, HeadRef, Wires) :-
+rule_wires_for_operators(Rule, Uses, AllRules, Number, HeadRef, Wires) :-
     include(positive_use, Uses, PositiveUses),
     filter_operators(Uses, Number, none, [], [], FilterOperators),
     reduce_operators(Rule, Number, none, [], [], [], ReduceOperators),
-    iterate_operators(HeadRef, Uses, Number, none, [], [], IterateOperators),
+    iterate_operators(HeadRef, Uses, AllRules, Number, none, [], [], IterateOperators),
     operator_id(map, Number, MapId),
     join_operators(Number, none, PositiveUses, [], [], [], JoinOperators),
     append([FilterOperators, ReduceOperators, IterateOperators,

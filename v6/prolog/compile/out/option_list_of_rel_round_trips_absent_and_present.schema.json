@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "fighter_summary": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"url": {"type":"string"}},
+      "required": ["name", "url" ],
+      "type":"object"
+    },
+    "squad": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    }
+  },
+  "$id":"option_list_of_rel_round_trips_absent_and_present#4894f3f5e18179b3",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
