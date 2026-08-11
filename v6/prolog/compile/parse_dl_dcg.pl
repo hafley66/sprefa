@@ -39,20 +39,19 @@ cst_shape(match_stmt/1,     match_statement-[scrutinee]).
 cst_shape(match_arm/1,      match_arm-[guard, arrow, head]).
 cst_shape(braces_term/1,    object_pattern-[]).
 cst_shape(dotted_path/1,    path-[]).
-cst_shape(statement/2,      ref(statement)-[]).
+cst_shape(statement/2,      statement-[]).
 cst_shape(rel_stmt/1,       ref(relation_declaration)-[]).
 cst_shape(sh_decl_stmt/1,   ref(shell_declaration)-[]).
 cst_shape(typed_col/2,      ref(column)-[]).
 cst_shape(type_expr/1,      ref(type)-[]).
 cst_shape(enum_variant/1,   ref(enum_variant)-[]).
-cst_shape(rule_stmt/1,      ref(rule)-[]).
+cst_shape(rule_stmt/1,      rule-[head, arrow, body]).
 cst_shape(query_stmt/1,     ref(query)-[]).
 cst_shape(body/1,           ref(goal_list)-[]).
 cst_shape(expr/1,           ref(expression)-[]).
 cst_shape(head_atom/1,      ref(atom)-[]).
-cst_shape(atom_arg/1,       ref(named_argument)-[]).
-cst_shape(brace_pair/1,     ref(object_pair)-[]).
-cst_shape(list_term/1,      ref(list)-[]).
+cst_shape(brace_pair/1,     object_pair-[key, value, type]).
+cst_shape(list_term/1,      list-[]).
 cst_shape(int_lit/1,        ref(integer)-[]).
 cst_shape(float_lit/1,      ref(float)-[]).
 cst_shape(string_lit/1,     string-[]).
@@ -60,6 +59,14 @@ cst_shape(atom_lit/1,       quoted_atom-[]).
 cst_shape(template_lit/1,   template-[]).
 cst_shape(bool_lit/1,       boolean-[]).
 cst_shape(ident/1,          ref(identifier)-[]).
+
+% Nodes the parser folds away: Nonterminal-Marker -> Node, inner = the
+% marked branch alone rather than the nonterminal with that branch chosen.
+cst_origin(atom_arg/1-named,    named_argument-[name, value]).
+cst_origin(rule_stmt/1-true,    fact-[]).
+cst_origin(brace_key/1-'$',     capture_key-[]).
+cst_origin(dot_chain/2-dot_get, member_access-[]).
+cst_origin(list_term/1-spread,  inner(spread_element)-[]).
 
 unsupported(Surface) :- assertz(finding_fact(unsupported_surface(Surface))).
 record_cols(Name, Cols) :-

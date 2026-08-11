@@ -538,6 +538,10 @@
           {
             "type": "quoted_atom",
             "named": true
+          },
+          {
+            "type": "string",
+            "named": true
           }
         ]
       },

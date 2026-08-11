@@ -22,16 +22,7 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat($.statement),
 
-    statement: $ => choice(
-      $.relation_declaration,
-      $.shell_declaration,
-      $.bind_declaration,
-      $.match_statement,
-      $.query,
-      $.rule,
-      $.fact,
-    ),
-
+    statement: $ => choice($.bind_declaration, $.relation_declaration, $.shell_declaration, $.query, $.match_statement, $.rule, $.fact),
     relation_declaration: $ => seq(
       "rel",
       field("name", $.path),
@@ -67,13 +58,7 @@ module.exports = grammar({
     enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),
 
     relation_modifier: $ => choice("log", seq("keep", "(", choice("all", seq("count", "(", $.integer, ")")), ")"), seq("key", "(", $.integer, repeat(seq(",", $.integer)), ")"), "set"),
-    rule: $ => seq(
-      field("head", $.atom),
-      field("arrow", choice("<-", "<+")),
-      field("body", $.goal_list),
-      ".",
-    ),
-
+    rule: $ => seq(field("head", $.atom), field("arrow", choice("<-", "<+")), field("body", $.goal_list), "."),
     fact: $ => seq($.atom, "."),
     query: $ => seq("?", $.atom, "."),
 
@@ -123,21 +108,11 @@ module.exports = grammar({
       optional(commaSep1(choice($.named_argument, $.expression))),
       ")",
     )),
-    named_argument: $ => seq(
-      field("name", $.identifier),
-      ":",
-      field("value", $.expression),
-    ),
-
+    named_argument: $ => seq(field("name", $.identifier), ":", field("value", $.expression)),
     object_pattern: $ => seq("{", optional(seq($.object_pair, repeat(seq(",", $.object_pair)))), "}"),
-    object_pair: $ => seq(
-      field("key", choice($.identifier, $.quoted_atom, $.capture_key, "**")),
-      ":",
-      field("value", $.expression),
-      optional(seq(":", field("type", $.identifier))),
-    ),
+    object_pair: $ => seq(field("key", choice("**", $.capture_key, $.quoted_atom, $.string, $.identifier)), ":", field("value", $.expression), optional(seq(":", field("type", $.identifier)))),
     capture_key: $ => token(/\$[A-Za-z_][A-Za-z0-9_]*/),
-    list: $ => seq("[", optional(commaSep1(choice($.spread_element, $.expression))), "]"),
+    list: $ => seq("[", optional(choice($.spread_element, seq($.expression, repeat(seq(",", $.expression))))), "]"),
     spread_element: $ => seq("...", $.expression),
 
     path: $ => seq($.identifier, repeat(seq(".", $.identifier))),

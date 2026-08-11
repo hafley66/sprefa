@@ -4,7 +4,7 @@ const EMITTER_RECEIPT = {
   registry: "operators([:=,is],[\\==,=:=,=\\=,=<,>=,==,<,>],[1-[+,-],2-[mod,*,/]])",
   specializations: "[args-atom_arg,args-decl_a_column,args-enum_field,args-expr,args-typed_col(decl_b_column_type(A)),args-typed_col(host_col_type(B)),sep-atom_arg,sep-decl_a_column,sep-enum_field,sep-expr,sep-int_lit,sep-rel_atom_term,sep-typed_col(decl_b_column_type(C)),sep-typed_col(host_col_type(D))]",
   unbound: "[args-A,sep-A]",
-  generated: ["bind_declaration", "boolean", "capture_key", "comment", "declaration_parameter", "enum_variants", "match_arm", "match_statement", "member_access", "object_pattern", "path", "quoted_atom", "relation_modifier", "string", "template"],
+  generated: ["bind_declaration", "boolean", "capture_key", "comment", "declaration_parameter", "enum_variants", "fact", "list", "match_arm", "match_statement", "member_access", "named_argument", "object_pair", "object_pattern", "path", "quoted_atom", "relation_modifier", "rule", "spread_element", "statement", "string", "template"],
   blocked: "[]",
 };
 
@@ -32,16 +32,7 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat($.statement),
 
-    statement: $ => choice(
-      $.relation_declaration,
-      $.shell_declaration,
-      $.bind_declaration,
-      $.match_statement,
-      $.query,
-      $.rule,
-      $.fact,
-    ),
-
+    statement: $ => choice($.bind_declaration, $.relation_declaration, $.shell_declaration, $.query, $.match_statement, $.rule, $.fact),
     relation_declaration: $ => seq(
       "rel",
       field("name", $.path),
@@ -77,13 +68,7 @@ module.exports = grammar({
     enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),
 
     relation_modifier: $ => choice("log", seq("keep", "(", choice("all", seq("count", "(", $.integer, ")")), ")"), seq("key", "(", $.integer, repeat(seq(",", $.integer)), ")"), "set"),
-    rule: $ => seq(
-      field("head", $.atom),
-      field("arrow", choice("<-", "<+")),
-      field("body", $.goal_list),
-      ".",
-    ),
-
+    rule: $ => seq(field("head", $.atom), field("arrow", choice("<-", "<+")), field("body", $.goal_list), "."),
     fact: $ => seq($.atom, "."),
     query: $ => seq("?", $.atom, "."),
 
@@ -133,23 +118,12 @@ module.exports = grammar({
       optional(commaSep1(choice($.named_argument, $.expression))),
       ")",
     )),
-    named_argument: $ => seq(
-      field("name", $.identifier),
-      ":",
-      field("value", $.expression),
-    ),
-
+    named_argument: $ => seq(field("name", $.identifier), ":", field("value", $.expression)),
     object_pattern: $ => seq("{", optional(seq($.object_pair, repeat(seq(",", $.object_pair)))), "}"),
-    object_pair: $ => seq(
-      field("key", choice($.identifier, $.quoted_atom, $.capture_key, "**")),
-      ":",
-      field("value", $.expression),
-      optional(seq(":", field("type", $.identifier))),
-    ),
+    object_pair: $ => seq(field("key", choice("**", $.capture_key, $.quoted_atom, $.string, $.identifier)), ":", field("value", $.expression), optional(seq(":", field("type", $.identifier)))),
     capture_key: $ => token(/\$[A-Za-z_][A-Za-z0-9_]*/),
-    list: $ => seq("[", optional(commaSep1(choice($.spread_element, $.expression))), "]"),
+    list: $ => seq("[", optional(choice($.spread_element, seq($.expression, repeat(seq(",", $.expression))))), "]"),
     spread_element: $ => seq("...", $.expression),
-
     path: $ => seq($.identifier, repeat(seq(".", $.identifier))),
     literal: $ => choice($.float, $.integer, $.string, $.quoted_atom, $.boolean),
     integer: $ => /[0-9]+/,

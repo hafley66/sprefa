@@ -228,7 +228,10 @@ parser_rule(Parser, Target) :-
 % Clause-shape reader: every predicate below answers a question about
 % parse_dl_dcg.pl's clause bodies and carries no Tree-sitter answer.
 
-dcg_clause(Terms, Name/Arity, Body) :-
+dcg_clause(Terms, Nonterminal, Body) :-
+    dcg_clause_full(Terms, Nonterminal, _, Body).
+
+dcg_clause_full(Terms, Name/Arity, Head, Body) :-
     member(Clause, Terms),
     nonvar(Clause),
     Clause = (Head --> Body),
@@ -474,8 +477,13 @@ separator_goal(Terms, Goals, Separator) :-
 % Fragments are terms first so field names can be placed and literal
 % alternatives factored before anything becomes JavaScript.
 
+% ws//0, here//1, back//1 and mark/1 consume no input
+zero_width(Goal) :-
+    nonvar(Goal),
+    ( Goal == ws ; Goal = here(_) ; Goal = back(_) ; Goal = mark(_) ).
+
 ir_sequence(Terms, Seen, Goals, Ir) :-
-    exclude(==(ws), Goals, Meaningful),
+    exclude(zero_width, Goals, Meaningful),
     maplist(ir_goal(Terms, Seen), Meaningful, Items),
     ir_flatten_sequence(Items, Ir).
 
@@ -518,10 +526,10 @@ ir_goal(Terms, Seen, Goal, Ir) :-
     nonvar(Goal),
     Goal = (Guard -> Then ; Else), !,
     ( nonvar(Guard), Guard = peek(_), goal_sequence(Then, [])
-    -> ir_branch(Terms, Seen, Else, Inner), Ir = optional(Inner)
-    ; ir_branch(Terms, Seen, (Guard, Then), ThenIr),
-      ir_branch(Terms, Seen, Else, ElseIr),
-      ir_choice([ThenIr, ElseIr], Ir)
+    -> ir_alternatives_of(Terms, Seen, [Else], [Inner]), Ir = optional(Inner)
+    ; ir_alternatives_of(Terms, Seen, [(Guard, Then), Else], Items),
+      Items = [_ | _],
+      ir_choice(Items, Ir)
     ).
 ir_goal(Terms, Seen, Goal, Ir) :-
     nonvar(Goal),
@@ -530,9 +538,9 @@ ir_goal(Terms, Seen, Goal, Ir) :-
 ir_goal(Terms, Seen, Goal, Ir) :-
     nonvar(Goal),
     Goal = (Left ; Right), !,
-    ir_branch(Terms, Seen, Left, LeftIr),
-    ir_branch(Terms, Seen, Right, RightIr),
-    ir_choice([LeftIr, RightIr], Ir).
+    ir_alternatives_of(Terms, Seen, [Left, Right], Items),
+    Items = [_ | _],
+    ir_choice(Items, Ir).
 ir_goal(Terms, Seen, Goal, Ir) :-
     nonvar(Goal),
     specialization_call(Goal, Kind, Parser),
@@ -546,15 +554,84 @@ ir_goal(Terms, _, Goal, Ir) :-
     nonvar(Goal),
     functor(Goal, Name, Arity),
     cst_shape_of(Terms, Name/Arity, Spelling, _), !,
-    ( Spelling = repeat(Rule) -> Ir = repeat(ref(Rule))
-    ; Spelling = ref(Rule) -> Ir = ref(Rule)
-    ; Ir = ref(Spelling)
+    ( Spelling = repeat(Rule)
+    -> Ir = repeat(ref(Rule))
+    ; ( Spelling = ref(Rule) -> true ; Rule = Spelling ),
+      findall(ref(Node),
+              origin_row(Terms, Name/Arity, _, Node, _, whole),
+              Siblings),
+      ( Siblings == [] -> Ir = ref(Rule) ; Ir = choice([ref(Rule) | Siblings]) )
     ).
 ir_goal(Terms, Seen, Goal, Ir) :-
     nonvar(Goal),
     functor(Goal, Name, Arity),
-    \+ memberchk(Name/Arity, Seen),
-    ir_body(Terms, [Name/Arity | Seen], Name/Arity, Ir).
+    \+ memberchk(Name/Arity-_, Seen),
+    ir_body(Terms, [Name/Arity-inline | Seen], Name/Arity, Ir).
+
+% cst_origin/2 marks one alternative of a nonterminal as its own editor node
+origin_row(Terms, Nonterminal, Marker, Node, Fields, Kind) :-
+    member(cst_origin(Nonterminal-Marker, Spelling-Fields), Terms),
+    ( Spelling = inner(Node) -> Kind = inner ; Node = Spelling, Kind = whole ).
+
+ir_alternatives_of(Terms, [Nonterminal-Mode | Rest], Branches, Items) :-
+    findall(Item,
+            ( member(Branch, Branches),
+              alternative_item(Terms, Nonterminal, Mode, Rest, Branch, Item)
+            ),
+            Items).
+
+alternative_item(Terms, Nonterminal, inline, _, Branch, ref(Node)) :-
+    origin_row(Terms, Nonterminal, Marker, Node, _, _),
+    carries_directly(Branch, Marker), !.
+alternative_item(Terms, Nonterminal, without_origins, _, Branch, _) :-
+    origin_row(Terms, Nonterminal, Marker, _, _, whole),
+    carries_directly(Branch, Marker), !,
+    fail.
+alternative_item(Terms, Nonterminal, only(Marker), Rest, Branch, Item) :- !,
+    carries(Branch, Marker),
+    ( carries_directly(Branch, Marker)
+    -> expand_alternative(Terms, [Nonterminal-inline | Rest], Branch, Item)
+    ; expand_alternative(Terms, [Nonterminal-only(Marker) | Rest], Branch, Item)
+    ).
+alternative_item(Terms, Nonterminal, Mode, Rest, Branch, Item) :-
+    expand_alternative(Terms, [Nonterminal-Mode | Rest], Branch, Item).
+
+expand_alternative(Terms, Seen, clause(_, Body), Ir) :- !,
+    ir_branch(Terms, Seen, Body, Ir).
+expand_alternative(Terms, Seen, Branch, Ir) :-
+    ir_branch(Terms, Seen, Branch, Ir).
+
+carries(clause(Head, Body), Marker) :- !, carries_term((Head, Body), Marker).
+carries(Branch, Marker) :- carries_term(Branch, Marker).
+
+carries_term(Term, Marker) :-
+    sub_term(Sub, Term),
+    nonvar(Sub),
+    functor(Sub, Marker, _), !.
+
+carries_directly(clause(Head, Body), Marker) :- !,
+    ( carries_term(Head, Marker) -> true ; direct_marker(Body, Marker) ).
+carries_directly(Branch, Marker) :- direct_marker(Branch, Marker).
+
+direct_marker(Branch, Marker) :-
+    conjunction_goals(Branch, All),
+    exclude(alternative_goal, All, Goals),
+    member(Goal, Goals),
+    carries_term(Goal, Marker), !.
+
+alternative_goal(Goal) :-
+    nonvar(Goal),
+    ( Goal = (_ ; _) ; Goal = (_ -> _) ).
+
+marked_branch(Body, Marker, Branch) :-
+    conjunction_goals(Body, Goals),
+    member(Goal, Goals),
+    nonvar(Goal),
+    branch_of(Goal, Candidate),
+    ( carries_directly(Candidate, Marker)
+    -> Branch = Candidate
+    ; marked_branch(Candidate, Marker, Branch)
+    ).
 
 applied_parser(Parser, Goal) :-
     Parser =.. Parts,
@@ -573,14 +650,15 @@ ir_body(Terms, Seen, Nonterminal, Ir) :-
     ; Ir = seq([ItemIr, repeat(seq([lit(Separator), ItemIr]))])
     ).
 ir_body(Terms, Seen, Nonterminal, Ir) :-
-    findall(Body, dcg_clause(Terms, Nonterminal, Body), Bodies),
-    Bodies = [_ | _],
-    ( Bodies = [Only]
-    -> ir_branch(Terms, Seen, Only, Ir)
-    ; maplist(ir_branch(Terms, Seen), Bodies, Items),
-      ir_choice(Items, Ir)
-    ).
+    findall(clause(Head, Body),
+            dcg_clause_full(Terms, Nonterminal, Head, Body),
+            Clauses),
+    Clauses = [_ | _],
+    ir_alternatives_of(Terms, Seen, Clauses, Items),
+    Items = [_ | _],
+    ir_choice(Items, Ir).
 
+ir_choice([seq([])], seq([])) :- !.
 ir_choice(Items0, Ir) :-
     flatten_choices(Items0, Items1),
     ( select(optional(Inner), Items1, Inner, Items2) -> true ; Items2 = Items1 ),
@@ -675,9 +753,24 @@ cst_shape_of(Terms, Nonterminal, Rule, Fields) :-
 rule_of_spelling(_, _, ref(_), _, _) :- !, fail.
 rule_of_spelling(Terms, Nonterminal, repeat(Rule), Rule, Ir) :- !,
     repetition(Terms, Nonterminal, Item, none),
-    ir_goal(Terms, [Nonterminal], Item, Ir).
+    ir_goal(Terms, [Nonterminal-inline], Item, Ir).
 rule_of_spelling(Terms, Nonterminal, Rule, Rule, Ir) :-
-    ir_body(Terms, [Nonterminal], Nonterminal, Ir).
+    ( origin_row(Terms, Nonterminal, _, _, _, whole)
+    -> Mode = without_origins
+    ; Mode = inline
+    ),
+    ir_body(Terms, [Nonterminal-Mode], Nonterminal, Ir).
+
+origin_body(Terms, Node, Js) :-
+    origin_row(Terms, Nonterminal, Marker, Node, Fields, Kind),
+    ( Kind == whole
+    -> ir_body(Terms, [Nonterminal-only(Marker)], Nonterminal, Ir0)
+    ; dcg_clause(Terms, Nonterminal, Body),
+      marked_branch(Body, Marker, Branch),
+      ir_branch(Terms, [Nonterminal-inline], Branch, Ir0)
+    ),
+    place_fields(Fields, Ir0, Ir),
+    render(Ir, Js).
 
 generated_bodies(Terms, Bodies) :-
     findall(Rule-Js,
@@ -688,8 +781,7 @@ generated_bodies(Terms, Bodies) :-
             ),
             Structural),
     findall(Rule-Js,
-            ( member(Nonterminal-Rule,
-                     [brace_key/1-capture_key, dot_chain/2-member_access]),
+            ( origin_row(Terms, Nonterminal, _, Rule, _, _),
               token_body(Terms, Nonterminal, Js)
             ),
             Tokens),
@@ -698,8 +790,15 @@ generated_bodies(Terms, Bodies) :-
               render(tok(Pattern), Js)
             ),
             Extras),
-    append([Structural, Tokens, Extras], Pairs),
-    keysort(Pairs, Bodies).
+    findall(Rule-Js, origin_body(Terms, Rule, Js), Origins),
+    append([Tokens, Extras, Structural, Origins], Pairs),
+    keysort(Pairs, Sorted),
+    first_per_rule(Sorted, Bodies).
+
+first_per_rule([], []).
+first_per_rule([Rule-Js | Rest], [Rule-Js | Out]) :-
+    exclude([Other-_]>>(Other == Rule), Rest, Remaining),
+    first_per_rule(Remaining, Out).
 
 ungenerated_shapes(Terms, Blocked) :-
     findall(Nonterminal,
