@@ -22,6 +22,15 @@ emitter_receipt=$(swipl -q -f emit_grammar.pl -- \
 cmp emitted-grammar.js "$emitted_tmp"
 echo "$emitter_receipt"
 
+emitted_dir="$lab_dir/build/emitted"
+mkdir -p "$emitted_dir"
+cp emitted-grammar.js "$emitted_dir/grammar.js"
+cp tree-sitter.json "$emitted_dir/tree-sitter.json"
+( cd "$emitted_dir" && tree-sitter generate >/dev/null )
+echo "PASS generate: emitted-grammar.js"
+
+python3 measure.py
+
 golden="$lab_dir/../../dl/fixtures/golden-flex.dl6"
 parse_output=$(tree-sitter parse "$golden")
 if grep -Eq '\(ERROR|\(MISSING' <<<"$parse_output"; then
