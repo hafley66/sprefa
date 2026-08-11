@@ -15,12 +15,39 @@ fi
 tree-sitter generate
 tree-sitter build -o build/dl6.dylib
 
-parse_output=$(tree-sitter parse fixtures/golden-flex-175-236.dl6)
+emitted_tmp=$(mktemp)
+trap 'rm -f "$emitted_tmp"' EXIT
+emitter_receipt=$(swipl -q -f emit_grammar.pl -- \
+  ../../prolog/compile/parse_dl_dcg.pl "$emitted_tmp")
+cmp emitted-grammar.js "$emitted_tmp"
+echo "$emitter_receipt"
+
+golden="$lab_dir/../../dl/fixtures/golden-flex.dl6"
+parse_output=$(tree-sitter parse "$golden")
 if grep -Eq '\(ERROR|\(MISSING' <<<"$parse_output"; then
-  echo "$parse_output" >&2
+  printf '%s\n' "$parse_output" >&2
   exit 1
 fi
-echo "PASS parse: golden-flex.dl6 lines 175-236 contain zero ERROR/MISSING nodes"
+echo "PASS parse: golden-flex.dl6 lines=630 errors=0"
+
+corpus_dir="$lab_dir/../../prolog/compile/out/text-door"
+mapfile -t corpus < <(find "$corpus_dir" -maxdepth 1 -type f -name '*.dl6' | sort)
+total=${#corpus[@]}
+clean=0
+errors=0
+for fixture in "${corpus[@]}"; do
+  if fixture_output=$(tree-sitter parse "$fixture" 2>&1) &&
+    ! grep -Eq '\(ERROR|\(MISSING' <<<"$fixture_output"; then
+    clean=$((clean + 1))
+  else
+    errors=$((errors + 1))
+    printf '%s\n' "$fixture_output" >&2
+  fi
+done
+echo "TS_CORPUS total=$total clean=$clean errors=$errors"
+if (( errors != 0 )); then
+  exit 1
+fi
 
 config="$lab_dir/languages.ncl"
 query="$lab_dir/queries/formatting.scm"

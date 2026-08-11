@@ -1,0 +1,31 @@
+// Generated from ../../prolog/compile/parse_dl_dcg.pl by emit_grammar.pl.
+// Only clauses with terminals, conjunctions, alternatives, and DCG calls are emitted.
+module.exports = grammar({
+  name: "dl6_dcg_probe",
+  rules: {
+    arg_exprs: $ => $.argsv,
+    args: $ => $.argsv,
+    atom_arg: $ => $.expr,
+    body_item: $ => choice($.relatom_item, seq($.bind_item, blank()), seq($.cmp_item, blank()), seq($.cst_item, blank()), seq(blank(), seq($.keyword_call, seq(blank(), seq(blank(), blank()))))),
+    brace_pairs: $ => $.brace_pair,
+    cmp_op: $ => seq($.infix_op, blank()),
+    cst_block: $ => choice(seq("\"", seq($.cst_block_string, seq(blank(), seq($.cst_block, blank())))), seq("}", blank())),
+    cst_block_string: $ => seq("\"", blank()),
+    decl_b_column_type: $ => choice($.type_expr, seq($.coltype, seq(blank(), seq(blank(), blank())))),
+    decl_b_columns: $ => $.args,
+    digits0: $ => blank(),
+    enum_variants: $ => $.enum_variant,
+    expr: $ => seq(blank(), $.tier_expr),
+    float_tail: $ => $.exp,
+    head_args: $ => $.argsv,
+    head_atom: $ => seq($.dotted_path, seq($.tok, seq($.head_args, seq($.tok, blank())))),
+    host_col_type: $ => choice($.type_expr, seq($.coltype, seq(blank(), blank()))),
+    host_output_columns: $ => $.args,
+    infix_op: $ => seq(blank(), $.op_codes),
+    rel_modifiers: $ => blank(),
+    sep: $ => $.sepv,
+    template_codes: $ => choice(seq("\\\\", seq(blank(), $.template_codes)), seq("\\`", seq(blank(), $.template_codes)), seq("`", blank())),
+    template_lit: $ => seq("`", seq(blank(), seq($.template_codes, blank()))),
+    tier_expr: $ => choice($.factor, seq($.tier_expr, seq(blank(), $.tier_rest))),
+  },
+});
