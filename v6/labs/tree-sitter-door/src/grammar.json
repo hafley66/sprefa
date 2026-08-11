@@ -402,7 +402,7 @@
           "name": "enum_variant"
         },
         {
-          "type": "REPEAT1",
+          "type": "REPEAT",
           "content": {
             "type": "SEQ",
             "members": [
@@ -1027,7 +1027,7 @@
       "type": "IMMEDIATE_TOKEN",
       "content": {
         "type": "PATTERN",
-        "value": "\\.[a-z_][A-Za-z0-9_]*"
+        "value": "\\.[A-Za-z_][A-Za-z0-9_]*"
       }
     },
     "parenthesized_expression": {
@@ -1262,8 +1262,11 @@
       ]
     },
     "capture_key": {
-      "type": "PATTERN",
-      "value": "\\$[A-Z_][A-Za-z0-9_]*"
+      "type": "TOKEN",
+      "content": {
+        "type": "PATTERN",
+        "value": "\\$[A-Za-z_][A-Za-z0-9_]*"
+      }
     },
     "list": {
       "type": "SEQ",

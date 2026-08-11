@@ -69,7 +69,7 @@ module.exports = grammar({
       optional("?"),
     ),
 
-    enum_variants: $ => seq($.enum_variant, repeat1(seq(";", $.enum_variant))),
+    enum_variants: $ => seq($.enum_variant, repeat(seq(";", $.enum_variant))),
     enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),
 
     relation_modifier: $ => choice(
@@ -138,7 +138,7 @@ module.exports = grammar({
 
     unary_expression: $ => prec(PREC.unary, seq(choice("-", "+"), $.expression)),
     member_expression: $ => prec(PREC.call, seq($.variable, repeat1($.member_access))),
-    member_access: $ => token.immediate(/\.[a-z_][A-Za-z0-9_]*/),
+    member_access: $ => token.immediate(/\.[A-Za-z_][A-Za-z0-9_]*/),
     parenthesized_expression: $ => seq("(", $.expression, ")"),
 
     atom: $ => prec(PREC.call, seq(
@@ -153,18 +153,18 @@ module.exports = grammar({
       field("value", $.expression),
     ),
 
-    object_pattern: $ => seq("{", optional(commaSep1($.object_pair)), "}"),
+    object_pattern: $ => seq("{", optional(seq($.object_pair, repeat(seq(",", $.object_pair)))), "}"),
     object_pair: $ => seq(
       field("key", choice($.identifier, $.quoted_atom, $.capture_key, "**")),
       ":",
       field("value", $.expression),
       optional(seq(":", field("type", $.identifier))),
     ),
-    capture_key: $ => /\$[A-Z_][A-Za-z0-9_]*/,
+    capture_key: $ => token(/\$[A-Za-z_][A-Za-z0-9_]*/),
     list: $ => seq("[", optional(commaSep1(choice($.spread_element, $.expression))), "]"),
     spread_element: $ => seq("...", $.expression),
 
-    path: $ => sep1($.identifier, "."),
+    path: $ => seq($.identifier, repeat(seq(".", $.identifier))),
     literal: $ => choice($.float, $.integer, $.string, $.quoted_atom, $.boolean),
     integer: $ => /[0-9]+/,
     float: $ => /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/,
@@ -182,6 +182,3 @@ function commaSep1(rule) {
   return seq(rule, repeat(seq(",", rule)));
 }
 
-function sep1(rule, separator) {
-  return seq(rule, repeat(seq(separator, rule)));
-}

@@ -36,16 +36,20 @@ main(Argv) :-
     format(string(Replacement), '~s  },\n});\n', [SpecializedRules]),
     replace_checked('  },\n});\n'-Replacement,
                     Rewritten,
-                    FinalGrammar),
+                    Rewritten2),
+    generated_bodies(Terms, Bodies),
+    rewrite_rule_bodies(Bodies, Rewritten2, FinalGrammar),
+    pairs_keys(Bodies, GeneratedNames),
     setup_call_cleanup(
         open(Output, write, Stream, [encoding(utf8)]),
         emit_file(Stream, Input, Registry, Overlay, Operators,
-                  Specializations, UnboundArgs, FinalGrammar),
+                  Specializations, UnboundArgs, GeneratedNames, FinalGrammar),
         close(Stream)),
     length(Specializations, SpecializedCount),
     length(UnboundArgs, UnboundCount),
-    format('DCG_EMIT_V2 specializations=~d unbound_args=~d output=~w~n',
-           [SpecializedCount, UnboundCount, Output]).
+    length(Bodies, BodyCount),
+    format('DCG_EMIT_V3 specializations=~d unbound_args=~d rule_bodies=~d output=~w~n',
+           [SpecializedCount, UnboundCount, BodyCount, Output]).
 
 read_source_terms(Path, Terms) :-
     setup_call_cleanup(
@@ -219,11 +223,370 @@ parser_rule(Parser, Target) :-
     functor(Parser, Name, _),
     format(atom(Target), '$.~w', [Name]).
 
+% Clause-shape reader: every predicate below answers a question about
+% parse_dl_dcg.pl's clause bodies and carries no Tree-sitter answer.
+
+dcg_clause(Terms, Name/Arity, Body) :-
+    member(Clause, Terms),
+    nonvar(Clause),
+    Clause = (Head --> Body),
+    nonvar(Head),
+    functor(Head, Name, Arity).
+
+plain_clause(Terms, Head, Body) :-
+    member(Clause, Terms),
+    nonvar(Clause),
+    Clause \= (:- _),
+    Clause \= (_ --> _),
+    ( Clause = (Head :- Body) -> true ; Head = Clause, Body = true ).
+
+conjunction_goals(Body, Goals) :-
+    ( nonvar(Body), Body = (Left, Right)
+    -> conjunction_goals(Left, LeftGoals),
+       conjunction_goals(Right, RightGoals),
+       append(LeftGoals, RightGoals, Goals)
+    ; Goals = [Body]
+    ).
+
+% {}/1, cuts and the empty body carry no input position
+noise_goal(Goal) :- nonvar(Goal), ( Goal = {_} ; Goal == ! ; Goal == [] ).
+
+goal_sequence(Body, Sequence) :-
+    conjunction_goals(Body, Goals),
+    exclude(noise_goal, Goals, Sequence).
+
+% every sequence reachable through if-then-else branches, outermost first
+nested_sequence(Body, Sequence) :- goal_sequence(Body, Sequence).
+nested_sequence(Body, Sequence) :-
+    conjunction_goals(Body, Goals),
+    member(Goal, Goals),
+    nonvar(Goal),
+    branch_of(Goal, Branch),
+    nested_sequence(Branch, Sequence).
+
+branch_of((Condition -> Then ; Else), Branch) :- !,
+    member(Branch, [(Condition, Then), Else]).
+branch_of((Condition -> Then), Branch) :- !,
+    Branch = (Condition, Then).
+branch_of((Left ; Right), Branch) :- !,
+    member(Branch, [Left, Right]).
+
+% ---------------------------------------------------------------- terminals
+
+% the sigils are prefix operators inside parse_dl_dcg.pl only, so this file
+% takes them apart with =.. rather than spelling them
+terminal_sigil('@').
+terminal_sigil('~').
+terminal_sigil('#').
+
+literal_codes(Goal, Codes) :-
+    nonvar(Goal),
+    Goal =.. [Sigil, Codes],
+    terminal_sigil(Sigil),
+    is_list(Codes).
+literal_codes(Goal, Codes) :-
+    nonvar(Goal),
+    Goal = kw(Word),
+    atom(Word),
+    atom_codes(Word, Codes).
+literal_codes(Goal, Codes) :-
+    is_list(Goal),
+    Goal \== [],
+    forall(member(C, Goal), integer(C)),
+    Codes = Goal.
+
+% a zero-argument nonterminal defined as Name([Code | S], S) is a one-char
+% terminal spelled as a predicate
+literal_text(_, Goal, Text) :-
+    literal_codes(Goal, Codes), !,
+    string_codes(Text, Codes).
+literal_text(Terms, Goal, Text) :-
+    atom(Goal),
+    plain_clause(Terms, Head, _),
+    nonvar(Head),
+    Head =.. [Goal, Front, Rest],
+    nonvar(Front),
+    Front = [Code | Tail],
+    integer(Code),
+    Tail == Rest,
+    !,
+    string_codes(Text, [Code]).
+
+% ident//1 and id_code/1 name their classes with code_type/2 and literal
+% codes; the class strings come from character_class/2 and nothing else.
+
+class_pieces(Body, Pieces) :-
+    findall(Piece,
+            ( sub_term(code_type(_, Kind), Body),
+              nonvar(Kind),
+              character_class(Kind, Piece)
+            ),
+            ClassPieces),
+    findall(Piece,
+            ( sub_term(Sub, Body),
+              nonvar(Sub),
+              literal_code_of(Sub, Code),
+              char_code(Char, Code),
+              regex_class_char(Char, Piece)
+            ),
+            LiteralPieces),
+    append(ClassPieces, LiteralPieces, All),
+    list_to_set(All, Pieces).
+
+literal_code_of(_ == Code, Code) :- integer(Code).
+
+regex_class_char(Char, Escaped) :-
+    ( memberchk(Char, ['\\', ']', '^', '-'])
+    -> atom_concat('\\', Char, Escaped)
+    ; Escaped = Char
+    ).
+
+ident_start_class(Terms, Class) :-
+    once(( plain_clause(Terms, Head, Body),
+           nonvar(Head),
+           Head = ident(_, _, _) )),
+    class_pieces(Body, Pieces),
+    atomic_list_concat(Pieces, Class).
+
+ident_rest_class(Terms, Class) :-
+    findall(Pieces,
+            ( plain_clause(Terms, Head, Body),
+              nonvar(Head),
+              Head = id_code(Arg),
+              class_pieces((Head, Body), Pieces0),
+              ( integer(Arg)
+              -> char_code(Char, Arg), regex_class_char(Char, Piece),
+                 Pieces = [Piece]
+              ; Pieces = Pieces0
+              )
+            ),
+            Nested),
+    append(Nested, Flat),
+    list_to_set(Flat, Set),
+    partition(class_range_piece, Set, Ranges, Singles),
+    append(Ranges, Singles, Ordered),
+    atomic_list_concat(Ordered, Class).
+
+class_range_piece(Piece) :- sub_atom(Piece, _, 1, _, '-').
+
+ident_regex(Terms, Regex) :-
+    ident_start_class(Terms, Start),
+    ident_rest_class(Terms, Rest),
+    format(string(Regex), '[~w][~w]*', [Start, Rest]).
+
+regex_escape(Text, Escaped) :-
+    string_chars(Text, Chars),
+    maplist(regex_escape_char, Chars, Parts),
+    atomic_list_concat(Parts, Escaped).
+
+regex_escape_char(Char, Escaped) :-
+    ( memberchk(Char, ['\\', '.', '$', '^', '*', '+', '?', '(', ')',
+                       '[', ']', '{', '}', '|', '/'])
+    -> atom_concat('\\', Char, Escaped)
+    ; Escaped = Char
+    ).
+
+% A terminal immediately followed by ident//1, no ws//0 between, is one token.
+% token.immediate applies when the call site rewinds past ws//0 with back//1.
+
+adjacent_goals(Sequence, First, Second) :-
+    append(_, [First, Second | _], Sequence),
+    nonvar(First),
+    nonvar(Second).
+
+ident_suffix_token(Terms, Nonterminal, Regex) :-
+    dcg_clause(Terms, Nonterminal, Body),
+    nested_sequence(Body, Sequence),
+    adjacent_goals(Sequence, First, Second),
+    Second = ident(_),
+    literal_text(Terms, First, Text),
+    regex_escape(Text, Escaped),
+    ident_regex(Terms, IdentRegex),
+    format(string(Regex), '~w~w', [Escaped, IdentRegex]).
+
+entered_after_rewind(Terms, Name/Arity) :-
+    dcg_clause(Terms, _, Body),
+    nested_sequence(Body, Sequence),
+    adjacent_goals(Sequence, Previous, Call),
+    Previous = back(_),
+    functor(Call, Name, Arity),
+    !.
+
+token_body(Terms, Nonterminal, Js) :-
+    once(ident_suffix_token(Terms, Nonterminal, Regex)),
+    ( entered_after_rewind(Terms, Nonterminal)
+    -> format(string(Js), 'token.immediate(/~w/)', [Regex])
+    ; format(string(Js), 'token(/~w/)', [Regex])
+    ).
+
+% Clause pair: Rule --> Item, Sep, Rule beside Rule --> Item.  Single clause:
+% Rule --> Item, ( Sep -> Rule ; {} ).  Both mean the same repetition.
+
+repetition(Terms, Nonterminal, Item, Separator) :-
+    findall(Body, dcg_clause(Terms, Nonterminal, Body), Bodies),
+    repetition_shape(Terms, Nonterminal, Bodies, Item, Separator).
+
+repetition_shape(Terms, Name/Arity, [Recursive, Base], Item, Separator) :-
+    goal_sequence(Base, [Item]),
+    goal_sequence(Recursive, RecursiveSequence),
+    append(Prefix, [Tail], RecursiveSequence),
+    nonvar(Tail),
+    functor(Tail, Name, Arity),
+    Prefix = [Leading | SeparatorGoals],
+    same_shape(Leading, Item),
+    separator_goal(Terms, SeparatorGoals, Separator).
+repetition_shape(Terms, Name/Arity, [Only], Item, Separator) :-
+    goal_sequence(Only, Sequence),
+    append(Prefix, [Conditional], Sequence),
+    nonvar(Conditional),
+    Conditional = (Guard -> Then ; _),
+    goal_sequence(Then, ThenSequence),
+    append(_, [Tail], ThenSequence),
+    nonvar(Tail),
+    functor(Tail, Name, Arity),
+    literal_text(Terms, Guard, Separator),
+    exclude(==(ws), Prefix, [Item]).
+
+same_shape(Left, Right) :-
+    nonvar(Left), nonvar(Right),
+    functor(Left, Name, Arity),
+    functor(Right, Name, Arity).
+
+separator_goal(Terms, Goals, Separator) :-
+    exclude(==(ws), Goals, [Goal]),
+    literal_text(Terms, Goal, Separator).
+
+% ------------------------------------------------------------- js rendering
+
+js_string(Text, Js) :- json_atom(Text, Js).
+
+gen_sequence(Terms, Goals, Js) :-
+    exclude(==(ws), Goals, Meaningful),
+    maplist(gen_goal(Terms), Meaningful, Parts),
+    ( Parts = [Single]
+    -> Js = Single
+    ; atomic_list_concat(Parts, ', ', Joined),
+      format(string(Js), 'seq(~w)', [Joined])
+    ).
+
+gen_goal(Terms, Goal, Js) :-
+    literal_text(Terms, Goal, Text), !,
+    js_string(Text, Js).
+gen_goal(Terms, Goal, Js) :-
+    nonvar(Goal),
+    Goal = (Guard -> Then ; Else),
+    !,
+    ( nonvar(Guard), Guard = peek(_), goal_sequence(Then, [])
+    -> goal_sequence(Else, ElseSequence),
+       gen_sequence(Terms, ElseSequence, ElseJs),
+       format(string(Js), 'optional(~w)', [ElseJs])
+    ; goal_sequence(Then, ThenSequence),
+      goal_sequence(Else, ElseSequence),
+      gen_sequence(Terms, ThenSequence, ThenJs),
+      gen_sequence(Terms, ElseSequence, ElseJs),
+      format(string(Js), 'choice(~w, ~w)', [ThenJs, ElseJs])
+    ).
+gen_goal(_, Goal, Js) :-
+    nonvar(Goal),
+    functor(Goal, Name, Arity),
+    cst_reference(Name/Arity, Js), !.
+gen_goal(Terms, Goal, Js) :-
+    nonvar(Goal),
+    functor(Goal, Name, Arity),
+    gen_body(Terms, Name/Arity, Js).
+
+gen_body(Terms, Nonterminal, Js) :-
+    repetition(Terms, Nonterminal, Item, Separator), !,
+    gen_goal(Terms, Item, ItemJs),
+    js_string(Separator, SeparatorJs),
+    format(string(Js), 'seq(~w, repeat(seq(~w, ~w)))',
+           [ItemJs, SeparatorJs, ItemJs]).
+gen_body(Terms, Nonterminal, Js) :-
+    findall(Body, dcg_clause(Terms, Nonterminal, Body), [Body]),
+    goal_sequence(Body, Sequence),
+    gen_sequence(Terms, Sequence, Js).
+
+% Editor node names for DCG nonterminals; every name here is already spelled
+% in the hand grammar and the emitter coins none.
+
+cst_reference(ident/1, '$.identifier').
+cst_reference(enum_variant/1, '$.enum_variant').
+cst_reference(brace_pair/1, '$.object_pair').
+
+cst_rule_body(dotted_path/1, path).
+cst_rule_body(enum_variants/1, enum_variants).
+cst_rule_body(braces_term/1, object_pattern).
+
+generated_bodies(Terms, Bodies) :-
+    findall(Rule-Js,
+            ( cst_rule_body(Nonterminal, Rule),
+              gen_body(Terms, Nonterminal, Js)
+            ),
+            Structural),
+    findall(Rule-Js,
+            ( member(Nonterminal-Rule,
+                     [brace_key/1-capture_key, dot_chain/2-member_access]),
+              token_body(Terms, Nonterminal, Js)
+            ),
+            Tokens),
+    append(Structural, Tokens, Pairs),
+    keysort(Pairs, Bodies).
+
+rewrite_rule_bodies(Bodies, GrammarIn, GrammarOut) :-
+    split_string(GrammarIn, "\n", "", Lines),
+    rewrite_lines(Lines, Bodies, Rewritten),
+    atomic_list_concat(Rewritten, '\n', GrammarOut).
+
+rewrite_lines([], _, []).
+rewrite_lines([Line | Rest], Bodies, Out) :-
+    ( rule_key_line(Line, Name),
+      memberchk(Name-Js, Bodies)
+    -> format(atom(New), '    ~w: $ => ~w,', [Name, Js]),
+       skip_rule_body(Rest, Tail),
+       Out = [New | More],
+       rewrite_lines(Tail, Bodies, More)
+    ; Out = [Line | More],
+      rewrite_lines(Rest, Bodies, More)
+    ).
+
+skip_rule_body([], []).
+skip_rule_body([Line | Rest], Tail) :-
+    ( rule_key_line(Line, _) ; rules_end_line(Line) ),
+    !,
+    Tail = [Line | Rest].
+skip_rule_body([_ | Rest], Tail) :- skip_rule_body(Rest, Tail).
+
+rule_key_line(Line, Name) :-
+    string_concat("    ", Body, Line),
+    sub_string(Body, Before, _, _, ": $ =>"),
+    !,
+    sub_string(Body, 0, Before, _, NameText),
+    string_chars(NameText, Chars),
+    Chars = [_ | _],
+    forall(member(Char, Chars), identifier_char(Char)),
+    atom_string(Name, NameText).
+
+identifier_char(Char) :- char_type(Char, alnum), !.
+identifier_char('_').
+
+rules_end_line(Line) :- string_concat("  },", _, Line).
+
+% Header paths are repo-relative so the cmp gate holds in any worktree.
+repo_relative(Path, Relative) :-
+    emitter_directory(LabDir),
+    absolute_file_name('../../..', Root, [relative_to(LabDir)]),
+    atom_concat(Root, '/', Prefix),
+    ( atom_concat(Prefix, Relative0, Path) -> Relative = Relative0
+    ; Relative = Path
+    ).
+
 emit_file(Stream, Input, Registry, Overlay, Operators,
-          Specializations, UnboundArgs, Grammar) :-
-    format(Stream, '// Generated by emit_grammar.pl v2.\n', []),
-    format(Stream, '// Inputs: ~w ; ~w ; ~w\n', [Input, Registry, Overlay]),
+          Specializations, UnboundArgs, GeneratedNames, Grammar) :-
+    maplist(repo_relative, [Input, Registry, Overlay], [RelIn, RelReg, RelOv]),
+    format(Stream, '// Generated by emit_grammar.pl v3.\n', []),
+    format(Stream, '// Inputs: ~w ; ~w ; ~w\n', [RelIn, RelReg, RelOv]),
     format(Stream, '// Registry inventory: ~q\n', [Operators]),
     format(Stream, '// Specialized calls: ~q\n', [Specializations]),
     format(Stream, '// Unbound args/sep calls: ~q\n', [UnboundArgs]),
+    format(Stream, '// Generated rule bodies: ~q\n', [GeneratedNames]),
     format(Stream, '~s', [Grammar]).

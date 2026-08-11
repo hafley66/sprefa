@@ -1,0 +1,44 @@
+# rule	verdict	reason
+source_file	HAND-ONLY	Root repetition and recovery boundary.
+statement	EMITTED-NEEDS-OVERLAY	Dispatch exists; the retained editor alternatives are hand input.
+relation_declaration	EMITTED-NEEDS-OVERLAY	Tokens and specialized arguments exist; fields and declaration alternatives remain.
+shell_declaration	EMITTED-NEEDS-OVERLAY	Tokens and argument shapes exist; input/output CST fields remain.
+bind_declaration	EMITTED-NEEDS-OVERLAY	Tokens and argument shape exist; declaration node shape remains.
+declaration_parameter	HAND-ONLY	The editor grammar admits typed and untyped generated columns.
+column	EMITTED-NEEDS-OVERLAY	typed_col(...) is specialized; field names remain.
+type	EMITTED-NEEDS-OVERLAY	Character classes help its name; wrapper recursion and nullability remain.
+enum_variants	EMITTED-NEEDS-OVERLAY	Variant recursion exists; the semicolon repetition boundary remains.
+enum_variant	EMITTED-NEEDS-OVERLAY	args_enum_field is generated; the editor node mapping remains.
+relation_modifier	EMITTED-NEEDS-OVERLAY	Fixed words exist; the three CST alternatives remain.
+rule	EMITTED-NEEDS-OVERLAY	Arrow tokens exist; field boundaries remain.
+fact	HAND-ONLY	The DCG converts a fact into a rule term.
+query	EMITTED-NEEDS-OVERLAY	Query tokens exist; its retained CST boundary remains.
+match_statement	EMITTED-NEEDS-OVERLAY	Block tokens exist; arm repetition and fields remain.
+match_arm	EMITTED-NEEDS-OVERLAY	Arrow tokens exist; guard and head fields remain.
+goal_list	EMITTED-IDENTICAL	sep_expr specializes to expression plus repeated comma-expression.
+expression	EMITTED-NEEDS-OVERLAY	Tiers are generated; the complete editor alternative set remains.
+binding_expression	EMITTED-IDENTICAL	Bind operator set and right association are emitted from registry data.
+comparison_expression	EMITTED-IDENTICAL	Guard operator set and left association are emitted.
+binary_expression	EMITTED-IDENTICAL	Both arithmetic levels, literal sets, order, and left association are emitted.
+unary_expression	EMITTED-NEEDS-OVERLAY	Its numeric level follows generated tiers; unary syntax remains hand input.
+member_expression	EMITTED-NEEDS-OVERLAY	Dot-chain structure exists; editor precedence and repetition remain.
+member_access	HAND-ONLY	Immediate-token behavior has no DCG representation.
+parenthesized_expression	EMITTED-NEEDS-OVERLAY	Delimiters and expression call exist; the named boundary remains.
+atom	EMITTED-NEEDS-OVERLAY	Specialized arguments exist; fields, named arguments, and call precedence remain.
+named_argument	EMITTED-NEEDS-OVERLAY	The DCG semantic wrapper does not specify fields.
+object_pattern	EMITTED-NEEDS-OVERLAY	Brace parsing exists; editor pair repetition remains.
+object_pair	EMITTED-NEEDS-OVERLAY	Pair parsing exists; key alternatives and fields remain.
+capture_key	HAND-ONLY	Dollar capture capitalization is an editor token choice.
+list	EMITTED-NEEDS-OVERLAY	sep_expr is generated; spread and empty-list alternatives remain.
+spread_element	HAND-ONLY	The DCG constructs a semantic term without this CST boundary.
+path	EMITTED-NEEDS-OVERLAY	Recursive dotted parsing exists; the reusable separator declaration remains hand input.
+literal	EMITTED-NEEDS-OVERLAY	Literal parsers exist; named editor alternatives remain.
+integer	EMITTED-IDENTICAL	Generated from the digit row.
+float	EMITTED-IDENTICAL	Generated from digit plus the finite decimal/exponent DCG shape.
+string	HAND-ONLY	Escape-preserving regex token shape is absent from the semantic decoder.
+quoted_atom	HAND-ONLY	Escape-preserving regex token shape is absent from the semantic decoder.
+template	EMITTED-NEEDS-OVERLAY	Fixed escape clauses exist; the arbitrary-character token remains.
+boolean	EMITTED-NEEDS-OVERLAY	Fixed values are visible through a semantic membership action.
+variable	EMITTED-IDENTICAL	Generated from alpha and alnum with the DCG capitalization branches.
+identifier	EMITTED-IDENTICAL	Generated from alpha and alnum with the underscore branches.
+comment	HAND-ONLY	Whitespace parsing discards comments; the editor grammar retains them.
