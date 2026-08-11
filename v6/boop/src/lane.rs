@@ -262,13 +262,46 @@ pub fn harness_for_model(model: &str) -> Option<&'static str> {
         .map(|(_, harness)| harness)
 }
 
-/// The harness a spawn runs on. `--harness` wins; otherwise the model spelling
-/// names it, because an unnamed harness once spawned gpt models on opencode.
+/// A model family whose own harness runs on a flat-rate plan; opencode would
+/// pay metered credit for it, so spawn refuses with no override.
+fn plan_harness_family(model: &str) -> Option<&'static str> {
+    let lowered = model.to_ascii_lowercase();
+    let name = lowered.split('@').next().unwrap_or(&lowered).trim();
+    let bare = name.rsplit('/').next().unwrap_or(name);
+    [
+        ("gpt", "codex"),
+        ("codex", "codex"),
+        ("o3", "codex"),
+        ("o4", "codex"),
+        ("claude", "claude"),
+        ("opus", "claude"),
+        ("sonnet", "claude"),
+        ("haiku", "claude"),
+        ("fable", "claude"),
+        ("gemini", "gemini"),
+    ]
+    .into_iter()
+    .find(|(prefix, _)| bare.starts_with(prefix))
+    .map(|(_, harness)| harness)
+}
+
+/// The harness a spawn runs on: `--harness` wins, else the model spelling.
+/// Plan-family models are refused on opencode even with `--harness opencode`.
 pub fn harness_for_spawn(explicit: Option<&str>, model: Option<&str>) -> Result<String> {
+    let model_named = model.filter(|model| !model.is_empty());
     if let Some(harness) = explicit.filter(|harness| !harness.is_empty()) {
+        if harness == "opencode" {
+            if let Some(model) = model_named {
+                if let Some(owner) = plan_harness_family(model) {
+                    anyhow::bail!(
+                        "model `{model}` is BANNED from opencode: its family runs on the `{owner}` harness's flat-rate plan, and opencode would pay metered API credit for it. Spell the bare model name (no provider path) so the `{owner}` harness picks it up."
+                    );
+                }
+            }
+        }
         return Ok(harness.to_owned());
     }
-    let Some(model) = model.filter(|model| !model.is_empty()) else {
+    let Some(model) = model_named else {
         return Ok("opencode".to_owned());
     };
     let Some(harness) = harness_for_model(model) else {
@@ -276,6 +309,13 @@ pub fn harness_for_spawn(explicit: Option<&str>, model: Option<&str>) -> Result<
             "model `{model}` names no harness (gpt-* codex, kimi-* kimi, claude-* claude, provider/model opencode); pass --harness <id>"
         );
     };
+    if harness == "opencode" {
+        if let Some(owner) = plan_harness_family(model) {
+            anyhow::bail!(
+                "model `{model}` is BANNED from opencode: its family runs on the `{owner}` harness's flat-rate plan, and opencode would pay metered API credit for it. Spell the bare model name (no provider path) so the `{owner}` harness picks it up."
+            );
+        }
+    }
     if harness == "claude" {
         anyhow::bail!(
             "model `{model}` is a Claude model, and Claude workers run as the coordinator's own Agent-tool subagents, never as tmux lanes; pass --harness claude to spawn one anyway"
@@ -604,6 +644,37 @@ mod tests {
             Some("opencode")
         );
         assert_eq!(harness_for_model("nothing-known"), None);
+    }
+
+    /// RECEIPT (field, 2026-08-11). `openrouter/openai/gpt-5.6-sol` spawned
+    /// two dead opencode lanes AND billed openrouter for plan-covered models.
+    #[test]
+    fn plan_family_models_are_banned_from_opencode() {
+        let err = harness_for_spawn(None, Some("openrouter/openai/gpt-5.6-sol"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("BANNED from opencode"), "{err}");
+        assert!(err.contains("codex"), "{err}");
+        let err = harness_for_spawn(Some("opencode"), Some("openai/gpt-5.6-terra"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("BANNED from opencode"), "{err}");
+        let err = harness_for_spawn(None, Some("anthropic/claude-sonnet-5"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("claude"), "{err}");
+        let err = harness_for_spawn(Some("opencode"), Some("google/gemini-3-pro"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("gemini"), "{err}");
+        assert_eq!(
+            harness_for_spawn(None, Some("openrouter/deepseek/deepseek-v4-flash-0731")).unwrap(),
+            "opencode"
+        );
+        assert_eq!(
+            harness_for_spawn(None, Some("zai-coding-plan/glm-4.6")).unwrap(),
+            "opencode"
+        );
     }
 
     /// RECEIPT. An explicit --harness always wins, and no model at all keeps
