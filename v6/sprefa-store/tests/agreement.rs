@@ -145,6 +145,32 @@ async fn signed_delta_survivors(g: &MultiGraph) -> Vec<i64> {
     keys
 }
 
+async fn signed_delta_cte_survivors(g: &MultiGraph) -> Vec<i64> {
+    let (store, path) = open_store().await;
+    let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
+    let deps: Vec<(i64, i64, i64, i64)> = g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
+    store.add_rows(&rows).await.unwrap();
+    store.add_deps(&deps).await.unwrap();
+    store.retract_signed_delta_cte(&[(g.seed.0 as i64, g.seed.1)]).await.unwrap();
+    let keys = store.alive_keys().await.unwrap();
+    drop(store);
+    cleanup(&path);
+    keys
+}
+
+async fn delta_fold_survivors(g: &MultiGraph) -> Vec<i64> {
+    let (store, path) = open_store().await;
+    let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
+    let deps: Vec<(i64, i64, i64, i64)> = g.edges.iter().map(|(pt, pi, ct, ci)| (*pt as i64, *pi, *ct as i64, *ci)).collect();
+    store.add_rows(&rows).await.unwrap();
+    store.add_deps(&deps).await.unwrap();
+    store.retract_delta_fold(&[(g.seed.0 as i64, g.seed.1)]).await.unwrap();
+    let keys = store.alive_keys().await.unwrap();
+    drop(store);
+    cleanup(&path);
+    keys
+}
+
 async fn count_scc_survivors(g: &MultiGraph) -> Vec<i64> {
     let (store, path) = open_store().await;
     let rows: Vec<(i64, i64, i64)> = g.rows.iter().map(|(t, i, w)| (*t as i64, *i, *w)).collect();
@@ -164,6 +190,8 @@ async fn assert_agreement(g: &MultiGraph, label: &str) {
     let oracle: Vec<i64> = benchgraph::oracle_survivors(g, g.seed).into_iter().collect();
     let dred = dred_survivors(g).await;
     let signed = signed_delta_survivors(g).await;
+    let signed_cte = signed_delta_cte_survivors(g).await;
+    let delta_fold = delta_fold_survivors(g).await;
     let edges: Vec<(i64, i64)> = g
         .edges
         .iter()
@@ -175,6 +203,10 @@ async fn assert_agreement(g: &MultiGraph, label: &str) {
     assert_eq!(dred, dd, "{label}: sqlite-DRed and dd disagreed with each other");
     assert_eq!(signed, oracle, "{label}: signed-delta disagreed with the oracle");
     assert_eq!(signed, dred, "{label}: signed-delta and sqlite-DRed disagreed with each other");
+    assert_eq!(signed_cte, oracle, "{label}: signed-delta-CTE disagreed with the oracle");
+    assert_eq!(signed_cte, dred, "{label}: signed-delta-CTE and sqlite-DRed disagreed with each other");
+    assert_eq!(delta_fold, oracle, "{label}: delta-fold disagreed with the oracle");
+    assert_eq!(delta_fold, dred, "{label}: delta-fold and sqlite-DRed disagreed with each other");
 }
 
 // ---- DAG matrix: oracle == DRed == dd == counting -----------------------------
