@@ -262,6 +262,9 @@ expression(norm/1,    text_scalar,         3, ascii_alnum_lower,     text_only).
 % rtrim(path, replace(path, '/', '')).
 expression(rtrim/2,   text_scalar,         3, rtrim,                text_only).
 expression(replace/3, text_scalar,         3, replace,              text_only).
+% RFC 7396 merge patch, the streaming scan operator over two json documents.
+% Its own family because text_only would reject a json operand.
+expression(json_patch/2, json_scalar,      3, json_patch,           json_only).
 
 expression_for_term(Term, Family, Precedence, SqlRendering, TypeRule) :-
     nonvar(Term),

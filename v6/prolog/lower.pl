@@ -549,6 +549,10 @@ compile_expr(Mode, Demand, Expr, Bound, Sql, Type, Encoding) :-
     -> compile_text_operands(Mode, Arguments, Bound, Expr, ArgumentSqls),
        text_scalar_sql(Function, ArgumentSqls, Sql),
        Type = text, Encoding = direct
+    ; json_scalar_expr(Expr, Function, Arguments)
+    -> compile_json_operands(Mode, Arguments, Bound, Expr, ArgumentSqls),
+       json_scalar_sql(Function, ArgumentSqls, Sql),
+       Type = json, Encoding = direct
     ; arithmetic_expr(Expr, Operator, Left, Right)
     -> compile_numeric_operand(Mode, Operator, Left, Bound, Expr, LeftSql, LeftType),
        compile_numeric_operand(Mode, Operator, Right, Bound, Expr, RightSql, RightType),
@@ -617,6 +621,37 @@ text_scalar_rendering(Function, Rendering, ArgumentSqls, Sql) :-
     Rendering == Function,
     atomic_list_concat(ArgumentSqls, ', ', ArgsJoined),
     format(atom(Sql), '~w(~w)', [Function, ArgsJoined]).
+
+json_scalar_expr(Expr, Function, Arguments) :-
+    compound(Expr), Expr =.. [Function | Arguments],
+    length(Arguments, Arity),
+    expression(Function/Arity, json_scalar, _, _, _).
+
+% A json operand reads its stored TEXT and re-tags through json(), the same
+% carrier json_group_array's aggregate values ride.
+compile_json_operand(Mode, Operand, Bound, Whole, Sql) :-
+    compile_expr(Mode, value, Operand, Bound, OperandSql, Type, _Encoding),
+    (   ( Type == json ; Type = json_list(_) )
+    ->  format(atom(Sql), 'json(~w)', [OperandSql])
+    ;   throw(unsupported_construct(json_operand_not_json(Whole, Operand, Type)))
+    ).
+
+compile_json_operands(_, [], _, _, []).
+compile_json_operands(Mode, [Operand | Rest], Bound, Whole, [Sql | Sqls]) :-
+    compile_json_operand(Mode, Operand, Bound, Whole, Sql),
+    compile_json_operands(Mode, Rest, Bound, Whole, Sqls).
+
+json_scalar_sql(Function, ArgumentSqls, Sql) :-
+    length(ArgumentSqls, Arity),
+    expression(Function/Arity, json_scalar, _, Rendering, _),
+    json_scalar_rendering(Rendering, ArgumentSqls, Sql).
+
+% body.pl's json_patch_carries_null/1, in SQL: a real JSON null and the string
+% it renders as both stop the statement instead of picking delete-or-string.
+json_scalar_rendering(json_patch, [TargetSql, PatchSql], Sql) :-
+    format(atom(Sql),
+           'CASE WHEN EXISTS (SELECT 1 FROM json_tree(~w) WHERE "type" = \'null\' OR "atom" = \'none\') THEN json(\'json_patch_null_unruled\') ELSE json_patch(~w, ~w) END',
+           [PatchSql, TargetSql, PatchSql]).
 
 % Without this guard the generic compound branch below wraps a braces literal
 % or a list in the json1 tagged-term encoding, a domain fact's rendering.

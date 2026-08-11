@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "metric_doc": {
+      "additionalProperties":false,
+      "properties": {"session": {"type":"string"},"snapshot": {}},
+      "required": ["session", "snapshot" ],
+      "type":"object"
+    },
+    "metric_sample": {
+      "additionalProperties":false,
+      "properties": {"patch": {},"session": {"type":"string"}},
+      "required": ["session", "patch" ],
+      "type":"object"
+    }
+  },
+  "$id":"json_patch_fold_merges_arrival_documents#9fcaee1de9cc2eca",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

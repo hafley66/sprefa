@@ -4554,6 +4554,7 @@ expected_row('=\\='/2,   ordered_comparison, 0, infix('<>'),           both_numb
 expected_row(norm/1,    text_scalar,         3, ascii_alnum_lower,    text_only).
 expected_row(rtrim/2,   text_scalar,         3, rtrim,                text_only).
 expected_row(replace/3, text_scalar,         3, replace,              text_only).
+expected_row(json_patch/2, json_scalar,      3, json_patch,           json_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
     findall(Signature-Family-Precedence-Sql-Type,
@@ -7667,6 +7668,81 @@ test(partial_list_value_keeps_its_unsupported,
     plan_rule_level_statements(Plan, _).
 
 :- end_tests(json_document_value).
+
+:- begin_tests(json_merge_patch).
+
+% FAIL-FIRST RECEIPT (json-as-value-in-scan arc, piece 2). On base 26f3f25f
+% json_patch/2 had no registry row, so both doors were SILENTLY WRONG rather
+% than stopped: the oracle left json_patch(Prior, Patch) unevaluated and the
+% emitter wrapped the same call in the json1 tagged-term encoding. All seven
+% json_patch_fold.pl fixtures were `fail` under swipl conformance.
+
+% The null guard renders BEFORE the patch call and reads the patch operand
+% only: a target's own null is data RFC 7396 never touches.
+test(json_patch_lowers_with_the_null_stand_in_guard) :-
+    Term = fixture(json_patch_sql,
+                   prog([ col_type(sample/2, session, text),
+                          col_type(sample/2, patch, json),
+                          col_type(prior_doc/2, session, text),
+                          col_type(prior_doc/2, prior, json),
+                          col_type(snapshot_doc/2, session, text),
+                          col_type(snapshot_doc/2, doc, json) ],
+                        [ (snapshot_doc(SessionId, Next) <-
+                             sample(SessionId, Patch),
+                             prior_doc(SessionId, Prior),
+                             Next := json_patch(Prior, Patch)) ]),
+                   [], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, Statements),
+    memberchk(levelstmt(snapshot_doc/2, _, [InsertSql], _, _, _, _), Statements),
+    InsertSql == 'INSERT OR IGNORE INTO "snapshot_doc" ("session", "doc") SELECT b0."session", CASE WHEN EXISTS (SELECT 1 FROM json_tree(json(b0."patch")) WHERE "type" = \'null\' OR "atom" = \'none\') THEN json(\'json_patch_null_unruled\') ELSE json_patch(json(b1."prior"), json(b0."patch")) END FROM "sample" b0, "prior_doc" b1 WHERE b1."session" = b0."session"'.
+
+% A text operand is a named stop, not a silent parse of whatever the text
+% happens to be: the tagged-term encoding lives in text columns.
+test(text_operand_keeps_its_unsupported,
+     [throws(unsupported_construct(json_operand_not_json(_, _, text)))]) :-
+    Term = fixture(json_patch_text_operand,
+                   prog([ col_type(sample/2, session, text),
+                          col_type(sample/2, patch, json) ],
+                        [ (snapshot_doc(SessionId, Next) <-
+                             sample(SessionId, Patch),
+                             label(SessionId, Tag),
+                             Next := json_patch(Tag, Patch)) ]),
+                   [], [], []),
+    program_plan(Term-[], [intern(direct)], Plan),
+    plan_rule_level_statements(Plan, _).
+
+% RFC 7396 §2 on the oracle's own value terms, one assertion per behavior.
+test(merge_patch_merges_nested_objects_recursively) :-
+    body:json_scalar_value(json_patch,
+                           [obj([cpu-obj([sys-2, user-1])]), obj([cpu-obj([sys-9])])],
+                           Out),
+    Out == obj([cpu-obj([sys-9, user-1])]).
+
+test(merge_patch_replaces_arrays_and_scalars_wholesale) :-
+    body:json_scalar_value(json_patch, [obj([tags-[red, green]]), obj([tags-[blue]])], Arrays),
+    Arrays == obj([tags-[blue]]),
+    body:json_scalar_value(json_patch, [obj([cpu-1]), [7, 8]], NonObjectPatch),
+    NonObjectPatch == [7, 8].
+
+test(merge_patch_empties_a_non_object_target) :-
+    body:json_scalar_value(json_patch, [[7, 8], obj([cpu-1])], Out),
+    Out == obj([cpu-1]).
+
+test(merge_patch_result_keys_are_sorted) :-
+    body:json_scalar_value(json_patch, [obj([zeta-1]), obj([alpha_key-2])], Out),
+    Out == obj([alpha_key-2, zeta-1]).
+
+% The delete clause has no surface spelling on this plane, so it stops.
+test(merge_patch_stops_on_the_json_null_stand_in,
+     [throws(json_patch_null_unruled)]) :-
+    body:json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-none])], _).
+
+test(merge_patch_stops_on_a_nested_json_null_stand_in,
+     [throws(json_patch_null_unruled)]) :-
+    body:json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-obj([user-none])])], _).
+
+:- end_tests(json_merge_patch).
 
 % The compile/text-door pipeline that feeds an emitter, shared by the
 % schema_emit and schema_parity_golden units (file scope: no cross-unit calls).
