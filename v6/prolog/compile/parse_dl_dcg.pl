@@ -141,14 +141,14 @@ reason_references(Reason, Refs) :-
             Refs0),
     sort(Refs0, Refs).
 
-statement_location_for_reference(rule, Ref, Line, Col) :-
-    source_statement_fact(rule, Item, Rem),
-    statement_head_reference(Item, Ref),
-    !,
-    remaining_line_column(Rem, Line, Col).
 statement_location_for_reference(Kind, Ref, Line, Col) :-
-    source_statement_fact(Kind, Item, Rem),
-    statement_reference(Kind, Item, Ref),
+    ( Kind == rule,
+      source_statement_fact(rule, Item, Rem),
+      statement_head_reference(Item, Ref)
+    -> true
+    ; source_statement_fact(Kind, Item, Rem),
+      statement_reference(Kind, Item, Ref)
+    ),
     !,
     remaining_line_column(Rem, Line, Col).
 
@@ -287,12 +287,12 @@ ident_rest(S, [], S).
 
 int_lit(Value, S0, S) :-
     mark(S0),
-    ( S0 = [0'- | S1] -> Neg = true, S2 = S1 ; Neg = false, S2 = S0 ),
+    ( S0 = [0'- | S2] -> Sign = -1 ; S2 = S0, Sign = 1 ),
     S2 = [D | _], code_type(D, digit), !,
     digits0(Ds, S2, S),
     mark(S),
     number_codes(Mag, Ds),
-    ( Neg == true -> Value is -Mag ; Value = Mag ).
+    Value is Sign * Mag.
 
 float_lit(Value, S0, S) :-
     mark(S0),
@@ -603,13 +603,12 @@ normalize_relation_value_decls(Decls0, Decls) :-
 
 normalize_relation_value_decls([], _, _, []).
 normalize_relation_value_decls([Head | Rest], VNames, Seen, Out) :-
-    ( Head = col_type(Name/Arity, _, _), memberchk(Name, VNames)
-    -> ( memberchk(Name, Seen)
-       -> Out = [Head | More], Seen1 = Seen
-       ; relation_schema([Head | Rest], Name, Name/Arity, Specs),
-         Out = [type_decl(Name, Specs), Head | More],
-         Seen1 = [Name | Seen]
-       )
+    ( Head = col_type(Name/Arity, _, _),
+      memberchk(Name, VNames),
+      \+ memberchk(Name, Seen)
+    -> relation_schema([Head | Rest], Name, Name/Arity, Specs),
+       Out = [type_decl(Name, Specs), Head | More],
+       Seen1 = [Name | Seen]
     ; Out = [Head | More], Seen1 = Seen
     ),
     normalize_relation_value_decls(Rest, VNames, Seen1, More).
@@ -739,13 +738,14 @@ rule_stmt(Rule) -->
 head_atom(Term) -->
     dotted_path(Segs), #`(`,
     head_args(Args), #`)`,
-    { last(Segs, Local),
-      module_path_name(Segs, Resolved),
-      resolve_named_args(head, Resolved, Args, Pos),
-      ( Segs = [_]
-      -> Term =.. [Local | Pos]
-      ; Term = rel_path(Segs, Pos)
-      ) }.
+    { path_atom(head, Segs, Args, Term) }.
+
+% the one spelling of "dotted path plus args becomes a term", shared by head
+% atoms and body atoms; a single segment stays plain, longer ones go rel_path.
+path_atom(Mode, Segs, Args, Term) :-
+    module_path_name(Segs, Resolved),
+    resolve_named_args(Mode, Resolved, Args, Pos),
+    ( Segs = [Name] -> Term =.. [Name | Pos] ; Term = rel_path(Segs, Pos) ).
 
 head_args(Args) --> args(atom_arg, Args).
 
@@ -807,17 +807,11 @@ fill_partial_slots(Mode, Rel, Arity, FreeIdxs, PosValues, Pos) :-
     fill_free_slots(FilledIdxs, PosValues, Pos),
     finish_omitted_slots(Mode, Rel/Arity, OmittedIdxs, Pos).
 
-finish_omitted_slots(body, _, Idxs, Pos) :-
-    fill_anonymous_slots(Idxs, Pos).
-finish_omitted_slots(head, Ref, Idxs, Pos) :-
-    ( Idxs == []
-    -> true
-    ; unsupported(partial_head(Ref)),
-      fill_anonymous_slots(Idxs, Pos)
-    ).
-
-fill_anonymous_slots(Is, Pos) :-
-    maplist({Pos}/[I]>>nth1(I, Pos, _), Is).
+% anonymous slots are free slots whose value list maplist/3 invents, so the
+% second argument stays unbound and fill_anonymous_slots/2 is not needed.
+finish_omitted_slots(Mode, Ref, Idxs, Pos) :-
+    ( Mode == head, Idxs \== [] -> unsupported(partial_head(Ref)) ; true ),
+    fill_free_slots(Idxs, _, Pos).
 
 
 body(Body) -->
@@ -918,17 +912,13 @@ cst_variable_names([Var | Rest], Vars, Names) :-
 balanced(Inner, S0, S) :- bp(S0, 0, [], Rev, S), reverse(Rev, Inner).
 
 bp([C | T], D, A, Out, S) :-
-    ( quote_code(C) -> bp_quoted(C, T, [C | A], A1, S1), bp(S1, D, A1, Out, S)
-    ; C == 0'( -> D1 is D + 1, bp(T, D1, [C | A], Out, S)
-    ; C == 0') ->
-        ( D == 0 -> Out = A, S = T
-        ; D1 is D - 1, bp(T, D1, [C | A], Out, S)
-        )
-    ; bp(T, D, [C | A], Out, S)
+    ( memberchk(C, `"'`)
+    -> bp_quoted(C, T, [C | A], A1, S1), bp(S1, D, A1, Out, S)
+    ; C == 0'), D == 0
+    -> Out = A, S = T
+    ; ( C == 0'( -> D1 is D + 1 ; C == 0') -> D1 is D - 1 ; D1 = D ),
+      bp(T, D1, [C | A], Out, S)
     ).
-
-quote_code(0'").
-quote_code(0'\').
 
 bp_quoted(Q, [C | T], A, Out, S) :-
     ( C == Q, T = [Q | T1] -> bp_quoted(Q, T1, [Q, Q | A], Out, S)
@@ -1007,18 +997,17 @@ partition_hiv([col(Name, _) | Cols], [V | Vs], [Role | Roles], Ids, Salts) :-
     partition_hiv(Cols, Vs, Roles, Ids1, Salts1).
 
 relatom_item(Item) -->
-    dotted_path(Segs),
-    { last(Segs, Name), module_path_name(Segs, Resolved) },
-    ws,
+    dotted_path(Segs), ws,
     ( @`!` -> { Mut = true }, ws ; { Mut = false } ),
     @`(`, head_args(Args), #`)`,
     { ( Mut == true
-      -> length(Args, Arity),
+      -> last(Segs, Name),
+         length(Args, Arity),
          unsupported(mutation(Name/Arity)),
+         module_path_name(Segs, Resolved),
          resolve_named_args(body, Resolved, Args, Pos),
          Item =.. [Name | Pos]
-      ; resolve_named_args(body, Resolved, Args, Pos),
-        ( Segs = [_] -> Item =.. [Name | Pos] ; Item = rel_path(Segs, Pos) )
+      ; path_atom(body, Segs, Args, Item)
       ) }.
 
 
