@@ -15,7 +15,8 @@
 :- use_module(library(apply)).
 :- use_module(library(crypto)).
 :- use_module(library(filesex)).
-:- use_module('compile/parse_dl', [use_item/3, parse_dl_source/5]).
+:- use_module('compile/parse_dl', [use_item/3]).
+:- use_module('compile/parse_dl_dcg', []).
 :- use_module('0_dot_expand', [declared_path/3]).
 
 :- op(1150, xfx, <-).
@@ -23,6 +24,15 @@
 :- op(700,  xfx, :=).
 
 :- dynamic(parse_count_fact/2).
+
+:- ( getenv('DL_PARSER', 'dcg') -> set_prolog_flag(dl_parser, dcg)
+   ; set_prolog_flag(dl_parser, classic) ).
+
+parse_source(Source, Codes, Program, Bindings, Findings) :-
+    ( current_prolog_flag(dl_parser, dcg)
+    -> parse_dl_dcg:parse_dl_dcg_entry(Source, Codes, Program, Bindings, Findings)
+    ;  parse_dl:parse_dl_source(Source, Codes, Program, Bindings, Findings)
+    ).
 
 %! include_roots(+EntryPath, -Roots) is det.
 %  <crate>/std and <exe>/'..' are install layouts with no SWI equivalent.
@@ -133,7 +143,7 @@ collect_all(EntryPath, BaseDir, OnStack, Loaded0, Loaded, Files, Tables,
     collect_children(UseSpecs, Roots, BaseDir, [loaded(EntryAbs, []) | OnStack],
                      EntryName, EntryHash, Loaded0, Loaded1, ChildFiles,
                      ChildTables, EdgeDecls),
-    parse_dl_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
+    parse_source(EntryPath, CoreCodes, OwnProg, OwnBindings, OwnFindings),
     prog_parts(OwnProg, OwnDecls0, OwnRules, OwnQueries),
     check_use_local_name_collisions(OwnDecls0, EdgeDecls),
     rel_module_decls(OwnDecls0, EntryHash, RelModuleDecls),

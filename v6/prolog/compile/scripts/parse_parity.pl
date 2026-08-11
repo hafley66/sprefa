@@ -92,12 +92,12 @@ run_worker(Mode, Manifest, Output) :-
 worker_main :-
     current_prolog_flag(argv, [Mode, Manifest, Output]),
     configure_parser(Mode),
-    parser_module_file(ParseFile),
+    parser_module_file(Mode, ParseModule, ParseFile),
     use_module(ParseFile, [parse_dl_file/4]),
     read_manifest(Manifest, Files),
     setup_call_cleanup(
         open(Output, write, Stream),
-        forall(member(File, Files), write_parse_result(Stream, File)),
+        forall(member(File, Files), write_parse_result(Stream, ParseModule, File)),
         close(Stream)).
 
 configure_parser(dcg) :-
@@ -105,7 +105,11 @@ configure_parser(dcg) :-
 configure_parser(classic) :-
     unsetenv('DL_PARSER').
 
-parser_module_file(ParseFile) :-
+parser_module_file(dcg, parse_dl_dcg, ParseFile) :-
+    script_file(Script),
+    file_directory_name(Script, ScriptsDir),
+    directory_file_path(ScriptsDir, '../parse_dl_dcg.pl', ParseFile).
+parser_module_file(classic, parse_dl, ParseFile) :-
     script_file(Script),
     file_directory_name(Script, ScriptsDir),
     directory_file_path(ScriptsDir, '../parse_dl.pl', ParseFile).
@@ -114,8 +118,8 @@ read_manifest(File, Files) :-
     setup_call_cleanup(open(File, read, Stream), read_file_terms(Stream, FileTerms), close(Stream)),
     findall(Path, member(file(Path), FileTerms), Files).
 
-write_parse_result(Stream, File) :-
-    catch(( parse_dl:parse_dl_file(File, Program, _Bindings, _Findings)
+write_parse_result(Stream, ParseModule, File) :-
+    catch(( call(ParseModule:parse_dl_file(File, Program, _Bindings, _Findings))
           -> Outcome = success(Program)
           ; Outcome = failed
           ),
@@ -142,7 +146,7 @@ compare_results([result(File, Classic) | ClassicRest],
     increment_count(Kind, Counts0, Counts1),
     compare_results(ClassicRest, CandidateRest, Mode, Counts1, Counts).
 
-compare_one(File, success(_Classic), Candidate, dcg, skip) :-
+compare_one(File, _Classic, Candidate, dcg, skip) :-
     Candidate = throw(Error),
     missing_nonterminal(Error, Nonterminal),
     !,
@@ -203,10 +207,14 @@ first_diff(Left, Right, [arg(Index) | Rest], LeftSubterm, RightSubterm) :-
     first_diff(LeftArg, RightArg, Rest, LeftSubterm, RightSubterm).
 
 missing_nonterminal(Term, Nonterminal) :-
-    sub_term(existence_error(nonterminal, Nonterminal), Term),
+    sub_term(Error, Term),
+    nonvar(Error),
+    Error = existence_error(nonterminal, Nonterminal),
     !.
 missing_nonterminal(Term, Name/GrammarArity) :-
-    sub_term(existence_error(procedure, Procedure), Term),
+    sub_term(Error, Term),
+    nonvar(Error),
+    Error = existence_error(procedure, Procedure),
     strip_module(Procedure, _, Name/Arity),
     integer(Arity),
     Arity >= 2,
