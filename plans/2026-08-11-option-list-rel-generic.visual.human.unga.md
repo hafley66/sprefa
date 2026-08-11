@@ -84,60 +84,86 @@ The fix is not "add a case for removal". The cheat sheet's whole job is to say
 what columns the shape has. So it is now just re-read, whole, after the
 compiler finishes rearranging. Renames, removals, anything: one read.
 
-## Where pokeapi stands
+## Where pokeapi stands: 12 flattened columns became 4
 
-You asked for pokeapi done. It is not done, and the reason is NOT the two
-things above. Those work.
+The 12 were never about the two things above. Every single one hit a name
+clash:
 
 ```
-  12 columns still get flattened.
-  All 12 of them, every single one, hit the same name clash:
+  the converter names a lifted sub-shape        item__kid
+  the compiler names the optional-link table    item__kid
 
-     the converter names a lifted sub-shape        item__kid
-     the compiler names the optional-link table    item__kid
-
-     same name, two different things, program stops.
+  same name, two different things, program stops.
 ```
 
-I proved it: rename the converter's sub-shape, and 12 becomes 4. I did not keep
-that change, because the converter is not this lane's file and renaming touches
-every generated shape name in a checked-in file. That is your call, or the
-coordinator's.
+Fixed on the converter side: a sub-shape lifted out of an OPTIONAL property is
+now called `item__kid_object`. Only optional ones get renamed, so 12 names
+change instead of 161, and both options land on the same final count.
 
-The last 4 are a genuine question only you can answer:
+```
+  BEFORE            AFTER
+  12 flattened      4 flattened
+```
+
+The compiler also used to report that clash as "this name has two different
+column counts", which tells you nothing about which feature did it. It now says
+which shape, which column, and that the optional-link table is the thing that
+claimed the name.
+
+## The last 4, and the one question I need you to answer
 
 ```
   rel contest_combos_normal(use_before: optional list, use_after: optional list).
 ```
 
-Both columns are optional links, so BOTH move out to side tables, and the shape
-is left with zero columns. Then something else points at it. A row with no
-columns is indistinguishable from every other row with no columns, so there is
-nothing to point AT.
+Both columns are optional, so BOTH move out to side tables, and the shape is
+left with ZERO columns. Then something else points at it.
 
-Three ways out, none of them cheap enough for me to pick:
+A row with no columns cannot be told apart from any other row with no columns.
+So two different move entries would end up sharing one row, and one set of side
+table entries. That is data loss, not a missing feature.
 
-1. leave it stopping, but with a message that says what is actually wrong
-2. let a column-less shape be identified by its hidden row number
-   (breaks the rule that identity is either your key or your whole row)
-3. have the converter not create column-less shapes in the first place
+The compiler now stops on this with a message that says exactly that, instead
+of the old confusing "this shape you declared is unknown".
+
+**Your question: when a shape has zero columns left, what identifies one of its
+rows?**
+
+```
+  1. nothing does. keep stopping.          <- what it does today
+  2. its hidden internal row number.       <- reaches zero flattened columns,
+                                              but breaks the rule that a row is
+                                              identified by its key or its whole
+                                              contents
+  3. the converter gives up nullability    <- reaches zero flattened columns,
+     on those 4 columns                       but the "did nullability survive"
+                                              counter goes from 786/0 to 782/4
+```
+
+Only option 2 reaches "zero flattened columns" without moving a different
+number. I did not pick.
 
 ## Also found
 
 - Writing `optional set-of-shapes` used to sneak past a ban that the plain
-  spelling already enforced. It now stops the same way. That is a stop that
-  MOVED, and it is the only one.
+  spelling already enforced. It now stops the same way.
 - A shape that is both pointed-at AND has a declared key loses its key when the
-  compiler prints it back out as text. Separate bug, separate file, worked
-  around here by not using a key in that one test.
+  compiler prints it back out as text. Separate bug, separate file I do not own,
+  worked around here by not using a key in that one test. Still open.
+- Nine compiler stops belonging to the optional-value and generic-shape
+  features were printing a bare "compiler refused rule X" with no shape named,
+  because their two files were missing from the message system's source list.
+  Added; they now name the shapes.
 
 ## Receipts
 
 ```
-  compiler tests        380 pass, 0 fail   (was 372)
-  print/reparse         380 / 380
+  compiler tests        382 pass, 0 fail   (was 372)
+  print/reparse         382 / 382
   text-vs-term door     276 / 276 byte identical
-  two-parser agreement  699 / 699, 0 differences
+  two-parser agreement  701 / 701, 0 differences
   unit tests            604, 1 red, and that one is red before I touched anything
   new unit tests        6, all 6 fail on the starting commit
+  converter tests       9 pass, 0 fail     (was 7)
+  pokeapi flattened     4                  (was 12)
 ```

@@ -7604,7 +7604,8 @@ test(option_over_a_bare_rel_answers_no_column_name) :-
 % scalar set, and walking through it would erase which of the two json_list
 % reasons column_storage/3 names.
 test(json_list_is_not_a_wrapper) :-
-    \+ type_plane:type_wrapper(json_list, _),
+    findall(Wrapper, type_plane:type_wrapper(Wrapper, _), Wrappers),
+    \+ memberchk(json_list, Wrappers),
     \+ type_plane:column_element_type_name(json_list(span), _),
     \+ type_plane:column_element_type_name(option(json_list(span)), _).
 
