@@ -13,13 +13,10 @@
 
 :- set_prolog_flag(back_quotes, codes).
 
-:- use_module(library(lists)).
-:- use_module(library(apply)).
-:- use_module(registry,
-              [ surface/5, body_surface_for_term/6,
-                wrapper_lower_role/3, host_input_roles/3, expression/5 ]).
-:- use_module('../0_cst_query',
-              [ parse_cst_query/2, ts_query_capture_names/2 ]).
+% lists/apply/pairs ride SWI autoloading; both module imports take the whole
+% export list because no name here collides with theirs.
+:- use_module(registry).
+:- use_module('../0_cst_query').
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -28,7 +25,7 @@
 :- dynamic finding_fact/1, rel_column_order_fact/2,
            host_signature_fact/3, source_statement_fact/3.
 
-record_finding(F) :- assertz(finding_fact(F)).
+unsupported(Surface) :- assertz(finding_fact(unsupported_surface(Surface))).
 record_cols(Name, Cols) :-
     retractall(rel_column_order_fact(Name, _)),
     assertz(rel_column_order_fact(Name, Cols)).
@@ -185,27 +182,28 @@ declaration_source_ref(sh_decl(Name, Ins, Outs, _), Name/Arity) :-
 normalize_host_calls(Decls, Rules, Out) :-
     maplist(normalize_host_rule(Decls), Rules, Out).
 
+% map_tree/4 rewrites the leaves of a ','- or ';'-tree; the leaf goal arrives
+% partially applied and is reached through call/3.
+map_tree(Functor, Goal, Tree, Out) :-
+    Tree =.. [Functor, Left, Right], !,
+    Out =.. [Functor, NewLeft, NewRight],
+    map_tree(Functor, Goal, Left, NewLeft),
+    map_tree(Functor, Goal, Right, NewRight).
+map_tree(_, Goal, Leaf, Out) :- call(Goal, Leaf, Out).
+
 normalize_host_rule(Decls, Rule0, Rule) :-
     Rule0 =.. [Op, Head, Body], memberchk(Op, [<-, <+]), !,
-    normalize_host_body(Decls, Body, N),
+    map_tree(',', normalize_host_leaf(Decls), Body, N),
     Rule =.. [Op, Head, N].
 normalize_host_rule(Decls, match(Source, Arms), match(Source, N)) :- !,
-    normalize_host_arms(Decls, Arms, N).
+    map_tree(';', normalize_host_rule(Decls), Arms, N).
 normalize_host_rule(_, Rule, Rule).
 
-normalize_host_arms(Decls, (L ; R), (NL ; NR)) :- !,
-    normalize_host_arms(Decls, L, NL),
-    normalize_host_arms(Decls, R, NR).
-normalize_host_arms(Decls, Arm, N) :- normalize_host_rule(Decls, Arm, N).
-
-normalize_host_body(Decls, (L, R), (NL, NR)) :- !,
-    normalize_host_body(Decls, L, NL),
-    normalize_host_body(Decls, R, NR).
-normalize_host_body(_, probe(A, B, C, D), probe(A, B, C, D)) :- !.
-normalize_host_body(_, Item, Item) :-
+normalize_host_leaf(_, probe(A, B, C, D), probe(A, B, C, D)) :- !.
+normalize_host_leaf(_, Item, Item) :-
     body_surface_for_term(Item, _, _, _, _, _),
     !.
-normalize_host_body(Decls, Atom, probe(Name, Ins, Outs, Salts)) :-
+normalize_host_leaf(Decls, Atom, probe(Name, Ins, Outs, Salts)) :-
     compound(Atom),
     functor(Atom, Name, _),
     member(sh_decl(Name, Cols, _, _), Decls),
@@ -218,7 +216,7 @@ normalize_host_body(Decls, Atom, probe(Name, Ins, Outs, Salts)) :-
     -> partition_hiv(Cols, SurfaceIns, Roles, Ins, Salts)
     ; Ins = SurfaceIns, Salts = []
     ).
-normalize_host_body(_, Item, Item).
+normalize_host_leaf(_, Item, Item).
 
 
 statements(Decls, Rules, Queries) -->
@@ -260,6 +258,9 @@ word(Cs, S0, S) :-
     \+ (S = [C | _], id_code(C)).
 
 peek(C, S, S) :- S = [C | _], !.
+
+% kw//1: an already-chosen atom spelled as a word terminal
+kw(Word) --> { atom_codes(Word, Cs) }, word(Cs).
 
 id_code(0'_) :- !.
 id_code(C) :- code_type(C, alnum).
@@ -338,12 +339,13 @@ quoted_chars(Q, [0'\\, E | Rest], Cs, S) :- !,
 quoted_chars(Q, [C | Rest], [C | More], S) :-
     quoted_chars(Q, Rest, More, S).
 
-escape(_, 0'n,  [0'\n  | M], M) :- !.
-escape(_, 0't,  [0'\t  | M], M) :- !.
-escape(_, 0'r,  [0'\r  | M], M) :- !.
-escape(_, 0'\\, [0'\\  | M], M) :- !.
-escape(Q, Q, [Q | M], M) :- !.
-escape(_, O, [0'\\, O | M], M).
+% the five recognized escapes collapse to one memberchk over Source-Decoded
+% pairs; the Quote-Quote row closes over the active quote character.
+escape(Quote, Source, [Decoded | M], M) :-
+    memberchk(Source-Decoded,
+              [ 0'n - 0'\n, 0't - 0'\t, 0'r - 0'\r,
+                0'\\ - 0'\\, Quote - Quote ]), !.
+escape(_, Other, [0'\\, Other | M], M).
 
 
 % dl_vars: b_setval backtrackable global replaces the old V0/V accumulator
@@ -377,7 +379,7 @@ statement(Kind, Item) -->
     ; sh_decl_stmt(D) -> { Kind = decl_list, Item = [D] }
     ; query_stmt(Q) -> { Kind = query, Item = Q }
     ; ( match_stmt(R) -> [] ; rule_stmt(R) -> [] ),
-      { Kind = rule, b_getval(dl_vars, Vars), annotate_cst_item(R, Vars, Item) }
+      { Kind = rule, b_getval(dl_vars, Vars), annotate_cst_item(Vars, R, Item) }
     ).
 
 
@@ -399,8 +401,7 @@ rel_stmt(Decls) -->
       { length(Specs, Arity),
         module_path_name(Segs, Name),
         Ref = Name/Arity,
-        spec_names(Specs, Cols),
-        record_cols(Name, Cols) },
+        record_spec_names(Name, Specs) },
       ws,
       { typed_decl_entries(Ref, Specs, Typed) },
       rel_modifiers(Ref, Mods),
@@ -425,7 +426,7 @@ rel_modifiers(Ref, Decls) -->
     ; keep_clause(Policy) -> { Decl = keep(Ref, Policy) }
     ; key_clause(Positions) -> { Decl = keyed(Ref, Positions) }
     ; word(`set`)
-    -> { record_finding(unsupported_surface(removed_word(set))), Decl = none }
+    -> { unsupported(removed_word(set)), Decl = none }
     ), !,
     ws, rel_modifiers(Ref, Rest),
     { Decl == none -> Decls = Rest ; Decls = [Decl | Rest] }.
@@ -439,12 +440,10 @@ type_expr(Type) -->
     type_base(Base),
     ( lit(`?`) -> { Type = option(Base) } ; { Type = Base } ).
 
-type_base(T) --> { scalar_column_type(T), atom_codes(T, Cs) }, word(Cs), !.
+type_base(T) --> { scalar_column_type(T) }, kw(T), !.
 type_base(T) -->
-    { member(W, [option, json_list, list, list_entity_dense_sequence,
-                 list_interned_set, list_entity_linked_sequence]),
-      atom_codes(W, Cs) },
-    word(Cs), !,
+    { member(W, [option, json_list]) ; list_type_word(W) },
+    kw(W), !,
     tok(`(`), ws, type_expr(E), tok(`)`),
     { T =.. [W, E] }.
 type_base(Name) --> ident(Name).
@@ -462,11 +461,13 @@ enum_field(Col:Type) --> ident(Col), tok(`:`), ws, ident(Type).
 record_enum_column_orders(Rel, Variants) :-
     tag_rel_name(Rel, Tag),
     record_cols(Tag, [id, tag]),
-    forall(enum_decl_variant_term(Variants, V), record_enum_variant(Rel, V)).
+    forall(tree_leaf(';', Variants, V), record_enum_variant(Rel, V)).
 
-enum_decl_variant_term((L ; R), V) :- !,
-    ( enum_decl_variant_term(L, V) ; enum_decl_variant_term(R, V) ).
-enum_decl_variant_term(V, V).
+% tree_leaf/3 is map_tree's generator twin: enumerate a ';'-tree's leaves
+tree_leaf(Functor, Tree, Leaf) :-
+    Tree =.. [Functor, Left, Right], !,
+    ( tree_leaf(Functor, Left, Leaf) ; tree_leaf(Functor, Right, Leaf) ).
+tree_leaf(_, Leaf, Leaf).
 
 record_enum_variant(Rel, Variant) :-
     Variant =.. [Name | Fields],
@@ -476,7 +477,9 @@ record_enum_variant(Rel, Variant) :-
 
 tag_rel_name(Rel, Tag) :- atomic_list_concat([Rel, tag], '_', Tag).
 
-spec_names(Specs, Names) :- maplist([column(N, _), N]>>true, Specs, Names).
+record_spec_names(Name, Specs) :-
+    maplist([column(N, _), N]>>true, Specs, Cols),
+    record_cols(Name, Cols).
 
 typed_decl_entries(Ref, Specs, Decls) :-
     findall(col_type(Ref, Col, Type),
@@ -503,10 +506,9 @@ decl_b_tail(Decls) -->
     decl_b_columns(Name, Specs), tok(`)`), tok(`.`),
     { length(Specs, Arity),
       Ref = Name/Arity,
-      spec_names(Specs, Cols),
-      record_cols(Name, Cols),
+      record_spec_names(Name, Specs),
       ( HasRetention == true
-      -> record_finding(unsupported_surface(retention_marker(Ref, Ret)))
+      -> unsupported(retention_marker(Ref, Ret))
       ; true
       ),
       typed_decl_entries(Ref, Specs, Decls) }.
@@ -518,12 +520,12 @@ typed_col(TypeP, column(Col, Type)) -->
 
 decl_b_column_type(Rel, Col, none) -->
     coltype(W), { W \== none }, !,
-    { record_finding(unsupported_surface(column_type_wrapper(Rel, Col, W))) }.
+    { unsupported(column_type_wrapper(Rel, Col, W)) }.
 decl_b_column_type(_, _, Type) --> type_expr(Type).
 
 coltype(W) -->
-    { member(W, ['Key', 'Min', 'Max']), atom_codes(W, Cs) },
-    word(Cs), !,
+    { member(W, ['Key', 'Min', 'Max']) },
+    kw(W), !,
     tok(`(`), ws, ident(_), tok(`)`).
 coltype(none) --> ident(_).
 
@@ -579,7 +581,7 @@ minted_rel_name(Decls, Minted) :-
       atom(Element),
       atomic_list_concat(['__opt_', Element], Minted)
     ; member(enum_decl(Rel, Variants), Decls),
-      ( enum_decl_variant_term(Variants, Variant),
+      ( tree_leaf(';', Variants, Variant),
         Variant =.. [Name | _],
         atomic_list_concat([Rel, Name], '_', Minted)
       ; tag_rel_name(Rel, Minted)
@@ -622,17 +624,20 @@ declared_column_type_name(Decls, Name) :-
     ; member(bind_decl(_, Cols), Decls),
       member(col(_, Name), Cols)
     ; member(enum_decl(_, Variants), Decls),
-      enum_decl_variant_term(Variants, Variant),
+      tree_leaf(';', Variants, Variant),
       Variant =.. [_ | Fields],
       member(_:Name, Fields)
     ),
     \+ scalar_column_type(Name).
 
+list_type_word(W) :-
+    member(W, [list, list_entity_dense_sequence, list_interned_set,
+               list_entity_linked_sequence]).
+
 list_element_type_name(Type, Name) :-
     compound(Type),
     Type =.. [F, Element],
-    memberchk(F, [list, list_entity_dense_sequence, list_interned_set,
-                  list_entity_linked_sequence]),
+    list_type_word(F),
     list_element_type_name(Element, Name).
 list_element_type_name(Name, Name) :- atom(Name).
 
@@ -643,8 +648,7 @@ bind_decl_stmt(bind_decl(Name, Cols)) -->
     word(`bind`), ws, ident(Name), tok(`(`),
     decl_b_columns(Name, Specs), tok(`)`), tok(`.`),
     { specs_to_columns(Specs, Cols),
-      spec_names(Specs, Names),
-      record_cols(Name, Names) }.
+      record_spec_names(Name, Specs) }.
 
 sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
     word(`sh`), ws, ident(Name), tok(`(`),
@@ -655,8 +659,7 @@ sh_decl_stmt(sh_decl(Name, Ins, Outs, template(Template))) -->
     { specs_to_columns(InSpecs, Ins),
       specs_to_columns(OutSpecs, Outs),
       append(InSpecs, OutSpecs, Specs),
-      spec_names(Specs, Names),
-      record_cols(Name, Names),
+      record_spec_names(Name, Specs),
       record_host_signature(Name, Ins, Outs) }.
 
 sh_decl_stmt(unsupported_host_decl(Name, Cols)) -->
@@ -665,15 +668,14 @@ sh_decl_stmt(unsupported_host_decl(Name, Cols)) -->
     lit(`=`), ws, template_lit(_), tok(`.`),
     { specs_to_columns(Specs, Cols),
       length(Cols, Arity),
-      spec_names(Specs, Names),
-      record_cols(Name, Names),
-      record_finding(unsupported_surface(host_decl_inferred(Name/Arity))) }.
+      record_spec_names(Name, Specs),
+      unsupported(host_decl_inferred(Name/Arity)) }.
 
 host_output_columns(Rel, Specs) --> args(typed_col(host_col_type(Rel)), Specs).
 
 host_col_type(Rel, Col, none) -->
     coltype(W), { W \== none },
-    { record_finding(unsupported_surface(column_type_wrapper(Rel, Col, W))) }.
+    { unsupported(column_type_wrapper(Rel, Col, W)) }.
 host_col_type(_, _, Type) --> type_expr(Type).
 
 specs_to_columns(Specs, Cols) :- maplist([column(N, T), col(N, T)]>>true, Specs, Cols).
@@ -759,7 +761,7 @@ resolve_named_args(_, _, Args, Pos) :-
 resolve_named_args(Mode, Rel, Args, Pos) :-
     ( lookup_column_order(Rel, Cols)
     -> resolve_mixed_args(Mode, Rel, Args, Cols, Pos)
-    ; record_finding(unsupported_surface(named_args_unresolved(Rel))),
+    ; unsupported(named_args_unresolved(Rel)),
       maplist(arg_value, Args, Pos)
     ).
 
@@ -779,9 +781,9 @@ resolve_mixed_args(Mode, Rel, Args, Cols, Pos) :-
 validate_named_columns(Rel, Args, Cols) :-
     findall(Name, member(named(Name, _), Args), Names),
     ( member(Name, Names), \+ memberchk(Name, Cols)
-    -> record_finding(unsupported_surface(unknown_named_arg(Rel, Name)))
+    -> unsupported(unknown_named_arg(Rel, Name))
     ; select(Dup, Names, Rest), memberchk(Dup, Rest)
-    -> record_finding(unsupported_surface(duplicate_named_arg(Rel, Dup)))
+    -> unsupported(duplicate_named_arg(Rel, Dup))
     ; true
     ).
 
@@ -806,7 +808,7 @@ finish_omitted_slots(body, _, Idxs, Pos) :-
 finish_omitted_slots(head, Ref, Idxs, Pos) :-
     ( Idxs == []
     -> true
-    ; record_finding(unsupported_surface(partial_head(Ref))),
+    ; unsupported(partial_head(Ref)),
       fill_anonymous_slots(Idxs, Pos)
     ).
 
@@ -831,15 +833,14 @@ body_item(Item) -->
     ; surface(Name/Arity, _, _, LowerRole, _),
       wrapper_lower_role(LowerRole, Shape, _)
     },
-    keyword_call(Name, Inner),
+    kw(Name), tok(`(`), balanced(Inner),
     { parse_surface_wrapper(Shape, Arity, Inner, Args) },
     !,
     { Item =.. [Name | Args] }.
 body_item(Name) -->
-    { surface(Name/0, _, _, word(_), _), atom_codes(Name, Cs) },
-    word(Cs), !.
-body_item(Item) --> bind_item(Item), !.
-body_item(Item) --> cmp_item(Item), !.
+    { surface(Name/0, _, _, word(_), _) }, kw(Name), !.
+body_item(Item) --> infix_item(infix_op(bind), Item), !.
+body_item(Item) --> infix_item(cmp_op, Item), !.
 body_item(not(Atom)) -->
     lit(`!`), ident(Name), tok(`(`),
     args(expr, Args), tok(`)`), !,
@@ -871,25 +872,17 @@ cst_block_string([0'"]) --> [0'"], !.
 cst_block_string([0'\\, C | More]) --> [0'\\, C], !, cst_block_string(More).
 cst_block_string([C | More]) --> [C], cst_block_string(More).
 
-annotate_cst_item(Rule0, Vars, Rule) :-
+annotate_cst_item(Vars, Rule0, Rule) :-
     Rule0 =.. [Op, Head, Body], memberchk(Op, [<-, <+]), !,
     term_variables((Head, Body), RVars),
-    annotate_cst_body(Body, Head, Vars, RVars, Annotated),
+    map_tree(',', annotate_cst_leaf(Head, Vars, RVars), Body, Annotated),
     Rule =.. [Op, Head, Annotated].
-annotate_cst_item(match(Source, Arms), Vars, match(Source, Annotated)) :- !,
-    annotate_cst_arms(Arms, Vars, Annotated).
-annotate_cst_item(Item, _, Item).
+annotate_cst_item(Vars, match(Source, Arms), match(Source, Annotated)) :- !,
+    map_tree(';', annotate_cst_item(Vars), Arms, Annotated).
+annotate_cst_item(_, Item, Item).
 
-annotate_cst_arms((L ; R), Vars, (AL ; AR)) :- !,
-    annotate_cst_item(L, Vars, AL),
-    annotate_cst_arms(R, Vars, AR).
-annotate_cst_arms(Arm, Vars, Annotated) :-
-    annotate_cst_item(Arm, Vars, Annotated).
-
-annotate_cst_body((L, R), Head, Vars, RVars, (AL, AR)) :- !,
-    annotate_cst_body(L, Head, Vars, RVars, AL),
-    annotate_cst_body(R, Head, Vars, RVars, AR).
-annotate_cst_body(cst(Path, Digest, Language, Query), Head, Vars, RVars,
+annotate_cst_leaf(Head, Vars, RVars,
+                  cst(Path, Digest, Language, Query),
                   cst(Path, Digest, Language, Query,
                       cst_bindings(Caps, Cands, RNames))) :- !,
     ts_query_capture_names(Query, Caps),
@@ -897,7 +890,7 @@ annotate_cst_body(cst(Path, Digest, Language, Query), Head, Vars, RVars,
     cst_variable_names(RVars, Vars, RNames),
     cst_variable_names(IVars, Vars, InNames),
     cst_body_variable_names(Head, Path, Digest, Vars, InNames, Cands).
-annotate_cst_body(Item, _, _, _, Item).
+annotate_cst_leaf(_, _, _, Item, Item).
 
 cst_body_variable_names(Head, Path, Digest, Vars, InNames, Names) :-
     term_variables(Head, HVars),
@@ -917,11 +910,6 @@ cst_variable_names([Var | Rest], Vars, Names) :-
     ),
     cst_variable_names(Rest, Vars, More).
 
-
-keyword_call(Keyword, Inner) -->
-    { atom_codes(Keyword, Cs) },
-    word(Cs), tok(`(`),
-    balanced(Inner).
 
 balanced(Inner, S0, S) :- bp(S0, 0, [], Rev, S), reverse(Rev, Inner).
 
@@ -973,12 +961,9 @@ wrapper_parser(rel_atom_default, 2, [Atom, D],
                comma_pair(rel_atom_term, expr, Atom, D)).
 
 
-bind_item(Term) -->
-    expr(Lhs), ws, infix_op(bind, Op), ws, expr(Rhs),
-    { Term =.. [Op, Lhs, Rhs] }.
-
-cmp_item(Term) -->
-    expr(Lhs), ws, cmp_op(Op), ws, expr(Rhs),
+% infix_item//2: the operator nonterminal arrives partially applied via call//2
+infix_item(OpParser, Term) -->
+    expr(Lhs), ws, call(OpParser, Op), ws, expr(Rhs),
     { Term =.. [Op, Lhs, Rhs] }.
 
 cmp_op(=<) --> lit(`<=`), !.
@@ -1025,7 +1010,7 @@ relatom_item(Item) -->
     lit(`(`), head_args(Args), tok(`)`),
     { ( Mut == true
       -> length(Args, Arity),
-         record_finding(unsupported_surface(mutation(Name/Arity))),
+         unsupported(mutation(Name/Arity)),
          resolve_named_args(body, Resolved, Args, Pos),
          Item =.. [Name | Pos]
       ; resolve_named_args(body, Resolved, Args, Pos),
@@ -1089,7 +1074,7 @@ dollar_var(Var) -->
     { hole_var(Name, Var) }.
 
 bool_lit(bool_lit(B)) -->
-    { member(B, [true, false]), atom_codes(B, Cs) }, word(Cs), !.
+    { member(B, [true, false]) }, kw(B), !.
 
 wildcard_var(_) --> word(`_`).
 
