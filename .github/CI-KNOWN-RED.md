@@ -15,6 +15,7 @@ the leg measured green.
 | leg | exact failure text |
 |---|---|
 | plunit | `catalog_plane_rail:level_plane_family_corpus_counts`, `plunit_tests.pl:1312`, 1 of 598 |
+| staleness-gate | `STALENESS_GATE_FAIL v6/ARCH-MAP.md is STALE (checked-in does not match self-map regeneration)`, v6/ARCH-MAP.md out of date vs HEAD sources |
 | rtkq-golden | `missing release extractor: v6/sprefa-extract/target/release/extract` |
 | compile-speed | `COMPILE_SPEED regressions=16 improvements=0 FAIL`, baseline written 2026-08-07 |
 | tsv2-test | `hostDecode.test.ts:144` expected `[0,1,2,3]` actual `[1,2,2,3]` |
@@ -33,6 +34,7 @@ the leg measured green.
 ## Allowlist
 
 allow: plunit
+allow: staleness-gate
 allow: rtkq-golden
 allow: compile-speed
 allow: tsv2-test
