@@ -949,7 +949,7 @@ task(signed_delta_v2_promote, done, [recursive_cte_probe]). % LANDED 2026-08-11 
 task(perf_report_refresh, done, [signed_delta_v2_promote]). % LANDED 2026-08-11 (471d0be9): PERF-REPORT refreshed with the coordinator verify run; the seven-engine matrix. DAG 960k: dd 174.6 (0 stmts, 1.00x), sqlite-signed-delta-v2 1135.6 (3, 6.50x), sqlite-dred-loop 1774.6 (53, 10.16x), sqlite-dred-cte 2582.7 (6, 14.79x).
 task(dd_fork2_epoch_batches, unbuilt, [perf_report_refresh]). % NOT BUILT as a Rust kernel. SQLite-shaped partial only: cx_delta(round,key,diff) + cx_refcount appended per round, engine.rs:139-146; PROBE-REPORT.md:61 states it does no periodic GROUP BY/HAVING sweep.
 task(dd_fork3_arranged_halfjoin, unbuilt, [perf_report_refresh]). % NOT BUILT, plan-term only: arr(Id,Ref,KeyColumns,ValueColumns,signed) emitted at compile/6_emit_dd_plan.pl:258-262; v6/dd-runner/src/kernel.rs never reads arrangements.
-task(dd_fork4_signed_multipity_consolidation, unbuilt, [perf_report_refresh]). % NOT BUILT, no code: no signed weight exists in v6/dd-runner/src/kernel.rs (relation type is BTreeMap<String, Vec<Tuple>>, kernel.rs:15).
+task(dd_fork4_signed_multiplicity_consolidation, unbuilt, [perf_report_refresh]). % NOT BUILT, no code: no signed weight exists in v6/dd-runner/src/kernel.rs (relation type is BTreeMap<String, Vec<Tuple>>, kernel.rs:15).
 
 roadmap :-
     findall(Name-Needs, task(Name, _, Needs), Pairs),
