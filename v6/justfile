@@ -43,6 +43,9 @@ conformance:
 roundtrip:
     cd {{ v6 }}/prolog/compile && bash scripts/roundtrip.sh
 
+parse-parity:
+    cd {{ v6 }}/prolog/compile && bash scripts/parse_parity.sh
+
 # term door vs .dl6 text door, byte-identical emitted modules (expect: 196/196/0)
 text-door:
     cd {{ v6 }}/prolog && bash compile/scripts/text_door_receipt.sh
