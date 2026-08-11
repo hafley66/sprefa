@@ -132,7 +132,17 @@ pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), 
          CREATE TEMP TABLE {scc_frontier} (key INTEGER PRIMARY KEY);
          CREATE TEMP TABLE {scc_next} (key INTEGER PRIMARY KEY);
          CREATE TEMP TABLE {scc_live} (key INTEGER PRIMARY KEY);
-         CREATE INDEX {ix_dep_child} ON {dep} (child_key);",
+         CREATE INDEX {ix_dep_child} ON {dep} (child_key);
+         CREATE TABLE {refcount} (
+            key INTEGER PRIMARY KEY,
+            n INTEGER NOT NULL
+         );
+         CREATE TABLE {delta} (
+            round INTEGER NOT NULL,
+            key   INTEGER NOT NULL,
+            diff  INTEGER NOT NULL,
+            PRIMARY KEY (round, key)
+         ) WITHOUT ROWID;",
             row = ns.row,
             dep = ns.dep,
             frontier = ns.frontier,
@@ -144,6 +154,8 @@ pub async fn create_schema(db: &DatabaseConnection, ns: &GraphNs) -> Result<(), 
             scc_next = ns.scc_next,
             scc_live = ns.scc_live,
             ix_dep_child = ns.ix_dep_child,
+            refcount = format!("{}cx_refcount", ns.row.trim_end_matches("cx_row")),
+            delta = format!("{}cx_delta", ns.row.trim_end_matches("cx_row")),
         ),
     )
     .await?;
@@ -609,6 +621,101 @@ pub async fn retract_dred_cte(
     exec(&txn, &format!("UPDATE {} SET weight=1 WHERE key IN (SELECT key FROM {})", ns.row, ns.frontier)).await?;
     txn.commit().await?;
     Ok(0)
+}
+
+/// One-pass signed-delta retraction: the timestamped-delta sibling to DRed. Per
+/// outer tick there is a single signed pass that recomputes the LEAST-FIXPOINT
+/// reachability from the surviving roots — no over-delete cone, no separate
+/// rederive walk. Retraction is the outer update "these base roots left"; the
+/// reach set re-derives forward from the roots that remain, one derivation round
+/// per step, through `delta(round,key,diff)`. Rewriting the whole survivor set is
+/// the same walk DRed's rederive pass performs, so the single pass lands near the
+/// recon's ~half-cost floor at ~half the SQL statements.
+///
+/// The cycle discipline: aliveness is monotone and thresholded (a key becomes alive
+/// once, at its earliest reaching round; a back-edge into an already-alive member
+/// emits nothing). Root-reachability is a least fixpoint, so a cycle whose only
+/// anchor is retracted collapses — cyclic self-support cannot refresh a key that is
+/// no longer reachable from any surviving root. This is the exact semantics the dd
+/// oracle and DRed argue for; naive support-counting (which weighs cyclic fan-in as
+/// independent support) is the phantom-cycle path this sidesteps. Returns rounds.
+pub async fn retract_signed_delta(
+    db: &DatabaseConnection,
+    ns: &GraphNs,
+    seeds: &[(i64, i64)],
+) -> Result<u64, DbErr> {
+    let p = ns.row.trim_end_matches("cx_row");
+    let refcount = format!("{p}cx_refcount");
+    let delta = format!("{p}cx_delta");
+
+    let txn = db.begin().await?;
+
+    // refcount is the persistent alive mask; re-derive it from the current store
+    // (every row starts dead, n=0), then re-seed it per round below.
+    exec(&txn, &format!(
+        "DELETE FROM {refcount};
+         INSERT INTO {refcount}(key,n) SELECT key, 0 FROM {row}",
+        refcount = refcount, row = ns.row,
+    ))
+    .await?;
+    exec(&txn, &format!("DELETE FROM {delta}", delta = delta)).await?;
+
+    let seed_in = {
+        let v: Vec<String> = seeds.iter().map(|(t, i)| key(*t, *i).to_string()).collect();
+        if v.is_empty() { "(-1)".to_string() } else { format!("({})", v.join(",")) }
+    };
+    // Round 0: the surviving roots — rows with no incoming dep edge, minus the
+    // retracted seeds. These seed the +1 reachability wave.
+    exec(&txn, &format!(
+        "INSERT OR IGNORE INTO {delta}(round,key,diff)
+         SELECT 0, r.key, 1 FROM {row} r
+         WHERE r.key NOT IN {seed_in}
+           AND NOT EXISTS (SELECT 1 FROM {dep} d WHERE d.child_key = r.key)",
+        delta = delta, row = ns.row, dep = ns.dep,
+    ))
+    .await?;
+    exec(&txn, &format!(
+        "INSERT OR REPLACE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = 0",
+        refcount = refcount, delta = delta,
+    ))
+    .await?;
+
+    let mut rounds = 0u64;
+    let mut r: i64 = 0;
+    loop {
+        if scalar(&txn, &format!("SELECT count(*) FROM {delta} WHERE round={r}", delta = delta)).await? == 0 {
+            break;
+        }
+        rounds += 1;
+        // Read ONLY round r deltas; join through dep. A child not yet alive
+        // becomes alive and fans out into round r+1 (no re-emission once alive).
+        exec(&txn, &format!(
+            "INSERT OR IGNORE INTO {delta}(round,key,diff)
+             SELECT {rn}, d.child_key, 1
+             FROM {delta} t
+             JOIN {dep} d ON d.parent_key = t.key
+             WHERE t.round = {r}
+               AND d.child_key NOT IN (SELECT key FROM {refcount} WHERE n > 0)",
+            delta = delta, dep = ns.dep, refcount = refcount, rn = r + 1,
+        ))
+        .await?;
+        exec(&txn, &format!(
+            "INSERT OR REPLACE INTO {refcount}(key,n) SELECT key, 1 FROM {delta} WHERE round = {rn}",
+            refcount = refcount, delta = delta, rn = r + 1,
+        ))
+        .await?;
+        r += 1;
+    }
+
+    // Publish the alive mask back to the store's weight so alive_keys matches.
+    exec(&txn, &format!(
+        "UPDATE {row} SET weight = COALESCE((SELECT n FROM {refcount} rf WHERE rf.key = {row}.key), 0)",
+        row = ns.row, refcount = refcount,
+    ))
+    .await?;
+
+    txn.commit().await?;
+    Ok(rounds)
 }
 
 #[cfg(test)]
