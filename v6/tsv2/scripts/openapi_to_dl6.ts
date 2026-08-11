@@ -251,8 +251,8 @@ export class OpenapiToDl6 {
     return out;
   }
 
-  // Strict mode: some ref targets carry generic option()/list() columns the
-  // 0_type_plane.pl:128 mirror-schema gap refuses; probeRefTargets decides which, by compiling.
+  // Which generic columns a ref target may keep is decided BY COMPILING, never
+  // by a shape rule: probe the rel, then probe each generic column on its own.
   private applyStrictFalls(): IRelDecl[] {
     const keep = this.rels.filter((r) => r.enumVariants === undefined);
     const enums = this.rels.filter((r) => r.enumVariants !== undefined);
@@ -260,23 +260,21 @@ export class OpenapiToDl6 {
     const refTarget = new Set<string>();
     for (const r of keep) {
       for (const col of r.columns) {
-        if (/^[a-z_]/.test(col.type) && byName.has(col.type)) refTarget.add(col.type);
-        const lm = /^list\(([a-z_][a-z0-9_]*)\)$/.exec(col.type);
-        if (lm && lm[1] && byName.has(lm[1])) refTarget.add(lm[1]);
-        const om = /^option\(([a-z_][a-z0-9_]*)\)$/.exec(col.type);
-        if (om && om[1] && byName.has(om[1])) refTarget.add(om[1]);
+        for (const ref of columnRelRefs(col.type, byName)) refTarget.add(ref);
       }
     }
     const candidates = new Set<string>();
     for (const t of refTarget) {
       const r = byName.get(t);
-      if (r && r.columns.some((c) => /^(option|list)\(/.test(c.type))) candidates.add(t);
+      if (r && r.columns.some((c) => isGenericType(c.type))) candidates.add(t);
     }
     const bad = probeRefTargets(candidates, byName);
+    const drop = confirmNarrowing(probeGuiltyColumns(bad, byName), byName);
     const out = keep.map((r) => {
+      const dropped = drop.get(r.name);
       const cols = r.columns.map((c) => {
-        if (bad.has(r.name) && /^(option|list)\(/.test(c.type)) {
-          this.gaps.push(`${r.name}.${c.name}: ${c.type} -> json (0_type_plane.pl:128)`);
+        if (dropped !== undefined && dropped.has(c.name)) {
+          this.gaps.push(`${r.name}.${c.name}: ${c.type} -> json (0_program_check.pl:342)`);
           return { name: c.name, type: "json" };
         }
         return c;
@@ -396,16 +394,13 @@ function relLine(rel: IRelDecl): string {
   return `rel ${rel.name}(${rel.columns.map((c) => `${c.name}: ${c.type}`).join(", ")}).`;
 }
 
-// The rel names one column type mentions (bare, list(), or option()), scoped
-// to names byName actually declares so scalars never register as targets.
+// Peels option()/list() to any depth, scoped to names byName declares, so a
+// probe file declares every placeholder the column under test names.
 function columnRelRefs(type: string, byName: ReadonlyMap<string, IRelDecl>): string[] {
-  const refs: string[] = [];
-  if (/^[a-z_][a-z0-9_]*$/.test(type) && byName.has(type)) refs.push(type);
-  const list = /^list\(([a-z_][a-z0-9_]*)\)$/.exec(type);
-  if (list && list[1] && byName.has(list[1])) refs.push(list[1]);
-  const opt = /^option\(([a-z_][a-z0-9_]*)\)$/.exec(type);
-  if (opt && opt[1] && byName.has(opt[1])) refs.push(opt[1]);
-  return refs;
+  const inner = /^(?:option|list)\((.*)\)$/.exec(type);
+  if (inner && inner[1]) return columnRelRefs(inner[1], byName);
+  if (/^[a-z_][a-z0-9_]*$/.test(type) && byName.has(type)) return [type];
+  return [];
 }
 
 // One candidate as a ref target with its real columns; any rel its columns
@@ -424,39 +419,104 @@ function buildRefTargetProbe(target: IRelDecl, byName: ReadonlyMap<string, IRelD
   return lines.join("\n") + "\n";
 }
 
+interface IProbeSpec {
+  readonly id: string;
+  readonly source: string;
+}
+
 // One swipl process runs a forall/catch loop over compile_dl6/2, one probe per
-// candidate; returns the ones that still throw column_type_unknown today.
-function probeRefTargets(candidates: ReadonlySet<string>, byName: ReadonlyMap<string, IRelDecl>): Set<string> {
-  if (candidates.size === 0) return new Set();
+// spec; the ids that compiled come back. An infrastructure failure returns none.
+function runProbes(specs: readonly IProbeSpec[]): Set<string> {
+  if (specs.length === 0) return new Set();
   let scratchDir: string;
   try {
     scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "dl6-strict-probe-"));
   } catch {
-    return new Set(candidates);
+    return new Set();
   }
   try {
-    const probes = [...candidates]
-      .map((name) => byName.get(name))
-      .filter((r): r is IRelDecl => r !== undefined)
-      .map((r) => ({ id: r.name, file: path.join(scratchDir, `${r.name}.dl6`), out: path.join(scratchDir, `${r.name}.out.ts`) }));
-    for (const p of probes) {
-      fs.writeFileSync(p.file, buildRefTargetProbe(byName.get(p.id)!, byName));
+    const files = specs.map((spec, index) => ({
+      id: spec.id,
+      file: path.join(scratchDir, `probe_${String(index)}.dl6`),
+      out: path.join(scratchDir, `probe_${String(index)}.out.ts`),
+    }));
+    for (let index = 0; index < specs.length; index += 1) {
+      fs.writeFileSync(files[index]!.file, specs[index]!.source);
     }
-    const members = probes.map((p) => `id('${p.id}','${p.file}','${p.out}')`).join(",");
+    const members = files.map((f, i) => `id(${String(i)},'${f.file}','${f.out}')`).join(",");
     const goal =
       `forall(member(id(Id,In,Out),[${members}]),` +
       `catch((compile_dl6(In,Out),format('PROBE_OK ~w~n',[Id])),_,format('PROBE_FAIL ~w~n',[Id])))`;
-    const cp = spawnSync("swipl", ["-q", "-l", COMPILE_PL, "-g", goal, "-g", "halt"], { encoding: "utf8", timeout: 30000 });
-    if (cp.error || cp.status !== 0) return new Set(candidates);
+    const cp = spawnSync("swipl", ["-q", "-l", COMPILE_PL, "-g", goal, "-g", "halt"], { encoding: "utf8", timeout: 60000 });
+    if (cp.error || cp.status !== 0) return new Set();
     const passed = new Set<string>();
     for (const line of (cp.stdout ?? "").split("\n")) {
-      const m = /^PROBE_OK (\S+)$/.exec(line.trim());
-      if (m && m[1]) passed.add(m[1]);
+      const m = /^PROBE_OK (\d+)$/.exec(line.trim());
+      if (m && m[1]) passed.add(files[Number(m[1])]!.id);
     }
-    return new Set([...candidates].filter((name) => !passed.has(name)));
+    return passed;
   } catch {
-    return new Set(candidates);
+    return new Set();
   } finally {
     fs.rmSync(scratchDir, { recursive: true, force: true });
   }
+}
+
+function isGenericType(type: string): boolean {
+  return /^(option|list)\(/.test(type);
+}
+
+function withColumnsAsJson(rel: IRelDecl, drop: ReadonlySet<string>): IRelDecl {
+  return { name: rel.name, columns: rel.columns.map((c) => (drop.has(c.name) ? { name: c.name, type: "json" } : c)) };
+}
+
+function probeRefTargets(candidates: ReadonlySet<string>, byName: ReadonlyMap<string, IRelDecl>): Set<string> {
+  const rels = [...candidates].map((name) => byName.get(name)).filter((r): r is IRelDecl => r !== undefined);
+  const passed = runProbes(rels.map((r) => ({ id: r.name, source: buildRefTargetProbe(r, byName) })));
+  return new Set(rels.filter((r) => !passed.has(r.name)).map((r) => r.name));
+}
+
+// Which generic columns of a bad ref target actually stop the compiler: each is
+// probed alone, every other generic column of the same rel rewritten to json.
+function probeGuiltyColumns(bad: ReadonlySet<string>, byName: ReadonlyMap<string, IRelDecl>): Map<string, Set<string>> {
+  const specs: IProbeSpec[] = [];
+  const generics = new Map<string, string[]>();
+  for (const name of bad) {
+    const rel = byName.get(name);
+    if (rel === undefined) continue;
+    const cols = rel.columns.filter((c) => isGenericType(c.type)).map((c) => c.name);
+    generics.set(name, cols);
+    for (const col of cols) {
+      const others = new Set(cols.filter((c) => c !== col));
+      specs.push({ id: `${name} ${col}`, source: buildRefTargetProbe(withColumnsAsJson(rel, others), byName) });
+    }
+  }
+  const passed = runProbes(specs);
+  const guilty = new Map<string, Set<string>>();
+  for (const [name, cols] of generics) {
+    guilty.set(name, new Set(cols.filter((col) => !passed.has(`${name} ${col}`))));
+  }
+  return guilty;
+}
+
+// A narrowed rel that still fails falls back to dropping every generic column,
+// so an unmodelled column interaction can never widen what the converter emits.
+function confirmNarrowing(guilty: Map<string, Set<string>>, byName: ReadonlyMap<string, IRelDecl>): Map<string, Set<string>> {
+  const specs: IProbeSpec[] = [];
+  for (const [name, drop] of guilty) {
+    const rel = byName.get(name);
+    if (rel === undefined) continue;
+    specs.push({ id: name, source: buildRefTargetProbe(withColumnsAsJson(rel, drop), byName) });
+  }
+  const passed = runProbes(specs);
+  const confirmed = new Map<string, Set<string>>();
+  for (const [name, drop] of guilty) {
+    const rel = byName.get(name);
+    if (rel === undefined) continue;
+    confirmed.set(
+      name,
+      passed.has(name) ? drop : new Set(rel.columns.filter((c) => isGenericType(c.type)).map((c) => c.name)),
+    );
+  }
+  return confirmed;
 }

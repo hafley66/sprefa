@@ -1,7 +1,7 @@
 # PokeAPI components round-trip report
 
-Source: `/Users/chrishafley/projects/sprefa/.boop-worktrees/fix/converter-nullable-arrays/v6/dl/fixtures/pokeapi.openapi.yml`
-Generated: `/Users/chrishafley/projects/sprefa/.boop-worktrees/fix/converter-nullable-arrays/v6/tsv2/gen/pokeapi_gen.dl6`
+Source: `/Users/chrishafley/projects/sprefa/.claude/worktrees/agent-ab605cc630a481ac3/v6/dl/fixtures/pokeapi.openapi.yml`
+Generated: `/Users/chrishafley/projects/sprefa/.claude/worktrees/agent-ab605cc630a481ac3/v6/tsv2/gen/pokeapi_gen.dl6`
 
 compile (compile_dl6.sh) exit code: 0
 emit-back (4_emit_jsonschema / 5_emit_openapi): OK
@@ -9,8 +9,9 @@ source components: 212 | generated component rels: 212 | lifted/enum rels: 161
 
 ## KNOWN emitter/compiler gaps (do not fail the gate)
 
-- **G1 ref-target carries generic columns**: the mapping mandates `list(rel_name)` and inline-object LIFT; the tsv2 compiler refuses a rel that is itself a ref TARGET (used as a column type, a list element, or an option element) while carrying generic option()/list() columns — the generic expansion inside that rel can't lower (`unsupported_construct(column_type_unknown(...))`, 0_type_plane.pl:128). Strict mode keeps every other real spelling and drops exactly these columns to the `json` carrier, each attributed in the gap rows below with the throw site; the clean-data rows are proven in the mapping hand fixture.
-- **G2 nullable arrays**: the converter now emits `option(list(_))` instead of dropping nullability, and the spelling compiles for SCALAR element types (conformance fixture `option_list_column_roundtrips_null_and_present`). Pokeapi's four nullable arrays all carry rel-typed elements, and `option(list(<rel>))` is refused (`column_type_unknown`, 0_type_plane.pl:128) as is `option(json_list(_))` (`option_element_type_unknown`); those four therefore fall to the `json` carrier under G1 rather than G2. Accepting a list under an option with a rel or json_list element is an open type-system question for the user.
+- **G1 `option(<rel>)` on a ref target**: a rel used as a reference target keeps a `type_decl/2` schema mirror minted at parse; the option desugar then removes that column from the rel and moves it to a companion split rel, and the mirror is never retargeted (0_generic_expand.pl:264-268), so a later check reads a column type no rel declares (`unsupported_construct(column_type_unknown(option(...)))`, 0_program_check.pl:342-347). Measured on this base: a ref target carrying `option(int)`, `option(text)`, `option(bool)`, `option(json)`, `list(int)`, `list(<rel>)` or `json_list(int)` compiles green; only `option(<rel>)` stops. Strict mode probes each generic column on its own and drops only the ones that stop the compiler.
+- **G2 `option(list(<rel>))`**: the list element's schema mirror is never minted, because the walk that finds element names peels the list flavors and not `option` (parse_dl_dcg.pl:637-646). `option(list(int))` and `option(list(text))` compile; the rel-element case stops as `column_type_unknown(<rel>)`. Nullable arrays otherwise round-trip their nullability.
+- Full trace, forks and receipts: `plans/2026-08-11-pokeapi-generic-nesting.md`.
 
 ### Component name set
 
@@ -61,12 +62,12 @@ source components: 212 | generated component rels: 212 | lifted/enum rels: 161
 
 ```
 wrote /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/pe_pokeapi_gen.ts
-COMPILE-TRACE program=pokeapi_gen parse=1371/7666227 plan=815/5956975 lower=177/728896 boot=1/24004 emit=884/8193707 write=34/179 total=3282/22569988
-emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/fix/converter-nullable-arrays/v6/tsv2/gen/pe_emit/schema.json
-emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/fix/converter-nullable-arrays/v6/tsv2/gen/pe_emit/openapi.json
+COMPILE-TRACE program=pokeapi_gen parse=1364/7700086 plan=844/6525088 lower=187/834964 boot=3/24292 emit=911/8242972 write=33/271 total=3342/23327673
+emit-back wrote /Users/chrishafley/projects/sprefa/.claude/worktrees/agent-ab605cc630a481ac3/v6/tsv2/gen/pe_emit/schema.json
+emit-back wrote /Users/chrishafley/projects/sprefa/.claude/worktrees/agent-ab605cc630a481ac3/v6/tsv2/gen/pe_emit/openapi.json
 ```
 
-Converter strict-mode dropped columns (G1): 29 (25 + the 4 formerly-G2 nullable arrays, whose rel-typed list element is the G1 reason); nullable-array-specific drops (G2): 0
+Converter strict-mode dropped columns (G1): 12; nullable-array drops (G2): 0 (option(list(..)) spelling emitted)
 
 ## Emit-back receipt
 
