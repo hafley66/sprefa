@@ -185,9 +185,9 @@ mod tests {
                 "luna": "gpt-5.6-luna@medium" } }"#,
             "collapsed",
         );
-        let explicit = Some("my-model".as_ref());
-        let preset = Some("flash4".as_ref());
-        let default = Some("luna".as_ref());
+        let explicit = Some("my-model");
+        let preset = Some("flash4");
+        let default = Some("luna");
         let cases = [
             (explicit, preset, default, Some("my-model".to_owned())),
             (
