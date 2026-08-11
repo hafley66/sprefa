@@ -86,9 +86,9 @@ test("openapiToDl6: strict equals full on the clean hand fixture, compiles, no d
   assert.equal(r.code, 0, `strict compile failed:\n${r.stdout}`);
 });
 
-test("openapiToDl6: strict drops a ref-target's generic columns with attribution", () => {
-  // A rel used as a ref target that also carries option/list columns is refused
-  // by the compiler (0_type_plane.pl:128); strict drops exactly those columns.
+test("openapiToDl6: strict keeps a ref target's generic columns the compiler accepts", () => {
+  // Sabotage receipt: asserting the old whole-rel drop
+  // (/rel item\(price: json, kids: json, name: text\)/) fails against this doc.
   const doc = {
     components: {
       schemas: {
@@ -107,10 +107,44 @@ test("openapiToDl6: strict drops a ref-target's generic columns with attribution
   } as never;
   const strict = new OpenapiToDl6(doc, "strict");
   const prog = strict.convert();
-  assert.match(prog, /rel item\(price: json, kids: json, name: text\)/);
-  assert.ok(strict.gapList.some((g) => g.startsWith("item.price: option(int)")));
-  assert.ok(strict.gapList.some((g) => g.startsWith("item.kids: list(kid)")));
-  assert.ok(strict.gapList.every((g) => g.includes("0_type_plane.pl:128")));
+  assert.match(prog, /rel item\(price: option\(int\), kids: list\(kid\), name: text\)/);
+  assert.equal(strict.gapList.length, 0);
+  const tmp = path.join(os.tmpdir(), "openapi_strict_ref_target.dl6");
+  fs.writeFileSync(tmp, prog);
+  const r = compile(tmp);
+  assert.equal(r.code, 0, `strict ref-target compile failed:\n${r.stdout}`);
+});
+
+test("openapiToDl6: strict drops only the ref-target column the compiler stops on", () => {
+  // option(<rel>) on a ref target has no type_decl mirror after the option
+  // arity shrink; its option(int) sibling on the same rel is untouched.
+  const doc = {
+    components: {
+      schemas: {
+        Holder: { type: "object", properties: { item: { $ref: "#/components/schemas/Item" } } },
+        Item: {
+          type: "object",
+          properties: {
+            price: { type: "integer", nullable: true },
+            kid: { allOf: [{ $ref: "#/components/schemas/Kid" }], nullable: true },
+            name: { type: "string" },
+          },
+        },
+        Kid: { type: "object", properties: { name: { type: "string" } } },
+      },
+    },
+  } as never;
+  const strict = new OpenapiToDl6(doc, "strict");
+  const prog = strict.convert();
+  assert.match(prog, /rel item\(price: option\(int\), kid: json, name: text\)/);
+  assert.deepEqual(
+    strict.gapList,
+    ["item.kid: option(kid) -> json (0_program_check.pl:342)"],
+  );
+  const tmp = path.join(os.tmpdir(), "openapi_strict_option_ref.dl6");
+  fs.writeFileSync(tmp, prog);
+  const r = compile(tmp);
+  assert.equal(r.code, 0, `strict option-ref compile failed:\n${r.stdout}`);
 });
 
 test("openapiToDl6: snake_casing name collision refused loudly", () => {

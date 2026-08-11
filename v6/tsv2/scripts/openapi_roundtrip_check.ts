@@ -199,8 +199,8 @@ function main(): void {
   const ref = cats.refTarget!;
   const nul = cats.nullable!;
 
-  // Columns the converter dropped to the json carrier under strict mode
-  // (0_type_plane.pl:128). These are KNOWN gaps, not mismatches.
+  // Columns the converter dropped to the json carrier under strict mode.
+  // These are KNOWN gaps, not mismatches.
   const strictDropped = new Set<string>(
     converter.gapList
       .map((g) => /^([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*):/.exec(g))
@@ -291,8 +291,9 @@ function main(): void {
   lines.push("");
   lines.push("## KNOWN emitter/compiler gaps (do not fail the gate)");
   lines.push("");
-  lines.push("- **G1 ref-target carries generic columns**: the mapping mandates `list(rel_name)` and inline-object LIFT; the tsv2 compiler refuses a rel that is itself a ref TARGET (used as a column type, a list element, or an option element) while carrying generic option()/list() columns — the generic expansion inside that rel can't lower (`unsupported_construct(column_type_unknown(...))`, 0_type_plane.pl:128). Strict mode keeps every other real spelling and drops exactly these columns to the `json` carrier, each attributed in the gap rows below with the throw site; the clean-data rows are proven in the mapping hand fixture.");
-  lines.push("- **G2 nullable arrays**: the `option(list(_))/option(json_list(_))` spelling is emitted; nullable arrays round-trip their nullability instead of dropping it.");
+  lines.push("- **G1 `option(<rel>)` on a ref target**: a rel used as a reference target keeps a `type_decl/2` schema mirror minted at parse; the option desugar then removes that column from the rel and moves it to a companion split rel, and the mirror is never retargeted (0_generic_expand.pl:264-268), so a later check reads a column type no rel declares (`unsupported_construct(column_type_unknown(option(...)))`, 0_program_check.pl:342-347). Measured on this base: a ref target carrying `option(int)`, `option(text)`, `option(bool)`, `option(json)`, `list(int)`, `list(<rel>)` or `json_list(int)` compiles green; only `option(<rel>)` stops. Strict mode probes each generic column on its own and drops only the ones that stop the compiler.");
+  lines.push("- **G2 `option(list(<rel>))`**: the list element's schema mirror is never minted, because the walk that finds element names peels the list flavors and not `option` (parse_dl_dcg.pl:637-646). `option(list(int))` and `option(list(text))` compile; the rel-element case stops as `column_type_unknown(<rel>)`. Nullable arrays otherwise round-trip their nullability.");
+  lines.push("- Full trace, forks and receipts: `plans/2026-08-11-pokeapi-generic-nesting.md`.");
   lines.push("");
 
   const tableHead = (title: string, c: ICatCount): void => {
