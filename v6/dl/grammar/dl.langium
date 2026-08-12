@@ -25,9 +25,20 @@ Statement:
 // occurrence of those digits anywhere in the language (same identifier-collision
 // reasoning as PlainType.prim below) — an ordinary integer literal `0` or `1` in a
 // rule body (`x = 0`) would then fail to lex as INT at all.
+// The first parenthesized group after the name is type parameters ONLY when a
+// second group follows; `rel point(x: int, y: int).` keeps the zero-parameter
+// shape. The `is` clause names interfaces the rel conforms to. Both are parsed
+// and held on the AST node; nothing in the bridge reads them yet.
+// A parameter is an ID, so it is lowercase in this slice (the ID terminal below
+// is /[a-z_].../); compile/parse_dl.pl accepts either case.
 RelDecl:
     'rel' ('(' retention=INT ')')? name=ID
-    '(' (columns+=ColumnDecl (',' columns+=ColumnDecl)*)? ')' '.';
+    ('(' typeParameters+=ID (',' typeParameters+=ID)* ')')?
+    '(' (columns+=ColumnDecl (',' columns+=ColumnDecl)*)? ')'
+    ('is' conformsTo+=TypeApplication (',' conformsTo+=TypeApplication)*)? '.';
+
+TypeApplication:
+    name=ID ('(' arguments+=ColumnType (',' arguments+=ColumnType)* ')')?;
 
 ColumnDecl:
     name=ID ':' type=ColumnType;

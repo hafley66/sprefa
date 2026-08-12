@@ -37,6 +37,7 @@ export type DlKeywordNames =
     | "Min"
     | "_"
     | "false"
+    | "is"
     | "null"
     | "rel"
     | "sh"
@@ -296,7 +297,7 @@ export function isNullLit(item: unknown): item is NullLit {
 }
 
 export interface PlainType extends langium.AstNode {
-    readonly $container: ColumnDecl;
+    readonly $container: ColumnDecl | TypeApplication;
     readonly $type: 'PlainType';
     prim: string;
 }
@@ -362,15 +363,19 @@ export interface RelDecl extends langium.AstNode {
     readonly $container: Program;
     readonly $type: 'RelDecl';
     columns: Array<ColumnDecl>;
+    conformsTo: Array<TypeApplication>;
     name: string;
     retention?: number;
+    typeParameters: Array<string>;
 }
 
 export const RelDecl = {
     $type: 'RelDecl',
     columns: 'columns',
+    conformsTo: 'conformsTo',
     name: 'name',
-    retention: 'retention'
+    retention: 'retention',
+    typeParameters: 'typeParameters'
 } as const;
 
 export function isRelDecl(item: unknown): item is RelDecl {
@@ -438,6 +443,23 @@ export function isStrLit(item: unknown): item is StrLit {
     return reflection.isInstance(item, StrLit.$type);
 }
 
+export interface TypeApplication extends langium.AstNode {
+    readonly $container: RelDecl;
+    readonly $type: 'TypeApplication';
+    arguments: Array<ColumnType>;
+    name: string;
+}
+
+export const TypeApplication = {
+    $type: 'TypeApplication',
+    arguments: 'arguments',
+    name: 'name'
+} as const;
+
+export function isTypeApplication(item: unknown): item is TypeApplication {
+    return reflection.isInstance(item, TypeApplication.$type);
+}
+
 export interface Var extends langium.AstNode {
     readonly $container: AggCall | CompareItem | HeadAtom | Member | MutationItem | NegItem | ProbeItem | QueryStmt | RelRefItem;
     readonly $type: 'Var';
@@ -467,7 +489,7 @@ export function isWildcard(item: unknown): item is Wildcard {
 }
 
 export interface WrapperType extends langium.AstNode {
-    readonly $container: ColumnDecl;
+    readonly $container: ColumnDecl | TypeApplication;
     readonly $type: 'WrapperType';
     prim: string;
     wrapper: 'Key' | 'Max' | 'Min';
@@ -511,6 +533,7 @@ export type DlAstType = {
     ShDecl: ShDecl
     Statement: Statement
     StrLit: StrLit
+    TypeApplication: TypeApplication
     Var: Var
     Wildcard: Wildcard
     WrapperType: WrapperType
@@ -747,11 +770,21 @@ export class DlAstReflection extends langium.AbstractAstReflection {
                     defaultValue: [],
                     optional: true
                 },
+                conformsTo: {
+                    name: RelDecl.conformsTo,
+                    defaultValue: [],
+                    optional: true
+                },
                 name: {
                     name: RelDecl.name
                 },
                 retention: {
                     name: RelDecl.retention,
+                    optional: true
+                },
+                typeParameters: {
+                    name: RelDecl.typeParameters,
+                    defaultValue: [],
                     optional: true
                 }
             },
@@ -802,6 +835,20 @@ export class DlAstReflection extends langium.AbstractAstReflection {
                 }
             },
             superTypes: [Literal.$type]
+        },
+        TypeApplication: {
+            name: TypeApplication.$type,
+            properties: {
+                arguments: {
+                    name: TypeApplication.arguments,
+                    defaultValue: [],
+                    optional: true
+                },
+                name: {
+                    name: TypeApplication.name
+                }
+            },
+            superTypes: []
         },
         Var: {
             name: Var.$type,
