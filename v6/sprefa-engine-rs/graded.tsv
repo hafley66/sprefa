@@ -1,14 +1,14 @@
-aggregate_count_min_max_track_arrivals_and_retraction	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+aggregate_count_min_max_track_arrivals_and_retraction	diff	-{"tick":1,"deltas":{"star_row":{"add":[["cli",4],["shell",7]],"del":[]},"stat":{"add":[["cli",1,4,4],["shell",1,7,7]],"del":[]}}}
 aggregate_in_edge_head_rejected	unsupported	aggregate_in_edge_head(total/1)
 aggregate_min_recomputes_when_the_minimum_is_retracted	diff	-{"tick":1,"deltas":{"star_row":{"add":[],"del":[["cli",4]]},"stat":{"add":[["cli",2,6,10]],"del":[["cli",3,4,10]]}}}
 aggregate_sum_tracks_a_growing_and_shrinking_group	diff	-{"tick":1,"deltas":{"budget":{"add":[["core",22]],"del":[["core",15]]},"spend":{"add":[["core","net",7]],"del":[]}}}
 any_two_tagged_arms_land_on_one_tick	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_note":{"add":[[1,"acked"],[1,"sealed"]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]}}}
 arithmetic_rejects_non_int_operand_at_runtime	unsupported	arith_operand_not_number(_+1,_,text)
 arrival_affinity_rewrite_keeps_delta	clean	byte-clean
-arrival_dup_batch_partial_ignore	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+arrival_dup_batch_partial_ignore	diff	-{"tick":1,"deltas":{"derived":{"add":[["alpha"],["gamma"]],"del":[]},"seen":{"add":[["alpha"],["gamma"]],"del":[]}}}
 async_state_machine_with_pattern_scan	unsupported	trigger_arg_not_var(fresh(_,_))
-backslash_in_string_literal_survives_both_doors	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-batched_increments_both_count	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+backslash_in_string_literal_survives_both_doors	diff	-{"tick":1,"deltas":{"hit":{"add":[["digit \\d here"]],"del":[]},"raw":{"add":[["digit \\d here"],["digit d here"]],"del":[]}}}
+batched_increments_both_count	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",2]],"del":[["clicks",0]]},"increment":{"add":[["clicks","ev1"],["clicks","ev2"]],"del":[]}}}
 bind_computes_derived_value_then_comparison_filters	clean	byte-clean
 bool_identity_comparison_filters	error	error(type_error(json_term,bool_lit(true)),_)
 bool_literals_round_trip	error	error(type_error(json_term,bool_lit(true)),_)
@@ -16,17 +16,17 @@ bool_rejects_text_ingress	unsupported	type_arrival_shape_mismatch(flag/1,value,b
 bool_relation_negation_is_two_valued	error	error(type_error(json_term,bool_lit(true)),_)
 braces_in_head_position	clean	byte-clean
 braces_literal_canonicalizes	clean	byte-clean
-callgraph_derivation_over_extraction	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-callgraph_unused_inverts_with_the_call_set	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+callgraph_derivation_over_extraction	diff	-{"tick":1,"deltas":{"def":{"add":[["a.rs","helper","method"],["a.rs","main","function"]],"del":[]},"node_fact":{"add":[["a.rs","node","function","main"],["a.rs","node","method","h
+callgraph_unused_inverts_with_the_call_set	diff	-{"tick":1,"deltas":{"def":{"add":[["a.rs","helper","method"],["a.rs","main","function"]],"del":[]},"node_fact":{"add":[["a.rs","node","function","main"],["a.rs","node","method","h
 chain_into_keyed_head_replaces	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_))))
 changed_since_ignores_events_before_turn	diff	-{"tick":1,"deltas":{"agent_turn":{"add":[["turn_only",1]],"del":[]},"turn_marker":{"add":[["turn_only"]],"del":[]}}}
 changed_since_spans_two_turns	diff	-{"tick":1,"deltas":{"agent_turn":{"add":[["turn_a",1]],"del":[]},"turn_marker":{"add":[["turn_a"]],"del":[]}}}
 clean_state_gate_and_exit_zero	clean	byte-clean
 clean_state_no_diags	clean	byte-clean
-clock_rel_join_storms	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+clock_rel_join_storms	diff	-{"tick":1,"deltas":{"diag_history":{"add":[["a_rs",3,"eprintln_ban",1],["a_rs",5,"eprintln_ban",1]],"del":[]},"diag_seen":{"add":[["a_rs",3,"eprintln_ban",1],["a_rs",3,"eprintln_b
 coalesce_default_returns_when_source_retracts	diff	-{"tick":1,"deltas":{"latest_commit":{"add":[["alpha","sha-1"]],"del":[]},"repo_latest":{"add":[["alpha","sha-1"]],"del":[["alpha","absent"]]}}}
 coalesce_defaults_the_absent_row	clean	byte-clean
-coalesce_in_edge_body_samples	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+coalesce_in_edge_body_samples	diff	-{"tick":1,"deltas":{"labelled":{"add":[[1,"oak"],[2,"unnamed"]],"del":[]},"ping":{"add":[[1],[2]],"del":[]}}}
 coalesce_over_derived_source	clean	byte-clean
 coalesce_under_negation_is_refused	unsupported	coalesce_not_top_level(latest_commit/2)
 coalesce_with_a_variable_default_is_refused	unsupported	coalesce_default_not_literal(latest_commit/2,variable)
@@ -36,9 +36,9 @@ combine_edge_is_the_conjunction_spelling	diff	-{"tick":1,"deltas":{"pair":{"add"
 combine_level_is_the_conjunction_spelling	clean	byte-clean
 comparison_filters_rows	clean	byte-clean
 complete_is_a_named_unsupported	unsupported	lifecycle_arm(complete)
-completion_propagation_lattice_tick	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-concat_fold_follows_arrival_order	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-concat_fold_reversed_arrival_reverses_result	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+completion_propagation_lattice_tick	diff	-{"tick":2,"deltas":{"end_a_signal":{"add":[["outer_x"],["outer_y"]],"del":[]}}}
+concat_fold_follows_arrival_order	diff	-{"tick":1,"deltas":{"append_line":{"add":[["main","a"],["main","b"]],"del":[]},"log_text":{"add":[["main","ab"]],"del":[["main",""]]}}}
+concat_fold_reversed_arrival_reverses_result	diff	-{"tick":1,"deltas":{"append_line":{"add":[["main","a"],["main","b"]],"del":[]},"log_text":{"add":[["main","ba"]],"del":[["main",""]]}}}
 concat_program_queue	diff	-{"tick":1,"deltas":{"demanded":{"add":[["tab(tab_a)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_a"]],"del":[]},"open_request":{"add":[["session_one","tab_a"]
 conjunction_edge_control_for_combine	diff	-{"tick":1,"deltas":{"pair":{"add":[[1,2]],"del":[]},"source_a":{"add":[[1]],"del":[]},"source_b":{"add":[[2]],"del":[]}}}
 conjunction_level_control_for_combine	clean	byte-clean
@@ -48,12 +48,12 @@ created_at_pinned_updated_at_advances	diff	-{"tick":1,"deltas":{"arrive":{"add":
 declaration_order_preserves_struct_refs	clean	byte-clean
 decode_missing_key_fails_quietly	unsupported	decode_source_not_struct(decode(_,{absent_key:_}))
 decode_open_pattern_binds_nested	unsupported	decode_source_not_struct(decode(_,{name:_}))
-demand_laziness_effect_rows	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+demand_laziness_effect_rows	diff	-{"tick":1,"deltas":{"demanded":{"add":[["alpha","session_one"]],"del":[]},"effect_call":{"add":[["alpha"]],"del":[]},"open_feed":{"add":[["session_one","alpha"]],"del":[]}}}
 demand_view_fires_its_consumer_once	diff	-{"tick":1,"deltas":{"fetch_call":{"add":[["repos/cli/cli"]],"del":[]},"fetch_demand":{"add":[["repos/cli/cli"]],"del":[]},"stale":{"add":[["repos/cli/cli"]],"del":[]}}}
 departed_fires_next_tick_on_retraction	diff	-{"tick":1,"deltas":{"mirror":{"add":[["alpha"]],"del":[]},"source_row":{"add":[["alpha"]],"del":[]}}}
 derive_directory_prefix_via_rtrim_replace	clean	byte-clean
 desugared_trace_equals_hand_written	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
-diag_scenario_seven_ticks_end_to_end	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+diag_scenario_seven_ticks_end_to_end	diff	-{"tick":1,"deltas":{"diag_history":{"add":[["a_rs",3,"eprintln_ban",1],["a_rs",5,"eprintln_ban",1]],"del":[]},"diagnostic":{"add":[["a_rs",3,"eprintln_ban","warning"],["a_rs",5,"e
 dirty_derives_from_digest_mismatch	diff	-{"tick":1,"deltas":{"dirty":{"add":[["src/lib.rs"]],"del":[]},"worktree_edit":{"add":[["src/lib.rs","sha_dirty"]],"del":[]},"worktree_file":{"add":[["src/lib.rs","sha_dirty"]],"de
 dirty_retracts_on_matching_commit	diff	-{"tick":1,"deltas":{"dirty":{"add":[["src/lib.rs"]],"del":[]},"worktree_edit":{"add":[["src/lib.rs","sha_v2"]],"del":[]},"worktree_file":{"add":[["src/lib.rs","sha_v2"]],"del":[["
 division_truncates_toward_zero_mod_follows_divisor_sign	clean	byte-clean
@@ -89,14 +89,14 @@ float_rejects_non_float_ingress	unsupported	type_arrival_shape_mismatch(score/1,
 float_shortest_round_trip_wire	diff	-{"tick":1,"deltas":{"sample":{"add":[[1e-7]],"del":[]}}}
 float_widens_integer_ingress	clean	byte-clean
 float_widens_wide_integer_ingress	clean	byte-clean
-flow_arg_param_hop_is_positional_and_site_pinned	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-flow_sig_owner_join_types_the_resolved_callee	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+flow_arg_param_hop_is_positional_and_site_pinned	diff	-{"tick":1,"deltas":{"df_arg":{"add":[["src/main.rs",10,15,-1,"receiver",17],["src/main.rs",10,15,0,"secret",16],["src/main.rs",30,35,0,"benign",36]],"del":[]},"df_param":{"add":[[
+flow_sig_owner_join_types_the_resolved_callee	diff	-{"tick":1,"deltas":{"df_param":{"add":[["src/f.rs","f_param",0,120]],"del":[]},"flow_node_type":{"add":[["f_param","src/f.rs","f","string"]],"del":[]},"flow_param_type":{"add":[["
 fork_join_error_arm_is_a_value	unsupported	compound_pattern_on_arrival_rel(outcome_a/1,1,ok(_))
 fork_join_is_a_conjunctive_body	diff	-{"tick":1,"deltas":{"result_a":{"add":[["alpha"]],"del":[]}}}
 generic_expansion_end_to_end	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[101,"first"]],"del":[]},"__opt_text_tag":{"add":[[101,"some"]],"del":[]},"author_audit":{"add":[[10,"some"]],"del":[]},"person":{"ad
 ghcacher_host_program_term	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
 ghcacher_json_normalization	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
-group_concat_one_argument_joins_members	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+group_concat_one_argument_joins_members	diff	-{"tick":1,"deltas":{"member_of":{"add":[["ada"],["grace"]],"del":[]},"roster":{"add":[["ada,grace"]],"del":[]}}}
 groupby_aggregate_two_bare_integer_literals	diff	-{"tick":1,"deltas":{"source":{"add":[["alpha"]],"del":[]},"tallied":{"add":[[0,0,1]],"del":[]}}}
 groupby_two_bare_integer_literals	diff	-{"tick":1,"deltas":{"classified":{"add":[["alpha",0,0]],"del":[]},"source":{"add":[["alpha"]],"del":[]}}}
 guard_stage_fires_on_negation_and_comparison	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
@@ -113,8 +113,8 @@ higher_order_call_over_atom_rejected	unsupported	dynamic_relation_name(call/1)
 host_free_query_leaves_a_derived_rel_unsubscribed	diff	-{"tick":1,"deltas":{"audit_trail":{"add":[[7]],"del":[]},"audited":{"add":[[7]],"del":[]},"reading":{"add":[["beta",7]],"del":[]},"watched":{"add":[["beta"]],"del":[]}}}
 host_input_column_shadows_runtime_witness	unsupported	host_column_shadows_runtime(peek,input,witness_digest)
 host_output_column_shadows_runtime_ordinal	unsupported	host_column_shadows_runtime(look,output,ordinal)
-identical_demand_dedups	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-identical_increments_stack_as_log_deltas	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+identical_demand_dedups	diff	-{"tick":1,"deltas":{"demand":{"add":[["src","sha_aaa"]],"del":[]},"watch_request":{"add":[["alice","src","sha_aaa"],["bob","src","sha_aaa"]],"del":[]}}}
+identical_increments_stack_as_log_deltas	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",3]],"del":[["clicks",0]]},"increment":{"add":[["clicks"],["clicks"],["clicks"]],"del":[]}}}
 increment_decrement_same_tick_nets_zero	diff	-{"tick":1,"deltas":{"decrement":{"add":[["clicks","ev2"]],"del":[]},"increment":{"add":[["clicks","ev1"]],"del":[]}}}
 int_accepts_integral_float	clean	byte-clean
 int_float_arithmetic_keeps_real_result	clean	byte-clean
@@ -156,13 +156,13 @@ json_patch_null_value_composes	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["
 json_patch_null_value_sets_key	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{}]],"del":[["alpha",{"cpu":1}]]},"metric_sample":{"add":[["alpha",{"cpu":null}]],"del":[]}}}
 json_patch_replaces_arrays_wholesale	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"tags":["blue"]}]],"del":[["alpha",{"tags":["red","green"]}]]},"metric_sample":{"add":[["alpha",{"tags":["blue"]}]],"del":[]}}}
 json_round_trip_decode_to_document	unsupported	level_body_goal(repo_lang(_,_),json_each(_,_))
-json_safe_integer_boundary_survives_both_doors	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+json_safe_integer_boundary_survives_both_doors	diff	-{"tick":1,"deltas":{"carried":{"add":[["max_safe",9007199254740991],["min_safe",-9007199254740991],["small",1]],"del":[]},"measure":{"add":[["max_safe",9007199254740991],["min_saf
 json_spread_and_capture_and_descent_multiply	clean	byte-clean
-json_string_control_escapes_are_valid_json	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-json_top_level_scalar_document_is_a_value	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-json_typed_capture_filters_a_wrong_typed_value	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-json_typed_capture_folds_into_a_keyed_int_total	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-json_untyped_capture_binds_without_a_type	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+json_string_control_escapes_are_valid_json	diff	-{"tick":1,"deltas":{"note":{"add":[["back\bspace"],["carriage\rreturn"],["form\ffeed"],["line\nfeed"],["tab\there"],["unit\u0001sep"]],"del":[]},"seen":{"add":[["back\bspace"],["c
+json_top_level_scalar_document_is_a_value	diff	-{"tick":1,"deltas":{"echoed":{"add":[["negative",-7],["number",42],["object",{"a":1}],["text_scalar","\"quoted\""]],"del":[]},"label":{"add":[["looks_like_json","{\"a\":1}"],["loo
+json_typed_capture_filters_a_wrong_typed_value	diff	-{"tick":1,"deltas":{"counted":{"add":[["cli",4]],"del":[]},"event":{"add":[[{"repo":"cli","stars":4}],[{"repo":"web","stars":"many"}],[{"repo":7,"stars":1}]],"del":[]}}}
+json_typed_capture_folds_into_a_keyed_int_total	diff	-{"tick":1,"deltas":{"event":{"add":[[{"repo":"cli","stars":4}]],"del":[]},"star_event":{"add":[["cli",4]],"del":[]},"total":{"add":[["cli",4]],"del":[]}}}
+json_untyped_capture_binds_without_a_type	diff	-{"tick":1,"deltas":{"event":{"add":[[{"stars":"lots"}],[{"stars":"many"}]],"del":[]},"seen":{"add":[["lots"],["many"]],"del":[]}}}
 keep_on_non_log_rel_rejected	unsupported	keep_on_non_log_rel(state/1)
 key_identical_write_is_silent	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
 key_last_write_wins	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
@@ -174,12 +174,12 @@ keyed_log_rejected	unsupported	keyed_log_rel(latest/2,[1])
 keyed_replace_departs_the_old_row	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
 latest_in_level_rule_rejected	unsupported	latest_in_level_rule(source_item/1)
 level_view_reads_set_projection_not_occurrences	diff	-{"tick":1,"deltas":{"line":{"add":[[1,"a.ts","alpha"]],"del":[]},"seen":{"add":[["a.ts"]],"del":[]}}}
-list_bare_column_round_trips	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+list_bare_column_round_trips	diff	-{"tick":1,"deltas":{"__gen__list_text_df210f232c1299bd":{"add":[[100]],"del":[]},"__gen__list_text_df210f232c1299bd__member":{"add":[[100,0,"alpha"],[100,1,"beta"]],"del":[]},"box
 list_bare_text_door	clean	byte-clean
 list_column_fans_out_through_spread	clean	byte-clean
 list_dense_sequence_text_door	clean	byte-clean
 list_entity_dense_sequence_end_to_end	diff	-{"tick":1,"deltas":{"__gen__list_entity_dense_sequence_text_f22da23f5c6":{"add":[[100]],"del":[]},"__gen__list_entity_dense_sequence_text_f22da23f5c6__member":{"add":[[100,0,"a"]]
-list_entity_linked_sequence_end_to_end	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+list_entity_linked_sequence_end_to_end	diff	-{"tick":1,"deltas":{"__gen__list_entity_linked_sequence_text_e34f8b0a209ed35":{"add":[[300]],"del":[]},"__gen__list_entity_linked_sequence_text_e34f8b0a209ed35__link":{"add":[[21,
 list_interned_set_dictionary_content_deduplicates	unsupported	emitter returned false
 list_interned_set_end_to_end	unsupported	emitter returned false
 list_interned_set_relation_element_refused	unsupported	list_interned_set_relation_element(fighter_summary)
@@ -188,33 +188,33 @@ list_linked_sequence_text_door	clean	byte-clean
 list_of_json_documents_round_trips	clean	byte-clean
 list_of_relation_refs_still_refused	unsupported	list_of_relation_refs(span)
 live_nonzero_exit_keeps_rows	diff	-{"tick":1,"deltas":{"stream_item":{"add":[["src",1,"alpha"]],"del":[]}}}
-log_deltas_follow_arrival_order	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-log_driver_fold_needs_no_id_column	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+log_deltas_follow_arrival_order	diff	-{"tick":1,"deltas":{"line":{"add":[[1,"a.ts","alpha"],[1,"a.ts","beta"],[1,"b.ts","gamma"]],"del":[]},"seen":{"add":[["a.ts"],["b.ts"]],"del":[]}}}
+log_driver_fold_needs_no_id_column	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",2]],"del":[["clicks",0]]},"increment":{"add":[["clicks"],["clicks"]],"del":[]}}}
 log_on_level_headed_rel_rejected	unsupported	log_on_level_headed_rel(derived_event/1)
-log_rel_identical_arrival_is_two_occurrences	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+log_rel_identical_arrival_is_two_occurrences	diff	-{"tick":1,"deltas":{"ev":{"add":[["alpha"],["alpha"]],"del":[]},"fired":{"add":[["alpha"],["alpha"]],"del":[]}}}
 log_retraction_rejected	compiled	no oracle tick log
-log_stacks_within_tick_and_across_ticks	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+log_stacks_within_tick_and_across_ticks	diff	-{"tick":1,"deltas":{"heard":{"add":[["alpha"],["alpha"]],"del":[]},"heard_count":{"add":[["alpha"],["alpha"]],"del":[]}}}
 log_without_retention_rejected	unsupported	missing_retention(event/1)
-lww_fold_follows_arrival_order	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+lww_fold_follows_arrival_order	diff	-{"tick":1,"deltas":{"latest":{"add":[["cli","v1"]],"del":[["cli","v0"]]},"set_value":{"add":[["cli","v1"],["cli","v2"]],"del":[]}}}
 marker_stops_backlog_replay	diff	-{"tick":1,"deltas":{"subscriber":{"add":[["alice"]],"del":[]}}}
-match_classify_response	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-match_classify_response_desugared	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+match_classify_response	diff	-{"tick":1,"deltas":{"fetch_result_error":{"add":[["worker",503]],"del":[]},"fetch_result_fresh":{"add":[["api","etag_","payload_"]],"del":[]},"fetch_result_unchanged":{"add":[["ap
+match_classify_response_desugared	diff	-{"tick":1,"deltas":{"fetch_result_error":{"add":[["worker",503]],"del":[]},"fetch_result_fresh":{"add":[["api","etag_","payload_"]],"del":[]},"fetch_result_unchanged":{"add":[["ap
 match_edge_arm_keeps_edge_semantics	diff	-{"tick":1,"deltas":{"cache":{"add":[["cli","v1"]],"del":[]},"poll_result":{"add":[["cli","v1"]],"del":[]}}}
 match_enum_nonexhaustive_is_refused	unsupported	match_nonexhaustive(body,redirect)
 merge_batches_per_tick	diff	-{"tick":1,"deltas":{"event_a":{"add":[["alpha"]],"del":[]},"out":{"add":[["alpha"]],"del":[]}}}
 merge_never_retracts	diff	-{"tick":1,"deltas":{"event_a":{"add":[["alpha"]],"del":[]},"out":{"add":[["alpha"]],"del":[]}}}
-merge_policy	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+merge_policy	diff	-{"tick":1,"deltas":{"demanded":{"add":[["tab(tab_a)","session_one"],["tab(tab_b)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_a"],["session_one","tab_b"]],"de
 module_path_and_option_column_coexist	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[801,"gala"]],"del":[]},"__opt_text_tag":{"add":[[801,"some"]],"del":[]}}}
 module_path_in_body_reads_the_flat_rel	clean	byte-clean
 module_path_in_head_resolves_and_contributes	clean	byte-clean
 module_path_local_name_binds_before_the_dotted_one	clean	byte-clean
 module_path_off_the_decl_tree_refuses	unsupported	unresolvable_path([orchard,north,tree])
 module_path_three_segments_resolve_through_the_rooms	clean	byte-clean
-mutual_recursion_matches_oracle	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+mutual_recursion_matches_oracle	diff	-{"tick":1,"deltas":{"clock":{"add":[["go"]],"del":[]},"even":{"add":[[0],[3]],"del":[]},"odd":{"add":[[0],[3]],"del":[]},"seed":{"add":[[0],[3]],"del":[]}}}
 native_ts_query_term	clean	byte-clean
 negated_identity_guard_flips_to_complement	clean	byte-clean
 negated_ordered_guard_flips_to_complement	clean	byte-clean
-nested_body_atom_reads_every_partition	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+nested_body_atom_reads_every_partition	clean	byte-clean
 nested_child_and_an_option_column_coexist	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[801,"gala"]],"del":[]},"__opt_text_tag":{"add":[[801,"some"]],"del":[]}}}
 nested_child_carries_the_parent_reference	clean	byte-clean
 nested_head_without_a_parent_atom_refuses	unsupported	nested_parent_unbound(orchard__tree)
@@ -223,8 +223,8 @@ nested_list_text_door	clean	byte-clean
 nested_parent_with_no_rows_yields_an_empty_child	clean	byte-clean
 nested_rel_element_list_round_trips	diff	-{"tick":1,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
 nested_three_levels_chain_the_references	clean	byte-clean
-nested_two_parent_rows_partition_the_child	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-nested_zero_column_child_is_one_row_per_parent	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+nested_two_parent_rows_partition_the_child	diff	-{"tick":1,"deltas":{"orchard":{"add":[[1],[2]],"del":[]},"orchard__tree":{"add":[[{"orchard_id":1},7],[{"orchard_id":1},8],[{"orchard_id":2},9]],"del":[]},"per_orchard":{"add":[[1
+nested_zero_column_child_is_one_row_per_parent	clean	byte-clean
 new_file_diag_at_hit_line_exact_rows	clean	byte-clean
 new_file_no_exceeded_diag	clean	byte-clean
 new_salt_refires_fresh_stream	diff	-{"tick":1,"deltas":{"demand":{"add":[["src","sha_aaa"]],"del":[]},"watch_request":{"add":[["alice","src","sha_aaa"]],"del":[]}}}
@@ -242,18 +242,18 @@ one_occurrence_two_rows_still_conflicts	unsupported	edge_head_conflict_risk(late
 option_companion_name_collision_is_named	unsupported	option_companion_name_collision(pair_holder__before/1,pair_holder/2,before)
 option_dense_sequence_of_rel_round_trips_absent_and_present	diff	-{"tick":1,"deltas":{"__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42":{"add":[[100]],"del":[]},"__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d
 option_in_key_column_is_refused	unsupported	option_in_key_column(session/2,token)
-option_list_column_roundtrips_null_and_present	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-option_list_of_rel_round_trips_absent_and_present	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+option_list_column_roundtrips_null_and_present	diff	-{"tick":1,"deltas":{"__gen__list_int_e673312e7575f":{"add":[[100]],"del":[]},"__gen__list_int_e673312e7575f__member":{"add":[[100,0,7],[100,1,9]],"del":[]},"__gen__list_text_df210
+option_list_of_rel_round_trips_absent_and_present	diff	-{"tick":1,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
 option_list_of_scalar_and_of_rel_in_one_rel	diff	-{"tick":2,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
 option_list_of_unknown_name_keeps_its_stop	unsupported	column_type_unknown(fighter_summry)
 option_of_interned_set_of_rel_is_refused	unsupported	list_interned_set_relation_element(fighter_summary)
 option_of_json_list_keeps_its_stop	unsupported	option_element_type_unknown(json_list(int))
 option_of_option_of_scalar_keeps_its_stop	unsupported	option_element_type_unknown(option(int))
-option_rel_on_a_reference_target_round_trips_absent_and_present	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-option_rel_ref_desugars_to_companion_split_rel	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+option_rel_on_a_reference_target_round_trips_absent_and_present	diff	-{"tick":1,"deltas":{"audit":{"add":[[1,{"id":101}],[2,{"id":102}]],"del":[]},"commit":{"add":[[101],[102]],"del":[]},"person":{"add":[[7,"ada"]],"del":[]}}}
+option_rel_ref_desugars_to_companion_split_rel	diff	-{"tick":1,"deltas":{"person":{"add":[[7,"ada"]],"del":[]}}}
 option_scalar_enums_mint_per_element_type	diff	-{"tick":1,"deltas":{"__opt_int_none":{"add":[[701]],"del":[]},"__opt_int_tag":{"add":[[701,"none"]],"del":[]},"__opt_text_some":{"add":[[601,"warm"]],"del":[]},"__opt_text_tag":{"
 option_text_column_reads_through_tag_join	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[501,"chris@example.com"]],"del":[]},"__opt_text_tag":{"add":[[501,"some"]],"del":[]}}}
-ordered_aggregate_retraction_rebuild	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+ordered_aggregate_retraction_rebuild	diff	-{"tick":1,"deltas":{"item":{"add":[],"del":[["north",1,"pear"]]},"ordered_values":{"add":[["north",["orange","apple"]]],"del":[["north",["pear","orange","apple"]]]}}}
 ordered_fragment_line_assembly	clean	byte-clean
 ordered_group_concat_explicit_comma_matches_one_argument	clean	byte-clean
 ordered_group_concat_one_argument_defaults_to_comma	clean	byte-clean
@@ -288,17 +288,17 @@ regexp_pattern_not_literal	unsupported	regexp_pattern_not_literal
 regexp_pattern_outside_subset	unsupported	regexp_pattern_outside_subset("a(?=b)")
 regexp_positive_match	runtime-error	boot statement failed: SqlInputError { error: Error { code: Unknown, extended_code: 1 }, msg: "no such function: REGEXP", sql: "INSERT OR IGNORE INTO \"matched\" (\"text\") SELECT
 regexp_retraction_flip	runtime-error	boot statement failed: SqlInputError { error: Error { code: Unknown, extended_code: 1 }, msg: "no such function: REGEXP", sql: "INSERT OR IGNORE INTO \"matched\" (\"text\") SELECT
-rel_element_list_round_trips	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+rel_element_list_round_trips	diff	-{"tick":1,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
 relation_depth2_chained_decode	diff	-{"tick":1,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
 relation_depth2_construct_and_read	diff	-{"tick":1,"deltas":{"coord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"a
 relation_depth2_dot_read	diff	-{"tick":2,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
 relation_depth2_literal_leaf_selects_zero_and_one	diff	-{"tick":1,"deltas":{"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"hit":{"add":[[10]],"del":[]},"raw":{"add":[["acme","sr
-relation_depth2_many_rows_share_one_leaf	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+relation_depth2_many_rows_share_one_leaf	diff	-{"tick":1,"deltas":{"coord":{"add":[["a.rs",1,2],["b.rs",3,4],["c.rs",5,6]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"a.rs"}],[{"name":"acme"},{"name":"b.rs"}],[{"name":"
 relation_depth2_member_dot_pattern	diff	-{"tick":2,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
 relation_depth2_nested_decode_pattern	diff	-{"tick":2,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
 relation_depth3_chained_decode	diff	-{"tick":1,"deltas":{"dfound":{"add":[["src/a.rs","def"]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"located
 relation_depth3_construct_and_read	diff	-{"tick":1,"deltas":{"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"found":{"add":[["src/a.rs","def"]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"located"
-relation_depth3_many_rows	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+relation_depth3_many_rows	diff	-{"tick":1,"deltas":{"file":{"add":[[{"name":"acme"},{"name":"a.rs"}],[{"name":"acme"},{"name":"b.rs"}]],"del":[]},"found":{"add":[["a.rs","def"],["a.rs","ref"],["b.rs","def"]],"de
 relation_pattern_target_arity_rejected	unsupported	relation_pattern_not_a_relation_value(span/3,file,file,file(repo(acme)))
 relation_pattern_text_literal_in_ref_column_rejected	unsupported	relation_pattern_not_a_relation_value(span/3,file,file,'src/a.rs')
 relation_pattern_wrong_target_rejected	unsupported	relation_pattern_not_a_relation_value(span/3,file,file,fpath('a.rs'))
@@ -316,7 +316,7 @@ retention_count_prunes_oldest	diff	-{"tick":1,"deltas":{"event":{"add":[["one"]]
 retention_head_conflict_risk_rejected	unsupported	retention_head_conflict_risk(journal/1,count(1))
 retention_prune_is_a_visible_minus	diff	-{"tick":1,"deltas":{"event":{"add":[["one"]],"del":[]}}}
 retention_single_arm_still_prunes	diff	-{"tick":1,"deltas":{"journal":{"add":[["a"]],"del":[]},"ping":{"add":[["a"]],"del":[]}}}
-retraction_only_tick_retracts_level_view	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+retraction_only_tick_retracts_level_view	diff	-{"tick":1,"deltas":{"mirror":{"add":[["alpha"],["beta"]],"del":[]},"source_row":{"add":[["alpha"],["beta"]],"del":[]}}}
 rev_fill_not_behind_keeps_stale_pin_empty	diff	-{"tick":1,"deltas":{"demand_rev":{"add":[[11,"release"]],"del":[]},"pin_want":{"add":[[4,11,"release"]],"del":[]}}}
 rtrim_strips_trailing_chars	clean	byte-clean
 same_tick_error_then_fresh_chains_arms	unsupported	trigger_arg_not_var(error(_))
@@ -325,15 +325,15 @@ scan_is_a_named_unsupported_at_five_arguments	unsupported	removed_word(scan)
 scope_done_three_spellings	unsupported	trigger_arg_not_var(done)
 seed_and_transition_are_disjoint	unsupported	edge_body_with_negation((increment(_,_),not(pre(counter(_,_)))))
 seeded_one_arm_fold_matches_two_arms	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",1]],"del":[]},"increment":{"add":[["clicks","ev1"]],"del":[]}}}
-seeded_pre_multicolumn_fee_stats_fold	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+seeded_pre_multicolumn_fee_stats_fold	diff	-{"tick":1,"deltas":{"fee":{"add":[["merchant",5],["merchant",7]],"del":[]},"fee_stats":{"add":[["merchant",12]],"del":[]}}}
 seeded_pre_reads_a_body_bound_value	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",5]],"del":[]},"increment":{"add":[["clicks",4]],"del":[]}}}
-seeded_pre_text_breadcrumb_fold	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+seeded_pre_text_breadcrumb_fold	diff	-{"tick":1,"deltas":{"breadcrumb":{"add":[["main","home/docs"]],"del":[]},"step":{"add":[["main","/"],["main","docs"],["main","home"]],"del":[]}}}
 seq_wire_hand	diff	-{"tick":1,"deltas":{"arrival":{"add":[["one"]],"del":[]},"numbered":{"add":[[1,"one"]],"del":[]},"seq_numbered_":{"add":[["q",1]],"del":[]}}}
 seq_wire_surface	diff	-{"tick":1,"deltas":{"arrival":{"add":[["one"]],"del":[]},"numbered":{"add":[[1,"one"]],"del":[]},"seq_numbered_":{"add":[["q",1]],"del":[]}}}
-set_dedups_log_stacks	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-set_rel_identical_arrival_is_one_occurrence	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-shared_demand_refcount	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-shuffled_arrival_reorders_log_deltas	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+set_dedups_log_stacks	diff	-{"tick":1,"deltas":{"heard":{"add":[["alpha"],["alpha"]],"del":[]},"heard_count":{"add":[["alpha"],["alpha"]],"del":[]},"seen":{"add":[["alpha"]],"del":[]},"seen_count":{"add":[["
+set_rel_identical_arrival_is_one_occurrence	diff	-{"tick":1,"deltas":{"ev":{"add":[["alpha"]],"del":[]},"fired":{"add":[["alpha"]],"del":[]}}}
+shared_demand_refcount	diff	-{"tick":1,"deltas":{"demanded":{"add":[["alpha","session_one"],["alpha","session_two"]],"del":[]},"effect_call":{"add":[["alpha"]],"del":[]},"open_feed":{"add":[["session_one","al
+shuffled_arrival_reorders_log_deltas	diff	-{"tick":1,"deltas":{"line":{"add":[[1,"a.ts","alpha"],[1,"a.ts","beta"],[1,"b.ts","gamma"]],"del":[]},"seen":{"add":[["a.ts"],["b.ts"]],"del":[]}}}
 stale_keyed_retraction_keeps_replacement	diff	-{"tick":1,"deltas":{"current_value":{"add":[["item","v1"]],"del":[]}}}
 state_flap_nets_to_zero_scope_churn	diff	-{"tick":1,"deltas":{"fetch_result":{"add":[["gh_repos","error(500)"]],"del":[]},"poll_due":{"add":[["gh_repos"]],"del":[]}}}
 struct_arrival_field_type_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,field_not_int(span,end,nine))
@@ -350,7 +350,7 @@ struct_host_output_type_unknown_rejected	unsupported	column_type_unknown(spann)
 struct_intern_order_a	diff	-{"tick":1,"deltas":{"mark":{"add":[[{"end":2,"start":1}]],"del":[]},"span":{"add":[[1,2]],"del":[]}}}
 struct_intern_order_b	diff	-{"tick":1,"deltas":{"mark":{"add":[[{"end":4,"start":3}]],"del":[]},"span":{"add":[[3,4]],"del":[]}}}
 struct_nested_value_renders_whole_tree	diff	-{"tick":1,"deltas":{"diag":{"add":[[{"at":{"end":9,"start":3},"file":"a.rs"},"unused"]],"del":[]},"diag_file":{"add":[["a.rs"]],"del":[]},"place":{"add":[["a.rs",{"end":9,"start":
-struct_shared_child_survives_one_release	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+struct_shared_child_survives_one_release	diff	-{"tick":1,"deltas":{"hit":{"add":[["left",{"end":2,"start":1}],["right",{"end":2,"start":1}]],"del":[]},"span":{"add":[[1,2]],"del":[]}}}
 struct_span_columns_are_int_after_decode	diff	-{"tick":1,"deltas":{"def_start":{"add":[["a.rs",17]],"del":[]},"node_fact":{"add":[["a.rs","main",{"end":42,"start":17}]],"del":[]},"span":{"add":[[42,17]],"del":[]}}}
 struct_type_cycle_rejected	unsupported	type_cycle([node])
 struct_type_mutual_cycle_rejected	unsupported	type_cycle([left,right])
@@ -364,7 +364,7 @@ text_one_and_numeric_one_never_join	unsupported	join_column_type_mismatch('b1."v
 text_rejects_number_ingress	unsupported	type_arrival_shape_mismatch(label/1,value,text,field_not_text(4))
 tightened_baseline_catches_regrowth	clean	byte-clean
 trigger_marker_is_what_stops_backlog_replay	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
-two_pins_dedup_to_one_demand_row	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+two_pins_dedup_to_one_demand_row	diff	-{"tick":1,"deltas":{"demand_rev":{"add":[[9,"main"]],"del":[]},"pin_want":{"add":[[1,9,"main"],[5,9,"main"]],"del":[]}}}
 typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))
 typed_int_without_literal_witness	clean	byte-clean
 unmarked_chain_replays_to_late_subscriber	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
