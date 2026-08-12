@@ -1,0 +1,9 @@
+# Lead 5: transitive closure over a CYCLIC graph, then retract one edge of
+# the cycle. Refcount-style incremental maintenance keeps rows in a cycle
+# alive through their own derivations.
+
+rel edge(from_node: text, to_node: text).
+rel reach(from_node: text, to_node: text).
+
+reach(FromNode, ToNode) <- edge(FromNode, ToNode).
+reach(FromNode, ToNode) <- reach(FromNode, MidNode), edge(MidNode, ToNode).

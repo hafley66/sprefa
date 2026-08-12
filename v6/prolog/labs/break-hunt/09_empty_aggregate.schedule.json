@@ -1,0 +1,6 @@
+[
+  [ {"rel":"spend","sign":"add","row":["red","nails",10]} ],
+  [ {"rel":"spend","sign":"add","row":["red","glue",5]} ],
+  [ {"rel":"spend","sign":"del","row":["red","nails",10]} ],
+  [ {"rel":"spend","sign":"del","row":["red","glue",5]} ]
+]
