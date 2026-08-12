@@ -21,6 +21,12 @@ use boop::{query, usage};
 const DOCTRINE: &str = "\
 DOCTRINE (this help is the usage contract; agents read it with `boop --help`):
 
+WARMUP: after the worktree exists and before the agent starts, lane create runs
+  the repo's `boop-start` just recipe if it declares one, and a repo that does
+  not is skipped in silence. A FAILING recipe blocks the spawn: the pre-commit
+  hook needs what it installs, and a lane that cannot commit reads the abort as
+  success. `--no-start` opts out.
+
 SPAWN: every lane spawn goes through lane create; bare tmux spawns leave no
 edge and stay invisible to tracking:
     boop beep lane create --branch feature/<name> --brief <abs-path> \\
@@ -59,12 +65,13 @@ TRANSPORT: every lane pane runs ONE command, whatever the harness:
   dropped and no hail needs a human re-dispatch.
 
 HAIL: boop beep hail <lane> --body \"text\" [--from <me>] [--kind <k>]
-  Reaches a running lane on EVERY harness. Two delivery tiers, both reported:
-    midturn  claude and codex take the text into the turn already running
-             (claude stream-json stdin; codex app-server turn/steer).
-    nextturn opencode and kimi run the model inside a one-shot CLI process with
-             no control port, so the supervisor holds the text and opens a
-             resume turn the instant the running one ends.
+  Reaches a running lane MID-TURN on all four harnesses:
+    claude    stream-json user line on the child's stdin
+    codex     app-server turn/steer against the live turn id
+    opencode  typed into its TUI window; plain Enter is the steer
+    kimi      typed into its TUI window, then C-s (Enter alone only QUEUES)
+  A harness with no in-flight port would report `nextturn` and the supervisor
+  would hold the text for a resume turn; none does today.
   Proof of delivery is in the store, not in a screenshot:
     boop db \"SELECT * FROM agent_edge\" -- edge kind deliver-midturn/deliver-nextturn
   and the mailbox row's to_timestamp is stamped when the lane takes it.
