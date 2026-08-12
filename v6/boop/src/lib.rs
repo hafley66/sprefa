@@ -7,6 +7,7 @@
 //! pins the exact call per view.
 
 pub mod bus;
+pub mod channel;
 #[cfg(feature = "agent-read")]
 pub mod chat;
 pub mod config;
@@ -20,6 +21,7 @@ pub mod proc;
 pub mod query;
 pub mod registry;
 pub mod rows;
+pub mod supervise;
 pub mod tail;
 pub mod tmux;
 #[cfg(feature = "agent-read")]

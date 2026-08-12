@@ -7,6 +7,7 @@
 //! because it is never a key. `boop sync` projects transcripts into these
 //! tables; `boop follow` is the same projection in a poll loop.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -21,7 +22,7 @@ pub struct Store {
 
 /// Bumped whenever stored rows mean something different. 8 = agent_pr keyed
 /// (session_id, turn, pr_url_id): a turn with two PRs keeps two rows.
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// A row returned to the CLI, joined back from ids to the TEXT the query
 /// surface exposes.
@@ -93,6 +94,53 @@ pub struct TurnQuery {
     pub limit: Option<u64>,
 }
 
+/// One lane spawn's purpose, as the store records it.
+#[derive(Clone, Debug, Default)]
+pub struct LaneSpawn {
+    pub lane: String,
+    pub trace: Option<String>,
+    pub harness: Option<String>,
+    pub branch: Option<String>,
+    pub cwd: Option<String>,
+    pub model: Option<String>,
+    pub parent: Option<String>,
+    pub goal: Option<String>,
+    pub brief_path: Option<String>,
+    pub brief_body: Option<String>,
+    pub ts: u64,
+}
+
+/// FNV-1a over the body, hex. The digest only has to separate distinct briefs
+/// in one local store; nothing trusts it against an adversary.
+fn markdown_digest(body: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in body.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("fnv1a64:{hash:016x}:{}", body.len())
+}
+
+/// Union-find root with path compression.
+fn find(parents: &mut BTreeMap<i64, i64>, node: i64) -> i64 {
+    let mut root = node;
+    while let Some(next) = parents.get(&root).copied() {
+        if next == root {
+            break;
+        }
+        root = next;
+    }
+    let mut walk = node;
+    while let Some(next) = parents.get(&walk).copied() {
+        if next == walk {
+            break;
+        }
+        parents.insert(walk, root);
+        walk = next;
+    }
+    root
+}
+
 impl Store {
     pub fn open(path: PathBuf) -> Result<Self> {
         let connection = Connection::open(&path)
@@ -121,7 +169,7 @@ impl Store {
                      PRAGMA user_version = 7;",
                 )?;
             }
-            // 7 -> 8: agent_pr carries pr_url_id in its key.
+            if store.schema_version()? < 8 {
             store.connection.execute_batch(
                 "CREATE TABLE agent_pr_new (
                    session_id INTEGER NOT NULL,
@@ -132,8 +180,13 @@ impl Store {
                  INSERT INTO agent_pr_new (session_id, turn, pr_url_id)
                    SELECT session_id, turn, pr_url_id FROM agent_pr;
                  DROP TABLE agent_pr;
-                 ALTER TABLE agent_pr_new RENAME TO agent_pr;",
+                 ALTER TABLE agent_pr_new RENAME TO agent_pr;
+                 PRAGMA user_version = 8;",
             )?;
+            }
+            if store.schema_version()? < 9 {
+                store.backfill_traces()?;
+            }
             store.stamp_version()?;
         }
         Ok(store)
@@ -637,6 +690,194 @@ impl Store {
             params![parent_id, child_id, kind_id, ts as i64],
         )?;
         Ok(())
+    }
+
+    /// Store one markdown body once. The digest is the natural key; a second
+    /// spawn of the same brief returns the id already there.
+    pub fn intern_markdown(&self, body: &str, ts: u64) -> Result<i64> {
+        let digest = markdown_digest(body);
+        self.connection.execute(
+            "INSERT OR IGNORE INTO markdown_cache (digest, body, bytes, first_ts)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![digest, body, body.len() as i64, ts as i64],
+        )?;
+        Ok(self.connection.query_row(
+            "SELECT markdown_id FROM markdown_cache WHERE digest = ?1",
+            params![digest],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// The trace a session belongs to, by trace name.
+    pub fn trace_of(&self, session: &str) -> Result<Option<String>> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT t.value FROM agent_trace_span s
+                   JOIN dict_session d ON d.id = s.session_id
+                   JOIN dict_trace t ON t.id = s.trace_id
+                  WHERE d.value = ?1",
+                params![session],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?)
+    }
+
+    /// Put `session` under `trace`, recording which rule decided it. The first
+    /// span of a trace becomes its root. A session already attached stays put:
+    /// re-attaching is how two arcs would silently merge.
+    pub fn attach_trace(&self, session: &str, trace: &str, rule: &str, ts: u64) -> Result<()> {
+        let session_id = self.session_id(session)?;
+        let trace_id = self.intern("dict_trace", trace)?;
+        let attach_id = self.intern("dict_attach", rule)?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO agent_trace (trace_id, root_session_id, started_ts)
+             VALUES (?1, ?2, ?3)",
+            params![trace_id, session_id, ts as i64],
+        )?;
+        self.connection.execute(
+            "INSERT OR IGNORE INTO agent_trace_span (session_id, trace_id, attach_id, attached_ts)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![session_id, trace_id, attach_id, ts as i64],
+        )?;
+        Ok(())
+    }
+
+    /// Every session under one trace, oldest attach first.
+    pub fn trace_sessions(&self, trace: &str) -> Result<Vec<String>> {
+        let mut statement = self.connection.prepare(
+            "SELECT d.value FROM agent_trace_span s
+               JOIN dict_session d ON d.id = s.session_id
+               JOIN dict_trace t ON t.id = s.trace_id
+              WHERE t.value = ?1 ORDER BY s.attached_ts",
+        )?;
+        let rows = statement.query_map(params![trace], |row| row.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Record what a lane was told to do: its goal, the brief path, and the
+    /// brief bytes as of this spawn.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_lane_spawn(&self, spawn: &LaneSpawn) -> Result<i64> {
+        let lane_id = self.session_id(&spawn.lane)?;
+        let trace_id = match &spawn.trace {
+            Some(trace) => Some(self.intern("dict_trace", trace)?),
+            None => None,
+        };
+        let harness_id = match &spawn.harness {
+            Some(value) => Some(self.intern("dict_harness", value)?),
+            None => None,
+        };
+        let branch_id = match &spawn.branch {
+            Some(value) => Some(self.intern("dict_branch", value)?),
+            None => None,
+        };
+        let cwd_id = match &spawn.cwd {
+            Some(value) => Some(self.intern("dict_cwd", value)?),
+            None => None,
+        };
+        let model_id = match &spawn.model {
+            Some(value) => Some(self.intern("dict_model", value)?),
+            None => None,
+        };
+        let parent_id = match &spawn.parent {
+            Some(value) => Some(self.session_id(value)?),
+            None => None,
+        };
+        let brief_path_id = match &spawn.brief_path {
+            Some(value) => Some(self.intern("dict_path", value)?),
+            None => None,
+        };
+        let brief_markdown_id = match &spawn.brief_body {
+            Some(body) => Some(self.intern_markdown(body, spawn.ts)?),
+            None => None,
+        };
+        self.connection.execute(
+            "INSERT INTO agent_lane
+               (lane_id, trace_id, harness_id, branch_id, cwd_id, model_id,
+                parent_lane_id, goal, brief_path_id, brief_markdown_id, spawned_ts)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                lane_id,
+                trace_id,
+                harness_id,
+                branch_id,
+                cwd_id,
+                model_id,
+                parent_id,
+                spawn.goal,
+                brief_path_id,
+                brief_markdown_id,
+                spawn.ts as i64
+            ],
+        )?;
+        Ok(self.connection.last_insert_rowid())
+    }
+
+    /// Give every connected component of `spawned` edges one trace, named for
+    /// its root session. A session with no edge is left unattached: adjacency
+    /// in time is a guess, and a wrong attach merges two unrelated arcs.
+    pub fn backfill_traces(&self) -> Result<usize> {
+        let mut parents: BTreeMap<i64, i64> = BTreeMap::new();
+        let mut statement = self.connection.prepare(
+            "SELECT a.parent_session_id, a.child_session_id, a.first_ts FROM agent_edge a
+               JOIN dict_edekind k ON k.id = a.edge_kind_id WHERE k.value = 'spawned'",
+        )?;
+        let mut edges = Vec::new();
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            edges.push(row?);
+        }
+        for (parent, child, _) in &edges {
+            parents.entry(*parent).or_insert(*parent);
+            parents.entry(*child).or_insert(*child);
+        }
+        for (parent, child, _) in &edges {
+            let root = find(&mut parents, *parent);
+            let other = find(&mut parents, *child);
+            if root != other {
+                parents.insert(other, root);
+            }
+        }
+        let mut attached = 0usize;
+        for (parent, child, ts) in &edges {
+            for session in [parent, child] {
+                let root = find(&mut parents, *session);
+                let name = self.session_name(root)?;
+                let trace_id = self.intern("dict_trace", &format!("trace-{name}"))?;
+                let attach_id = self.intern("dict_attach", "backfill-spawned-edge")?;
+                self.connection.execute(
+                    "INSERT OR IGNORE INTO agent_trace (trace_id, root_session_id, started_ts)
+                     VALUES (?1, ?2, ?3)",
+                    params![trace_id, root, ts],
+                )?;
+                attached += self.connection.execute(
+                    "INSERT OR IGNORE INTO agent_trace_span
+                       (session_id, trace_id, attach_id, attached_ts)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    params![session, trace_id, attach_id, ts],
+                )?;
+            }
+        }
+        Ok(attached)
+    }
+
+    fn session_name(&self, id: i64) -> Result<String> {
+        Ok(self.connection.query_row(
+            "SELECT value FROM dict_session WHERE id = ?1",
+            params![id],
+            |row| row.get(0),
+        )?)
     }
 
     /// Query spawn edges, joined back to the TEXT query surface. `session`
@@ -1357,6 +1598,48 @@ CREATE TABLE IF NOT EXISTS dict_request (
   UNIQUE (message_id, request_id)
 );
 
+CREATE TABLE IF NOT EXISTS dict_trace (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+CREATE TABLE IF NOT EXISTS dict_attach (id INTEGER PRIMARY KEY, value TEXT NOT NULL UNIQUE);
+
+CREATE TABLE IF NOT EXISTS markdown_cache (
+  markdown_id INTEGER PRIMARY KEY,
+  digest TEXT NOT NULL UNIQUE,
+  body TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  first_ts INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_trace (
+  trace_id INTEGER PRIMARY KEY,
+  root_session_id INTEGER,
+  started_ts INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_trace_span (
+  session_id INTEGER PRIMARY KEY,
+  trace_id INTEGER NOT NULL,
+  attach_id INTEGER NOT NULL,
+  attached_ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_span_trace ON agent_trace_span(trace_id);
+
+CREATE TABLE IF NOT EXISTS agent_lane (
+  spawn_id INTEGER PRIMARY KEY,
+  lane_id INTEGER NOT NULL,
+  trace_id INTEGER,
+  harness_id INTEGER,
+  branch_id INTEGER,
+  cwd_id INTEGER,
+  model_id INTEGER,
+  parent_lane_id INTEGER,
+  goal TEXT,
+  brief_path_id INTEGER,
+  brief_markdown_id INTEGER,
+  spawned_ts INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_lane_trace ON agent_lane(trace_id);
+CREATE INDEX IF NOT EXISTS idx_lane_lane ON agent_lane(lane_id, spawned_ts);
+
 CREATE TABLE IF NOT EXISTS agent_session (
   session_id INTEGER PRIMARY KEY,
   harness_id INTEGER NOT NULL,
@@ -1519,10 +1802,144 @@ mod tests {
 
     use crate::harness::SessionRef;
 
+    use rusqlite::params;
+
     use super::{sync_session, sync_session_with_pid, Store};
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!("boop_rel_{}_{}", std::process::id(), name))
+    }
+
+    fn fresh_store(name: &str) -> (PathBuf, Store) {
+        let path = temp_path(name);
+        let _ = std::fs::remove_file(&path);
+        let store = Store::open(path.clone()).unwrap();
+        (path, store)
+    }
+
+    /// The user's word: "markdown_cache is own table for reason". Twenty lanes
+    /// reading one brief must leave one row.
+    #[test]
+    fn the_same_brief_interns_once_however_often_it_is_spawned() {
+        let (path, store) = fresh_store("md");
+        let body = "# brief\n\ndo the thing\n";
+        let first = store.intern_markdown(body, 1).unwrap();
+        let second = store.intern_markdown(body, 2).unwrap();
+        let other = store.intern_markdown("# other brief\n", 3).unwrap();
+        assert_eq!(first, second);
+        assert_ne!(first, other);
+        let rows: i64 = store
+            .connection
+            .query_row("SELECT count(*) FROM markdown_cache", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(rows, 2);
+        let bytes: i64 = store
+            .connection
+            .query_row(
+                "SELECT bytes FROM markdown_cache WHERE markdown_id = ?1",
+                params![first],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(bytes, body.len() as i64);
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A session id moves on clear, compact and resume; the trace does not.
+    #[test]
+    fn one_trace_holds_every_session_id_a_lane_wears() {
+        let (path, store) = fresh_store("trace");
+        store.attach_trace("lane-a", "trace-lane-a", "lane-create", 10).unwrap();
+        store.attach_trace("ses-1", "trace-lane-a", "supervisor-conversation", 11).unwrap();
+        store.attach_trace("ses-2", "trace-lane-a", "supervisor-conversation", 12).unwrap();
+        assert_eq!(
+            store.trace_sessions("trace-lane-a").unwrap(),
+            vec!["lane-a".to_owned(), "ses-1".to_owned(), "ses-2".to_owned()]
+        );
+        assert_eq!(store.trace_of("ses-2").unwrap().as_deref(), Some("trace-lane-a"));
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Re-attaching is how two unrelated arcs would silently merge, so the
+    /// first attach wins and the second is a no-op.
+    #[test]
+    fn a_session_never_moves_to_a_second_trace() {
+        let (path, store) = fresh_store("trace2");
+        store.attach_trace("ses-1", "trace-one", "lane-create", 10).unwrap();
+        store.attach_trace("ses-1", "trace-two", "lane-create", 11).unwrap();
+        assert_eq!(store.trace_of("ses-1").unwrap().as_deref(), Some("trace-one"));
+        assert!(store.trace_sessions("trace-two").unwrap().is_empty());
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The brief on disk is edited after the lane runs; the stored copy is the
+    /// one the lane was actually given.
+    #[test]
+    fn a_lane_spawn_keeps_the_goal_the_path_and_the_brief_bytes() {
+        let (path, store) = fresh_store("lane");
+        let spawn = super::LaneSpawn {
+            lane: "chore-x".into(),
+            trace: Some("trace-chore-x".into()),
+            harness: Some("claude".into()),
+            branch: Some("chore/x".into()),
+            cwd: Some("/repo".into()),
+            model: Some("haiku".into()),
+            parent: Some("coordinator".into()),
+            goal: Some("make the gate green".into()),
+            brief_path: Some("/tmp/brief.md".into()),
+            brief_body: Some("first version".into()),
+            ts: 42,
+        };
+        store.record_lane_spawn(&spawn).unwrap();
+        let mut second = spawn.clone();
+        second.brief_body = Some("second version".into());
+        second.ts = 43;
+        store.record_lane_spawn(&second).unwrap();
+        let bodies: Vec<String> = {
+            let mut statement = store
+                .connection
+                .prepare(
+                    "SELECT m.body FROM agent_lane l
+                       JOIN markdown_cache m ON m.markdown_id = l.brief_markdown_id
+                       JOIN dict_session d ON d.id = l.lane_id
+                      WHERE d.value = 'chore-x' ORDER BY l.spawned_ts",
+                )
+                .unwrap();
+            let rows = statement
+                .query_map([], |row| row.get::<_, String>(0))
+                .unwrap();
+            rows.map(|row| row.unwrap()).collect()
+        };
+        assert_eq!(bodies, vec!["first version", "second version"]);
+        let goal: String = store
+            .connection
+            .query_row("SELECT goal FROM agent_lane LIMIT 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(goal, "make the gate green");
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Backfill unions `spawned` edges into one trace per component and leaves
+    /// an edgeless session alone rather than guessing from timing.
+    #[test]
+    fn backfill_traces_one_component_and_skips_the_edgeless() {
+        let (path, store) = fresh_store("backfill");
+        store.add_edge_at("root", "kid-a", "spawned", 100).unwrap();
+        store.add_edge_at("kid-a", "kid-b", "spawned", 101).unwrap();
+        store.add_edge_at("other", "kid-c", "spawned", 102).unwrap();
+        store.session_id("loner").unwrap();
+        store.backfill_traces().unwrap();
+        let root_trace = store.trace_of("root").unwrap().unwrap();
+        assert_eq!(store.trace_of("kid-a").unwrap().as_deref(), Some(root_trace.as_str()));
+        assert_eq!(store.trace_of("kid-b").unwrap().as_deref(), Some(root_trace.as_str()));
+        assert_ne!(store.trace_of("kid-c").unwrap().unwrap(), root_trace);
+        assert_eq!(store.trace_of("loner").unwrap(), None);
+        drop(store);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// RECEIPT (Job 1). The passthrough runs raw SELECT over a temp store and

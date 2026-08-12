@@ -162,6 +162,8 @@ mod tests {
             model: None,
             on_exit: None,
             tmux: None,
+            lane: "lane-test".to_owned(),
+            mail_dir: std::env::temp_dir(),
         }
     }
 
