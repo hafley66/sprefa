@@ -32,21 +32,26 @@ pub async fn run_schedule(
     seam.run_ddl(&program.ddl).expect("DDL execution failed");
     run_boot(seam, &program.boot);
     let mut lines = Vec::new();
-    for (tick_index, batch) in schedule.iter().enumerate() {
-        let tick_number = tick_index + 1;
-        let deltas = drive_tick(program, seam, batch.clone()).await;
-        lines.push(format_deltas(program, tick_number, &deltas));
-        let mut drain_tick = tick_number + 1;
-        let mut carry = deltas.carry_pending;
-        let mut drained = 0;
-        while carry && drained < drain_cap {
-            let empty = Vec::new();
-            let deltas = drive_tick(program, seam, empty).await;
-            lines.push(format_deltas(program, drain_tick, &deltas));
-            carry = deltas.carry_pending;
-            drain_tick += 1;
-            drained += 1;
+    let mut tick_number = 0usize;
+    let mut carry_pending = false;
+    let mut drains_used = 0usize;
+    loop {
+        let drains = tick_number >= schedule.len();
+        let arrivals = match schedule.get(tick_number) {
+            Some(batch) => batch.clone(),
+            None if carry_pending => Vec::new(),
+            None => break,
+        };
+        if drains && drains_used >= drain_cap {
+            panic!("drain overflow: {} exceeded {} drain ticks", program.name, drain_cap);
         }
+        let deltas = drive_tick(program, seam, arrivals).await;
+        tick_number += 1;
+        if drains {
+            drains_used += 1;
+        }
+        carry_pending = deltas.carry_pending;
+        lines.push(format_deltas(program, tick_number, &deltas));
     }
     TickFold { lines }
 }

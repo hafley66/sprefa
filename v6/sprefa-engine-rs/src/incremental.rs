@@ -379,6 +379,12 @@ fn rows_equal(left: &Row, right: &Row) -> bool {
     left == right
 }
 
+// One statement per tick: the clock the oracle fixes for the whole tick.
+pub fn advance_tick(seam: &SqliteSeam) {
+    seam.execute_multiple("UPDATE \"__tick\" SET \"n\" = \"n\" + 1")
+        .expect("advance_tick failed");
+}
+
 pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
     if relations.is_empty() {
         return;
@@ -539,6 +545,28 @@ pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan
 
 // ═══ level phases (port of 1_incremental.ts apply_level_* + reconcile_*) ═══
 
+// Both statements read the same rows, so the intern arm runs in the same
+// ordered batch as the statement whose write depends on it.
+fn intern_then_execute(
+    seam: &SqliteSeam,
+    intern_sql: Option<&Vec<String>>,
+    statement: &SqlStatement,
+) -> crate::types::QueryResult {
+    let Some(intern_sql) = intern_sql.filter(|sqls| !sqls.is_empty()) else {
+        return seam.execute(statement).expect("statement failed");
+    };
+    let mut batch: Vec<SqlStatement> = intern_sql
+        .iter()
+        .map(|sql| SqlStatement {
+            sql: sql.clone(),
+            args: statement.args.clone(),
+        })
+        .collect();
+    batch.push(statement.clone());
+    let mut results = seam.batch(&batch).expect("intern batch failed");
+    results.pop().expect("intern batch produced no result")
+}
+
 fn to_statements(texts: &[String]) -> Vec<SqlStatement> {
     texts
         .iter()
@@ -620,19 +648,29 @@ fn apply_level_statement(
         .iter()
         .find(|r| r.rel == statement.head_rel)
         .expect("incremental level head relation missing");
-    if statement.aggregate_sql.is_some() {
+    if let Some(aggregate) = &statement.aggregate_sql {
+        apply_aggregate_level_statement(
+            seam,
+            statement,
+            aggregate,
+            relation,
+            after_edges,
+            next_sequence,
+        );
         return 0;
     }
     let insert_sql = statement
         .insert_sql
         .as_ref()
         .expect("level statement has no insert_sql");
-    let result = seam
-        .execute(&SqlStatement {
+    let result = intern_then_execute(
+        seam,
+        statement.intern_sql.as_ref(),
+        &SqlStatement {
             sql: insert_sql.clone(),
             args: vec![],
-        })
-        .expect("level insert failed");
+        },
+    );
     let rows = result_rows(
         &result,
         &statement.head_columns,
@@ -650,20 +688,124 @@ fn apply_level_statement(
             row: row.clone(),
         })
         .collect();
-    let copies: Vec<(String, i64)> = relations
-        .iter()
-        .filter(|r| r.rel == statement.head_rel)
-        .map(|r| {
-            let table = if after_edges {
-                &r.next_frontier_table_name
-            } else {
-                &r.frontier_table_name
-            };
-            (table.clone(), if after_edges { 1 } else { 2 })
-        })
-        .collect();
+    let copies = level_frontier_copies(relation, after_edges);
     stage_events(seam, std::slice::from_ref(relation), &events, &copies);
     rows.len()
+}
+
+// The DELETE and every INSERT return only the rows of the AFFECTED GROUPS, so
+// the head re-derives without a full-table read on either side of the seam.
+fn apply_aggregate_level_statement(
+    seam: &SqliteSeam,
+    statement: &crate::types::IncrementalLevelStatement,
+    aggregate: &crate::types::AggregateLevelPlan,
+    relation: &IncrementalRelationPlan,
+    after_edges: bool,
+    next_sequence: &mut dyn FnMut() -> u64,
+) {
+    // The intern arm reads the scope table, so it follows the seed inside the
+    // same ordered batch and precedes the insert that looks its ids back up.
+    let mut scope_texts = vec![aggregate.scope_clear_sql.clone()];
+    scope_texts.extend(aggregate.scope_seed_sql.clone());
+    scope_texts.extend(aggregate.intern_sql.clone().unwrap_or_default());
+    seam.batch(&to_statements(&scope_texts))
+        .expect("aggregate scope batch failed");
+    let delete_result = seam
+        .execute(&SqlStatement {
+            sql: aggregate.delete_scoped_sql.clone(),
+            args: vec![],
+        })
+        .expect("aggregate scoped delete failed");
+    let removed_rows = result_rows(
+        &delete_result,
+        &statement.head_columns,
+        &statement.head_column_types,
+    );
+    let insert_results = seam
+        .batch(&to_statements(&aggregate.insert_scoped_sql))
+        .expect("aggregate scoped insert failed");
+    let mut events: Vec<DeltaEvent> = removed_rows
+        .iter()
+        .map(|row| DeltaEvent {
+            rel: statement.head_rel.clone(),
+            sign: -1,
+            sequence: next_sequence(),
+            row: row.clone(),
+        })
+        .collect();
+    for insert_result in &insert_results {
+        for row in result_rows(
+            insert_result,
+            &statement.head_columns,
+            &statement.head_column_types,
+        ) {
+            events.push(DeltaEvent {
+                rel: statement.head_rel.clone(),
+                sign: 1,
+                sequence: next_sequence(),
+                row,
+            });
+        }
+    }
+    if events.is_empty() {
+        return;
+    }
+    let copies = level_frontier_copies(relation, after_edges);
+    stage_events(seam, std::slice::from_ref(relation), &events, &copies);
+}
+
+pub fn apply_retention(
+    seam: &SqliteSeam,
+    statements: &[crate::types::IncrementalRetentionStatement],
+    relations: &[IncrementalRelationPlan],
+) {
+    let mut sequence = 0u64;
+    for statement in statements {
+        let relation = relations
+            .iter()
+            .find(|r| r.rel == statement.rel)
+            .expect("incremental retention relation missing");
+        let result = seam
+            .execute(&SqlStatement {
+                sql: statement.delete_sql.clone(),
+                args: vec![],
+            })
+            .expect("retention delete failed");
+        let rows = result_rows(&result, &relation.columns, &relation.column_types);
+        if rows.is_empty() {
+            continue;
+        }
+        let events: Vec<DeltaEvent> = rows
+            .iter()
+            .map(|row| {
+                let current = sequence;
+                sequence += 1;
+                DeltaEvent {
+                    rel: statement.rel.clone(),
+                    sign: -1,
+                    sequence: current,
+                    row: row.clone(),
+                }
+            })
+            .collect();
+        stage_events(seam, std::slice::from_ref(relation), &events, &[]);
+    }
+}
+
+// After the edge boundary a level row must reach BOTH the current frontier
+// (this pass) and the next one (the carry), the way TICK PHASE ALIGNMENT sets.
+fn level_frontier_copies(
+    relation: &IncrementalRelationPlan,
+    after_edges: bool,
+) -> Vec<(String, i64)> {
+    if after_edges {
+        vec![
+            (relation.frontier_table_name.clone(), 2),
+            (relation.next_frontier_table_name.clone(), 1),
+        ]
+    } else {
+        vec![(relation.frontier_table_name.clone(), 2)]
+    }
 }
 
 // apply_levels_before_edges: dependency-ordered insert pass. A head on a level
@@ -696,6 +838,311 @@ pub fn apply_levels_before_edges(
         } else {
             apply_level_statement(seam, statement, relations, false, &mut next_sequence);
         }
+    }
+}
+
+// ═══ edge phases (port of 1_incremental.ts apply_edges + merge/after) ═══════
+
+fn edge_columns_text(statement: &crate::types::IncrementalEdgeStatement) -> Vec<String> {
+    statement
+        .head_columns
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect()
+}
+
+fn edge_keyed_rows_sql(
+    statement: &crate::types::IncrementalEdgeStatement,
+    row_count: usize,
+) -> String {
+    let columns = edge_columns_text(statement);
+    let key_columns: Vec<String> = statement
+        .key_indices
+        .iter()
+        .map(|index| columns[*index].clone())
+        .collect();
+    format!(
+        "SELECT {} FROM {} WHERE ({}) IN ({})",
+        columns.join(", "),
+        quote_identifier(&statement.head_table_name),
+        key_columns.join(", "),
+        values_sql(row_count, key_columns.len())
+    )
+}
+
+fn edge_keyed_write_statement(
+    statement: &crate::types::IncrementalEdgeStatement,
+    rows: &[Row],
+) -> SqlStatement {
+    let columns = edge_columns_text(statement);
+    let key_columns: Vec<String> = statement
+        .key_indices
+        .iter()
+        .map(|index| columns[*index].clone())
+        .collect();
+    let non_key_columns: Vec<String> = columns
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !statement.key_indices.contains(index))
+        .map(|(_, column)| column.clone())
+        .collect();
+    let conflict = if non_key_columns.is_empty() {
+        format!("ON CONFLICT({}) DO NOTHING", key_columns.join(", "))
+    } else {
+        let sets: Vec<String> = non_key_columns
+            .iter()
+            .map(|column| format!("{} = excluded.{}", column, column))
+            .collect();
+        format!(
+            "ON CONFLICT({}) DO UPDATE SET {}",
+            key_columns.join(", "),
+            sets.join(", ")
+        )
+    };
+    SqlStatement {
+        sql: format!(
+            "INSERT INTO {} ({}) VALUES {} {}",
+            quote_identifier(&statement.head_table_name),
+            columns.join(", "),
+            values_sql(rows.len(), columns.len()),
+            conflict
+        ),
+        args: rows.iter().flat_map(|row| bind_args(row)).collect(),
+    }
+}
+
+fn edge_log_write_statement(
+    statement: &crate::types::IncrementalEdgeStatement,
+    rows: &[Row],
+) -> SqlStatement {
+    let columns = edge_columns_text(statement);
+    SqlStatement {
+        sql: format!(
+            "INSERT INTO {} ({}) VALUES {}",
+            quote_identifier(&statement.head_table_name),
+            columns.join(", "),
+            values_sql(rows.len(), columns.len())
+        ),
+        args: rows.iter().flat_map(|row| bind_args(row)).collect(),
+    }
+}
+
+fn apply_log_edge(
+    seam: &SqliteSeam,
+    statement: &crate::types::IncrementalEdgeStatement,
+    relation: &IncrementalRelationPlan,
+    rows: &[Row],
+) {
+    if rows.is_empty() {
+        return;
+    }
+    let events: Vec<DeltaEvent> = rows
+        .iter()
+        .enumerate()
+        .map(|(sequence, row)| DeltaEvent {
+            rel: statement.head_rel.clone(),
+            sign: 1,
+            sequence: sequence as u64,
+            row: row.clone(),
+        })
+        .collect();
+    seam.execute(&edge_log_write_statement(statement, rows))
+        .expect("edge log write failed");
+    stage_events(
+        seam,
+        std::slice::from_ref(relation),
+        &events,
+        &[(relation.next_frontier_table_name.clone(), 0)],
+    );
+}
+
+fn apply_keyed_edge(
+    seam: &SqliteSeam,
+    statement: &crate::types::IncrementalEdgeStatement,
+    relation: &IncrementalRelationPlan,
+    projected_rows: &[Row],
+) {
+    let mut resolved: Vec<(String, Row)> = Vec::new();
+    for row in projected_rows {
+        let key = row_key(row, &statement.key_indices);
+        match resolved.iter_mut().find(|(existing, _)| existing == &key) {
+            Some(entry) => entry.1 = row.clone(),
+            None => resolved.push((key, row.clone())),
+        }
+    }
+    let rows: Vec<Row> = resolved.into_iter().map(|(_, row)| row).collect();
+    if rows.is_empty() {
+        return;
+    }
+    let key_args: Vec<Value> = rows
+        .iter()
+        .flat_map(|row| {
+            let key: Row = statement
+                .key_indices
+                .iter()
+                .map(|index| row[*index].clone())
+                .collect();
+            bind_args(&key)
+        })
+        .collect();
+    let before_result = seam
+        .execute(&SqlStatement {
+            sql: edge_keyed_rows_sql(statement, rows.len()),
+            args: key_args,
+        })
+        .expect("edge keyed rows lookup failed");
+    let head_types = relation.column_types.clone();
+    let before_rows = result_rows(&before_result, &statement.head_columns, &head_types);
+    let mut before_by_key: HashMap<String, Row> = HashMap::new();
+    for row in &before_rows {
+        before_by_key.insert(row_key(row, &statement.key_indices), row.clone());
+    }
+    let changed_rows: Vec<Row> = rows
+        .into_iter()
+        .filter(|row| {
+            match before_by_key.get(&row_key(row, &statement.key_indices)) {
+                None => true,
+                Some(before) => !rows_equal(before, row),
+            }
+        })
+        .collect();
+    if changed_rows.is_empty() {
+        return;
+    }
+    let mut events = Vec::new();
+    for (sequence, row) in changed_rows.iter().enumerate() {
+        let key = row_key(row, &statement.key_indices);
+        if let Some(before) = before_by_key.get(&key) {
+            events.push(DeltaEvent {
+                rel: statement.head_rel.clone(),
+                sign: -1,
+                sequence: (sequence * 2) as u64,
+                row: before.clone(),
+            });
+        }
+        events.push(DeltaEvent {
+            rel: statement.head_rel.clone(),
+            sign: 1,
+            sequence: (sequence * 2 + 1) as u64,
+            row: row.clone(),
+        });
+    }
+    seam.execute(&edge_keyed_write_statement(statement, &changed_rows))
+        .expect("edge keyed write failed");
+    stage_events(
+        seam,
+        std::slice::from_ref(relation),
+        &events,
+        &[(relation.next_frontier_table_name.clone(), 0)],
+    );
+}
+
+pub fn apply_edges(
+    seam: &SqliteSeam,
+    statements: &[crate::types::IncrementalEdgeStatement],
+    relations: &[IncrementalRelationPlan],
+) {
+    for statement in statements {
+        let relation = relations
+            .iter()
+            .find(|r| r.rel == statement.head_rel)
+            .expect("incremental edge head relation missing");
+        let result = intern_then_execute(
+            seam,
+            statement.intern_sql.as_ref(),
+            &SqlStatement {
+                sql: statement.project_sql.clone(),
+                args: vec![],
+            },
+        );
+        let rows = result_rows(&result, &statement.head_columns, &relation.column_types);
+        match statement.head_kind {
+            RelationKind::Log => apply_log_edge(seam, statement, relation, &rows),
+            RelationKind::Set => apply_keyed_edge(seam, statement, relation, &rows),
+        }
+    }
+}
+
+pub fn merge_next_into_current(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
+    if relations.is_empty() {
+        return;
+    }
+    let sql: Vec<String> = relations
+        .iter()
+        .map(|relation| {
+            let mut columns = vec!["_phase".to_string(), "_sequence".to_string()];
+            columns.extend(relation.columns.clone());
+            let columns_text: Vec<String> = columns.iter().map(|c| quote_identifier(c)).collect();
+            let joined = columns_text.join(", ");
+            format!(
+                "INSERT INTO {} ({}) SELECT {} FROM {}",
+                quote_identifier(&relation.frontier_table_name),
+                joined,
+                joined,
+                quote_identifier(&relation.next_frontier_table_name)
+            )
+        })
+        .collect();
+    seam.execute_multiple(&sql.join(";\n"))
+        .expect("merge_next_into_current failed");
+}
+
+pub fn apply_levels_after_edges(
+    seam: &SqliteSeam,
+    statements: &[crate::types::IncrementalLevelStatement],
+    relations: &[IncrementalRelationPlan],
+) {
+    let mut sequence = 0u64;
+    let mut next_sequence = || {
+        let current = sequence;
+        sequence += 1;
+        current
+    };
+    for statement in statements {
+        apply_level_statement(seam, statement, relations, true, &mut next_sequence);
+    }
+}
+
+// The frozen mid-tick level plane: a level row an arrival retracted this tick
+// must be gone before an edge body reads it.
+pub fn recompute_levels_before_edges(
+    seam: &SqliteSeam,
+    statements: &[crate::types::IncrementalLevelStatement],
+    relations: &[IncrementalRelationPlan],
+    reconcile_every_tick: bool,
+    arrival_count: usize,
+) {
+    if arrival_count == 0 || relations.is_empty() {
+        return;
+    }
+    let ref_count_statements: Vec<&crate::types::IncrementalLevelStatement> = statements
+        .iter()
+        .filter(|statement| statement.aggregate_sql.is_none())
+        .collect();
+    if ref_count_statements.is_empty() {
+        return;
+    }
+    let reconcile = |seam: &SqliteSeam| {
+        for statement in &ref_count_statements {
+            let relation = relations
+                .iter()
+                .find(|r| r.rel == statement.head_rel)
+                .expect("incremental level head relation missing");
+            reconcile_ref_count_statement(
+                seam,
+                statement,
+                relations,
+                &[(relation.frontier_table_name.clone(), 2)],
+            );
+        }
+    };
+    if reconcile_every_tick {
+        reconcile(seam);
+        return;
+    }
+    let guard = retraction_guard_sql(relations);
+    if seam.scalar(&guard).expect("retraction guard read failed") == 1 {
+        reconcile(seam);
     }
 }
 
@@ -820,9 +1267,17 @@ pub fn recompute_levels_after_edges(
     if statements.is_empty() {
         return;
     }
+    // No frontier copies on either arm: a reconcile row is a correction inside
+    // the same closure, never post-write growth, so it must not carry.
     let reconcile = |seam: &SqliteSeam| {
+        let mut sequence = 0u64;
+        let mut next_sequence = || {
+            let current = sequence;
+            sequence += 1;
+            current
+        };
         for statement in statements {
-            let _relation = relations
+            let relation = relations
                 .iter()
                 .find(|r| r.rel == statement.head_rel)
                 .expect("incremental level head relation missing");
@@ -830,6 +1285,14 @@ pub fn recompute_levels_after_edges(
                 if aggregate.delta_maintained {
                     continue;
                 }
+                apply_aggregate_level_statement(
+                    seam,
+                    statement,
+                    aggregate,
+                    relation,
+                    false,
+                    &mut next_sequence,
+                );
                 continue;
             }
             reconcile_ref_count_statement(seam, statement, relations, &[]);
