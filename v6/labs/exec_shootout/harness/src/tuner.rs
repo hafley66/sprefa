@@ -28,6 +28,24 @@ fn grid_edges(rows: u64, cols: u64) -> u64 {
     rows * (cols - 1) + cols * (rows - 1)
 }
 
+fn cycle_derived(component_size: u64, components: u64) -> u64 {
+    component_size * component_size * components
+}
+
+fn tune_cycle(scale: u32) -> Tuned {
+    let components = (scale as u64 / 100).max(1);
+    let component_size = (((MIDPOINT / components) as f64).sqrt() as u64).max(2);
+    let derived = cycle_derived(component_size, components);
+    Tuned {
+        params: Params::Cycle {
+            component_size: component_size as u32,
+            components: components as u32,
+        },
+        derived,
+        edge_count: component_size * components,
+    }
+}
+
 fn chain_edges(segment_len: u64, scale: u64) -> u64 {
     let edges_per_segment = segment_len - 1;
     let segments = (scale / edges_per_segment).max(1);
@@ -189,6 +207,7 @@ pub fn tune(family: Family, scale: u32) -> Tuned {
         Family::Chain => tune_chain(scale),
         Family::Layered => tune_layered(scale, seed),
         Family::Grid => tune_grid(scale),
+        Family::Cycle => tune_cycle(scale),
     }
 }
 
@@ -203,6 +222,16 @@ mod tests {
         }
     }
 
+    fn cycle_key(params: Params) -> (u32, u32) {
+        match params {
+            Params::Cycle {
+                component_size,
+                components,
+            } => (component_size, components),
+            other => panic!("not a cycle: {:?}", other),
+        }
+    }
+
     #[test]
     fn grid_tuner_is_scale_aware_and_in_band() {
         let scales = [10_000u32, 100_000, 1_000_000];
@@ -211,6 +240,29 @@ mod tests {
             .map(|scale| tune(Family::Grid, *scale))
             .collect();
         let keys: Vec<(u32, u32)> = tuned.iter().map(|entry| grid_key(entry.params)).collect();
+        assert!(keys[0] != keys[1]);
+        assert!(keys[1] != keys[2]);
+        assert!(keys[0] != keys[2]);
+        for entry in &tuned {
+            assert!(
+                entry.derived >= BAND_MIN && entry.derived <= BAND_MAX,
+                "params {:?} derived {} out of band",
+                entry.params,
+                entry.derived
+            );
+        }
+    }
+
+    // Sabotage receipt: pinning component_size to 2 yields derived 400 at scale
+    // 10_000, and this test fails with "derived 400 out of band".
+    #[test]
+    fn cycle_tuner_is_scale_aware_and_in_band() {
+        let scales = [10_000u32, 100_000, 1_000_000];
+        let tuned: Vec<Tuned> = scales
+            .iter()
+            .map(|scale| tune(Family::Cycle, *scale))
+            .collect();
+        let keys: Vec<(u32, u32)> = tuned.iter().map(|entry| cycle_key(entry.params)).collect();
         assert!(keys[0] != keys[1]);
         assert!(keys[1] != keys[2]);
         assert!(keys[0] != keys[2]);

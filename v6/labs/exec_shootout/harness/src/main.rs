@@ -193,7 +193,7 @@ fn main() {
         }
     }
 
-    let families = [Family::Chain, Family::Layered, Family::Grid];
+    let families = [Family::Chain, Family::Layered, Family::Grid, Family::Cycle];
     let mut cases: Vec<CaseStanding> = Vec::new();
     let mut had_failure = false;
 
