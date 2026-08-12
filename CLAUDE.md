@@ -16,7 +16,7 @@ Archives: ~/projects/sprefa-archive-20260701 (v3/v4), -20260428 (OG).
 - Narrative history: `.agent/memories/sprefa-task-ledger.md` (read on demand,
   never auto-loaded; the pre-2026-08-02 ledger is archived verbatim at its tail),
   `chat_log/` session logs, `plans/` docs, git history.
-- Rulings: `v6/prolog/rulings.pl`. Roadmap: `plans/2026-07-29-v6-alpha-golden-plan.md`
+- Rulings: `v6/prolog/conformance/rulings.pl`. Roadmap: `plans/2026-07-29-v6-alpha-golden-plan.md`
   (P0-P4 complete; phase 5 = type pass float/REAL+avg, clock checker, ingest commit_ms).
 - Position 2026-08-02: lane wave merged on `codex/rel-ref-file-span-lab`, UNPUSHED,
   no tag. Battery green: conformance 281/0, plunit 276, TEXT_DOOR 196/196/0, tsv2
