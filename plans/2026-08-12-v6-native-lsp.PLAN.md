@@ -118,3 +118,133 @@ The pricing body for features lives in part 4. The candidate vote here: buy
 `vscode-jsonrpc` + `vscode-languageserver-types`, compose the connection into
 the existing serve spine, do not buy `vscode-languageserver`'s connection or
 langium.
+
+---
+
+## 4. Part 3, the forks (user rules on design; each is priced, none chosen)
+
+### 4.1 Primary fork: one process vs two
+
+Fork A, the LSP as a consumer of the existing serve process.
+- What: the serve process grows an LSP transport; `serve/main.ts`'s single cold
+  observable gains an LSP connection that answers requests by querying the same
+  store and pushes diagnostics from the same tick chain.
+- Costs in files and lines: new `v6/tsv2/serve/5_lsp.ts` (the connection +
+  feature handlers), deps `vscode-jsonrpc` + `vscode-languageserver-types` in
+  `v6/tsv2/package.json`, a launch flag or alias so the binary is editor-spawned
+  over stdio (`TSV2_LSP=1 node --experimental-transform-types serve/main.ts`).
+  Diagnostic handlers are ~the delta path; hover handlers read the `hover_note`
+  table the engine already derives. Each new class declares its interface in
+  `v6/tsv2/serve/types.ts` (the standing law).
+- Forces later: the serve process becomes editor-resident (attaches to an editor
+  launch, not a daemon); HTTP and LSP requests share one store; the
+  one-subscribe ratchet must stay at 1, so the LSP connection is one more cold
+  observable composed inside `serve_tsv2`, not a second manual subscribe
+  (`serve/main.ts:22`, ratchet `v6/tools/one-subscribe.sh:40`).
+- Forecloses: the multi-session daemon shape. A stdio LSP is one process per
+  editor launch; the "one engine, many LSP sessions over UDS" plan the 0719
+  docs wanted (`v6/plans/2026-07-19-v6-daemon.md:55-57`, `:92-99`) is not this.
+- Throw sites: `serve/main.ts:22` (the single subscribe), `4_http.ts` app
+  assembly, the store seam `v6/sprefa-store/js/src/engine/types.ts:58`.
+
+Fork B, a separate LSP server process.
+- What: a second entrypoint (e.g. `v6/tsv2/serve/lsp-main.ts`) reuses the same
+  runtime + store over the same SQLite file, either polling it like v5's
+  `--diag-db` or bridging the existing delta tick.
+- Costs: a second entrypoint + a second manual subscribe (ratchet baseline `2`
+  in `one-subscribe.sh:40` unless the entrypoint re-delegates to `serve_tsv2`,
+  in which case it is Fork A in disguise), a second process contract (which file,
+  how deltas cross), duplicate boot wiring. Reproduces the v5 external-db
+  handshake: poll cadence `src/lsp.rs:515`, path-cwd agreement
+  `docs/lsp.md:143-169`, poll latency `docs/lsp.md:171-174`.
+- Forces later: process-pair coordination; two processes on one SQLite file
+  (WAL lock choreography the single-process shape does not have).
+- Forecloses: the single-process story; it is the v5 `--diag-db` shape
+  (`src/lsp.rs:495-537`) re-homed to a v6-owned process, not removed.
+- Throw sites: the mode being mirrored `src/lsp.rs:495`, `:537`, the gotchas
+  `docs/lsp.md:152-174`.
+
+### 4.2 Sub-forks, whichever process shape the user picks
+
+Transport: stdio JSON-RPC (the `vscode-jsonrpc` buy, 4.1) vs SSE-over-HTTP
+(the existing `/ticks` SSE, `4_http.ts:414`).
+- stdio is the only transport a stock generic-LSP client (VS Code, coc, neovim
+  lspconfig) spawns and speaks; it forces a real editor-spawned process, which
+  is what forks A and B both already are. `lsp_diag_driver.py` proves a real
+  Content-Length stdio client against the v5 binary (`v6/tsv2/scripts/lsp_diag_
+  driver.py`).
+- SSE over HTTP fits the existing serve shape with fewer new parts, but no
+  stock editor client speaks it as LSP; it would force a custom client, which is
+  more code than the stdio buy, so it only wins if the editor face is a custom
+  panel (the own flow-panel path) rather than a generic LSP.
+
+Feature slice, first v6-owned LSP: diagnostics only (drop-in for the
+`diag_v5`-to-v5 path, the one measured working) vs diagnostics + hover (also
+replaces the dead `hover_note` sink, part 4, and disposes of PR #202's broken
+bridge). Diagnostics alone is the smallest replace; hover is cheap once the wire
+exists because the `hover_note` table the engine derives is already present
+(`diag-rail.dl6`, `import-hover-rail.dl6`).
+
+None of these is chosen here. The user rules.
+
+---
+
+## 5. Part 4, disposition of PR #202 (the `hover_note` sink)
+
+PR #202 landed a `hover_note` sink (`.dl6` side) that carries no path to an
+editor, even with v5 running. Measured evidence: v5's hover reads `txt_tbl(
+"hover_note")` = `rel_hover_note_txt` (`src/engine/lens.rs:294-296` via
+`src/lower.rs:10`), which the bare `hover_note` table a `.dl6` compile emits
+never is; v5 has no `--hover-db` foreign mode (`run_diag_db_mode`, `src/lsp.rs:
+495`); `hover_notes_at` runs only in the full `--lsp` engine mode against v5's
+own compiled db. The PR's own lane could not put a note into an editor
+(`plans/2026-08-12-import-openapi-hover.md:70-90`, `:159-180`).
+
+Disposition options, each true to what was measured:
+- useful unchanged: no. As a v5 bridge it is dead weight today; nothing reads
+  the bare table.
+- useful with a different consumer: yes, as the data source for a v6-owned LSP
+  hover (Fork A/B feature slice, 4.2). The derive rules and the 6-column
+  `hover_note` schema are exactly the shape a v6 hover handler would query; the
+  `import_hover_rail.dl6` and `import-hover-receipt.sh` pieces stay as the
+  emit-side receipt.
+- dead weight to revert: the V5-BRIDGE part specifically (the claim that naming
+  the rel `hover_note` reaches v5) is dead and should be corrected in the
+  `v6/prolog/lower.pl:176` bare-name story and the `lsp-diags.sh` header, which
+  both overstate what the name buys. The rel itself and its derive receipt stay;
+  reverting the sink would cost a working data surface for zero gain.
+
+The one true fix is architectural: treat `hover_note` as v6 data, not as a v5
+wire. Under the constraint, PR #202's deliverable becomes "the data side of a
+future v6 hover", and its broken v5-reading claim is corrected, not re-shimmed.
+
+
+---
+
+## 6. Verification
+
+This lane is recon only: zero production code. The plan proves out when a later
+lane that owns `v6/tsv2/serve` and the lower seam lands a v6-owned LSP. The
+receipts to reuse are already in the tree and do not need v5:
+
+| probe | what it proves | source |
+|---|---|---|
+| served `/idb/diag_v5` rows appear and retract | the store, not v5, already computes diagnostics | `lsp-diags.sh` phase A (`:200-230`) |
+| a real Content-Length stdio LSP client exchanges diagnostics | the wire works against a v6-owned server once it exists | `lsp_diag_driver.py` (`v6/tsv2/scripts/`) |
+| `hover_note` rows derive from a served program | the data surface a v6 hover would read | `import-hover-receipt.sh`, `import-hover-rail.dl6` |
+
+A v6-owned LSP's own receipts (HOLDS/FAIL) are a build lane's contract; this
+plan only fixes the edge that the current bridge cannot be the receipt host.
+`PLANS.md` regen and the `plans-index-drift` rail are not run here: this worktree
+owns exactly two paths and touching PLANS.md would violate `git status`.
+
+## 7. Staffing
+
+| slot | value |
+|---|---|
+| lane type | plan/recon only, zero production code |
+| base SHA | `154ae23c` |
+| owned files | `plans/2026-08-12-v6-native-lsp.PLAN.md`, `plans/2026-08-12-v6-native-lsp.PLAN.visual.human.unga.md` |
+| executes | no build lane here; the first build lane owns `v6/tsv2/serve` file ownership, `v6/tsv2/package.json` deps, and the lower seam (`v6/prolog/lower.pl` bare-name story) |
+| parallel lanes | three in-tree (compiler, emitter seam, CI ledger); this doc touches no `src/` and no shared file |
+| style | no em dashes; no `here is`/`below is`; tables carry the prose load |
