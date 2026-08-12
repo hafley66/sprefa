@@ -11,6 +11,9 @@
 7. [Cycles](#cycles)
 8. [Verification](#verification)
 9. [Staffing](#staffing)
+10. [Pass 2: rel roles and conformance](#pass-2-rel-roles-and-conformance)
+11. [Pass 2: generic rel arguments](#pass-2-generic-rel-arguments)
+12. [Pass 2: closed codegen picture](#pass-2-closed-codegen-picture)
 
 ## Context and receipts
 
@@ -131,7 +134,12 @@ An SCC has no total topological order. The recon's deterministic topological ord
 | Check | Receipt |
 |---|---|
 | Base before any commit | `git log --oneline -1` printed `0447d771 Merge pull request #215 from hafley66/feature/emit-rust-close-the-loop` |
+| Pass-1 source | `c57a06da` was absent from this worktree and present on `plans/typespec-module-ir`; cherry-pick created `1437957e` with the unchanged two pass-1 artifacts before this append |
+| Required hook setup | `cargo build --release --features cli --bin extract`, `v6/tsv2 pnpm install`, and `v6/sprefa-store/js pnpm install` returned 0 before `1437957e` |
 | Enum probe | `v6/prolog/compile/dl_view/enum_decl_variant_rows_round_trip_through_tag_view.dl6`; expansion receipts in the enum section |
+| Pass-2 reference probe | temporary `.dl6` with `point` and `line` returned 0 and emitted INTEGER `line.a` and `line.b` |
+| Pass-2 enum probe | temporary `.dl6` with `body` and `response` returned 0 and emitted the three `body_*` tables plus INTEGER `response.payload` |
+| Pass-2 generic probe | temporary curried `pair` returned 2 at line 1, column 12 |
 | Option phase | `0_option_expand.pl:42-43`; `1_expansion.pl:28-29` |
 | Module receipts | Context table |
 | TypeSpec version | `npm view @typespec/compiler version` printed `1.15.0` |
@@ -144,4 +152,193 @@ An SCC has no total topological order. The recon's deterministic topological ord
 | Work | two documentation artifacts only |
 | Agent | Codex, one lane |
 | Base | `0447d771` |
-| Commit | none requested or created |
+| Pass-1 import commit | `1437957e` |
+| Pass-2 commit | pending |
+
+## Pass 2: rel roles and conformance
+
+### Reproduced probes and current rel roles
+
+All three supplied probes were rerun through `v6/prolog/compile/scripts/compile_dl6.sh` on 2026-08-12. The reference program and enum program returned `rc=0`. `rel pair(T)(first: T, second: T).` returned `rc=2`, with `dl_parse_error/2` at line 1, column 12, the second `(`. The parser has two `rel` declaration arms: enum at `compile/parse_dl.pl:610-621`, ordinary columns at `:623-644`; the ordinary arm consumes one parenthesized column list and then modifiers or `.`.
+
+| What the declaration carries | Current role | Current storage | Receipt |
+|---|---|---|---|
+| columns plus `key(...)` | keyed stored rel | its own set table: `__id INTEGER PRIMARY KEY`, columns, `UNIQUE` over the declared key when the rel is an arrival target or rule head | `compile.pl:198-235`; `lower.pl:874-900`, `:2104-2144` |
+| columns only | set rel | its own table: `__id INTEGER PRIMARY KEY`, columns, `UNIQUE` over all columns | `lower.pl:861-872`, `:2104-2144`; reproduced `point` and `line` DDL |
+| variants `(a(...) ; b(...))` | closed sum type | one table per variant plus `name_tag(id, tag)` | `0_enum_expand.pl:55-80`, `:122-199`; reproduced `body_page`, `body_redirect`, `body_tag` |
+| named as a column type | reference | the owner table's column is `INTEGER NOT NULL`, containing the target row `__id`; current lowering emits no SQLite `FOREIGN KEY` clause | `0_type_plane.pl:181-204`; `lower.pl:2160-2165`; reproduced `line.a` and `line.b` |
+| rule head | derived rel | its own table, selected by `derived_refs/2` out of arrival targets | `compile.pl:204-215`; `lower.pl:2084-2144` |
+
+The table supports the observation: `rel` presently covers stored relation, relation value type, closed sum declaration, and derived relation. The missing declaration category is an instance-free interface. Every current non-enum relation reaches `declared_refs/2` and `rel_ddl/6`; an interface needs a discriminator before that path so it produces no ordinary instance table.
+
+### Open tag set
+
+The enum lowering has the proposed graph shape. For each closed variant `body_page(Id, ...)`, `0_enum_expand.pl:122-163` generates one rule, `body_tag(Id, page) <- body_page(Id, ...)`; `:55-80` retargets an enum column to `int`. The tag table is a derived set rel, so it currently has `__id`, `id`, `tag`, `__refcount`, and `UNIQUE(id, tag)` in the reproduced program.
+
+An interface can use the same tag relation pattern with member declarations discovered from conformance rows rather than variant terms:
+
+```text
+rel addressable(path: text, digest: text) interface.
+rel file(path: text, digest: text, bytes: int) is addressable.
+
+file(__id, path, digest, bytes)
+  -> addressable_tag(id = __id, which_rel = file)
+```
+
+The physical tag requires two INTEGER columns: `id` and `which_rel`. `which_rel` is the existing catalog relation id, rather than a repeated relation-name string. The pair is unique. `id` alone is not global, since every rel table has its own `__id` sequence. The existing compiler deliberately omits SQLite foreign-key clauses for relation references because SQL cascades conflict with retraction; the interface tag follows that same storage rule. `__rel` already supplies the dictionary row for relation identity (`lower.pl:836-900`, `:1369-1710`).
+
+| Source form | Variant membership source | Tag rows | Membership set |
+|---|---|---|---|
+| `rel body(page(...) ; redirect(...)).` | enum declaration | `body_tag(id, tag)` | closed at the enum declaration |
+| `rel addressable(...) interface. ... rel file(...) is addressable.` | conformance clause on each member rel | `addressable_tag(id, which_rel)` | open across declared member rels |
+
+The emitter delta is limited to reading a new interface and conformance record and emitting the tag relation rule/table. The existing enum expander is 199 lines; its reusable mechanism is 42 lines from `expand_enum_program/2` through column retargeting (`:55-96`) plus 78 lines for variant declaration/rule expansion (`:122-199`). An open tag needs no variant parser, no enum column retargeting, and no generated content tables. A bounded initial estimate is 35-70 shared compiler lines plus 60-120 targeted tests, before target-language type rendering.
+
+### Interface discriminator and content floor
+
+| Marking fork | Whole-program read | Parser and IR price | Failure boundary |
+|---|---|---|---|
+| explicit `interface` modifier | declaration owns its category | one parser modifier, one relation-kind or declaration record, 25-45 shared lines and 35-70 tests | a conformance target must name an interface declaration |
+| infer from conformance plus no population | every declaration, rule head, schedule target, and seed must be examined | no initial keyword, then 70-130 shared lines and 80-150 tests for classification and diagnostics | a later rule or arrival changes an earlier declaration from interface to stored rel |
+
+Use the explicit `interface` modifier as the leading spelling. Inference makes declaration meaning depend on the complete program and requires a late check before `declared_refs/2` builds `RelPlans`.
+
+Columns are the initial interface floor. They are required to check the shared value shape and to render TypeScript fields, Rust associated data through a generated row type, and Go field access helpers. Rules on an interface introduce default-method semantics. Rust traits permit defaults, Go interfaces have method signatures without defaults, and TypeScript interfaces describe shape only. The initial declaration should therefore reject interface rules as TODO. Keys, `log`, `keep`, arrivals, seeds, and ordinary relation references are also absent because an interface has no instance table.
+
+| Member rel kind | Meaning of `member is addressable` | Tag rule source |
+|---|---|---|
+| stored rel | every stored member row produces one `(member.__id, member rel id)` tag row | generated edge rule from the member table |
+| derived rel | every current derived member row produces one tag row; retraction follows the derived row's retraction | generated edge rule from the derived member table |
+
+### Conformance link
+
+The current `.dl6` source has one written rel-to-rel link: a column type such as `line(a: point)`. The parser turns a referenced relation into `type_decl/2` metadata at `compile/parse_dl.pl:990-1036`; `column_storage/3` turns the name into `ref(Name)`; `column_def/4` stores that endpoint as INTEGER. Conformance adds an is-a link. It has a different cardinality and expansion: one member rel can name many interfaces, and each member row produces a tag row for each named interface.
+
+| Spelling | Parse consequence | Price | Result |
+|---|---|---|---|
+| `rel file(...) is addressable.` | add a keyword-led clause after ordinary modifiers; `is` is currently unclaimed by the declaration parser | 20-35 parser lines, 30-60 tests | leading choice: reads as a clause on the existing rel |
+| `rel file(...) implements addressable.` | same position and parser shape, longer reserved word | 20-35 parser lines, 30-60 tests | retains the prior document's SCIP-aligned word |
+| `implements(file, addressable).` | new fact declaration path, separate from the rel | 35-60 parser lines, 45-80 tests | repeats the member name and permits a detached source location |
+| `file <- addressable` | conflicts with the already declared xfx rule arrow | parser conflict and rule ambiguity | unavailable |
+
+The leading surface is `is`, with an IR row named `is_implementation(MemberRelId, InterfaceRelId)`. `is` keeps conformance on the rel declaration and supplies the user-visible clause; the IR spelling follows SCIP's existing `is_implementation` relationship kind. `is_type_definition` serves a different relation: it connects a symbol occurrence to its defining symbol, while this row connects a member declaration to an interface declaration. The prior document's `implements(Type, Interface)` text can remain a foreign-source adapter spelling or a diagnostic rendering, without minting a second IR relation kind.
+
+| Conformance mode | Determining data | Shared price | Target consequence |
+|---|---|---|---|
+| structural | compare member columns with required interface columns | 70-120 compiler lines and 90-160 tests | Go and TypeScript can infer satisfaction; source intent is unavailable to catalog and Rust output |
+| declared | retain `is_implementation(member, interface)` | 35-70 compiler lines and 60-120 tests | Rust `impl`, Go compile-time satisfaction witness, TypeScript `extends` or assignment check have a stable source |
+
+Declared conformance is the leading mode. A declaration supplies the requested written link and a catalog relationship that remains available after source parsing. A future structural query can run over the same column records without changing the declared row.
+
+The generated Rust shape is per member relation, generated by the Rust type emitter after it has the module placement and name map from pass 1:
+
+```rust
+pub trait Addressable {
+    fn path(&self) -> &str;
+    fn digest(&self) -> &str;
+}
+
+impl Addressable for FileRow {
+    fn path(&self) -> &str { &self.path }
+    fn digest(&self) -> &str { &self.digest }
+}
+```
+
+The compiler emits neither an author-declared `impl` entity nor a relation named `my_impl`. The conformance clause yields the catalog row and the tag rule. The Rust emitter reads that row and writes the `impl` block.
+
+If a member conforms to two interfaces whose column names collide, each interface keeps its own declared column list and its own tag table. The member must satisfy each column type independently. Rust method names collide when two traits expose the same method name, but trait-qualified calls select one; Go and TypeScript use the same field name and type. Equal names with unequal types require a named conformance mismatch before target emission. Equal names with equal types require one member column and satisfy both checks.
+
+### Three levels and staging
+
+| Level | Surface | Expansion result | Existing support | Price |
+|---|---|---|---|---|
+| 0 | `interface` plus `is`, no generics | interface record, `is_implementation` row, open tag rule | enum tag mechanism and rel reference storage | 35-70 compiler lines plus 60-120 tests; 20-70 lines per target type emitter |
+| 1 | `rel pair(T)(...)`, `pair(int)` | each ground instantiation mints a concrete rel/table | worklist, canonical naming, artifact lowering already exist for wrapper templates | 170-310 shared compiler lines plus 180-320 tests |
+| 2 | generic interface plus `is container(text)` | level-1 instantiation followed by level-0 conformance | both previous records and tag rule | 60-120 additional shared lines plus 90-160 tests |
+
+Level 0 has no type-variable parse, substitution, instance discovery, or generic artifact. It is independent of levels 1 and 2 and can be staged first. Level 2 depends on a concrete instantiation being available to conformance expansion. The source distinction remains:
+
+| Written | Meaning |
+|---|---|
+| `pair(int)` | generic instantiation: mint one concrete relation value type and its table at compile time |
+| `file is addressable` | conformance: link an already declared rel to an interface and expand rows into an interface tag |
+
+## Pass 2: generic rel arguments
+
+### Curried surface
+
+The curried form is the leading surface:
+
+```dl
+rel pair(T)(first: T, second: T).
+rel coords(point: pair(int)).
+```
+
+The current parser already recognizes the zero-parameter portion, `rel point(x: int, y: int).`, through the ordinary declaration arm at `compile/parse_dl.pl:623-644`. Its grammar change can be represented as:
+
+```text
+rel_decl ::= "rel" dotted_path generic_params? columns modifiers conformance? "."
+generic_params ::= "(" ident ("," ident)* ")"
+columns ::= "(" column ("," column)* ")"
+conformance ::= "is" type_application ("," type_application)*
+type_application ::= ident | ident "(" type ("," type)* ")"
+```
+
+After a rel name, the first parenthesized group is parameters only when a second parenthesized group follows. The parser is at the closing `)` of the first group before selecting that branch, so no arbitrary token lookahead is required. Existing declarations remain the one-parenthesized zero-parameter form. The grammar must reserve parameter names inside the template body and reject free parameters in a non-template declaration.
+
+The Zig comparison holds at compile time: `pair` is a schema template from types to a concrete schema, and `pair(int)` selects a concrete schema. It stops at surface operations and runtime representation. Zig can execute arbitrary comptime code and produces a language type; this compiler's initial template body is a rel column list plus permitted declaration facts, and expansion produces relation declarations and SQL tables.
+
+### Existing generic phase and user-facing delta
+
+`0_generic_expand.pl` is 348 lines. It already executes monomorphization for four internal wrapper constructors: `list/1`, `list_entity_dense_sequence/1`, `list_interned_set/1`, and `list_entity_linked_sequence/1` (`:91-110`). The expansion runs a ground-instance worklist (`:47-89`), lowers typed artifacts to ordinary declarations (`:117-192`), keeps author declarations before minted declarations (`:194-201`), detects generated-name collisions (`:203-244`), replaces generic column types (`:246-309`), and gives each concrete type a readable stem plus 64-bit SHA-256 prefix (`:311-348`). It runs at expansion phase 5, before enum phase 10 (`1_expansion.pl:28-29`).
+
+| Work | Existing lines | User-facing template addition | Estimate |
+|---|---:|---|---:|
+| ground instance discovery and fixed point | 47-115 | discover `user_template(Name, Parameters, Columns)` applications as well as wrapper terms | 35-65 lines |
+| schema artifacts | 117-192 | substitute parameter bindings into template columns and key facts, then mint the concrete rel | 55-100 lines |
+| deterministic minted identity | 194-244, 311-348 | reuse `canonical_type_encoding/2` and collision check; retain source template name separately | 15-30 lines |
+| column replacement and type mirrors | 246-309 | retarget `pair(int)` to its minted type name/reference | 25-45 lines |
+| `.dl6` parser and template IR | none | curried parameters, type applications, template declaration record, source spans | 40-70 lines |
+| checks and fixtures | existing generic fixture and parser suite | arity, groundness, recursive use, collision, column/key substitution | 180-320 lines |
+
+This places the user-facing route at about 170-310 compiler lines and 180-320 test lines. The phase has the core worklist, hashing, artifact order, and ordinary-declaration boundary already present; parser support, user template records, substitution, and checks are new.
+
+Each distinct ground application produces tables. There is no runtime type column and no polymorphic table. The current wrapper artifact counts are concrete: `list(T)` emits 2 relations, `list_entity_dense_sequence(T)` emits 4, `list_interned_set(T)` emits 3, and `list_entity_linked_sequence(T)` emits 3 (`0_generic_expand.pl:125-175`). A program with 6 templates, 8 distinct instantiations per template, and 2 emitted relations per template instance produces 96 generated relations. The present `.dl6` corpus contains 0 curried generic declarations (`rg -n 'rel [[:alnum:]_]+\\([^)]*\\)\\(' v6 -g '*.dl6'`), so no corpus-backed user-template multiplication factor exists yet.
+
+Generic bounds such as `rel pair(T)(...) where T is addressable` are a later arc. They need level 2's instantiated interface record plus a type-level conformance check, while level 1 only requires ground substitution. Deferring bounds retains a direct expansion order: generic instantiation first, ordinary interface conformance second.
+
+### Wrapper prize
+
+| Current wrapper path | Storage result | Existing receipt | Single generic-template route |
+|---|---|---|---|
+| `option(scalar)` | generated scalar enum id | `0_option_expand.pl:39-43` | a template needs a closed-sum artifact capability in addition to companion tables |
+| `option(rel)` | companion relation with endpoint INTEGER reference | `0_option_expand.pl:44-49` | a two-artifact template can emit option identity and an endpoint relation |
+| `list(T)` | list entity and member relation | `0_generic_expand.pl:125-133` | already an artifact template |
+| dense, interned-set, linked list flavors | 4, 3, and 3 relation artifact sets | `0_generic_expand.pl:134-175` | already artifact templates |
+| `json_list(T)` | one JSON carrier column with array check, no relation artifact | `0_type_plane.pl:77-123` | parameterized type checker/storage rule, not companion-table expansion |
+
+The shared route can make the four relation-artifact list flavors and reference-option companion path instances of one template artifact vocabulary. `0_generic_expand.pl:117-192` is already that vocabulary boundary. Scalar option still needs enum-artifact generation, and `json_list(T)` remains a carrier/storage rule. Therefore one generic surface can route wrappers through one generic-expansion phase and a common artifact record form, while its template kinds must include relation artifacts, enum artifacts, and inline carrier rules. The current option versus enum ordering defect remains: `option(<enum>)` stops at `0_option_expand.pl:42-43` because generic/option executes at phase 5 and enum at phase 10.
+
+## Pass 2: closed codegen picture
+
+```mermaid
+flowchart LR
+  Source[.dl6 modules, visibility, rel, enum, interface, generic] --> Parse[parse plus module resolver]
+  Parse --> Expand[generic phase 5, enum phase 10, conformance tag expansion]
+  Expand --> Catalog[module owner, type, is_implementation, SCC]
+  Catalog --> TS[TypeScript files: imports, interfaces, unions, concrete types]
+  Catalog --> Rust[Rust modules: imports, traits, impl blocks, concrete types]
+  Catalog --> Go[Go packages: imports, interfaces, tagged records, concrete types]
+  Expand --> SQL[SQLite: rel tables, enum tags, interface tags, generated instance tables]
+```
+
+| Source fact | Catalog and SQL result | TypeScript output | Rust output | Go output | Missing after all listed forks |
+|---|---|---|---|---|---|
+| module plus visibility | module owner, edge, visibility rows; no SQL data-table change | output path, `import type`, export filter | `mod`, `use`, `pub` selection | package path and exported-name selection | source readers for each foreign-language visibility/import form; placement/import pass in current TS/Rust writers |
+| SCC module cycle | SCC row, stable local order inside condensation group | ESM cycle-aware imports | same-crate item references | cycle diagnostic before package emission | target cycle policy and Go package split policy |
+| enum rel | variant tables plus closed `name_tag` | discriminated union | enum or row/tag adapter | tag plus member records | target renderer selection and match helper generation |
+| interface plus `is` | `is_implementation` record; open `interface_tag(id, which_rel)` | interface and declared member check | trait and emitter-generated `impl` | interface and compile-time assignment witness | interface parser/IR/tag expander; target type renderers |
+| `pair(int)` | canonical generated type name and concrete table(s) | concrete interface/type alias | concrete struct/row type | concrete struct | curried parser, template substitution, source spans, generated type naming policy |
+| `container(text)` conformance | concrete interface instance then `is_implementation` row/tag | instantiated interface shape | instantiated trait or generated trait form | instantiated interface shape | generic interface/bound checker and level-2 expansion |
+
+Pass 1's module, visibility, re-export, resolver, cycle, and late-edge forks remain independent choices. Pass 2 adds no total ordering within an SCC: emit SCC groups topologically and declarations deterministically inside each group, as established in pass 1.

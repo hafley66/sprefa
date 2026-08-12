@@ -8,6 +8,10 @@
 4. [Enum, interface, trait](#enum-interface-trait)
 5. [Prices](#prices)
 6. [Cycles and late edges](#cycles-and-late-edges)
+7. [Pass 2: rel roles](#pass-2-rel-roles)
+8. [Pass 2: conformance](#pass-2-conformance)
+9. [Pass 2: generic rel arguments](#pass-2-generic-rel-arguments)
+10. [Pass 2: generated output](#pass-2-generated-output)
 
 ## What exists
 
@@ -178,3 +182,130 @@ module graph
 | Go | package import cycle is a compiler error | explicit application loader |
 
 An eager cycle can remain in the graph. A late edge can break it only when the chosen target loader postpones the dependency read past eager initialization.
+
+## Pass 2: rel roles
+
+The supplied compiler probes were rerun through `compile_dl6.sh`.
+
+| Written form | Result |
+|---|---|
+| `rel point(x: int, y: int). rel line(a: point, b: point).` | exit 0; both `line` columns are `INTEGER NOT NULL` |
+| enum `body` followed by `response(payload: body)` | exit 0; `body_page`, `body_redirect`, `body_tag`, and integer `response.payload` |
+| `rel pair(T)(first: T, second: T).` | exit 2 at line 1, column 12, the second `(` |
+
+```text
+columns + key       -> stored table, explicit unique key
+columns             -> stored table, unique all columns
+variants            -> variant tables + closed tag table
+column type         -> integer endpoint to another rel row
+rule head           -> derived table
+interface           -> no member table; open tag table fed by conformance
+```
+
+Every ordinary `rel` reaches the table planner today. An interface needs its own declaration category so it stops before ordinary table creation.
+
+```text
+closed sum
+
+body page(...)      ----> body_tag(id, page)
+body redirect(...)  ----> body_tag(id, redirect)
+
+open interface
+
+file(...) is addressable ----> addressable_tag(file.__id, file rel id)
+url(...)  is addressable ----> addressable_tag(url.__id, url rel id)
+```
+
+The interface tag stores two integers. `id` names a row within one member relation. `which_rel` names that relation through the existing relation catalog. A pair is required because table-local `__id` values are not global.
+
+The enum expansion owns 199 lines. Its tag/rule and declaration-generation portion is 78 lines. Open tags reuse the rule/table pattern and skip enum variant parsing, content tables, and enum-column retargeting. Initial shared compiler estimate: 35-70 lines plus 60-120 tests.
+
+## Pass 2: conformance
+
+```dl
+rel addressable(path: text, digest: text) interface.
+rel file(path: text, digest: text, bytes: int) is addressable.
+```
+
+`is` is the leading surface spelling. `<-` is already the rule arrow. `implements` has the same parser position and can remain an adapter or diagnostic word. The type IR row is `is_implementation(member_rel_id, interface_rel_id)`, matching SCIP's implementation relationship term. `is_type_definition` is a different source-to-definition relationship.
+
+| Marking method | Data needed | Price |
+|---|---|---|
+| explicit `interface` | category on the declaration | 25-45 shared lines, 35-70 tests |
+| infer from conformance and no writes | complete program scan of rules, seeds, schedule, and references | 70-130 shared lines, 80-150 tests |
+| structural conformance | compare column sets and types | 70-120 shared lines, 90-160 tests |
+| declared conformance | `is_implementation` row | 35-70 shared lines, 60-120 tests |
+
+Columns are the first interface content. Interface rules would need default-method behavior. Rust traits permit defaults; Go interfaces and TypeScript interfaces supply declaration shapes. Keys, arrivals, seeds, and ordinary references do not apply to an instance-free interface.
+
+Stored and derived member rels both feed interface tags. A derived member's tag rows retract when its rows retract.
+
+```rust
+pub trait Addressable { fn path(&self) -> &str; }
+impl Addressable for FileRow { fn path(&self) -> &str { &self.path } }
+```
+
+The source declares no `impl` block and no `my_impl` relation. The Rust writer emits the `impl` from the conformance row. A rel can conform to two interfaces. Equal field names require equal types; unequal types are a named conformance mismatch. Rust trait-qualified calls select a duplicated method name.
+
+## Pass 2: generic rel arguments
+
+```dl
+rel pair(T)(first: T, second: T).
+rel coords(point: pair(int)).
+```
+
+```text
+rel declaration
+  = rel name + optional parameter group + column group + modifiers + optional is clause
+
+one parenthesized group   = existing zero-parameter rel
+two parenthesized groups  = template parameters, then columns
+```
+
+The parser reaches the first closing parenthesis before choosing whether a second group follows. Existing rel declarations retain one group.
+
+```text
+level 0  interface + conformance
+level 1  generic rel types
+level 2  generic interface plus conformance to an instantiation
+```
+
+Level 0 needs neither parameters nor substitution and can land independently. `pair(int)` mints a concrete type/table. `file is addressable` adds an interface tag row for an existing rel. No `impl` entity is declared.
+
+`0_generic_expand.pl` has 348 lines. It already has a ground-instance worklist, typed artifact lowering, collision checking, canonical 64-bit hash names, and replacement of generic column types. It currently supports four wrapper constructors. User-facing rel templates add parser records, parameter substitution, template application discovery, and checks. Estimate: 170-310 shared compiler lines and 180-320 tests.
+
+| Existing wrapper | Tables per ground instance |
+|---|---:|
+| `list(T)` | 2 |
+| dense entity sequence | 4 |
+| interned set | 3 |
+| linked entity sequence | 3 |
+
+Six templates with eight ground applications each and two tables per application yield 96 generated relations. The present `.dl6` corpus has 0 curried user-template declarations.
+
+One generic-expansion phase can carry relation-artifact wrappers and reference-option companion relations through a common artifact vocabulary. Scalar option needs enum artifacts. `json_list(T)` remains an inline JSON carrier. `option(<enum>)` remains blocked by current ordering: option runs at phase 5 and enum at phase 10.
+
+Generic bounds, such as `where T is addressable`, require instantiated interfaces and type-level conformance checks. They belong after levels 0 and 1.
+
+## Pass 2: generated output
+
+```mermaid
+flowchart LR
+  A[dl6 source] --> B[parse and module resolver]
+  B --> C[generic phase 5]
+  C --> D[enum phase 10]
+  D --> E[conformance tags and catalog rows]
+  E --> F[TypeScript files]
+  E --> G[Rust modules and impl blocks]
+  E --> H[Go packages and interfaces]
+  E --> I[SQLite tables]
+```
+
+| Source feature | SQL/catalog | TypeScript | Rust | Go |
+|---|---|---|---|---|
+| module and visibility | module owner, edges, visibility | paths, imports, exports | modules, use, visibility | packages, exported names |
+| enum | variants + closed tag | discriminated union | enum or row/tag form | tag plus records |
+| interface and `is` | open tag + `is_implementation` | interface plus member check | trait plus generated `impl` | interface plus assignment witness |
+| `pair(int)` | generated concrete table(s) | concrete type | concrete row type | concrete struct |
+
+The current TS and Rust type writers still need file placement/import work. Interface parsing, conformance rows, open tag expansion, curried templates, template substitution, and generic interface expansion remain unbuilt. Module SCC ordering remains condensation order followed by deterministic local order.
