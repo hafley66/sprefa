@@ -114,10 +114,24 @@ pub fn run(lane: LaneRun, channel: &mut dyn LaneChannel) -> Result<i32> {
     }
 }
 
+/// Pin the harness's current conversation to the lane route and to the lane's
+/// trace. The id MOVES on `/clear`, on compaction and on resume; the trace does
+/// not, so every id this lane ever wears lands under one trace.
 fn remember_conversation(lane: &LaneRun, channel: &dyn LaneChannel) {
-    if let Some(id) = channel.conversation_id() {
-        record_conversation(&lane.mail_dir, &lane.lane, &id);
-    }
+    let Some(id) = channel.conversation_id() else {
+        return;
+    };
+    record_conversation(&lane.mail_dir, &lane.lane, &id);
+    let Ok(store) = crate::Store::default_path().and_then(crate::Store::open) else {
+        return;
+    };
+    let trace = store
+        .trace_of(&lane.lane)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| format!("trace-{}", lane.lane));
+    let _ = store.attach_trace(&lane.lane, &trace, "lane-run", crate::channel::now_ms());
+    let _ = store.attach_trace(&id, &trace, "supervisor-conversation", crate::channel::now_ms());
 }
 
 /// Write the harness's own conversation id onto the lane's registry route so a

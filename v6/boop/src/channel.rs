@@ -86,13 +86,8 @@ pub trait LaneChannel: Send {
     fn close(&mut self) -> Result<()>;
 }
 
-/// Quote one value as a single shell word.
-pub(crate) fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', r"'\''"))
-}
-
 /// Milliseconds since the epoch.
-pub(crate) fn now_ms() -> u64 {
+pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis() as u64)
@@ -115,8 +110,4 @@ mod tests {
         assert!(!TurnEnd::failed("boom").ok);
     }
 
-    #[test]
-    fn shell_quote_survives_an_embedded_quote() {
-        assert_eq!(shell_quote("it's"), r"'it'\''s'");
-    }
 }

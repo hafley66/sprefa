@@ -549,6 +549,7 @@ fn main() -> Result<()> {
                 base_sha,
                 socket,
                 goal,
+                trace: None,
                 mail_dir,
                 dry_run,
                 wait: false,
@@ -1442,6 +1443,42 @@ fn run_lane_supervisor(
     std::process::exit(code);
 }
 
+/// Write what the lane was told to do, including the brief bytes as of now:
+/// the file on disk is edited afterward and then nothing recovers the text.
+#[allow(clippy::too_many_arguments)]
+fn record_lane_purpose(
+    lane: &str,
+    trace: &str,
+    harness: &str,
+    branch: &str,
+    repo: &Path,
+    model: Option<&str>,
+    parent: Option<&str>,
+    goal: Option<&str>,
+    brief: &Path,
+) {
+    let Ok(store) = boop::Store::default_path().and_then(boop::Store::open) else {
+        return;
+    };
+    let spawn = boop::ident::LaneSpawn {
+        lane: lane.to_owned(),
+        trace: Some(trace.to_owned()),
+        harness: Some(harness.to_owned()),
+        branch: Some(branch.to_owned()),
+        cwd: Some(repo.display().to_string()),
+        model: model.map(str::to_owned),
+        parent: parent.map(str::to_owned),
+        goal: goal.map(str::to_owned),
+        brief_path: Some(brief.display().to_string()),
+        brief_body: std::fs::read_to_string(brief).ok(),
+        ts: boop::channel::now_ms(),
+    };
+    if let Err(error) = store.record_lane_spawn(&spawn) {
+        eprintln!("[boop] lane purpose not recorded: {error}");
+    }
+    let _ = store.attach_trace(lane, trace, "lane-create", boop::channel::now_ms());
+}
+
 fn record_control_edge(message: &boop::bus::Message) -> Result<()> {
     if !matches!(
         message.kind.as_str(),
@@ -1598,6 +1635,7 @@ struct LaneArgs {
     base_sha: Option<String>,
     socket: Option<String>,
     goal: Option<String>,
+    trace: Option<String>,
     mail_dir: Option<PathBuf>,
     dry_run: bool,
     wait: bool,
@@ -1737,6 +1775,21 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
         );
     }
     let lane_id = identity.lane.clone();
+    let trace = args
+        .trace
+        .clone()
+        .unwrap_or_else(|| format!("trace-{}", identity.lane));
+    record_lane_purpose(
+        &identity.lane,
+        &trace,
+        &harness_id,
+        &identity.branch,
+        &repo,
+        model.as_deref(),
+        parent.parent.as_deref(),
+        args.goal.as_deref(),
+        &brief,
+    );
     run_dispatch(
         registry,
         DispatchArgs {
@@ -2708,6 +2761,10 @@ enum LaneCmd {
         /// What the lane is running toward.
         #[arg(long)]
         goal: Option<String>,
+        /// Continue an existing trace instead of opening one named for the
+        /// lane. Every session this lane runs joins it.
+        #[arg(long)]
+        trace: Option<String>,
         /// Repo to branch from; defaults to the repo the caller stands in.
         #[arg(long)]
         cwd: Option<String>,
@@ -3283,6 +3340,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             base_sha,
             socket,
             goal,
+            trace,
             mail_dir,
             dry_run,
             wait,
@@ -3302,6 +3360,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 base_sha,
                 socket,
                 goal,
+                trace,
                 mail_dir,
                 dry_run,
                 wait,
