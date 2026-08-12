@@ -30,6 +30,7 @@ pub struct GenProgram {
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,
     pub retentions: Vec<IncrementalRetentionStatement>,
+    pub uses_tick: bool,
     pub reconcile_every_tick: bool,
     pub incremental_safe: bool,
 }
@@ -51,6 +52,7 @@ impl GenProgram {
             edges: pj.edges,
             levels: pj.levels,
             retentions: pj.retentions,
+            uses_tick: pj.uses_tick,
             reconcile_every_tick: pj.reconcile_every_tick,
             incremental_safe: pj.incremental_safe,
         }
@@ -66,6 +68,9 @@ impl GenProgram {
 
     pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> TickDeltas {
         incremental::prepare_tick(seam, &self.relations);
+        if self.uses_tick {
+            incremental::advance_tick(seam);
+        }
         let interned = match &self.text_intern_plan {
             Some(plan) => crate::text_plane::intern(seam, plan, arrivals),
             None => arrivals.to_vec(),

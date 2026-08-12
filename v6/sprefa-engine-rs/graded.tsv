@@ -19,11 +19,11 @@ braces_literal_canonicalizes	clean	byte-clean
 callgraph_derivation_over_extraction	clean	byte-clean
 callgraph_unused_inverts_with_the_call_set	clean	byte-clean
 chain_into_keyed_head_replaces	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_))))
-changed_since_ignores_events_before_turn	diff	mixed(missing-rel+wrong-row) first-tick=1
-changed_since_spans_two_turns	diff	mixed(missing-rel+wrong-row) first-tick=1
+changed_since_ignores_events_before_turn	clean	byte-clean
+changed_since_spans_two_turns	clean	byte-clean
 clean_state_gate_and_exit_zero	clean	byte-clean
 clean_state_no_diags	clean	byte-clean
-clock_rel_join_storms	diff	wrong-row first-tick=1
+clock_rel_join_storms	clean	byte-clean
 coalesce_default_returns_when_source_retracts	clean	byte-clean
 coalesce_defaults_the_absent_row	clean	byte-clean
 coalesce_in_edge_body_samples	clean	byte-clean
@@ -44,7 +44,7 @@ conjunction_edge_control_for_combine	clean	byte-clean
 conjunction_level_control_for_combine	clean	byte-clean
 count_is_bag_of_derivations	clean	byte-clean
 counter_fold_matches_hand_computation	diff	mixed(missing-rel+missing-tick) first-tick=1
-created_at_pinned_updated_at_advances	diff	mixed(missing-rel+missing-tick+wrong-row) first-tick=1
+created_at_pinned_updated_at_advances	diff	mixed(missing-rel+missing-tick) first-tick=2
 declaration_order_preserves_struct_refs	clean	byte-clean
 decode_missing_key_fails_quietly	unsupported	decode_source_not_struct(decode(_,{absent_key:_}))
 decode_open_pattern_binds_nested	unsupported	decode_source_not_struct(decode(_,{name:_}))
@@ -53,7 +53,7 @@ demand_view_fires_its_consumer_once	clean	byte-clean
 departed_fires_next_tick_on_retraction	diff	missing-tick first-tick=3
 derive_directory_prefix_via_rtrim_replace	clean	byte-clean
 desugared_trace_equals_hand_written	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
-diag_scenario_seven_ticks_end_to_end	diff	mixed(missing-rel+wrong-row) first-tick=1
+diag_scenario_seven_ticks_end_to_end	clean	byte-clean
 dirty_derives_from_digest_mismatch	clean	byte-clean
 dirty_retracts_on_matching_commit	clean	byte-clean
 division_truncates_toward_zero_mod_follows_divisor_sign	clean	byte-clean
@@ -231,7 +231,7 @@ new_salt_refires_fresh_stream	clean	byte-clean
 next_edge_is_the_bare_atom_spelling	clean	byte-clean
 next_level_is_the_bare_atom_spelling	clean	byte-clean
 non_array_value_at_list_column_is_refused	unsupported	type_arrival_shape_mismatch(batch/2,payloads,json_list(json),field_not_array(42))
-now_reads_the_tick	diff	wrong-row first-tick=1
+now_reads_the_tick	clean	byte-clean
 numeric_equality_operator_filters	clean	byte-clean
 numeric_inequality_operator_filters	clean	byte-clean
 one_attempt_bounded_log_two_arms_refused	unsupported	retention_head_conflict_risk(dispatch_first/2,count(1))

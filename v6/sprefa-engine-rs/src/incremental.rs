@@ -379,6 +379,12 @@ fn rows_equal(left: &Row, right: &Row) -> bool {
     left == right
 }
 
+// One statement per tick: the clock the oracle fixes for the whole tick.
+pub fn advance_tick(seam: &SqliteSeam) {
+    seam.execute_multiple("UPDATE \"__tick\" SET \"n\" = \"n\" + 1")
+        .expect("advance_tick failed");
+}
+
 pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
     if relations.is_empty() {
         return;

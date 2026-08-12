@@ -116,8 +116,6 @@ pub struct QueryResult {
     pub rows_affected: i64,
 }
 
-// One IIncrementalRelationPlan: the per-relation table names and statement
-// text the tick engine stages events through.
 // `rel_columns` carries one flag per relation column, true where the stored
 // column holds a dictionary id and the arriving value is its content.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +125,8 @@ pub struct TextInternPlan {
     pub rel_columns: std::collections::HashMap<String, Vec<bool>>,
 }
 
+// One IIncrementalRelationPlan: the per-relation table names and statement
+// text the tick engine stages events through.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalRelationPlan {
     pub rel: String,
@@ -262,6 +262,8 @@ pub struct ProgramJson {
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,
     pub retentions: Vec<IncrementalRetentionStatement>,
+    #[serde(default)]
+    pub uses_tick: bool,
     pub reconcile_every_tick: bool,
     pub incremental_safe: bool,
 }

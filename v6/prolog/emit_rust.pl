@@ -16,7 +16,8 @@
 :- use_module(lower, [ departure_frontier_table_name/2,
                        program_text_intern_plan/3 ]).
 :- use_module('0_rel_record').
-:- use_module(analyze, [ body_ref_uses/2, listened_departure_refs/2 ]).
+:- use_module(analyze, [ body_ref_uses/2, listened_departure_refs/2,
+                         program_uses_tick/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -271,7 +272,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     plan_intern_mode(Plan, InternMode),
     include(is_level_statement, LevelStatements, RuleLevelStatements),
     include(is_retention_statement, LevelStatements, RetentionStatements),
-    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _, _, _),
+    Plan = plan(_, TickProg, _, _, _, _, _, _, _),
+    TickProg = prog(_, PlanRules),
+    program_uses_tick(TickProg, UsesTick),
     listened_departure_refs(PlanRules, DepartureRefs),
     reconcile_every_tick(Plan, ReconcileEveryTick),
 
@@ -310,6 +313,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        edges: Edges,
        levels: Levels,
        retentions: Retentions,
+       uses_tick: UsesTick,
        reconcile_every_tick: ReconcileEveryTick,
        incremental_safe: true },
     json_write_string(ProgramDict, ProgramJson),
