@@ -16,7 +16,7 @@ mkdir -p "$corpus"
 cargo build --quiet --release --manifest-path "$here/Cargo.toml"
 runner="$here/target/release/dd-runner"
 
-swipl -q -l "$root/v6/prolog/compile/6_emit_dd_plan.pl" -l "$here/sweep_plans.pl" \
+swipl -q -l "$root/v6/prolog/compile/6_isolated_compiler_dd.pl" -l "$here/sweep_plans.pl" \
   -g "sweep('$root','$corpus','$scratch/plans.tsv')" -g halt
 ( cd "$root/v6/prolog/conformance" && swipl -q -l ticklog.pl -l "$here/sweep_oracle.pl" \
   -g "sweep_oracle('$corpus','$scratch/oracle.tsv')" -g halt )
