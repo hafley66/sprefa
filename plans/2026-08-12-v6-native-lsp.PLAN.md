@@ -45,7 +45,7 @@ engine lenses it populates. The complete v5 LSP method dispatch is
 | D2 | hover (note over span) | `.dl6` rel named `hover_note`, 6 cols, compiles to bare table `hover_note` (`lower.pl:176`); no serve-side reader; intended v5 hover | `hover_notes_at` call `src/lsp.rs:884`; merge `src/lsp.rs:886-897`; `MarkupContent` `src/lsp.rs:906`; impl reads `txt_tbl("hover_note")` `src/engine/lens.rs:294-296` | NO. Broken even with v5. `hover_notes_at` selects `rel_hover_note_txt` (`txt_tbl` naming, `src/lower.rs:10`), never the bare `hover_note` table v6 emits. v5 has no `--hover-db` foreign mode (only `--diag-db`, `src/lsp.rs:495`); `hover_notes_at` runs only in full `--lsp` engine mode against v5's own compiled db. PR #202's own lane measured it could not put a note into an editor. |
 
 D1 caveats: spans are whole-file only (line=col=end_line=end_col=0, the
-`decode/2` refusal in `diag-rail.dl6`), and the binary has a shutdown hang after
+the `decode/2` wall in `diag-rail.dl6`), and the binary has a shutdown hang after
 `exit` + stdin EOF (`lsp-diags.sh` header, downgraded to a SIGKILL-with-grace in
 the driver). Neither blocks the measure: D1 is the one v6 editor feature that
 reaches an editor through v5 today, and it is the only one.
