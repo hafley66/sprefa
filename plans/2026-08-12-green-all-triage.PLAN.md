@@ -19,6 +19,8 @@ whole gate. See `.github/CI-KNOWN-RED.md` for the allowlist this updates.
 | roundtrip | FAIL 3/3 | real | print_dl/parse_dl round-trip not variant-stable for the mutual-recursion fixture | `v6/prolog/compile/scripts/roundtrip.sh:132` |
 | extraction-live | PASS 3/3 | stale (ledger) | `EXTRACTION LIVE HOLDS`; passes once the release extractor is present | none |
 | lsp-diags | FAIL 3/3 | real | LSP client never receives both diagnostics for b.ts (driver.log stalls at READY); needs the v5 `dl` binary, then fails B1 deterministically | `v6/tsv2/scripts/lsp-diags.sh:266` |
+| flagship | FAIL 3/3 | real | pinned corpus moved since the v5 golden: digest `b8d03946` now `8e3874d5`; golden must be regenerated | `v6/tsv2/scripts/flagship-callgraph.sh:287` |
+| getting-started | FAIL 3/3 | real | engine error text changed to `rule-index unavailable:`, doc block 24 still prints the old `broken.dl6:4:` message | `v6/tsv2/scripts/getting-started.sh:224` |
 
 ## 2. Real failures
 
