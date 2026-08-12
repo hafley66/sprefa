@@ -33,16 +33,17 @@ fn value_from_json(v: &serde_json::Value) -> Value {
         serde_json::Value::Bool(b) => Value::Bool(*b),
         serde_json::Value::String(s) => Value::Text(s.clone()),
         serde_json::Value::Null => Value::Text(String::new()),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            Value::Text(v.to_string())
-        }
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Value::Text(v.to_string()),
     }
 }
 
 // Extract the JSON body from the emitted module's raw string literal.
 fn extract_json(module_text: &str) -> String {
     let start = module_text.find("r#\"").expect("no r#\" delimiter") + 3;
-    let end = module_text[start..].find("\"#;").expect("no \"#; delimiter") + start;
+    let end = module_text[start..]
+        .find("\"#;")
+        .expect("no \"#; delimiter")
+        + start;
     module_text[start..end].to_string()
 }
 
@@ -67,7 +68,11 @@ fn main() {
                 .iter()
                 .map(|a| Arrival {
                     rel: a.rel.clone(),
-                    sign: if a.sign == "add" { ArrivalSign::Add } else { ArrivalSign::Del },
+                    sign: if a.sign == "add" {
+                        ArrivalSign::Add
+                    } else {
+                        ArrivalSign::Del
+                    },
                     row: a.row.iter().map(value_from_json).collect(),
                 })
                 .collect()
