@@ -26,6 +26,7 @@ whole gate. See `.github/CI-KNOWN-RED.md` for the allowlist this updates.
 | plunit | FAIL 3/3 | real | 6 unit-test failures now (ledger records 1); catalog_plane_rail + expression_inventory + rel_zero_arity + 3 json_merge_patch, incl. two `no_exception` | `v6/prolog/compile/test/plunit_tests.pl:1314,4561,5809,7684,7739,7743` |
 | rtkq-golden | FAIL 3/3 | real | api_endpoint row order mismatch: engine emits updateUser-before-listUsers, order-sensitive golden expects listUsers-first (spans identical, not a corpus move) | `v6/tsv2/labs/1_rtkq-extraction-golden.ts:200` |
 | compile-speed | FAIL 3/3 | real | `COMPILE_SPEED regressions=16 improvements=0` vs 2026-08-07 baseline; golden-flex lower +178%, emit +120% | `v6/prolog/compile/scripts/1_compile_speed.sh:248` |
+| scale-floor | FAIL 3/3 | real | stmts/tick `[39,43]` flat at BOTH 10k and 1k (delta-proportionality holds) but expected pin `[37,41]` is stale by a constant +2 | `v6/tsv2/scripts/7_scale-floor.sh:240` |
 
 ## 2. Real failures
 
