@@ -14,6 +14,8 @@
 :- use_module(lower, [ lower_program/2, boot_statements/7, catalog_decl_rows/6 ]).
 :- use_module(emit_ts, [ emit_program/5 ]).
 :- use_module('compile/4_emit_jsonschema', [ jsonschema_text/3, option_rows/3 ]).
+:- use_module('compile/7_emit_ts_types', [ ts_types_text/3 ]).
+:- use_module('compile/8_emit_rust_types', [ rust_types_text/3 ]).
 :- use_module('conformance/body', [ rel_ref/2 ]).
 :- use_module('0_rel_record', [ relplan_column_types/3 ]).
 :- use_module('0_type_plane',
@@ -90,7 +92,8 @@ clear_stale_compiled_outputs(OutDir) :-
     forall(( member(Entry, Entries),
              ( sub_atom(Entry, _, 3, 0, '.ts')
              ; sub_atom(Entry, _, 14, 0, '.schedule.json')
-             ; sub_atom(Entry, _, 11, 0, '.schema.json') )
+             ; sub_atom(Entry, _, 11, 0, '.schema.json')
+             ; sub_atom(Entry, _, 9, 0, '.types.rs') )
            ),
            ( atomic_list_concat([OutDir, '/', Entry], Path), delete_file(Path) )).
 
@@ -125,6 +128,30 @@ sweep_one(Options, File, Name, Term, Bindings, result(Name, File, Bucket, Reason
               setup_call_cleanup(open(SchemaPath, write, SchemaStream),
                                  format(SchemaStream, "~s", [SchemaText]),
                                  close(SchemaStream))
+          ;   true
+          ),
+          (   catch( ( catalog_decl_rows(Name, Rules, RelPlans, Decls,
+                                        TypeRows, _),
+                       option_rows(Decls, TypeRows, TypeRowsOpt),
+                       ts_types_text(Name, TypeRowsOpt, TsTypesText) ),
+                     _TsTypesError,
+                     fail )
+          ->  format(atom(TsTypesPath), '~w/~w.types.ts', [OutDir, Name]),
+              setup_call_cleanup(open(TsTypesPath, write, TsTypesStream),
+                                 format(TsTypesStream, "~s", [TsTypesText]),
+                                 close(TsTypesStream))
+          ;   true
+          ),
+          (   catch( ( catalog_decl_rows(Name, Rules, RelPlans, Decls,
+                                        TypeRows, _),
+                       option_rows(Decls, TypeRows, TypeRowsOpt),
+                       rust_types_text(Name, TypeRowsOpt, RustTypesText) ),
+                     _RustTypesError,
+                     fail )
+          ->  format(atom(RustTypesPath), '~w/~w.types.rs', [OutDir, Name]),
+              setup_call_cleanup(open(RustTypesPath, write, RustTypesStream),
+                                 format(RustTypesStream, "~s", [RustTypesText]),
+                                 close(RustTypesStream))
           ;   true
           ),
           Bucket = compiled, Reason = none
