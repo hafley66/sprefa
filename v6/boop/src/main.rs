@@ -76,7 +76,25 @@ ROUTE: session id for a lane: boop beep lane route <lane> (route cwd = the
   lane's worktree). Mailbox: ~/.agent/mail/ (bus.ndjson + registry.json),
   override with --mail-dir.
 
-STORE SCHEMA: this build writes version 5. A store written by an older build is
+TRACE + PURPOSE: a session id is per-process-run and MOVES on /clear, on
+compaction and on resume. A trace does not move, and every session id a lane
+ever wears hangs under one:
+    agent_trace       trace_id, root_session_id, started_ts
+    agent_trace_span  session_id -> trace_id, attach_id (WHY it attached)
+    agent_lane        one row per spawn: goal text, brief path id, brief body id
+    markdown_cache    digest UNIQUE, body, bytes, first_ts (briefs dedupe here)
+  `lane create` opens `trace-<lane>`; `--trace <id>` continues an existing one.
+  A session attaches only on evidence boop holds: lane-create, lane-run,
+  supervisor-conversation, backfill-spawned-edge. Adjacency in time is NOT
+  evidence, so an unattached session stays unattached; a wrong attach would
+  silently merge two arcs.
+    boop db \"SELECT t.value, d.value FROM agent_trace_span s
+      JOIN dict_trace t ON t.id=s.trace_id
+      JOIN dict_session d ON d.id=s.session_id\"
+  The brief body is stored AS OF SPAWN. Editing the file afterward does not
+  change what the store says the lane was told.
+
+STORE SCHEMA: this build writes version 9. A store written by an older build is
 refused, and `boop db sync create --rebuild` drops every stored row and
 re-projects every transcript from byte 0 (about 18 s over 1.5 GB here). Nothing
 is wiped without that flag.
