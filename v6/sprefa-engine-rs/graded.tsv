@@ -76,8 +76,8 @@ fill_as_cache_update_swr	diff	-{"tick":1,"deltas":{"demanded":{"add":[["alpha","
 filter_map_is_a_level_rule	diff	-{"tick":1,"deltas":{"doubled":{"add":[["net",60]],"del":[]},"reading":{"add":[["net",30]],"del":[]}}}
 finalize_over_log_fires_on_retention_prune	diff	-{"tick":1,"deltas":{"ev":{"add":[[1,"a"]],"del":[]}}}
 fix_by_waiver_returns_to_clean	clean	byte-clean
-flagship_flow_reach_over_batched_resolved_edges	runtime-error	parse program json: Error("invalid type: map, expected a string")
-flagship_flow_reach_over_resolved_edges	runtime-error	parse program json: Error("invalid type: map, expected a string")
+flagship_flow_reach_over_batched_resolved_edges	diff	-{"tick":1,"deltas":{"flow_edge":{"add":[["app","entry","lib","decode"],["lib","decode","sink","persist"]],"del":[]},"flow_reach":{"add":[["app","entry","lib","decode"],["app","ent
+flagship_flow_reach_over_resolved_edges	diff	-{"tick":1,"deltas":{"flow_edge":{"add":[["app","entry","lib","decode"]],"del":[]},"flow_reach":{"add":[["app","entry","lib","decode"]],"del":[]},"resolved_call_edge":{"add":[["app
 float_arithmetic_is_binary64	clean	byte-clean
 float_avg_is_grouped	clean	byte-clean
 float_avg_retracts_to_empty_group	diff	-{"tick":1,"deltas":{"mean":{"add":[["a",1.5]],"del":[["a",1]]},"score":{"add":[],"del":[["a",0.5]]}}}
@@ -266,7 +266,7 @@ ordered_json_group_array_nested_json	clean	byte-clean
 ordered_json_group_array_ordinal	clean	byte-clean
 ordered_json_group_array_value	clean	byte-clean
 ordered_mermaid_line_assembly	clean	byte-clean
-ordered_program_level_fold_reaches_three_links	runtime-error	parse program json: Error("invalid type: map, expected a string")
+ordered_program_level_fold_reaches_three_links	clean	byte-clean
 over_baseline_count_row	clean	byte-clean
 over_baseline_diag_exact_rows	clean	byte-clean
 over_baseline_gate_blocks_commit_only	clean	byte-clean
@@ -370,7 +370,7 @@ typed_int_without_literal_witness	clean	byte-clean
 unmarked_chain_replays_to_late_subscriber	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 unmarked_edge_replays_backlog	diff	-{"tick":1,"deltas":{"subscriber":{"add":[["alice"]],"del":[]}}}
 unmarked_first_stage_refires_on_late_watch	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
-unordered_program_level_fold_reaches_three_links	runtime-error	parse program json: Error("invalid type: map, expected a string")
+unordered_program_level_fold_reaches_three_links	clean	byte-clean
 unsubscribe_is_a_named_unsupported	unsupported	lifecycle_arm(unsubscribe)
 unwrap_aggregate_and_interpolation	clean	byte-clean
 unwrap_below_budget_silent	clean	byte-clean

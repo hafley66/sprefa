@@ -180,6 +180,18 @@ pub struct AggregateLevelPlan {
     pub delta_maintained: bool,
 }
 
+// SQL statements for one expand wavefront plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExpandPlan {
+    pub clear_a_sql: String,
+    pub clear_b_sql: String,
+    pub seed_sqls: Vec<String>,
+    pub hop_ab_sql: String,
+    pub hop_ba_sql: String,
+    pub absorb_a_sql: String,
+    pub absorb_b_sql: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalLevelStatement {
     pub head_rel: String,
@@ -191,7 +203,7 @@ pub struct IncrementalLevelStatement {
     pub recompute_sql: String,
     pub support_sql: Option<Vec<String>>,
     pub support_intern_sql: Option<Vec<String>>,
-    pub expand_sql: Option<String>,
+    pub expand_sql: Option<ExpandPlan>,
     pub dred_sql: Option<DredPlan>,
     pub aggregate_sql: Option<AggregateLevelPlan>,
 }
