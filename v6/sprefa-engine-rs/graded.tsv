@@ -1,7 +1,7 @@
-aggregate_count_min_max_track_arrivals_and_retraction	diff	missing-rel first-tick=1
+aggregate_count_min_max_track_arrivals_and_retraction	clean	byte-clean
 aggregate_in_edge_head_rejected	unsupported	aggregate_in_edge_head(total/1)
-aggregate_min_recomputes_when_the_minimum_is_retracted	diff	missing-rel first-tick=1
-aggregate_sum_tracks_a_growing_and_shrinking_group	diff	missing-rel first-tick=1
+aggregate_min_recomputes_when_the_minimum_is_retracted	clean	byte-clean
+aggregate_sum_tracks_a_growing_and_shrinking_group	clean	byte-clean
 any_two_tagged_arms_land_on_one_tick	clean	byte-clean
 arithmetic_rejects_non_int_operand_at_runtime	unsupported	arith_operand_not_number(_+1,_,text)
 arrival_affinity_rewrite_keeps_delta	clean	byte-clean
@@ -74,13 +74,13 @@ extraction_fork_callgraph	clean	byte-clean
 extraction_fork_span_line	clean	byte-clean
 fill_as_cache_update_swr	clean	byte-clean
 filter_map_is_a_level_rule	clean	byte-clean
-finalize_over_log_fires_on_retention_prune	diff	mixed(missing-rel+missing-tick+wrong-row) first-tick=3
+finalize_over_log_fires_on_retention_prune	diff	mixed(missing-rel+missing-tick) first-tick=4
 fix_by_waiver_returns_to_clean	clean	byte-clean
 flagship_flow_reach_over_batched_resolved_edges	clean	byte-clean
 flagship_flow_reach_over_resolved_edges	clean	byte-clean
 float_arithmetic_is_binary64	clean	byte-clean
 float_avg_is_grouped	clean	byte-clean
-float_avg_retracts_to_empty_group	diff	missing-rel first-tick=1
+float_avg_retracts_to_empty_group	clean	byte-clean
 float_exact_comparison_has_no_epsilon	clean	byte-clean
 float_exact_join_has_no_epsilon	clean	byte-clean
 float_integral_value_keeps_real_storage	clean	byte-clean
@@ -96,8 +96,8 @@ fork_join_is_a_conjunctive_body	clean	byte-clean
 generic_expansion_end_to_end	clean	byte-clean
 ghcacher_host_program_term	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
 ghcacher_json_normalization	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
-group_concat_one_argument_joins_members	diff	missing-rel first-tick=1
-groupby_aggregate_two_bare_integer_literals	diff	missing-rel first-tick=1
+group_concat_one_argument_joins_members	clean	byte-clean
+groupby_aggregate_two_bare_integer_literals	clean	byte-clean
 groupby_two_bare_integer_literals	clean	byte-clean
 guard_stage_fires_on_negation_and_comparison	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
 guard_stage_silent_below_threshold	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
@@ -223,7 +223,7 @@ nested_list_text_door	clean	byte-clean
 nested_parent_with_no_rows_yields_an_empty_child	clean	byte-clean
 nested_rel_element_list_round_trips	diff	mixed(missing-rel+wrong-row) first-tick=1
 nested_three_levels_chain_the_references	clean	byte-clean
-nested_two_parent_rows_partition_the_child	diff	missing-rel first-tick=1
+nested_two_parent_rows_partition_the_child	clean	byte-clean
 nested_zero_column_child_is_one_row_per_parent	clean	byte-clean
 new_file_diag_at_hit_line_exact_rows	clean	byte-clean
 new_file_no_exceeded_diag	clean	byte-clean
@@ -253,7 +253,7 @@ option_rel_on_a_reference_target_round_trips_absent_and_present	diff	mixed(missi
 option_rel_ref_desugars_to_companion_split_rel	clean	byte-clean
 option_scalar_enums_mint_per_element_type	clean	byte-clean
 option_text_column_reads_through_tag_join	clean	byte-clean
-ordered_aggregate_retraction_rebuild	diff	missing-rel first-tick=1
+ordered_aggregate_retraction_rebuild	clean	byte-clean
 ordered_fragment_line_assembly	clean	byte-clean
 ordered_group_concat_explicit_comma_matches_one_argument	clean	byte-clean
 ordered_group_concat_one_argument_defaults_to_comma	clean	byte-clean
@@ -312,10 +312,10 @@ replace_rewrites_all_occurrences	clean	byte-clean
 repo_on_bind_watch_is_refused	unsupported	bind_repo_column(watch)
 reserved_namespace_declared_rel	unsupported	reserved_rel_namespace('__txt_reach')
 reserved_namespace_derived_head	unsupported	reserved_rel_namespace('__str_stats')
-retention_count_prunes_oldest	diff	wrong-row first-tick=3
+retention_count_prunes_oldest	clean	byte-clean
 retention_head_conflict_risk_rejected	unsupported	retention_head_conflict_risk(journal/1,count(1))
-retention_prune_is_a_visible_minus	diff	wrong-row first-tick=3
-retention_single_arm_still_prunes	diff	wrong-row first-tick=2
+retention_prune_is_a_visible_minus	clean	byte-clean
+retention_single_arm_still_prunes	clean	byte-clean
 retraction_only_tick_retracts_level_view	clean	byte-clean
 rev_fill_not_behind_keeps_stale_pin_empty	clean	byte-clean
 rtrim_strips_trailing_chars	clean	byte-clean

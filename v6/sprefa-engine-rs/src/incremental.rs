@@ -642,7 +642,15 @@ fn apply_level_statement(
         .iter()
         .find(|r| r.rel == statement.head_rel)
         .expect("incremental level head relation missing");
-    if statement.aggregate_sql.is_some() {
+    if let Some(aggregate) = &statement.aggregate_sql {
+        apply_aggregate_level_statement(
+            seam,
+            statement,
+            aggregate,
+            relation,
+            after_edges,
+            next_sequence,
+        );
         return 0;
     }
     let insert_sql = statement
@@ -677,6 +685,105 @@ fn apply_level_statement(
     let copies = level_frontier_copies(relation, after_edges);
     stage_events(seam, std::slice::from_ref(relation), &events, &copies);
     rows.len()
+}
+
+// The DELETE and every INSERT return only the rows of the AFFECTED GROUPS, so
+// the head re-derives without a full-table read on either side of the seam.
+fn apply_aggregate_level_statement(
+    seam: &SqliteSeam,
+    statement: &crate::types::IncrementalLevelStatement,
+    aggregate: &crate::types::AggregateLevelPlan,
+    relation: &IncrementalRelationPlan,
+    after_edges: bool,
+    next_sequence: &mut dyn FnMut() -> u64,
+) {
+    // The intern arm reads the scope table, so it follows the seed inside the
+    // same ordered batch and precedes the insert that looks its ids back up.
+    let mut scope_texts = vec![aggregate.scope_clear_sql.clone()];
+    scope_texts.extend(aggregate.scope_seed_sql.clone());
+    scope_texts.extend(aggregate.intern_sql.clone().unwrap_or_default());
+    seam.batch(&to_statements(&scope_texts))
+        .expect("aggregate scope batch failed");
+    let delete_result = seam
+        .execute(&SqlStatement {
+            sql: aggregate.delete_scoped_sql.clone(),
+            args: vec![],
+        })
+        .expect("aggregate scoped delete failed");
+    let removed_rows = result_rows(
+        &delete_result,
+        &statement.head_columns,
+        &statement.head_column_types,
+    );
+    let insert_results = seam
+        .batch(&to_statements(&aggregate.insert_scoped_sql))
+        .expect("aggregate scoped insert failed");
+    let mut events: Vec<DeltaEvent> = removed_rows
+        .iter()
+        .map(|row| DeltaEvent {
+            rel: statement.head_rel.clone(),
+            sign: -1,
+            sequence: next_sequence(),
+            row: row.clone(),
+        })
+        .collect();
+    for insert_result in &insert_results {
+        for row in result_rows(
+            insert_result,
+            &statement.head_columns,
+            &statement.head_column_types,
+        ) {
+            events.push(DeltaEvent {
+                rel: statement.head_rel.clone(),
+                sign: 1,
+                sequence: next_sequence(),
+                row,
+            });
+        }
+    }
+    if events.is_empty() {
+        return;
+    }
+    let copies = level_frontier_copies(relation, after_edges);
+    stage_events(seam, std::slice::from_ref(relation), &events, &copies);
+}
+
+pub fn apply_retention(
+    seam: &SqliteSeam,
+    statements: &[crate::types::IncrementalRetentionStatement],
+    relations: &[IncrementalRelationPlan],
+) {
+    let mut sequence = 0u64;
+    for statement in statements {
+        let relation = relations
+            .iter()
+            .find(|r| r.rel == statement.rel)
+            .expect("incremental retention relation missing");
+        let result = seam
+            .execute(&SqlStatement {
+                sql: statement.delete_sql.clone(),
+                args: vec![],
+            })
+            .expect("retention delete failed");
+        let rows = result_rows(&result, &relation.columns, &relation.column_types);
+        if rows.is_empty() {
+            continue;
+        }
+        let events: Vec<DeltaEvent> = rows
+            .iter()
+            .map(|row| {
+                let current = sequence;
+                sequence += 1;
+                DeltaEvent {
+                    rel: statement.rel.clone(),
+                    sign: -1,
+                    sequence: current,
+                    row: row.clone(),
+                }
+            })
+            .collect();
+        stage_events(seam, std::slice::from_ref(relation), &events, &[]);
+    }
 }
 
 // After the edge boundary a level row must reach BOTH the current frontier
@@ -1154,9 +1261,17 @@ pub fn recompute_levels_after_edges(
     if statements.is_empty() {
         return;
     }
+    // No frontier copies on either arm: a reconcile row is a correction inside
+    // the same closure, never post-write growth, so it must not carry.
     let reconcile = |seam: &SqliteSeam| {
+        let mut sequence = 0u64;
+        let mut next_sequence = || {
+            let current = sequence;
+            sequence += 1;
+            current
+        };
         for statement in statements {
-            let _relation = relations
+            let relation = relations
                 .iter()
                 .find(|r| r.rel == statement.head_rel)
                 .expect("incremental level head relation missing");
@@ -1164,6 +1279,14 @@ pub fn recompute_levels_after_edges(
                 if aggregate.delta_maintained {
                     continue;
                 }
+                apply_aggregate_level_statement(
+                    seam,
+                    statement,
+                    aggregate,
+                    relation,
+                    false,
+                    &mut next_sequence,
+                );
                 continue;
             }
             reconcile_ref_count_statement(seam, statement, relations, &[]);

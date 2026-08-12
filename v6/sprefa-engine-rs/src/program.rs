@@ -85,6 +85,7 @@ impl GenProgram {
             incremental::merge_next_into_current(seam, &self.relations);
             incremental::apply_levels_after_edges(seam, &self.levels, &self.relations);
         }
+        incremental::apply_retention(seam, &self.retentions, &self.relations);
         incremental::recompute_levels_after_edges(
             seam,
             &self.levels,
