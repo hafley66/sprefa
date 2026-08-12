@@ -23,6 +23,7 @@ whole gate. See `.github/CI-KNOWN-RED.md` for the allowlist this updates.
 | getting-started | FAIL 3/3 | real | engine error text changed to `rule-index unavailable:`, doc block 24 still prints the old `broken.dl6:4:` message | `v6/tsv2/scripts/getting-started.sh:224` |
 | golden-flex | FAIL 3/3 | real | `json_object/2` stale `refused` excuse (now live) + `json_patch/2` unexercised; 69 registry constructs, 2 unaccounted | `v6/prolog/compile/scripts/golden_coverage.pl:174,178` |
 | tsv2-test | FAIL 3/3 | real | sh host grid decode: a 0-row demand answers with rows; decoded per-demand counts `[0,1,2,3]` expected, `[1,2,2,3]` actual. (Needs `gen_emitted/` first, produced by `just sweep`.) | `v6/tsv2/tests/hostDecode.test.ts:144` |
+| plunit | FAIL 3/3 | real | 6 unit-test failures now (ledger records 1); catalog_plane_rail + expression_inventory + rel_zero_arity + 3 json_merge_patch, incl. two `no_exception` | `v6/prolog/compile/test/plunit_tests.pl:1314,4561,5809,7684,7739,7743` |
 
 ## 2. Real failures
 
