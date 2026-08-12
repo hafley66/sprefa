@@ -21,6 +21,8 @@ whole gate. See `.github/CI-KNOWN-RED.md` for the allowlist this updates.
 | lsp-diags | FAIL 3/3 | real | LSP client never receives both diagnostics for b.ts (driver.log stalls at READY); needs the v5 `dl` binary, then fails B1 deterministically | `v6/tsv2/scripts/lsp-diags.sh:266` |
 | flagship | FAIL 3/3 | real | pinned corpus moved since the v5 golden: digest `b8d03946` now `8e3874d5`; golden must be regenerated | `v6/tsv2/scripts/flagship-callgraph.sh:287` |
 | getting-started | FAIL 3/3 | real | engine error text changed to `rule-index unavailable:`, doc block 24 still prints the old `broken.dl6:4:` message | `v6/tsv2/scripts/getting-started.sh:224` |
+| golden-flex | FAIL 3/3 | real | `json_object/2` stale `refused` excuse (now live) + `json_patch/2` unexercised; 69 registry constructs, 2 unaccounted | `v6/prolog/compile/scripts/golden_coverage.pl:174,178` |
+| tsv2-test | FAIL 3/3 | real | sh host grid decode: a 0-row demand answers with rows; decoded per-demand counts `[0,1,2,3]` expected, `[1,2,2,3]` actual. (Needs `gen_emitted/` first, produced by `just sweep`.) | `v6/tsv2/tests/hostDecode.test.ts:144` |
 
 ## 2. Real failures
 
