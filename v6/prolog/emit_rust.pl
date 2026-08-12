@@ -1,0 +1,312 @@
+% Emit lowered compiler plans as Rust source modules for the
+% v6/sprefa-engine-rs runtime crate.
+%
+% emit_program/5 is substitutable for emit_ts:emit_program/5 with no call-site
+% special case: same lowered/8 destructure, same output contract. The Text it
+% produces is a Rust file carrying the program's IGenProgram data as one
+% ProgramJson document (library(http/json_write) serializes a built dict), the
+% same "compiler emits JSON, runtime parses it" seam dd-runner already buys.
+% Only the tick log is byte-diffed; program JSON whitespace is irrelevant.
+:- module(emit_rust,
+          [ emit_program/5 ]).
+
+:- use_module(library(lists)).
+:- use_module(library(apply)).
+:- use_module(library(json)).
+:- use_module(lower, [ departure_frontier_table_name/2 ]).
+:- use_module('0_rel_record').
+:- use_module(analyze, [ body_ref_uses/2, listened_departure_refs/2 ]).
+
+:- op(1150, xfx, <-).
+:- op(1150, xfx, <+).
+
+% ═══ helpers ═════════════════════════════════════════════════════════════════
+
+ref_name(Ref, Name) :- ( Ref = _/_ -> arg(1, Ref, Name) ; atom_string(Name, Ref) ).
+
+lines_block(Lines, Text) :- atomic_list_concat(Lines, '\n', Text).
+
+position_index(Position, Index) :- Index is Position - 1.
+
+json_write_string(Value, Atom) :-
+    with_output_to(string(S), json_write_dict(current_output, Value, [width(0)])),
+    atom_string(Atom, S).
+
+% Name-Value pairs to a dict (JSON object), for the map-shaped fields.
+pairs_to_dict([], _{}) :- !.
+pairs_to_dict(Pairs, Dict) :-
+    foldl(add_pair, Pairs, _{}, Dict).
+add_pair(Name-Value, Acc, Out) :- Out = Acc.put(Name, Value).
+
+% ═══ plan accessors ══════════════════════════════════════════════════════════
+
+plan_intern_mode(plan(_, _, _, _, _, _, _, _, InternMode), InternMode).
+
+incremental_safe(true).
+
+% emit_ts's rules_have_supported_level_bodies is a vacuous walk; Safe is true.
+reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Reconcile) :-
+    ( member(Rule, Rules),
+      Rule = (_ <- Body),
+      body_ref_uses(Body, Uses),
+      member(use(_, _, neg, _), Uses)
+    -> Reconcile = true
+    ;  Reconcile = false
+    ).
+
+% ═══ section builders: each returns a JSON-able value (dict / list / atom) ═══
+
+map_from(RelPlans, Getter, Map) :-
+    findall(Name-Value,
+            ( member(Rel, RelPlans),
+              relplan_parts(Rel, Ref, _K, _Cols, _Key, _Types),
+              ref_name(Ref, Name),
+              call(Getter, Rel, Value) ),
+            Pairs),
+    pairs_to_dict(Pairs, Map).
+
+rel_columns_of(Rel, Columns) :- relplan_parts(Rel, _Ref, _K, Columns, _Key, _T).
+rel_column_types_of(Rel, Types) :-
+    relplan_parts(Rel, _Ref, _K, _Cols, _Key, ColumnTypes),
+    maplist(boundary_type_name, ColumnTypes, Types).
+
+boundary_type_name(ref(_), ref) :- !.
+boundary_type_name(json, json) :- !.
+boundary_type_name(json_list(_), json) :- !.
+boundary_type_name(T, T).
+
+boot_dict(bootstmt(Rel, Sql, Params), _{rel: Rel, sql: Sql, params: Params}).
+
+final_select_entry(deltastmt(Ref, Sql, _, _, _), Name-Sql) :- ref_name(Ref, Name).
+
+final_select_map(DeltaStatements, Map) :-
+    maplist(final_select_entry, DeltaStatements, Pairs),
+    pairs_to_dict(Pairs, Map).
+
+arrival_tpl(Ref, ArrivalStatements, Tpl) :-
+    memberchk(arrivalstmt(Ref, Kind, AddSql, DelSql, _, _), ArrivalStatements),
+    ( DelSql == none -> DelText = null ; DelText = DelSql ),
+    Tpl = _{kind: Kind, add_sql: AddSql, del_sql: DelText}.
+
+arrival_templates_map(ArrivalStatements, Map) :-
+    findall(Name-Tpl,
+            ( member(arrivalstmt(Ref, _, _, _, _, _), ArrivalStatements),
+              ref_name(Ref, Name),
+              arrival_tpl(Ref, ArrivalStatements, Tpl) ),
+            Pairs),
+    pairs_to_dict(Pairs, Map).
+
+relation_dict(RelPlans, ArrivalStatements, DepartureRefs,
+              deltastmt(Ref, _Sel, DeltaTable, BoundarySql, _Stored), Dict) :-
+    ref_name(Ref, Name),
+    relplan_shape(RelPlans, Ref, Kind, Columns, KeyOrNone, RawColumnTypes),
+    maplist(boundary_type_name, RawColumnTypes, ColumnTypes),
+    ( KeyOrNone = key(KeyPositions) -> maplist(position_index, KeyPositions, KeyIndices)
+    ; KeyIndices = []
+    ),
+    ( memberchk(arrivalstmt(Ref, _, _, _, AddSql, _), ArrivalStatements)
+    -> AddText = AddSql ; AddText = null ),
+    ( memberchk(arrivalstmt(Ref, _, _, _, _, DelSql), ArrivalStatements),
+      DelSql \== none
+    -> DelText = DelSql ; DelText = null ),
+    format(atom(FrontierTable), '__frontier_~w', [Name]),
+    format(atom(NextFrontierTable), '__next_frontier_~w', [Name]),
+    ( memberchk(Ref, DepartureRefs)
+    -> departure_frontier_table_name(Ref, DepartureTable), DepField = DepartureTable
+    ; DepField = null ),
+    Dict = _{ rel: Name, kind: Kind, table_name: Name,
+              delta_table_name: DeltaTable,
+              frontier_table_name: FrontierTable,
+              next_frontier_table_name: NextFrontierTable,
+              departure_frontier_table_name: DepField,
+              columns: Columns, column_types: ColumnTypes,
+              key_indices: KeyIndices,
+              arrival_add_sql: AddText, arrival_del_sql: DelText,
+              boundary_sql: BoundarySql }.
+
+relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements, Dicts) :-
+    maplist(relation_dict(RelPlans, ArrivalStatements, DepartureRefs),
+            DeltaStatements, Dicts).
+
+edge_dict(edgestmt(HeadRef, _Trigger, HeadColumns, KeyColumns, _Proj, _Write,
+                   DeltaProjectSql, _Kind, _Interns), Dict) :-
+    ref_name(HeadRef, HeadName),
+    format(atom(DeltaTable), '__delta_~w', [HeadName]),
+    head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
+    Dict = _{ head_rel: HeadName, head_columns: HeadColumns,
+              head_table_name: HeadName, head_delta_table_name: DeltaTable,
+              key_indices: KeyIndices, project_sql: DeltaProjectSql }.
+head_to_key_indices(HeadColumns, KeyColumns, Indices) :-
+    maplist(key_index(HeadColumns), KeyColumns, Indices).
+key_index(Columns, Col, Index) :- nth0(Index, Columns, Col).
+
+edges_list(EdgeStatements, Dicts) :- maplist(edge_dict, EdgeStatements, Dicts).
+
+level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
+                                RefCountSql, AggregateSql, _DeltaInternSqls),
+           Dict) :-
+    ref_name(HeadRef, HeadName),
+    format(atom(DeltaTable), '__delta_~w', [HeadName]),
+    memberchk(HeadName-[HeadColumns, RawHeadTypes], HeadTable),
+    maplist(boundary_type_name, RawHeadTypes, HeadTypes),
+    ( DeltaInsertSql = none -> InsertField = null ; InsertField = DeltaInsertSql ),
+    atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
+    select_sql_text(HeadName, HeadColumns, SelectSql),
+    refcount_fields(RefCountSql, SupportField, ExpandField, DredField,
+                    SupportInternField),
+    aggregate_field(AggregateSql, AggregateField),
+    Dict = _{ head_rel: HeadName,
+              head_delta_table_name: DeltaTable,
+              head_columns: HeadColumns,
+              head_column_types: HeadTypes,
+              insert_sql: InsertField,
+              select_sql: SelectSql,
+              recompute_sql: RecomputeSql,
+              support_sql: SupportField,
+              support_intern_sql: SupportInternField,
+              expand_sql: ExpandField,
+              dred_sql: DredField,
+              aggregate_sql: AggregateField }.
+select_sql_text(HeadName, HeadColumns, SelectSql) :-
+    maplist(quote_ident_local, HeadColumns, Quoted),
+    atomic_list_concat(Quoted, ', ', HeadSql),
+    format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadSql, HeadName]).
+quote_ident_local(Col, Quoted) :- format(atom(Quoted), '"~w"', [Col]).
+
+levels_list(LevelStatements, HeadTable, Dicts) :-
+    maplist(level_dict(HeadTable), LevelStatements, Dicts).
+
+retention_dict(retentionstmt(Ref, _Limit, DeleteSql), Dict) :-
+    ref_name(Ref, Name),
+    Dict = _{ rel: Name, delete_sql: DeleteSql }.
+retentions_list(RetentionStatements, Dicts) :-
+    maplist(retention_dict, RetentionStatements, Dicts).
+
+refcount_fields(none, null, null, null, null) :- !.
+refcount_fields(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
+                            CollectZeroSql, ClearNewSql, FillNewSql,
+                            StageAddSql, StageFrontierSql, StageNextFrontierSql,
+                            InsertNewSql, ExpandPlan, DredPlan, _FixpointIr,
+                            SupportInternSqls),
+                SupportText, ExpandText, DredText, SupportInternText) :-
+    SupportText =
+    [ ClearSql, SeedSql, UpdateSql, StageRetractSql, CollectZeroSql,
+      ClearNewSql, FillNewSql, StageAddSql, StageFrontierSql,
+      StageNextFrontierSql, InsertNewSql ],
+    expand_field(ExpandPlan, ExpandText),
+    dred_field(DredPlan, DredText),
+    ( SupportInternSqls == [] -> SupportInternText = null
+    ; SupportInternText = SupportInternSqls ).
+
+expand_field(none, null) :- !.
+expand_field(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,
+                        AbsorbASql, AbsorbBSql),
+             Dict) :-
+    Dict = _{ clear_a_sql: ClearASql, clear_b_sql: ClearBSql,
+              seed_sqls: SeedSqls, hop_ab_sql: HopABSql, hop_ba_sql: HopBASql,
+              absorb_a_sql: AbsorbASql, absorb_b_sql: AbsorbBSql }.
+
+dred_field(none, null) :- !.
+dred_field(dredplan(ClearPing, ClearPong, ClearCone, AssertSeeds,
+                    AssertAB, AssertBA, CommitA, CommitB, ArrivalA, ArrivalB,
+                    DredSeeds, DredAB, DredBA, ConeAbsorbA, ConeAbsorbB,
+                    ConeTrim, HeadDelete, RederiveSeeds, ReviveAB, ReviveBA,
+                    ConeDropA, ConeDropB, StageRetract, HeadCount),
+            Dict) :-
+    Dict = _{ clear_ping_sql: ClearPing, clear_pong_sql: ClearPong,
+              clear_cone_sql: ClearCone, assert_seed_sqls: AssertSeeds,
+              assert_hop_ab_sql: AssertAB, assert_hop_ba_sql: AssertBA,
+              commit_a_sql: CommitA, commit_b_sql: CommitB,
+              arrival_a_sql: ArrivalA, arrival_b_sql: ArrivalB,
+              dred_seed_sqls: DredSeeds, dred_hop_ab_sql: DredAB,
+              dred_hop_ba_sql: DredBA, cone_absorb_a_sql: ConeAbsorbA,
+              cone_absorb_b_sql: ConeAbsorbB, cone_trim_sql: ConeTrim,
+              head_delete_sql: HeadDelete, rederive_seed_sqls: RederiveSeeds,
+              revive_hop_ab_sql: ReviveAB, revive_hop_ba_sql: ReviveBA,
+              cone_drop_a_sql: ConeDropA, cone_drop_b_sql: ConeDropB,
+              stage_retract_sql: StageRetract, head_count_sql: HeadCount }.
+
+aggregate_field(none, null) :- !.
+aggregate_field(aggsql(_ScopeCols, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
+                       DeleteScopedSql, InsertScopedSqls, InternSqls),
+                Dict) :-
+    ( InternSqls == [] -> InternField = null ; InternField = InternSqls ),
+    Dict = _{ scope_clear_sql: ScopeClearSql, scope_seed_sql: ScopeSeedSqls,
+              delete_scoped_sql: DeleteScopedSql,
+              insert_scoped_sql: InsertScopedSqls,
+              intern_sql: InternField, delta_maintained: false }.
+aggregate_field(avgsql(_ScopeCols, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
+                       DeleteScopedSql, InsertScopedSqls, _BootSqls),
+                Dict) :-
+    Dict = _{ scope_clear_sql: ScopeClearSql, scope_seed_sql: ScopeSeedSqls,
+              delete_scoped_sql: DeleteScopedSql,
+              insert_scoped_sql: InsertScopedSqls,
+              intern_sql: null, delta_maintained: true }.
+
+% ═══ assemble the Rust source ════════════════════════════════════════════════
+
+emit_program(Name, Plan, Lowered, BootStatements, Text) :-
+    Lowered = lowered(Name, Ddl, ArrivalStatements, EdgeStatements,
+                      LevelStatements, DeltaStatements, RelPlans, ArrivalTargets),
+    plan_intern_mode(Plan, InternMode),
+    include(is_level_statement, LevelStatements, RuleLevelStatements),
+    include(is_retention_statement, LevelStatements, RetentionStatements),
+    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _, _, _),
+    listened_departure_refs(PlanRules, DepartureRefs),
+    reconcile_every_tick(Plan, ReconcileEveryTick),
+
+    findall(HeadName-[Cols, Types],
+            ( member(deltastmt(Ref, _, _, _, _), DeltaStatements),
+              ref_name(Ref, HeadName),
+              relplan_shape(RelPlans, Ref, _K, Cols, _Key, Types) ),
+            HeadTable),
+
+    map_from(RelPlans, rel_columns_of, RelColumns),
+    map_from(RelPlans, rel_column_types_of, RelColumnTypes),
+    maplist(ref_name, ArrivalTargets, ArrivalTargetNames),
+    maplist(boot_dict, BootStatements, BootDicts),
+    final_select_map(DeltaStatements, FinalSelect),
+    arrival_templates_map(ArrivalStatements, ArrivalTemplates),
+    relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements,
+                   Relations),
+    edges_list(EdgeStatements, Edges),
+    levels_list(RuleLevelStatements, HeadTable, Levels),
+    retentions_list(RetentionStatements, Retentions),
+
+    ProgramDict =
+    _{ name: Name,
+       intern_mode: InternMode,
+       ddl: Ddl,
+       rel_columns: RelColumns,
+       rel_column_types: RelColumnTypes,
+       arrival_targets: ArrivalTargetNames,
+       boot: BootDicts,
+       final_select: FinalSelect,
+       arrival_templates: ArrivalTemplates,
+       relations: Relations,
+       edges: Edges,
+       levels: Levels,
+       retentions: Retentions,
+       reconcile_every_tick: ReconcileEveryTick,
+       incremental_safe: true },
+    json_write_string(ProgramDict, ProgramJson),
+    format(atom(HeadLine), '// Program: ~w', [Name]),
+    HeaderLines =
+    [ '// GENERATED by v6/prolog/emit_rust.pl. Do not hand-edit; recompile.',
+      HeadLine,
+      '',
+      'use sprefa_engine_rs::types::ProgramJson;',
+      '',
+      'pub const PROGRAM_JSON: &str = r#"',
+      ProgramJson,
+      '"#;',
+      '',
+      'pub fn program() -> ProgramJson {',
+      '    serde_json::from_str(PROGRAM_JSON).expect("emitted program json")',
+      '}'
+    ],
+    lines_block(HeaderLines, Body),
+    format(atom(Text), '~w\n', [Body]).
+
+is_level_statement(levelstmt(_, _, _, _, _, _, _)).
+is_retention_statement(retentionstmt(_, _, _)).
