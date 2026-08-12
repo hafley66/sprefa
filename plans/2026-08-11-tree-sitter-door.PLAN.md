@@ -273,22 +273,36 @@ EMITTED-IDENTICAL this round: `source_file`, `relation_declaration`,
 | expression | 206 | editor alternative list is the tier structure plus `factor//1` leaves; `expr//1`'s `tier_expr//2` names no tier. Needs editor precedence tiering, not a fact row |
 | unary_expression | 71 | no DCG clause at all; the parser reads a leading minus inside `int_lit//1`/`float_lit//1`. Nothing to hang a node on |
 | column | 67 | `typed_col//2` defers its type parser through `call(TypeP, Col, Type)` with `TypeP` unbound at parse time; its two concrete bindings `decl_b_column_type//3` and `host_col_type//3` differ only in a cut. Merging passes parity while silently widening the language; left unmerged (four-agent precedent) |
-| enum_variant | 72 | editor wider than the parser: `enum_field//1` types a field with `ident//1`, the editor rule uses `$.type`. User call |
-| query | 29 | editor wider than the parser: keeps the `$.atom` node; `query_stmt//1` inlines `ident//1`/`head_args//1` and refuses dotted paths. User call |
+| enum_variant | 72 | editor wider than the parser: `enum_field//1` types a field with `ident//1`, the editor rule uses `$.type`. DECIDED keep-editor-wider, uniform with query |
+| query | 29 | editor wider than the parser: keeps the `$.atom` node; `query_stmt//1` inlines `ident//1`/`head_args//1` and refuses dotted paths. DECIDED keep-editor-wider, uniform with enum_variant |
 
 206 + 71 + 67 + 72 + 29 = 445. `column` stays hand-written; the other four
 block because the DCG does not preserve the editor node (two) or the editor
 is deliberately wider (two).
 
-### Three language questions, restated, unanswered
+### The two user calls, decided
+
+The delegated reading was uniform: an editor grammar wider than the parser is
+correct and better, because the editor highlights half-typed text the parser
+rejects. Both rows took that reading; neither was narrowed to the parser.
+
+| rule | decision | reasoning |
+|---|---|---|
+| enum_variant | keep-editor-wider | `enum_field//1` types a field with `ident//1` (`parse_dl_dcg.pl:521`); the editor rule types with `$.type`, so `list(int)` and any other type expression highlights while typing. Narrowing the editor only shrinks highlight coverage so the emitter can win a 72-char row; that trade favors the emitter, not the editor |
+| query | keep-editor-wider | `query_stmt//1` (`parse_dl_dcg.pl:750`) inlines `ident//1`/`head_args//1` and reads a plain `Name`, so a DCG-true body would drop the `$.atom` node and lose dotted names; the editor keeps `$.atom`, highlighting `? a.b(x)` and half-typed query names. Same trade, same call |
+
+Consequence: both rows stay `EMITTED-NEEDS-OVERLAY` and the 101 chars (72 + 29)
+remain in the floor. That is the intended floor, not a deficit.
+
+### Two language questions, answered; one open
 
 1. Enum variant field types: full type expression or bare identifier? The
    DCG `enum_field//1` reads the type with `ident//1`; the editor uses
-   `$.type`, so the editor is wider. Narrowing removes `list(int)` from enum
-   fields in the editor only.
+   `$.type`, so the editor is wider. ANSWERED keep-editor-wider: full type
+   expression stays in the editor.
 2. `? name(...)`: keep the `$.atom` node? `query_stmt//1` inlines
    `ident//1` and `head_args//1` and refuses dotted paths; the editor rule is
-   wider on both counts.
+   wider on both counts. ANSWERED keep-editor-wider: the `$.atom` node stays.
 3. Show `set` as a relation modifier in the editor? `rel_modifiers//2`
    parses `~set` then calls `unsupported(removed_word(set))`; the editor
    grammar now shows it. These are the user's calls.

@@ -175,3 +175,59 @@ cargo clippy --all-targets -- -D warnings   rc 0
 
 Resisted: the compute cost of `beep ps`/`status_rows` by spawning a fresh
 sysinfo snapshot per row (it is captured once and queried many times).
+## tree-sitter-101-floor lane
+
+Branch `fix/treesitter-101-floor`. User delegated the two "User call" rows in
+`plans/2026-08-11-tree-sitter-door.PLAN.md`. Decided both uniform:
+keep-editor-wider. No grammar change; decision recorded in
+`v6/labs/tree-sitter-door/classification.tsv` and the plan doc. Ratio stays
+0.1021, overlay 445.
+
+| rule | chars | decision |
+|---|---:|---|
+| `enum_variant` | 72 | keep-editor-wider |
+| `query` | 29 | keep-editor-wider |
+
+Reasoning, uniform across both rows: an editor grammar wider than the parser
+is correct and better, because the editor highlights half-typed text the
+parser rejects. `enum_field//1` (`parse_dl_dcg.pl:521`) types a field with
+`ident//1`; the editor uses `$.type`, so `list(int)` and any type expression
+highlights while typing. `query_stmt//1` (`parse_dl_dcg.pl:750`) inlines
+`ident//1`/`head_args//1` and reads a plain `Name`; the editor keeps `$.atom`,
+so dotted query names and half-typed queries highlight. Narrowing either row
+only shrinks highlight coverage so the emitter can win 72 or 29 chars; that
+trade favors the emitter, not the editor. The 101 chars stay in the intended
+floor.
+
+Gates:
+
+```text
+$ python3 measure.py
+identical hand-rule spans            3426
+generated specialized helper rules    934
+emitted total                        4360
+remaining hand-rule overlay           445
+ratio                              0.1021
+rules EMITTED-IDENTICAL=38 EMITTED-NEEDS-OVERLAY=5
+
+$ cd v6/prolog && swipl -g go -t halt ARCH.pl
+PASS  sugar_grounds_out  ...  PASS  covers_endpoints_ground
+rc=0
+
+$ cd v6/labs/tree-sitter-door && ./run-tests.sh
+PASS generate: emitted-grammar.js
+PASS parse: golden-flex.dl6 lines=630 errors=0
+TS_CORPUS total=286 clean=286 errors=0
+PASS format: formatting law and idempotence
+rc=0
+```
+
+`green-all` red set is the json-null merge base and ARCH.pl lane (ARCH-MAP
+stale at 255 tasks, catalog_plane_rail corpus counts, mutual_recursion fixture)
+plus the known soak/scale/compile environment list. None intersect my
+two-owned-file diff (classification.tsv, plan doc).
+
+Files changed: `plans/2026-08-11-tree-sitter-door.PLAN.md` (floor table marked
+DECIDED, new "the two user calls, decided" section, "two language questions
+answered; one open"), `v6/labs/tree-sitter-door/classification.tsv` (reason
+strings for enum_variant and query).

@@ -8,11 +8,11 @@ declaration_parameter	EMITTED-IDENTICAL	cst_shape(decl_a_column/1) with name and
 column	EMITTED-NEEDS-OVERLAY	typed_col//2 defers its type parser through call//3 with the parser unbound; the two concrete bindings differ only by a cut and must not be merged.
 type	EMITTED-IDENTICAL	ir_body renders type_expr/1 as identifier, optional paren element, trailing optional marker.
 enum_variants	EMITTED-IDENTICAL	clause-pair repetition with the semicolon separator read off the clause.
-enum_variant	EMITTED-NEEDS-OVERLAY	enum_field//1 types a field with ident//1 while the editor rule uses $.type; the editor rule is wider than the parser.
+enum_variant	EMITTED-NEEDS-OVERLAY	enum_field//1 types a field with ident//1 while the editor rule uses $.type; decided keep-editor-wider, uniform with query: an editor accepting half-typed field types is a feature the compiler parser need not share.
 relation_modifier	EMITTED-IDENTICAL	cst_shape(rel_modifiers/2) as repeat(relation_modifier); keep_clause//1 and key_clause//1 inline.
 rule	EMITTED-IDENTICAL	cst_shape(rule_stmt/1) with head, arrow and body; the arrow-less branch leaves through cst_origin.
 fact	EMITTED-IDENTICAL	cst_origin(rule_stmt/1-true); the branch that binds Body to true, with the surrounding sequence.
-query	EMITTED-NEEDS-OVERLAY	query_stmt//1 inlines ident//1 and head_args//1 instead of calling head_atom//1, so a DCG-true body would drop the $.atom node.
+query	EMITTED-NEEDS-OVERLAY	query_stmt//1 inlines ident//1 and head_args//1 instead of calling head_atom//1, so a DCG-true body would drop the $.atom node; decided keep-editor-wider, uniform with enum_variant: the $.atom node stays for half-typed and dotted query names.
 match_statement	EMITTED-IDENTICAL	cst_shape(match_stmt/1) with scrutinee; match_arms//1 and match_arm_tail//2 give the optional leading semicolon and the repetition.
 match_arm	EMITTED-IDENTICAL	cst_shape(match_arm/1) with guard, arrow and head; the arrow pair factors out of the two branches.
 goal_list	EMITTED-IDENTICAL	sep_expr specializes to expression plus repeated comma-expression.
