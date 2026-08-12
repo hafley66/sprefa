@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "carried" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "carried" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name", "value"))`,
   `CREATE TEMP VIEW "__txt_carried" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value", t."__refcount" AS "__refcount" FROM "carried" t`,
-  `CREATE TABLE "measure" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "measure" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("name", "value"))`,
   `CREATE TEMP VIEW "__txt_measure" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value" FROM "measure" t`,
   `CREATE TEMP TABLE "__delta_carried" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_carried_sign" ON "__delta_carried" ("_sign")`,

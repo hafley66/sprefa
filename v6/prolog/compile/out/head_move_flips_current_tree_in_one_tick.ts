@@ -166,11 +166,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "current_tree" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "digest")) WITHOUT ROWID`,
+  `CREATE TABLE "current_tree" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "digest"))`,
   `CREATE TEMP VIEW "__txt_current_tree" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."__refcount" AS "__refcount" FROM "current_tree" t`,
-  `CREATE TABLE "head" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, PRIMARY KEY ("repo_id")) WITHOUT ROWID`,
+  `CREATE TABLE "head" ("__id" INTEGER PRIMARY KEY, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, UNIQUE ("repo_id"))`,
   `CREATE TABLE "head_move" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
-  `CREATE TABLE "tree_file" ("rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, PRIMARY KEY ("rev_id", "path")) WITHOUT ROWID`,
+  `CREATE TABLE "tree_file" ("__id" INTEGER PRIMARY KEY, "rev_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, UNIQUE ("rev_id", "path"))`,
   `CREATE TEMP VIEW "__txt_tree_file" AS SELECT t."rev_id" AS "rev_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest" FROM "tree_file" t`,
   `CREATE TEMP TABLE "__delta_current_tree" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_current_tree_sign" ON "__delta_current_tree" ("_sign")`,

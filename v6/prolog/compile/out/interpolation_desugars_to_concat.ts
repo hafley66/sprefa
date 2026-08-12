@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "eprintln_hit" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
+  `CREATE TABLE "eprintln_hit" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, UNIQUE ("path", "line_number"))`,
   `CREATE TEMP VIEW "__txt_eprintln_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number" FROM "eprintln_hit" t`,
-  `CREATE TABLE "message" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "line_number", "text")) WITHOUT ROWID`,
+  `CREATE TABLE "message" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "line_number", "text"))`,
   `CREATE TEMP VIEW "__txt_message" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."__refcount" AS "__refcount" FROM "message" t`,
   `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_hit_sign" ON "__delta_eprintln_hit" ("_sign")`,

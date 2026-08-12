@@ -146,9 +146,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "hit" ("item" INTEGER NOT NULL, "name" INTEGER NOT NULL, "leaf" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("item", "name", "leaf")) WITHOUT ROWID`,
+  `CREATE TABLE "hit" ("__id" INTEGER PRIMARY KEY, "item" INTEGER NOT NULL, "name" INTEGER NOT NULL, "leaf" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("item", "name", "leaf"))`,
   `CREATE TEMP VIEW "__txt_hit" AS SELECT t."item" AS "item", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."leaf" AS "leaf", t."__refcount" AS "__refcount" FROM "hit" t`,
-  `CREATE TABLE "spec" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TABLE "spec" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
   `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL, "name" INTEGER NOT NULL, "leaf" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hit_sign" ON "__delta_hit" ("_sign")`,
   `CREATE INDEX "__delta_hit_group" ON "__delta_hit" ("item", "name", "leaf")`,

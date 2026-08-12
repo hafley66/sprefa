@@ -172,7 +172,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP VIEW "__txt_heard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "heard" t`,
   `CREATE TABLE "heard_count" ("item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_heard_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "heard_count" t`,
-  `CREATE TABLE "seen" ("item" INTEGER NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TABLE "seen" ("__id" INTEGER PRIMARY KEY, "item" INTEGER NOT NULL, UNIQUE ("item"))`,
   `CREATE TEMP VIEW "__txt_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "seen" t`,
   `CREATE TABLE "seen_count" ("item" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_seen_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "seen_count" t`,

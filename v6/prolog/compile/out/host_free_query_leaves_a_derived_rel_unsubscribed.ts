@@ -147,11 +147,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "audit_trail" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TABLE "audited" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TABLE "reading" ("sensor" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("sensor", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "audit_trail" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
+  `CREATE TABLE "audited" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
+  `CREATE TABLE "reading" ("__id" INTEGER PRIMARY KEY, "sensor" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("sensor", "value"))`,
   `CREATE TEMP VIEW "__txt_reading" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."sensor") AS "sensor", t."value" AS "value" FROM "reading" t`,
-  `CREATE TABLE "watched" ("sensor" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("sensor")) WITHOUT ROWID`,
+  `CREATE TABLE "watched" ("__id" INTEGER PRIMARY KEY, "sensor" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("sensor"))`,
   `CREATE TEMP VIEW "__txt_watched" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."sensor") AS "sensor", t."__refcount" AS "__refcount" FROM "watched" t`,
   `CREATE TEMP TABLE "__delta_audit_trail" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_audit_trail_sign" ON "__delta_audit_trail" ("_sign")`,

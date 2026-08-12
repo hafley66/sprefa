@@ -146,9 +146,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "operation" ("path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "method", "id")) WITHOUT ROWID`,
+  `CREATE TABLE "operation" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "method", "id"))`,
   `CREATE TEMP VIEW "__txt_operation" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."method") AS "method", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."id") AS "id", t."__refcount" AS "__refcount" FROM "operation" t`,
-  `CREATE TABLE "spec" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TABLE "spec" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
   `CREATE TEMP TABLE "__delta_operation" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "method" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_operation_sign" ON "__delta_operation" ("_sign")`,
   `CREATE INDEX "__delta_operation_group" ON "__delta_operation" ("path", "method", "id")`,

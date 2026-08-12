@@ -175,7 +175,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "from_poll" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_from_poll" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "from_poll" t`,
-  `CREATE TABLE "latest" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
+  `CREATE TABLE "latest" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("key"))`,
   `CREATE TEMP VIEW "__txt_latest" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "latest" t`,
   `CREATE TABLE "replaced_value" ("key" INTEGER NOT NULL, "old_value" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_replaced_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."old_value") AS "old_value" FROM "replaced_value" t`,

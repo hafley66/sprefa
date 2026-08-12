@@ -146,11 +146,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "__gen__list_text_df210f232c1299bd" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "__gen__list_text_df210f232c1299bd__member" ("list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("list_id", "idx")) WITHOUT ROWID`,
+  `CREATE TABLE "__gen__list_text_df210f232c1299bd" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "__gen__list_text_df210f232c1299bd__member" ("__id" INTEGER PRIMARY KEY, "list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("list_id", "idx"))`,
   `CREATE TEMP VIEW "__txt___gen__list_text_df210f232c1299bd__member" AS SELECT t."list_id" AS "list_id", t."idx" AS "idx", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "__gen__list_text_df210f232c1299bd__member" t`,
-  `CREATE TABLE "box" ("id" INTEGER NOT NULL, "items" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "carry" ("id" INTEGER NOT NULL, "items" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "items")) WITHOUT ROWID`,
+  `CREATE TABLE "box" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "items" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "carry" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "items" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "items"))`,
   `CREATE TEMP TABLE "__delta___gen__list_text_df210f232c1299bd" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___gen__list_text_df210f232c1299bd_sign" ON "__delta___gen__list_text_df210f232c1299bd" ("_sign")`,
   `CREATE INDEX "__delta___gen__list_text_df210f232c1299bd_group" ON "__delta___gen__list_text_df210f232c1299bd" ("id")`,

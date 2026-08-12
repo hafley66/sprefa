@@ -158,7 +158,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "def_start" ("path" INTEGER NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "offset")) WITHOUT ROWID`,
+  `CREATE TABLE "def_start" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "offset" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "offset"))`,
   `CREATE TEMP VIEW "__txt_def_start" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."offset" AS "offset", t."__refcount" AS "__refcount" FROM "def_start" t`,
   `CREATE TABLE "node_fact" ("path" INTEGER NOT NULL, "name" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_node_fact" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."at" AS "at" FROM "node_fact" t`,

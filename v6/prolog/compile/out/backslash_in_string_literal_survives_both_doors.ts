@@ -148,9 +148,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('digit \\d here')`,
-  `CREATE TABLE "hit" ("text_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
+  `CREATE TABLE "hit" ("__id" INTEGER PRIMARY KEY, "text_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("text_value"))`,
   `CREATE TEMP VIEW "__txt_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text_value") AS "text_value", t."__refcount" AS "__refcount" FROM "hit" t`,
-  `CREATE TABLE "raw" ("text_value" INTEGER NOT NULL, PRIMARY KEY ("text_value")) WITHOUT ROWID`,
+  `CREATE TABLE "raw" ("__id" INTEGER PRIMARY KEY, "text_value" INTEGER NOT NULL, UNIQUE ("text_value"))`,
   `CREATE TEMP VIEW "__txt_raw" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text_value") AS "text_value" FROM "raw" t`,
   `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hit_sign" ON "__delta_hit" ("_sign")`,

@@ -856,6 +856,21 @@ set_rel_pk_sql(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs, Columns,
     maplist(quote_ident, KeyColumns, QuotedKeyColumns),
     atomic_list_concat(QuotedKeyColumns, ', ', PkSql).
 
+%! set_rel_table_ddl(+QuotedTable, +ColumnsSql, +RefCountColumn, +PkSql,
+%!                   -Ddl) is det.
+%   The single set-rel table shape: a surrogate `__id INTEGER PRIMARY KEY`
+%   plus the content identity as UNIQUE over the columns. At zero columns
+%   there is no content, so there is no UNIQUE and no refcount: a 0-ary rel is
+%   a proposition and every arrival mints a row.
+set_rel_table_ddl(QuotedTable, ColumnsSql, RefCountColumn, PkSql, Ddl) :-
+    (   ColumnsSql = ''
+    ->  format(atom(Ddl), 'CREATE TABLE ~w ("__id" INTEGER PRIMARY KEY)',
+               [QuotedTable])
+    ;   format(atom(Ddl),
+               'CREATE TABLE ~w ("__id" INTEGER PRIMARY KEY, ~w~w, UNIQUE (~w))',
+               [QuotedTable, ColumnsSql, RefCountColumn, PkSql])
+    ).
+
 % A keyed set rel's PK is its declared key (when edge-headed or an arrival
 % target, or a catalog table), else all columns. Yields the positions so the
 % option some-table scope check can reuse the same computation.
@@ -864,7 +879,13 @@ set_rel_key_positions(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
     ( set_rel_has_key(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
                       KeyPositions)
     -> true
-    ;  length(Columns, Arity), numlist(1, Arity, KeyPositions)
+    ;  length(Columns, Arity),
+       % numlist/3 FAILS at arity 0 (high below low); a bare failure would
+       % drop the whole rel from RelPlans with no message.
+       (   Arity =:= 0
+       ->  KeyPositions = []
+       ;   numlist(1, Arity, KeyPositions)
+       )
     ).
 
 % A level-headed keyed rel must keep its all-column PK: that is what
@@ -2097,11 +2118,12 @@ rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
        RefCountPassThrough = []
     ),
     Ref = Name/_,
+    % One table shape for every set rel: a surrogate __id key plus the content
+    % identity as a UNIQUE constraint. The declared-type and ordinary branches
+    % differ only in the companion view / index they attach.
+    set_rel_table_ddl(QuotedTable, ColumnsSql, RefCountColumn, PkSql, Ddl),
     ( declared_type_name(Types, Name)
-    -> format(atom(Ddl),
-              'CREATE TABLE ~w ("__id" INTEGER PRIMARY KEY, ~w~w, UNIQUE (~w))',
-              [QuotedTable, ColumnsSql, RefCountColumn, PkSql]),
-       dictionary_table_name(Name, ReferenceView),
+    -> dictionary_table_name(Name, ReferenceView),
        quote_ident(ReferenceView, QuotedReferenceView),
        relation_render_expr(Mode, Types, Columns, ColumnTypes, RenderExpr),
        format(atom(ViewDdl),
@@ -2109,10 +2131,7 @@ rel_ddl(Mode, Types, EdgeHeadedRefs, ArrivalTargetRefs, LevelHeadedRefs,
               [QuotedReferenceView, SelectColumnsSql, RenderExpr, QuotedTable]),
        TableDdls = [Ddl, ViewDdl],
        PassThroughColumns = ['__id' | RefCountPassThrough]
-    ;  format(atom(Ddl),
-              'CREATE TABLE ~w (~w~w, PRIMARY KEY (~w)) WITHOUT ROWID',
-              [QuotedTable, ColumnsSql, RefCountColumn, PkSql]),
-       ( option_some_table(Ref, Columns, KeyOrNone, EdgeHeadedRefs,
+    ;  ( option_some_table(Ref, Columns, KeyOrNone, EdgeHeadedRefs,
                            ArrivalTargetRefs)
        -> option_some_index_ddl(Table, SomeIndexDdl),
           TableDdls = [Ddl, SomeIndexDdl]

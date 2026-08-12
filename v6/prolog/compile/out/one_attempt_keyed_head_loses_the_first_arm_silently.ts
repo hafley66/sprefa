@@ -166,9 +166,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('acked'), ('sealed')`,
-  `CREATE TABLE "dispatch_ack" ("dispatch_id" INTEGER NOT NULL, PRIMARY KEY ("dispatch_id")) WITHOUT ROWID`,
-  `CREATE TABLE "dispatch_seal" ("sealed_id" INTEGER NOT NULL, PRIMARY KEY ("sealed_id")) WITHOUT ROWID`,
-  `CREATE TABLE "dispatch_winner" ("dispatch_id" INTEGER NOT NULL, "col2" INTEGER NOT NULL, PRIMARY KEY ("dispatch_id")) WITHOUT ROWID`,
+  `CREATE TABLE "dispatch_ack" ("__id" INTEGER PRIMARY KEY, "dispatch_id" INTEGER NOT NULL, UNIQUE ("dispatch_id"))`,
+  `CREATE TABLE "dispatch_seal" ("__id" INTEGER PRIMARY KEY, "sealed_id" INTEGER NOT NULL, UNIQUE ("sealed_id"))`,
+  `CREATE TABLE "dispatch_winner" ("__id" INTEGER PRIMARY KEY, "dispatch_id" INTEGER NOT NULL, "col2" INTEGER NOT NULL, UNIQUE ("dispatch_id"))`,
   `CREATE TEMP VIEW "__txt_dispatch_winner" AS SELECT t."dispatch_id" AS "dispatch_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2" FROM "dispatch_winner" t`,
   `CREATE TEMP TABLE "__delta_dispatch_ack" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_dispatch_ack_sign" ON "__delta_dispatch_ack" ("_sign")`,

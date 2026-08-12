@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "division_input" ("label" INTEGER NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL, PRIMARY KEY ("label", "numerator", "denominator")) WITHOUT ROWID`,
+  `CREATE TABLE "division_input" ("__id" INTEGER PRIMARY KEY, "label" INTEGER NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL, UNIQUE ("label", "numerator", "denominator"))`,
   `CREATE TEMP VIEW "__txt_division_input" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."numerator" AS "numerator", t."denominator" AS "denominator" FROM "division_input" t`,
-  `CREATE TABLE "probe" ("label" INTEGER NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("label", "quotient", "remainder")) WITHOUT ROWID`,
+  `CREATE TABLE "probe" ("__id" INTEGER PRIMARY KEY, "label" INTEGER NOT NULL, "quotient" INTEGER NOT NULL, "remainder" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("label", "quotient", "remainder"))`,
   `CREATE TEMP VIEW "__txt_probe" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label", t."quotient" AS "quotient", t."remainder" AS "remainder", t."__refcount" AS "__refcount" FROM "probe" t`,
   `CREATE TEMP TABLE "__delta_division_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "label" INTEGER NOT NULL, "numerator" INTEGER NOT NULL, "denominator" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_division_input_sign" ON "__delta_division_input" ("_sign")`,

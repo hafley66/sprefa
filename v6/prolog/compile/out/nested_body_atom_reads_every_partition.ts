@@ -146,11 +146,11 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "any_tree" ("tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
+  `CREATE TABLE "any_tree" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("tree_id"))`,
   `CREATE TABLE "orchard" ("__id" INTEGER PRIMARY KEY, "orchard_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("orchard_id"))`,
   `CREATE TEMP VIEW "__ref_orchard" AS SELECT t."__id", "orchard_id", json_object('orchard_id', t."orchard_id") AS "__rendered" FROM "orchard" t`,
-  `CREATE TABLE "orchard__tree" ("parent" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("parent", "tree_id")) WITHOUT ROWID`,
-  `CREATE TABLE "planted" ("orchard_id" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, PRIMARY KEY ("orchard_id", "tree_id")) WITHOUT ROWID`,
+  `CREATE TABLE "orchard__tree" ("__id" INTEGER PRIMARY KEY, "parent" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("parent", "tree_id"))`,
+  `CREATE TABLE "planted" ("__id" INTEGER PRIMARY KEY, "orchard_id" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, UNIQUE ("orchard_id", "tree_id"))`,
   `CREATE TEMP TABLE "__delta_any_tree" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_any_tree_sign" ON "__delta_any_tree" ("_sign")`,
   `CREATE INDEX "__delta_any_tree_group" ON "__delta_any_tree" ("tree_id")`,

@@ -169,7 +169,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "fetch_call" ("endpoint" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_fetch_call" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint" FROM "fetch_call" t`,
-  `CREATE TABLE "fetch_demand" ("endpoint" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
+  `CREATE TABLE "fetch_demand" ("__id" INTEGER PRIMARY KEY, "endpoint" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("endpoint"))`,
   `CREATE TEMP VIEW "__txt_fetch_demand" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."__refcount" AS "__refcount" FROM "fetch_demand" t`,
   `CREATE TABLE "stale" ("endpoint" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_stale" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint" FROM "stale" t`,

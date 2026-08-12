@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "hit" ("path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL, PRIMARY KEY ("path", "line", "col3")) WITHOUT ROWID`,
+  `CREATE TABLE "hit" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL, UNIQUE ("path", "line", "col3"))`,
   `CREATE TEMP VIEW "__txt_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line" AS "line", t."col3" AS "col3" FROM "hit" t`,
-  `CREATE TABLE "hits" ("path" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "hits" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "col2"))`,
   `CREATE TEMP VIEW "__txt_hits" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "hits" t`,
   `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_hit_sign" ON "__delta_hit" ("_sign")`,

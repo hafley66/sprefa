@@ -157,12 +157,12 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "__gen__list_fighter_summary_b424a4b49951eef7" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "__gen__list_fighter_summary_b424a4b49951eef7__member" ("list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("list_id", "idx")) WITHOUT ROWID`,
+  `CREATE TABLE "__gen__list_fighter_summary_b424a4b49951eef7" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "__gen__list_fighter_summary_b424a4b49951eef7__member" ("__id" INTEGER PRIMARY KEY, "list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("list_id", "idx"))`,
   `CREATE TABLE "fighter_summary" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "url" INTEGER NOT NULL, UNIQUE ("name", "url"))`,
   `CREATE TEMP VIEW "__ref_fighter_summary" AS SELECT t."__id", "name", "url", json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name"), 'url', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."url")) AS "__rendered" FROM "fighter_summary" t`,
   `CREATE TEMP VIEW "__txt_fighter_summary" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."url") AS "url", t."__id" AS "__id" FROM "fighter_summary" t`,
-  `CREATE TABLE "squad" ("id" INTEGER NOT NULL, "members" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
+  `CREATE TABLE "squad" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "members" INTEGER NOT NULL, UNIQUE ("id"))`,
   `CREATE TEMP TABLE "__delta___gen__list_fighter_summary_b424a4b49951eef7" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___gen__list_fighter_summary_b424a4b49951eef7_sign" ON "__delta___gen__list_fighter_summary_b424a4b49951eef7" ("_sign")`,
   `CREATE INDEX "__delta___gen__list_fighter_summary_b424a4b49951eef7_group" ON "__delta___gen__list_fighter_summary_b424a4b49951eef7" ("id")`,

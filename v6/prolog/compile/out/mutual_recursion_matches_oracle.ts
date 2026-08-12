@@ -146,11 +146,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "clock" ("col1" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID`,
+  `CREATE TABLE "clock" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, UNIQUE ("col1"))`,
   `CREATE TEMP VIEW "__txt_clock" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1" FROM "clock" t`,
-  `CREATE TABLE "even" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TABLE "odd" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TABLE "seed" ("value" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "even" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
+  `CREATE TABLE "odd" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
+  `CREATE TABLE "seed" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
   `CREATE TEMP TABLE "__delta_clock" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_clock_sign" ON "__delta_clock" ("_sign")`,
   `CREATE INDEX "__delta_clock_group" ON "__delta_clock" ("col1")`,

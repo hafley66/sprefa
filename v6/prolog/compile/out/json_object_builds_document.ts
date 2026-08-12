@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "repo_kv" ("repo" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), PRIMARY KEY ("repo", "key", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "repo_kv" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), UNIQUE ("repo", "key", "value"))`,
   `CREATE TEMP VIEW "__txt_repo_kv" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", t."value" AS "value" FROM "repo_kv" t`,
-  `CREATE TABLE "repo_meta" ("repo" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "repo_meta" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("repo", "col2"))`,
   `CREATE TEMP VIEW "__txt_repo_meta" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "repo_meta" t`,
   `CREATE TEMP TABLE "__delta_repo_kv" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
   `CREATE INDEX "__delta_repo_kv_sign" ON "__delta_repo_kv" ("_sign")`,

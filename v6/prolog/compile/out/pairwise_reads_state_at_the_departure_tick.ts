@@ -172,7 +172,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "reading" ("sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL, PRIMARY KEY ("sensor")) WITHOUT ROWID`,
+  `CREATE TABLE "reading" ("__id" INTEGER PRIMARY KEY, "sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL, UNIQUE ("sensor"))`,
   `CREATE TEMP VIEW "__txt_reading" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."sensor") AS "sensor", t."previous" AS "previous" FROM "reading" t`,
   `CREATE TABLE "step" ("sensor" INTEGER NOT NULL, "previous" INTEGER NOT NULL, "current" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_step" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."sensor") AS "sensor", t."previous" AS "previous", t."current" AS "current" FROM "step" t`,

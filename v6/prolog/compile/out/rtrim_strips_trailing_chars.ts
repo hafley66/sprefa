@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "path" ("path" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "path" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, UNIQUE ("path"))`,
   `CREATE TEMP VIEW "__txt_path" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path" FROM "path" t`,
-  `CREATE TABLE "trimmed" ("path" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "out")) WITHOUT ROWID`,
+  `CREATE TABLE "trimmed" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "out"))`,
   `CREATE TEMP VIEW "__txt_trimmed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."out") AS "out", t."__refcount" AS "__refcount" FROM "trimmed" t`,
   `CREATE TEMP TABLE "__delta_path" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_path_sign" ON "__delta_path" ("_sign")`,

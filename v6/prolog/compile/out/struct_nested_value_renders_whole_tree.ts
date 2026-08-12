@@ -161,9 +161,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "diag" ("where" INTEGER NOT NULL, "message" INTEGER NOT NULL, PRIMARY KEY ("where", "message")) WITHOUT ROWID`,
+  `CREATE TABLE "diag" ("__id" INTEGER PRIMARY KEY, "where" INTEGER NOT NULL, "message" INTEGER NOT NULL, UNIQUE ("where", "message"))`,
   `CREATE TEMP VIEW "__txt_diag" AS SELECT t."where" AS "where", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."message") AS "message" FROM "diag" t`,
-  `CREATE TABLE "diag_file" ("file" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file")) WITHOUT ROWID`,
+  `CREATE TABLE "diag_file" ("__id" INTEGER PRIMARY KEY, "file" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("file"))`,
   `CREATE TEMP VIEW "__txt_diag_file" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."file") AS "file", t."__refcount" AS "__refcount" FROM "diag_file" t`,
   `CREATE TABLE "place" ("__id" INTEGER PRIMARY KEY, "file" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("file", "at"))`,
   `CREATE TEMP VIEW "__ref_place" AS SELECT t."__id", "file", "at", json_object('file', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."file"), 'at', json((SELECT c."__rendered" FROM "__ref_span" c WHERE c."__id" = t."at"))) AS "__rendered" FROM "place" t`,

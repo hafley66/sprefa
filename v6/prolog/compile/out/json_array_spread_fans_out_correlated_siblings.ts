@@ -146,9 +146,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "pull_request" ("number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("number", "title", "author")) WITHOUT ROWID`,
+  `CREATE TABLE "pull_request" ("__id" INTEGER PRIMARY KEY, "number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("number", "title", "author"))`,
   `CREATE TEMP VIEW "__txt_pull_request" AS SELECT t."number" AS "number", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."title") AS "title", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."author") AS "author", t."__refcount" AS "__refcount" FROM "pull_request" t`,
-  `CREATE TABLE "resp" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TABLE "resp" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
   `CREATE TEMP TABLE "__delta_pull_request" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL, "title" INTEGER NOT NULL, "author" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_pull_request_sign" ON "__delta_pull_request" ("_sign")`,
   `CREATE INDEX "__delta_pull_request_group" ON "__delta_pull_request" ("number", "title", "author")`,

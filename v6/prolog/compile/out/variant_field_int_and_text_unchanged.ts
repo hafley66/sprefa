@@ -148,10 +148,10 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('num'), ('word')`,
-  `CREATE TABLE "record_num" ("id" INTEGER NOT NULL, "n" INTEGER NOT NULL, PRIMARY KEY ("n")) WITHOUT ROWID`,
-  `CREATE TABLE "record_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "record_num" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "n" INTEGER NOT NULL, UNIQUE ("n"))`,
+  `CREATE TABLE "record_tag" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "tag"))`,
   `CREATE TEMP VIEW "__txt_record_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "record_tag" t`,
-  `CREATE TABLE "record_word" ("id" INTEGER NOT NULL, "w" INTEGER NOT NULL, PRIMARY KEY ("w")) WITHOUT ROWID`,
+  `CREATE TABLE "record_word" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "w" INTEGER NOT NULL, UNIQUE ("w"))`,
   `CREATE TEMP VIEW "__txt_record_word" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."w") AS "w" FROM "record_word" t`,
   `CREATE TEMP TABLE "__delta_record_num" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "n" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_record_num_sign" ON "__delta_record_num" ("_sign")`,

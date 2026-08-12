@@ -135,10 +135,10 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "heavy" ("tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("tree_id", "kilos")) WITHOUT ROWID`,
-  `CREATE TABLE "pick" ("tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, PRIMARY KEY ("tree_id", "kilos")) WITHOUT ROWID`,
-  `CREATE TABLE "report" ("tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("tree_id", "kilos")) WITHOUT ROWID`,
-  `CREATE TABLE "tree" ("tree_id" INTEGER NOT NULL, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
+  `CREATE TABLE "heavy" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("tree_id", "kilos"))`,
+  `CREATE TABLE "pick" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, UNIQUE ("tree_id", "kilos"))`,
+  `CREATE TABLE "report" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("tree_id", "kilos"))`,
+  `CREATE TABLE "tree" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, UNIQUE ("tree_id"))`,
   `CREATE TEMP TABLE "__delta_heavy" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_heavy_sign" ON "__delta_heavy" ("_sign")`,
   `CREATE INDEX "__delta_heavy_group" ON "__delta_heavy" ("tree_id", "kilos")`,

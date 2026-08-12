@@ -169,15 +169,15 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "demand_rev" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TABLE "demand_rev" ("__id" INTEGER PRIMARY KEY, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, UNIQUE ("dep_repo_id", "ref_text"))`,
   `CREATE TEMP VIEW "__txt_demand_rev" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text" FROM "demand_rev" t`,
   `CREATE TABLE "pin_want" ("col1" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_pin_want" AS SELECT t."col1" AS "col1", t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text" FROM "pin_want" t`,
   `CREATE TABLE "rev_fill" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_rev_fill" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."behind" AS "behind", t."ahead" AS "ahead" FROM "rev_fill" t`,
-  `CREATE TABLE "rev_status" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TABLE "rev_status" ("__id" INTEGER PRIMARY KEY, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "behind" INTEGER NOT NULL, "ahead" INTEGER NOT NULL, UNIQUE ("dep_repo_id", "ref_text"))`,
   `CREATE TEMP VIEW "__txt_rev_status" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."behind" AS "behind", t."ahead" AS "ahead" FROM "rev_status" t`,
-  `CREATE TABLE "stale_pin" ("dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("dep_repo_id", "ref_text")) WITHOUT ROWID`,
+  `CREATE TABLE "stale_pin" ("__id" INTEGER PRIMARY KEY, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("dep_repo_id", "ref_text"))`,
   `CREATE TEMP VIEW "__txt_stale_pin" AS SELECT t."dep_repo_id" AS "dep_repo_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ref_text") AS "ref_text", t."__refcount" AS "__refcount" FROM "stale_pin" t`,
   `CREATE TEMP TABLE "__delta_demand_rev" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dep_repo_id" INTEGER NOT NULL, "ref_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_demand_rev_sign" ON "__delta_demand_rev" ("_sign")`,

@@ -146,8 +146,8 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "chart" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TABLE "image" ("repository" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repository", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "chart" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
+  `CREATE TABLE "image" ("__id" INTEGER PRIMARY KEY, "repository" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("repository", "tag"))`,
   `CREATE TEMP VIEW "__txt_image" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repository") AS "repository", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "image" t`,
   `CREATE TEMP TABLE "__delta_chart" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_chart_sign" ON "__delta_chart" ("_sign")`,

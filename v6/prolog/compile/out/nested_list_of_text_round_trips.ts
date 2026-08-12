@@ -135,8 +135,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "carry" ("id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "rows")) WITHOUT ROWID`,
-  `CREATE TABLE "grid" ("id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), PRIMARY KEY ("id", "rows")) WITHOUT ROWID`,
+  `CREATE TABLE "carry" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "rows"))`,
+  `CREATE TABLE "grid" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'), UNIQUE ("id", "rows"))`,
   `CREATE TEMP TABLE "__delta_carry" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "rows" TEXT NOT NULL CHECK (json_valid("rows") AND json_type("rows") = 'array'))`,
   `CREATE INDEX "__delta_carry_sign" ON "__delta_carry" ("_sign")`,
   `CREATE INDEX "__delta_carry_group" ON "__delta_carry" ("id", "rows")`,

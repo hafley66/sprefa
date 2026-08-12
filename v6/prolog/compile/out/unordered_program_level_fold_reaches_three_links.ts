@@ -135,8 +135,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "dispatch_leg" ("leg_id" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "previous_leg" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, PRIMARY KEY ("leg_id", "dispatch_id", "previous_leg", "kilos")) WITHOUT ROWID`,
-  `CREATE TABLE "leg_total" ("leg_id" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("leg_id", "dispatch_id", "kilos")) WITHOUT ROWID`,
+  `CREATE TABLE "dispatch_leg" ("__id" INTEGER PRIMARY KEY, "leg_id" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "previous_leg" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, UNIQUE ("leg_id", "dispatch_id", "previous_leg", "kilos"))`,
+  `CREATE TABLE "leg_total" ("__id" INTEGER PRIMARY KEY, "leg_id" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "kilos" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("leg_id", "dispatch_id", "kilos"))`,
   `CREATE TEMP TABLE "__delta_dispatch_leg" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "leg_id" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "previous_leg" INTEGER NOT NULL, "kilos" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_dispatch_leg_sign" ON "__delta_dispatch_leg" ("_sign")`,
   `CREATE INDEX "__delta_dispatch_leg_group" ON "__delta_dispatch_leg" ("leg_id", "dispatch_id", "previous_leg", "kilos")`,

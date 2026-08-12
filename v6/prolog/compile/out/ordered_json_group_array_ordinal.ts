@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "item" ("group" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("group", "ordinal", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "item" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("group", "ordinal", "value"))`,
   `CREATE TEMP VIEW "__txt_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "item" t`,
-  `CREATE TABLE "ordinal_sorted" ("group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "ordinal_sorted" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("group", "col2"))`,
   `CREATE TEMP VIEW "__txt_ordinal_sorted" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "ordinal_sorted" t`,
   `CREATE TEMP TABLE "__delta_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_item_sign" ON "__delta_item" ("_sign")`,

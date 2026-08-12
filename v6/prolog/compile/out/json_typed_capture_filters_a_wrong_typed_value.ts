@@ -146,7 +146,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "counted" ("repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
+  `CREATE TABLE "counted" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("repo", "stars"))`,
   `CREATE TEMP VIEW "__txt_counted" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."stars" AS "stars", t."__refcount" AS "__refcount" FROM "counted" t`,
   `CREATE TABLE "event" ("payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE TEMP TABLE "__delta_counted" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL)`,

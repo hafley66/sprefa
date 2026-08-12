@@ -148,10 +148,10 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('page'), ('redirect')`,
-  `CREATE TABLE "body_page" ("id" INTEGER NOT NULL, "view" INTEGER NOT NULL, PRIMARY KEY ("view")) WITHOUT ROWID`,
-  `CREATE TABLE "body_redirect" ("id" INTEGER NOT NULL, "to" INTEGER NOT NULL, PRIMARY KEY ("to")) WITHOUT ROWID`,
+  `CREATE TABLE "body_page" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL, UNIQUE ("view"))`,
+  `CREATE TABLE "body_redirect" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "to" INTEGER NOT NULL, UNIQUE ("to"))`,
   `CREATE TEMP VIEW "__txt_body_redirect" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."to") AS "to" FROM "body_redirect" t`,
-  `CREATE TABLE "body_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "body_tag" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "tag"))`,
   `CREATE TEMP VIEW "__txt_body_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "body_tag" t`,
   `CREATE TEMP TABLE "__delta_body_page" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "view" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_body_page_sign" ON "__delta_body_page" ("_sign")`,

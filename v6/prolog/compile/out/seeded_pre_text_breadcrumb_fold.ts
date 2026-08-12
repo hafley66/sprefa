@@ -167,7 +167,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('')`,
-  `CREATE TABLE "breadcrumb" ("path" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "breadcrumb" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("path"))`,
   `CREATE TEMP VIEW "__txt_breadcrumb" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."next") AS "next" FROM "breadcrumb" t`,
   `CREATE TABLE "step" ("path" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_step" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece" FROM "step" t`,
