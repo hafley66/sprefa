@@ -24,7 +24,6 @@ Rows removed by re-measure at base `259e0289`: `flagship`, `getting-started`,
 | rtkq-golden | `ERR_ASSERTION` `deepStrictEqual` at `labs/1_rtkq-extraction-golden.ts:200`: `api_endpoint` rows emit `updateUser`-before-`listUsers`, order-sensitive golden expects `listUsers`-first (spans identical, not a corpus move) | `v6/tsv2/labs/1_rtkq-extraction-golden.ts:200` |
 | plunit | `6 tests failed` (of 621): `catalog_plane_rail:level_plane_family_corpus_counts`, `expression_inventory:inventory_is_exactly_the_expected_rows`, `rel_zero_arity:a_root_rel_zero_still_has_no_storage`, `json_merge_patch:json_patch_lowers_with_the_null_stand_in_guard`, `json_merge_patch:merge_patch_stops_on_the_json_null_stand_in` (no_exception), `json_merge_patch:merge_patch_stops_on_a_nested_json_null_stand_in` (no_exception) | `v6/prolog/compile/test/plunit_tests.pl:1314,4561,5809,7684,7739,7743` |
 | compile-speed | `COMPILE_SPEED regressions=16 improvements=0 FAIL` (baseline written 2026-08-07; golden-flex lower +178%, emit +120%) | `v6/prolog/compile/scripts/1_compile_speed.sh:248` |
-| scale-floor | `stmts/tick set @10000 [37,41] [39,43] FAIL`; the set is flat `[39,43]` at both 10k and 1k (delta-proportionality holds) but the expected pin `[37,41]` is stale by a constant +2 | `v6/tsv2/scripts/7_scale-floor.sh:240` |
 | memory-soak | `FAIL sqlite_page_count_flat: second-quarter mean 24.8, final-quarter mean 49.5, ceiling 27.2` | `v6/tsv2/scripts/memory-soak.ts:327` |
 | lsp-diags | `phase B1: the real LSP client never received both diagnostics for b.ts: READY`; needs the v5 `dl` binary present, then fails B1 deterministically (driver.log stalls at READY) | `v6/tsv2/scripts/lsp-diags.sh:266` |
 
@@ -47,7 +46,6 @@ allow: compile-speed
 allow: tsv2-test
 allow: lsp-diags
 allow: golden-flex
-allow: scale-floor
 allow: memory-soak
 allow: roundtrip
 allow: serve-leak-soak

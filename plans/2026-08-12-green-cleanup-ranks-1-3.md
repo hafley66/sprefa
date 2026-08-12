@@ -42,8 +42,8 @@ just getting-started
 just scale-floor
 ```
 
-`scale-floor` is timing sensitive; checked `boop beep ps` first and waited if
-another lane was burning CPU.
+`scale-floor` is timing sensitive; checked `boop beep ps` before the gate and
+waited. All lanes were <=0.1% cpu during the scale-floor runs.
 
 ## Rank 3 note
 
