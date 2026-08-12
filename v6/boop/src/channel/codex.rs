@@ -10,8 +10,6 @@ use serde_json::{json, Value};
 use crate::channel::jsonrpc::RpcChild;
 use crate::channel::{ChannelSpec, Delivery, LaneChannel, TurnEnd};
 
-/// A turn can legitimately run for hours; only a wedged peer should trip this.
-const TURN_CEILING: Duration = Duration::from_secs(6 * 3600);
 const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub struct CodexChannel {
@@ -104,11 +102,15 @@ impl LaneChannel for CodexChannel {
         }
     }
 
-    fn join(&mut self) -> Result<TurnEnd> {
-        let deadline = std::time::Instant::now() + TURN_CEILING;
-        while std::time::Instant::now() < deadline {
-            let Some(note) = self.rpc.next_notification(Duration::from_secs(30)) else {
-                continue;
+    fn poll_turn(&mut self, timeout: Duration) -> Result<Option<TurnEnd>> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Ok(None);
+            }
+            let Some(note) = self.rpc.next_notification(left) else {
+                return Ok(None);
             };
             let method = note.get("method").and_then(Value::as_str).unwrap_or("");
             let params = note.get("params").cloned().unwrap_or(Value::Null);
@@ -127,15 +129,14 @@ impl LaneChannel for CodexChannel {
                         .and_then(|turn| turn.get("status"))
                         .and_then(Value::as_str)
                         .unwrap_or("unknown");
-                    return Ok(match status {
+                    return Ok(Some(match status {
                         "failed" => TurnEnd::failed(status),
                         _ => TurnEnd::ok(status),
-                    });
+                    }));
                 }
                 _ => {}
             }
         }
-        Ok(TurnEnd::failed("codex turn passed the 6 hour ceiling"))
     }
 
     fn close(&mut self) -> Result<i32> {

@@ -16,6 +16,14 @@ use crate::ident::{Store, SyncStat, UsageRow};
 pub struct Opencode;
 
 impl Harness for Opencode {
+    fn open_channel(
+        &self,
+        spec: &crate::channel::ChannelSpec,
+    ) -> anyhow::Result<Box<dyn crate::channel::LaneChannel>> {
+        Ok(Box::new(crate::channel::opencode::OpencodeChannel::open(spec)?))
+    }
+
+
     fn id(&self) -> &'static str {
         "opencode"
     }
@@ -100,7 +108,7 @@ impl Harness for Opencode {
     }
 
     fn preview_command(&self, spec: &SpawnSpec) -> Option<String> {
-        launch_command(spec).ok()
+        Some(crate::harness::supervisor_command(spec))
     }
 
     fn spawn(&self, spec: &SpawnSpec) -> Result<SessionRef> {
@@ -110,7 +118,7 @@ impl Harness for Opencode {
             .clone()
             .unwrap_or_else(|| format!("boop-{session_id}"));
         let cwd = crate::worktree::prepare_spawn_dir(spec)?;
-        let command = launch_command(spec)?;
+        let command = crate::harness::supervisor_command(spec);
         crate::tmux::mux().new_detached_session(
             spec.socket.as_deref(),
             &tmux_name,
@@ -294,7 +302,7 @@ pub struct Part {
     pub input: Option<Value>,
 }
 
-fn store_path() -> Option<PathBuf> {
+pub(crate) fn store_path() -> Option<PathBuf> {
     opencode_db_path().filter(|path| path.exists())
 }
 
@@ -536,6 +544,8 @@ mod tests {
             model: Some("m".to_owned()),
             on_exit: None,
             tmux: None,
+            lane: "lane-test".to_owned(),
+            mail_dir: std::env::temp_dir(),
         }
     }
 

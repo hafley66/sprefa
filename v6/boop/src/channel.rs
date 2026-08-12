@@ -78,8 +78,9 @@ pub trait LaneChannel: Send {
     /// took nothing and the supervisor must re-offer it after `join`.
     fn steer(&mut self, text: &str) -> Result<Delivery>;
 
-    /// Block until the running turn ends.
-    fn join(&mut self) -> Result<TurnEnd>;
+    /// Wait up to `timeout` for the running turn to end. `None` means it is
+    /// still running, which is when the supervisor offers it new text.
+    fn poll_turn(&mut self, timeout: std::time::Duration) -> Result<Option<TurnEnd>>;
 
     /// Release the harness child and report its exit code.
     fn close(&mut self) -> Result<i32>;

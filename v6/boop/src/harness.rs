@@ -63,6 +63,41 @@ pub trait Harness {
     fn stop(&self, _session: &SessionRef) -> anyhow::Result<()> {
         anyhow::bail!("harness `{}` has no stop support", self.id())
     }
+
+    /// Open a lane conversation. The supervisor drives it; nothing else calls
+    /// this, and no caller learns which harness answered.
+    fn open_channel(
+        &self,
+        _spec: &crate::channel::ChannelSpec,
+    ) -> anyhow::Result<Box<dyn crate::channel::LaneChannel>> {
+        anyhow::bail!("harness `{}` has no lane channel", self.id())
+    }
+}
+
+/// The one command a lane pane runs, whatever the harness: the boop
+/// supervisor, which owns the harness child and drains the lane inbox.
+pub fn supervisor_command(spec: &SpawnSpec) -> String {
+    let mut command = format!(
+        "boop beep lane run --lane {} --harness {} --brief {} --mail-dir {}",
+        quote(&spec.lane),
+        quote(&spec.harness),
+        quote(&spec.prompt),
+        quote(&spec.mail_dir.display().to_string()),
+    );
+    if let Some(model) = spec.model.as_deref().filter(|value| !value.is_empty()) {
+        command.push_str(&format!(" --model {}", quote(model)));
+    }
+    if let Some(session) = &spec.resume_session {
+        command.push_str(&format!(" --resume {}", quote(session)));
+    }
+    spec.with_on_exit(match &spec.env_stamp {
+        Some(stamp) => format!("{stamp} {command}"),
+        None => command,
+    })
+}
+
+fn quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
 }
 
 /// What one ingest pass wrote, plus where the next pass resumes.
@@ -156,6 +191,10 @@ pub struct SpawnSpec {
     pub on_exit: Option<String>,
     /// The tmux session name to spawn under; `None` mints `boop-agent-<hex>`.
     pub tmux: Option<String>,
+    /// The lane id the supervisor drains messages for.
+    pub lane: String,
+    /// The mailbox directory the lane's inbox lives in.
+    pub mail_dir: PathBuf,
 }
 
 impl SpawnSpec {

@@ -21,6 +21,7 @@ pub mod proc;
 pub mod query;
 pub mod registry;
 pub mod rows;
+pub mod supervise;
 pub mod tail;
 pub mod tmux;
 #[cfg(feature = "agent-read")]

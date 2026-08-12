@@ -92,22 +92,27 @@ impl LaneChannel for ClaudeChannel {
         Ok(Delivery::MidTurn)
     }
 
-    fn join(&mut self) -> Result<TurnEnd> {
-        while let Ok(event) = self.events.recv() {
-            let Some(kind) = event.get("type").and_then(Value::as_str) else {
-                continue;
-            };
-            if kind == "system" {
-                if let Some(id) = event.get("session_id").and_then(Value::as_str) {
-                    self.conversation = id.to_owned();
+    fn poll_turn(&mut self, timeout: std::time::Duration) -> Result<Option<TurnEnd>> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Ok(None);
+            }
+            let event = match self.events.recv_timeout(left) {
+                Ok(event) => event,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => return Ok(None),
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    return Ok(Some(TurnEnd::failed(
+                        "claude stream closed before a result event",
+                    )))
                 }
-                continue;
-            }
-            if kind != "result" {
-                continue;
-            }
+            };
             if let Some(id) = event.get("session_id").and_then(Value::as_str) {
                 self.conversation = id.to_owned();
+            }
+            if event.get("type").and_then(Value::as_str) != Some("result") {
+                continue;
             }
             let subtype = event
                 .get("subtype")
@@ -117,12 +122,11 @@ impl LaneChannel for ClaudeChannel {
                 .get("is_error")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            return Ok(match errored {
+            return Ok(Some(match errored {
                 false => TurnEnd::ok(subtype),
                 true => TurnEnd::failed(subtype),
-            });
+            }));
         }
-        Ok(TurnEnd::failed("claude stream closed before a result event"))
     }
 
     fn close(&mut self) -> Result<i32> {

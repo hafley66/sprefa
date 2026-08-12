@@ -51,11 +51,23 @@ LIVENESS: a lane can die silently, producing nothing. Liveness is TWO checks:
   A REPORT.md at the root alone proves nothing; check its mtime and first line
   against the lane you dispatched.
 
+TRANSPORT: every lane pane runs ONE command, whatever the harness:
+    boop beep lane run --lane <id> --harness <h> --brief <abs> --model <m>
+  That supervisor owns the harness conversation and the lane's inbox. It opens
+  the conversation with the brief, drains the inbox every 700 ms, and starts a
+  resume turn for anything the harness would not take mid-turn. Nothing is ever
+  dropped and no hail needs a human re-dispatch.
+
 HAIL: boop beep hail <lane> --body \"text\" [--from <me>] [--kind <k>]
-  Injects keystrokes AND reports whether they landed. `opencode run` lanes take
-  their prompt from ARGV, so a mid-flight hail reaches nothing: let the lane
-  finish and re-dispatch with its session id, or kill it. Only interactive TUIs
-  receive mid-flight hails.
+  Reaches a running lane on EVERY harness. Two delivery tiers, both reported:
+    midturn  claude and codex take the text into the turn already running
+             (claude stream-json stdin; codex app-server turn/steer).
+    nextturn opencode and kimi run the model inside a one-shot CLI process with
+             no control port, so the supervisor holds the text and opens a
+             resume turn the instant the running one ends.
+  Proof of delivery is in the store, not in a screenshot:
+    boop db \"SELECT * FROM agent_edge\" -- edge kind deliver-midturn/deliver-nextturn
+  and the mailbox row's to_timestamp is stamped when the lane takes it.
 
 ACK: boop beep message ack is age-based bulk-mark, NOT proof-of-read. An ack
   proves read at best, never compliance; compliance = the work's own artifacts.
@@ -1110,6 +1122,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         Some(sha) => sha.clone(),
         None => git_head(&args.cwd)?.unwrap_or_else(|| "HEAD".into()),
     };
+    let dir = mail_dir(args.mail_dir.as_deref())?;
     let mut body = args.body.clone().unwrap_or_else(|| args.cmd.clone());
     // A dispatch's goal rides the route's `goal` field; embed it in the mail
     // row body too so history states the goal without a registry lookup.
@@ -1148,17 +1161,11 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         model: args.model.clone(),
         on_exit: args.on_exit.clone(),
         tmux: args.tmux.clone(),
+        lane: args.to.clone(),
+        mail_dir: dir.clone(),
     };
     let session = adapter.spawn(&spec)?;
 
-    let stamp = format!(
-        "[bus {}] dispatched: {}",
-        message.id,
-        args.cmd.split('\n').next().unwrap_or("")
-    );
-    adapter.send(&session, &stamp)?;
-
-    let dir = mail_dir(args.mail_dir.as_deref())?;
     // The route's cwd is where the harness actually runs (the worktree when
     // one was made): session-id resolution joins opencode.db on directory.
     let route = Route {
@@ -1353,6 +1360,12 @@ fn run_hail(
         println!("no registry route for {to}: message stays queued, to_timestamp null");
         return Ok(());
     };
+    // A lane pane runs the supervisor, which reads this mailbox directly;
+    // typing at its stdout would reach no agent.
+    if route.kind == "lane" {
+        println!("queued {} -> {to} (lane supervisor delivers it)", message.id);
+        return Ok(());
+    }
     let pane = route.tmux.as_deref();
     let no_pane =
         pane.is_none() || pane.is_some_and(|target| !tmux::mux().target_alive(socket, target));
@@ -1394,6 +1407,39 @@ fn run_hail(
         }
     }
     Ok(())
+}
+
+/// Drive one lane to completion inside its pane, then exit with the harness's
+/// own code so the on-exit epilogue reports a true rc.
+fn run_lane_supervisor(
+    registry: &Registry,
+    lane: &str,
+    harness_id: &str,
+    brief: &Path,
+    model: Option<&str>,
+    resume: Option<&str>,
+    mail_dir_arg: Option<&Path>,
+) -> Result<()> {
+    let adapter = harness_by_id(registry, harness_id)?;
+    let dir = mail_dir(mail_dir_arg)?;
+    let cwd = std::env::current_dir().context("read the current directory")?;
+    let spec = boop::channel::ChannelSpec {
+        model: model.map(str::to_owned),
+        cwd: cwd.clone(),
+        resume: resume.map(str::to_owned),
+    };
+    let mut channel = adapter.open_channel(&spec)?;
+    let run = boop::supervise::LaneRun {
+        lane: lane.to_owned(),
+        brief: brief.to_owned(),
+        mail_dir: dir,
+        cwd,
+        model: model.map(str::to_owned),
+        resume: resume.map(str::to_owned),
+    };
+    let code = boop::supervise::run(run, channel.as_mut())?;
+    println!("[boop] lane {lane} finished rc={code}");
+    std::process::exit(code);
 }
 
 fn record_control_edge(message: &boop::bus::Message) -> Result<()> {
@@ -1648,6 +1694,8 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             model: model.clone(),
             on_exit: on_exit.clone(),
             tmux: Some(identity.tmux.clone()),
+            lane: identity.lane.clone(),
+            mail_dir: hail_mail_dir.clone(),
         };
         let command = adapter
             .preview_command(&spec)
@@ -2699,6 +2747,24 @@ enum LaneCmd {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Drive one lane conversation. This is what a lane pane runs; a human
+    /// calls `lane create`, never this.
+    Run {
+        #[arg(long)]
+        lane: String,
+        #[arg(long)]
+        harness: String,
+        /// Absolute path to the brief that opens the conversation.
+        #[arg(long)]
+        brief: PathBuf,
+        #[arg(long)]
+        model: Option<String>,
+        /// Continue an existing harness conversation instead of opening one.
+        #[arg(long)]
+        resume: Option<String>,
+        #[arg(long)]
+        mail_dir: Option<PathBuf>,
+    },
     /// One lane's route and state.
     Get {
         lane: String,
@@ -3241,6 +3307,22 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 wait,
                 wait_timeout,
             },
+        ),
+        LaneCmd::Run {
+            lane,
+            harness,
+            brief,
+            model,
+            resume,
+            mail_dir,
+        } => run_lane_supervisor(
+            registry,
+            &lane,
+            &harness,
+            &brief,
+            model.as_deref(),
+            resume.as_deref(),
+            mail_dir.as_deref(),
         ),
         LaneCmd::Get { lane, mail_dir } => run_lane_get(mail_dir.as_deref(), &lane),
         LaneCmd::Patch {
