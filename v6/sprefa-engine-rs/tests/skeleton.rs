@@ -80,6 +80,8 @@ fn fixture_program() -> GenProgram {
         final_select: HashMap::new(),
         arrival_templates: HashMap::new(),
         text_intern_plan: None,
+        struct_types: Vec::new(),
+        struct_ref_columns: HashMap::new(),
         relations,
         edges: vec![],
         levels: vec![IncrementalLevelStatement {

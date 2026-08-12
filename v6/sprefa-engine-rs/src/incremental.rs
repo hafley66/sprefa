@@ -999,12 +999,12 @@ fn apply_keyed_edge(
     }
     let changed_rows: Vec<Row> = rows
         .into_iter()
-        .filter(|row| {
-            match before_by_key.get(&row_key(row, &statement.key_indices)) {
+        .filter(
+            |row| match before_by_key.get(&row_key(row, &statement.key_indices)) {
                 None => true,
                 Some(before) => !rows_equal(before, row),
-            }
-        })
+            },
+        )
         .collect();
     if changed_rows.is_empty() {
         return;

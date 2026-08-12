@@ -66,7 +66,7 @@ enum_decl_variant_name_collision_is_refused	unsupported	enum_variant_name_collis
 enum_decl_variant_rows_round_trip_through_tag_view	clean	byte-clean
 enum_name_is_a_column_type	clean	byte-clean
 enum_nullary_variant_boots_and_tags	clean	byte-clean
-enum_variant_field_typed_as_rel_is_a_ref	diff	mixed(missing-rel+wrong-row) first-tick=1
+enum_variant_field_typed_as_rel_is_a_ref	clean	byte-clean
 enum_variant_field_undeclared_type_still_throws	unsupported	column_type_unknown(treee)
 error_is_a_named_unsupported	unsupported	lifecycle_arm(error)
 exhaust_policy	clean	byte-clean
@@ -221,7 +221,7 @@ nested_head_without_a_parent_atom_refuses	unsupported	nested_parent_unbound(orch
 nested_list_of_text_round_trips	clean	byte-clean
 nested_list_text_door	clean	byte-clean
 nested_parent_with_no_rows_yields_an_empty_child	clean	byte-clean
-nested_rel_element_list_round_trips	diff	mixed(missing-rel+wrong-row) first-tick=1
+nested_rel_element_list_round_trips	clean	byte-clean
 nested_three_levels_chain_the_references	clean	byte-clean
 nested_two_parent_rows_partition_the_child	clean	byte-clean
 nested_zero_column_child_is_one_row_per_parent	clean	byte-clean
@@ -240,16 +240,16 @@ one_attempt_guard_by_negation_lands_one_unnamed_winner	clean	byte-clean
 one_attempt_keyed_head_loses_the_first_arm_silently	clean	byte-clean
 one_occurrence_two_rows_still_conflicts	unsupported	edge_head_conflict_risk(latest/2,[ping/1])
 option_companion_name_collision_is_named	unsupported	option_companion_name_collision(pair_holder__before/1,pair_holder/2,before)
-option_dense_sequence_of_rel_round_trips_absent_and_present	diff	mixed(missing-rel+wrong-row) first-tick=1
+option_dense_sequence_of_rel_round_trips_absent_and_present	clean	byte-clean
 option_in_key_column_is_refused	unsupported	option_in_key_column(session/2,token)
 option_list_column_roundtrips_null_and_present	clean	byte-clean
-option_list_of_rel_round_trips_absent_and_present	diff	mixed(missing-rel+wrong-row) first-tick=1
-option_list_of_scalar_and_of_rel_in_one_rel	diff	mixed(missing-rel+wrong-row) first-tick=2
+option_list_of_rel_round_trips_absent_and_present	clean	byte-clean
+option_list_of_scalar_and_of_rel_in_one_rel	clean	byte-clean
 option_list_of_unknown_name_keeps_its_stop	unsupported	column_type_unknown(fighter_summry)
 option_of_interned_set_of_rel_is_refused	unsupported	list_interned_set_relation_element(fighter_summary)
 option_of_json_list_keeps_its_stop	unsupported	option_element_type_unknown(json_list(int))
 option_of_option_of_scalar_keeps_its_stop	unsupported	option_element_type_unknown(option(int))
-option_rel_on_a_reference_target_round_trips_absent_and_present	diff	mixed(missing-rel+wrong-row) first-tick=1
+option_rel_on_a_reference_target_round_trips_absent_and_present	clean	byte-clean
 option_rel_ref_desugars_to_companion_split_rel	clean	byte-clean
 option_scalar_enums_mint_per_element_type	clean	byte-clean
 option_text_column_reads_through_tag_join	clean	byte-clean
@@ -288,7 +288,7 @@ regexp_pattern_not_literal	unsupported	regexp_pattern_not_literal
 regexp_pattern_outside_subset	unsupported	regexp_pattern_outside_subset("a(?=b)")
 regexp_positive_match	clean	byte-clean
 regexp_retraction_flip	clean	byte-clean
-rel_element_list_round_trips	diff	mixed(missing-rel+wrong-row) first-tick=1
+rel_element_list_round_trips	clean	byte-clean
 relation_depth2_chained_decode	clean	byte-clean
 relation_depth2_construct_and_read	clean	byte-clean
 relation_depth2_dot_read	clean	byte-clean
@@ -304,7 +304,7 @@ relation_pattern_text_literal_in_ref_column_rejected	unsupported	relation_patter
 relation_pattern_wrong_target_rejected	unsupported	relation_pattern_not_a_relation_value(span/3,file,file,fpath('a.rs'))
 relation_ref_column_fed_by_ref_variable_accepted	clean	byte-clean
 relation_ref_column_fed_by_text_variable_rejected	unsupported	relation_column_type_conflict(span/3,file,file,raw3/3,file,text)
-relation_reference_target_and_parent_share_tick	diff	mixed(missing-rel+wrong-row) first-tick=1
+relation_reference_target_and_parent_share_tick	clean	byte-clean
 relation_value_in_edge_rule_rejected	unsupported	relation_value_in_edge_rule(span/3,file,file,file(repo(acme),fpath('src/a.rs')))
 relation_value_under_negation_rejected	unsupported	relation_value_under_negation(span/3,file,file,file(repo(acme),fpath('missing.rs')))
 repeat_is_a_self_carry_chain	clean	byte-clean
@@ -338,20 +338,20 @@ stale_keyed_retraction_keeps_replacement	clean	byte-clean
 state_flap_nets_to_zero_scope_churn	clean	byte-clean
 struct_arrival_field_type_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,field_not_int(span,end,nine))
 struct_arrival_functor_term_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,not_an_object(span,span(3,9)))
-struct_arrival_key_order_canonicalized	diff	mixed(missing-rel+wrong-row) first-tick=1
+struct_arrival_key_order_canonicalized	clean	byte-clean
 struct_arrival_missing_key_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,missing_key(span,end))
 struct_arrival_unknown_key_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,unknown_key(span,extra))
-struct_column_renders_canonical_json	diff	mixed(missing-rel+wrong-row) first-tick=1
+struct_column_renders_canonical_json	clean	byte-clean
 struct_column_type_unknown_rejected	unsupported	column_type_unknown(spann)
 struct_decode_field_unknown_rejected	unsupported	decode_field_unknown(span,beginning)
-struct_ghcacher_stars_normalization	diff	mixed(missing-rel+wrong-row) first-tick=1
-struct_host_output_schedule_answer_interned	diff	mixed(missing-rel+wrong-row) first-tick=1
+struct_ghcacher_stars_normalization	clean	byte-clean
+struct_host_output_schedule_answer_interned	clean	byte-clean
 struct_host_output_type_unknown_rejected	unsupported	column_type_unknown(spann)
-struct_intern_order_a	diff	mixed(missing-rel+wrong-row) first-tick=1
-struct_intern_order_b	diff	mixed(missing-rel+wrong-row) first-tick=1
-struct_nested_value_renders_whole_tree	diff	mixed(missing-rel+wrong-row) first-tick=1
-struct_shared_child_survives_one_release	diff	mixed(missing-rel+wrong-row) first-tick=1
-struct_span_columns_are_int_after_decode	diff	mixed(missing-rel+wrong-row) first-tick=1
+struct_intern_order_a	clean	byte-clean
+struct_intern_order_b	clean	byte-clean
+struct_nested_value_renders_whole_tree	clean	byte-clean
+struct_shared_child_survives_one_release	clean	byte-clean
+struct_span_columns_are_int_after_decode	clean	byte-clean
 struct_type_cycle_rejected	unsupported	type_cycle([node])
 struct_type_mutual_cycle_rejected	unsupported	type_cycle([left,right])
 subscribe_is_a_named_unsupported	unsupported	lifecycle_arm(subscribe)
@@ -379,7 +379,7 @@ variant_field_bool_stays_bool	clean	byte-clean
 variant_field_float_stays_float	clean	byte-clean
 variant_field_int_and_text_unchanged	clean	byte-clean
 variant_field_typed_as_json_stays_json	clean	byte-clean
-variant_field_typed_as_struct_is_a_ref	diff	mixed(missing-rel+wrong-row) first-tick=1
+variant_field_typed_as_struct_is_a_ref	clean	byte-clean
 waiver_range_join_exact_rows	clean	byte-clean
 wide_int_refused_at_undeclared_column	unsupported	int_out_of_range(untyped/1,1,9007199254740993)
 wide_int_refused_inside_json_document	unsupported	int_out_of_range(payload/1,document,9007199254740993)

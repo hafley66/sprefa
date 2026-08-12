@@ -125,6 +125,17 @@ pub struct TextInternPlan {
     pub rel_columns: std::collections::HashMap<String, Vec<bool>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructTypePlan {
+    pub name: String,
+    pub columns: Vec<String>,
+    pub refs: Vec<Option<String>>,
+    pub key_indices: Vec<usize>,
+    pub conflict_sql: String,
+    pub intern_sql: String,
+    pub lookup_sql: String,
+}
+
 // One IIncrementalRelationPlan: the per-relation table names and statement
 // text the tick engine stages events through.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +269,10 @@ pub struct ProgramJson {
     pub arrival_templates: std::collections::HashMap<String, ArrivalTemplate>,
     #[serde(default)]
     pub text_intern_plan: Option<TextInternPlan>,
+    #[serde(default)]
+    pub struct_types: Vec<StructTypePlan>,
+    #[serde(default)]
+    pub struct_ref_columns: std::collections::HashMap<String, Vec<Option<String>>>,
     pub relations: Vec<IncrementalRelationPlan>,
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,

@@ -8,6 +8,7 @@ pub mod driver;
 pub mod incremental;
 pub mod program;
 pub mod sql;
+pub mod struct_plane;
 pub mod text_plane;
 pub mod ticklog;
 pub mod types;
