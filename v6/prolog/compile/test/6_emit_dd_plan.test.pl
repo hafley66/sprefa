@@ -72,8 +72,23 @@ test(json_twin_carries_reduce_aggregate) :-
     get_dict(aggregate, Op, Agg),
     get_dict(kind, Agg, Kinds),
     memberchk(avg, Kinds),
-    get_dict(group, Agg, Group), Group == [group],
-    get_dict(value, Agg, Value), Value == [value].
+    get_dict(group, Agg, Group), Group == ['b0.group'],
+    get_dict(value, Agg, Value), Value == ['value'].
+
+test(reduce_group_columns_resolve_against_bindings) :-
+    dd_fixture_file('5_value_plane.pl', Fixture),
+    fixture_dd_plan_json_text(Fixture, float_avg_is_grouped, Text),
+    json_text_dict(Text, Dict),
+    get_dict(operators, Dict, Operators),
+    member(Op, Operators),
+    get_dict(kind, Op, reduce),
+    get_dict(bindings, Op, Bindings),
+    get_dict(b0, Bindings, 'score/2'),
+    get_dict(aggregate, Op, Agg),
+    get_dict(group, Agg, [Group]),
+    Group == 'b0.group',
+    get_dict(projection, Op, Projection),
+    proj_head_source(Projection, group, Group).
 
 test(json_twin_carries_arrangements_and_wires) :-
     dd_fixture_file('5_value_plane.pl', Fixture),
@@ -233,6 +248,12 @@ json_text_dict(Text, Dict) :-
     open_string(Atom, Stream),
     json_read_dict(Stream, Dict, [value_string_as(atom)]),
     close(Stream).
+
+proj_head_source(Projection, Head, Source) :-
+    member(Item, Projection),
+    get_dict(head, Item, Head),
+    get_dict(source, Item, Source),
+    !.
 
 test(empty_rule_order_falls_back_to_program_rules) :-
     Program = prog([], [(copy(Item) <- source(Item))]),
