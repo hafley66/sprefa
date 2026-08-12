@@ -27,6 +27,7 @@ whole gate. See `.github/CI-KNOWN-RED.md` for the allowlist this updates.
 | rtkq-golden | FAIL 3/3 | real | api_endpoint row order mismatch: engine emits updateUser-before-listUsers, order-sensitive golden expects listUsers-first (spans identical, not a corpus move) | `v6/tsv2/labs/1_rtkq-extraction-golden.ts:200` |
 | compile-speed | FAIL 3/3 | real | `COMPILE_SPEED regressions=16 improvements=0` vs 2026-08-07 baseline; golden-flex lower +178%, emit +120% | `v6/prolog/compile/scripts/1_compile_speed.sh:248` |
 | scale-floor | FAIL 3/3 | real | stmts/tick `[39,43]` flat at BOTH 10k and 1k (delta-proportionality holds) but expected pin `[37,41]` is stale by a constant +2 | `v6/tsv2/scripts/7_scale-floor.sh:240` |
+| memory-soak | FAIL 3/3 | real | sqlite page count grows ~2x across the soak: second-quarter 24.8 -> final-quarter 49.5 vs +10% ceiling 27.2; storage not flat | `v6/tsv2/scripts/memory-soak.ts:327` |
 
 ## 2. Real failures
 
