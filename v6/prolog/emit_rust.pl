@@ -99,7 +99,8 @@ arrival_templates_map(ArrivalStatements, Map) :-
 relation_dict(RelPlans, ArrivalStatements, DepartureRefs,
               deltastmt(Ref, _Sel, DeltaTable, BoundarySql, _Stored), Dict) :-
     ref_name(Ref, Name),
-    relplan_shape(RelPlans, Ref, Kind, Columns, KeyOrNone, ColumnTypes),
+    relplan_shape(RelPlans, Ref, Kind, Columns, KeyOrNone, RawColumnTypes),
+    maplist(boundary_type_name, RawColumnTypes, ColumnTypes),
     ( KeyOrNone = key(KeyPositions) -> maplist(position_index, KeyPositions, KeyIndices)
     ; KeyIndices = []
     ),
@@ -146,7 +147,8 @@ level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
            Dict) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
-    memberchk(HeadName-[HeadColumns, HeadTypes], HeadTable),
+    memberchk(HeadName-[HeadColumns, RawHeadTypes], HeadTable),
+    maplist(boundary_type_name, RawHeadTypes, HeadTypes),
     ( DeltaInsertSql = none -> InsertField = null ; InsertField = DeltaInsertSql ),
     atomic_list_concat([DeleteSql | InsertSqls], ';\n', RecomputeSql),
     select_sql_text(HeadName, HeadColumns, SelectSql),

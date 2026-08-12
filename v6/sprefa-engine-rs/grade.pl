@@ -1,0 +1,47 @@
+:- module(rust_grade, [ generate/2 ]).
+
+:- use_module('../prolog/compile', [ program_plan/3 ]).
+:- use_module('../prolog/lower', [ lower_program/2, boot_statements/7 ]).
+:- use_module('../prolog/emit_rust', [ emit_program/5 ]).
+:- use_module('../prolog/sweep').
+:- use_module(library(filesex)).
+
+generate(OutDir, Report) :-
+    make_directory_path(OutDir),
+    sweep:fixture_files(Files),
+    setup_call_cleanup(open(Report, write, Stream),
+                       forall(member(File, Files), generate_file(File, OutDir, Stream)),
+                       close(Stream)).
+
+generate_file(File, OutDir, Stream) :-
+    sweep:read_all_fixtures(File, Entries),
+    forall(member(entry(Name, Term, Bindings), Entries),
+           generate_one(Name, Term, Bindings, OutDir, Stream)).
+
+generate_one(Name, Term, Bindings, OutDir, Stream) :-
+    catch(
+        ( ( program_plan(Term-Bindings, [], Plan),
+          lower_program(Plan, Lowered),
+          Term = fixture(Name, _Program, Initial, Schedule, _Expectations),
+          Plan = plan(_, prog(Decls, _Rules), Types, RelPlans, _, _, _, _, Mode),
+          Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+          boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, Boot),
+          emit_program(Name, Plan, Lowered, Boot, Text),
+          format(atom(RustPath), '~w/~w.rs', [OutDir, Name]),
+          setup_call_cleanup(open(RustPath, write, RustStream),
+                             format(RustStream, '~w', [Text]), close(RustStream)),
+          sweep:schedule_json(Types, RelPlans, Schedule, ScheduleJson),
+          format(atom(SchedulePath), '~w/~w.schedule.json', [OutDir, Name]),
+          setup_call_cleanup(open(SchedulePath, write, ScheduleStream),
+                             format(ScheduleStream, '~w', [ScheduleJson]), close(ScheduleStream)),
+          Result = compiled
+        ) -> true
+        ; Result = unsupported
+        ),
+        Error,
+        result_name(Error, Result)),
+    format(Stream, '~w\t~w~n', [Name, Result]),
+    flush_output(Stream).
+
+result_name(unsupported_construct(_), unsupported) :- !.
+result_name(_, error).
