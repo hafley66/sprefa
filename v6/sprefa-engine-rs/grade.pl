@@ -34,14 +34,18 @@ generate_one(Name, Term, Bindings, OutDir, Stream) :-
           format(atom(SchedulePath), '~w/~w.schedule.json', [OutDir, Name]),
           setup_call_cleanup(open(SchedulePath, write, ScheduleStream),
                              format(ScheduleStream, '~w', [ScheduleJson]), close(ScheduleStream)),
-          Result = compiled
+          Result = compiled,
+          Reason = ''
         ) -> true
-        ; Result = unsupported
+        ; Result = unsupported,
+          Reason = 'emitter returned false'
         ),
         Error,
-        result_name(Error, Result)),
-    format(Stream, '~w\t~w~n', [Name, Result]),
+        result_name(Error, Result, Reason)),
+    format(Stream, '~w\t~w\t~w~n', [Name, Result, Reason]),
     flush_output(Stream).
 
-result_name(unsupported_construct(_), unsupported) :- !.
-result_name(_, error).
+result_name(unsupported_construct(Reason), unsupported, Text) :- !,
+    term_string(Reason, Text, [numbervars(true)]).
+result_name(Error, error, Text) :-
+    term_string(Error, Text, [numbervars(true)]).

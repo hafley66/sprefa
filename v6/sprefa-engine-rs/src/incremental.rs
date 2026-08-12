@@ -269,7 +269,8 @@ pub fn apply_arrivals(
         let encoded_rows: String = entries
             .iter()
             .map(|(_, row)| json_array_text(row))
-            .collect();
+            .collect::<Vec<_>>()
+            .join(",");
         let write_statement = SqlStatement {
             sql,
             args: vec![Value::Text(format!("[{}]", encoded_rows))],

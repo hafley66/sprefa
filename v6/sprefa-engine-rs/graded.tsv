@@ -1,392 +1,392 @@
-aggregate_count_min_max_track_arrivals_and_retraction	runtime-error
-aggregate_in_edge_head_rejected	unsupported
-aggregate_min_recomputes_when_the_minimum_is_retracted	diff
-aggregate_sum_tracks_a_growing_and_shrinking_group	diff
-any_two_tagged_arms_land_on_one_tick	runtime-error
-arithmetic_rejects_non_int_operand_at_runtime	unsupported
-arrival_affinity_rewrite_keeps_delta	clean
-arrival_dup_batch_partial_ignore	runtime-error
-async_state_machine_with_pattern_scan	unsupported
-backslash_in_string_literal_survives_both_doors	runtime-error
-batched_increments_both_count	runtime-error
-bind_computes_derived_value_then_comparison_filters	clean
-bool_identity_comparison_filters	error
-bool_literals_round_trip	error
-bool_rejects_text_ingress	unsupported
-bool_relation_negation_is_two_valued	error
-braces_in_head_position	clean
-braces_literal_canonicalizes	clean
-callgraph_derivation_over_extraction	runtime-error
-callgraph_unused_inverts_with_the_call_set	runtime-error
-chain_into_keyed_head_replaces	unsupported
-changed_since_ignores_events_before_turn	runtime-error
-changed_since_spans_two_turns	runtime-error
-clean_state_gate_and_exit_zero	clean
-clean_state_no_diags	clean
-clock_rel_join_storms	runtime-error
-coalesce_default_returns_when_source_retracts	diff
-coalesce_defaults_the_absent_row	clean
-coalesce_in_edge_body_samples	runtime-error
-coalesce_over_derived_source	clean
-coalesce_under_negation_is_refused	unsupported
-coalesce_with_a_variable_default_is_refused	unsupported
-coalesce_with_two_outputs_is_refused	unsupported
-coalesce_without_an_output_is_refused	unsupported
-combine_edge_is_the_conjunction_spelling	runtime-error
-combine_level_is_the_conjunction_spelling	clean
-comparison_filters_rows	clean
-complete_is_a_named_unsupported	unsupported
-completion_propagation_lattice_tick	runtime-error
-concat_fold_follows_arrival_order	runtime-error
-concat_fold_reversed_arrival_reverses_result	runtime-error
-concat_program_queue	runtime-error
-conjunction_edge_control_for_combine	runtime-error
-conjunction_level_control_for_combine	clean
-count_is_bag_of_derivations	clean
-counter_fold_matches_hand_computation	runtime-error
-created_at_pinned_updated_at_advances	runtime-error
-declaration_order_preserves_struct_refs	clean
-decode_missing_key_fails_quietly	unsupported
-decode_open_pattern_binds_nested	unsupported
-demand_laziness_effect_rows	runtime-error
-demand_view_fires_its_consumer_once	runtime-error
-departed_fires_next_tick_on_retraction	runtime-error
-derive_directory_prefix_via_rtrim_replace	clean
-desugared_trace_equals_hand_written	unsupported
-diag_scenario_seven_ticks_end_to_end	runtime-error
-dirty_derives_from_digest_mismatch	runtime-error
-dirty_retracts_on_matching_commit	runtime-error
-division_truncates_toward_zero_mod_follows_divisor_sign	clean
-duplicate_host_name_is_refused	unsupported
-edge_chain_hops_tick_per_stage	runtime-error
-edge_into_unkeyed_set_rejected	unsupported
-edge_trigger_literal_filters_on_the_oracle_door	unsupported
-enum_decl_two_variants_union_in_tag_view	diff
-enum_decl_variant_name_collision_is_refused	unsupported
-enum_decl_variant_rows_round_trip_through_tag_view	diff
-enum_name_is_a_column_type	clean
-enum_nullary_variant_boots_and_tags	diff
-enum_variant_field_typed_as_rel_is_a_ref	diff
-enum_variant_field_undeclared_type_still_throws	unsupported
-error_is_a_named_unsupported	unsupported
-exhaust_policy	runtime-error
-extraction_fork_callgraph	diff
-extraction_fork_span_line	diff
-fill_as_cache_update_swr	runtime-error
-filter_map_is_a_level_rule	diff
-finalize_over_log_fires_on_retention_prune	runtime-error
-fix_by_waiver_returns_to_clean	clean
-flagship_flow_reach_over_batched_resolved_edges	runtime-error
-flagship_flow_reach_over_resolved_edges	runtime-error
-float_arithmetic_is_binary64	clean
-float_avg_is_grouped	clean
-float_avg_retracts_to_empty_group	diff
-float_exact_comparison_has_no_epsilon	clean
-float_exact_join_has_no_epsilon	clean
-float_integral_value_keeps_real_storage	clean
-float_negative_zero_canonical_boundary	clean
-float_rejects_non_float_ingress	unsupported
-float_shortest_round_trip_wire	diff
-float_widens_integer_ingress	clean
-float_widens_wide_integer_ingress	clean
-flow_arg_param_hop_is_positional_and_site_pinned	runtime-error
-flow_sig_owner_join_types_the_resolved_callee	runtime-error
-fork_join_error_arm_is_a_value	unsupported
-fork_join_is_a_conjunctive_body	diff
-generic_expansion_end_to_end	diff
-ghcacher_host_program_term	unsupported
-ghcacher_json_normalization	unsupported
-group_concat_one_argument_joins_members	runtime-error
-groupby_aggregate_two_bare_integer_literals	diff
-groupby_two_bare_integer_literals	diff
-guard_stage_fires_on_negation_and_comparison	unsupported
-guard_stage_silent_below_threshold	unsupported
-guard_stage_silent_when_muted	unsupported
-head_column_int_widens_into_float	clean
-head_column_list_and_json_share_storage	clean
-head_column_type_conflict_is_refused	unsupported
-head_expression_evaluates_derived_column	clean
-head_move_flips_current_tree_in_one_tick	runtime-error
-head_move_replaces_key	runtime-error
-higher_order_call_goal_rejected	unsupported
-higher_order_call_over_atom_rejected	unsupported
-host_free_query_leaves_a_derived_rel_unsubscribed	diff
-host_input_column_shadows_runtime_witness	unsupported
-host_output_column_shadows_runtime_ordinal	unsupported
-identical_demand_dedups	runtime-error
-identical_increments_stack_as_log_deltas	runtime-error
-increment_decrement_same_tick_nets_zero	runtime-error
-int_accepts_integral_float	clean
-int_float_arithmetic_keeps_real_result	clean
-int_out_of_range_is_named_unsupported	unsupported
-int_rejects_fractional_ingress	unsupported
-interpolation_desugars_to_concat	clean
-json_absent_key_yields_no_row_under_arrivals	diff
-json_array_groups_and_nests	unsupported
-json_array_keeps_bag_duplicates	unsupported
-json_array_spread_fans_out_correlated_siblings	clean
-json_array_spread_skips_non_matching_elements	clean
-json_capture_type_bool_is_refused	unsupported
-json_capture_type_typo_is_refused	unsupported
-json_control_escapes_inside_a_document	clean
-json_deep_exact_key_chain_binds	clean
-json_descent_into_scalars_is_silent	clean
-json_descent_matches_at_any_depth	clean
-json_each_fans_out	unsupported
-json_empty_containers_nest	clean
-json_empty_object_pattern_matches_any_object	clean
-json_empty_string_key_round_trips	clean
-json_key_capture_binds_key_and_value	clean
-json_key_capture_nests_and_fans_out	clean
-json_marker_shaped_keys_are_ordinary_data	clean
-json_nfc_and_nfd_keys_stay_distinct	clean
-json_non_ascii_keys_sort_by_code_point	clean
-json_null_round_trips_byte_identical	runtime-error
-json_object_builds_document	clean
-json_object_dup_key_rejected	compiled
-json_object_groups_rows_into_documents	clean
-json_object_orders_keys	clean
-json_object_throws_on_duplicate_keys	compiled
-json_patch_fold_merges_arrival_documents	runtime-error
-json_patch_fold_result_is_key_sorted	runtime-error
-json_patch_merges_nested_objects_recursively	runtime-error
-json_patch_non_object_patch_replaces_the_document	runtime-error
-json_patch_non_object_target_becomes_empty	runtime-error
-json_patch_null_value_composes	runtime-error
-json_patch_null_value_sets_key	runtime-error
-json_patch_replaces_arrays_wholesale	runtime-error
-json_round_trip_decode_to_document	unsupported
-json_safe_integer_boundary_survives_both_doors	runtime-error
-json_spread_and_capture_and_descent_multiply	clean
-json_string_control_escapes_are_valid_json	runtime-error
-json_top_level_scalar_document_is_a_value	runtime-error
-json_typed_capture_filters_a_wrong_typed_value	runtime-error
-json_typed_capture_folds_into_a_keyed_int_total	runtime-error
-json_untyped_capture_binds_without_a_type	runtime-error
-keep_on_non_log_rel_rejected	unsupported
-key_identical_write_is_silent	runtime-error
-key_last_write_wins	runtime-error
-key_range_reported_before_unknown_column_type	unsupported
-key_same_tick_ordered_not_conflict	runtime-error
-keyed_edge_head_still_replaces	runtime-error
-keyed_level_head_is_refused	unsupported
-keyed_log_rejected	unsupported
-keyed_replace_departs_the_old_row	runtime-error
-latest_in_level_rule_rejected	unsupported
-level_view_reads_set_projection_not_occurrences	diff
-list_bare_column_round_trips	runtime-error
-list_bare_text_door	clean
-list_column_fans_out_through_spread	clean
-list_dense_sequence_text_door	clean
-list_entity_dense_sequence_end_to_end	diff
-list_entity_linked_sequence_end_to_end	runtime-error
-list_interned_set_dictionary_content_deduplicates	unsupported
-list_interned_set_end_to_end	unsupported
-list_interned_set_relation_element_refused	unsupported
-list_interned_set_text_door	clean
-list_linked_sequence_text_door	clean
-list_of_json_documents_round_trips	clean
-list_of_relation_refs_still_refused	unsupported
-live_nonzero_exit_keeps_rows	diff
-log_deltas_follow_arrival_order	runtime-error
-log_driver_fold_needs_no_id_column	runtime-error
-log_on_level_headed_rel_rejected	unsupported
-log_rel_identical_arrival_is_two_occurrences	runtime-error
-log_retraction_rejected	compiled
-log_stacks_within_tick_and_across_ticks	runtime-error
-log_without_retention_rejected	unsupported
-lww_fold_follows_arrival_order	runtime-error
-marker_stops_backlog_replay	runtime-error
-match_classify_response	runtime-error
-match_classify_response_desugared	runtime-error
-match_edge_arm_keeps_edge_semantics	runtime-error
-match_enum_nonexhaustive_is_refused	unsupported
-merge_batches_per_tick	runtime-error
-merge_never_retracts	runtime-error
-merge_policy	runtime-error
-module_path_and_option_column_coexist	diff
-module_path_in_body_reads_the_flat_rel	clean
-module_path_in_head_resolves_and_contributes	clean
-module_path_local_name_binds_before_the_dotted_one	clean
-module_path_off_the_decl_tree_refuses	unsupported
-module_path_three_segments_resolve_through_the_rooms	clean
-mutual_recursion_matches_oracle	runtime-error
-native_ts_query_term	clean
-negated_identity_guard_flips_to_complement	clean
-negated_ordered_guard_flips_to_complement	clean
-nested_body_atom_reads_every_partition	runtime-error
-nested_child_and_an_option_column_coexist	diff
-nested_child_carries_the_parent_reference	clean
-nested_head_without_a_parent_atom_refuses	unsupported
-nested_list_of_text_round_trips	clean
-nested_list_text_door	clean
-nested_parent_with_no_rows_yields_an_empty_child	clean
-nested_rel_element_list_round_trips	diff
-nested_three_levels_chain_the_references	clean
-nested_two_parent_rows_partition_the_child	runtime-error
-nested_zero_column_child_is_one_row_per_parent	runtime-error
-new_file_diag_at_hit_line_exact_rows	clean
-new_file_no_exceeded_diag	clean
-new_salt_refires_fresh_stream	runtime-error
-next_edge_is_the_bare_atom_spelling	runtime-error
-next_level_is_the_bare_atom_spelling	clean
-non_array_value_at_list_column_is_refused	unsupported
-now_reads_the_tick	runtime-error
-numeric_equality_operator_filters	clean
-numeric_inequality_operator_filters	clean
-one_attempt_bounded_log_two_arms_refused	unsupported
-one_attempt_guard_by_negation_arrival_order_beats_arm_order	runtime-error
-one_attempt_guard_by_negation_lands_one_unnamed_winner	runtime-error
-one_attempt_keyed_head_loses_the_first_arm_silently	runtime-error
-one_occurrence_two_rows_still_conflicts	unsupported
-option_companion_name_collision_is_named	unsupported
-option_dense_sequence_of_rel_round_trips_absent_and_present	diff
-option_in_key_column_is_refused	unsupported
-option_list_column_roundtrips_null_and_present	runtime-error
-option_list_of_rel_round_trips_absent_and_present	runtime-error
-option_list_of_scalar_and_of_rel_in_one_rel	diff
-option_list_of_unknown_name_keeps_its_stop	unsupported
-option_of_interned_set_of_rel_is_refused	unsupported
-option_of_json_list_keeps_its_stop	unsupported
-option_of_option_of_scalar_keeps_its_stop	unsupported
-option_rel_on_a_reference_target_round_trips_absent_and_present	runtime-error
-option_rel_ref_desugars_to_companion_split_rel	runtime-error
-option_scalar_enums_mint_per_element_type	diff
-option_text_column_reads_through_tag_join	diff
-ordered_aggregate_retraction_rebuild	runtime-error
-ordered_fragment_line_assembly	clean
-ordered_group_concat_explicit_comma_matches_one_argument	clean
-ordered_group_concat_one_argument_defaults_to_comma	clean
-ordered_group_concat_ordinal	clean
-ordered_group_concat_value	clean
-ordered_group_rels_json_head	clean
-ordered_group_rels_v5_collect	clean
-ordered_json_group_array_integer_values	clean
-ordered_json_group_array_nested_json	clean
-ordered_json_group_array_ordinal	clean
-ordered_json_group_array_value	clean
-ordered_mermaid_line_assembly	clean
-ordered_program_level_fold_reaches_three_links	runtime-error
-over_baseline_count_row	clean
-over_baseline_diag_exact_rows	clean
-over_baseline_gate_blocks_commit_only	clean
-pairwise_pairs_adjacent_values_when_the_source_idles	runtime-error
-pairwise_reads_state_at_the_departure_tick	runtime-error
-paren_in_literal_inside_wrapper	clean
-pin_to_unknown_repo_derives_repo_candidate	runtime-error
-pipe_stage_costs_one_tick	unsupported
-pr_size_decodes_files_and_rolls_up	clean
-pre_in_level_rule_rejected	unsupported
-probe_output_comparison_guard	diff
-quote_in_literal_doubles_the_escape	clean
-range_join_over_arithmetic	clean
-reference_target_emptied_by_option_split_is_named	unsupported
-regexp_non_match	runtime-error
-regexp_operand_not_text	unsupported
-regexp_pattern_invalid	unsupported
-regexp_pattern_not_literal	unsupported
-regexp_pattern_outside_subset	unsupported
-regexp_positive_match	runtime-error
-regexp_retraction_flip	runtime-error
-rel_element_list_round_trips	runtime-error
-relation_depth2_chained_decode	diff
-relation_depth2_construct_and_read	diff
-relation_depth2_dot_read	diff
-relation_depth2_literal_leaf_selects_zero_and_one	diff
-relation_depth2_many_rows_share_one_leaf	runtime-error
-relation_depth2_member_dot_pattern	diff
-relation_depth2_nested_decode_pattern	diff
-relation_depth3_chained_decode	diff
-relation_depth3_construct_and_read	diff
-relation_depth3_many_rows	runtime-error
-relation_pattern_target_arity_rejected	unsupported
-relation_pattern_text_literal_in_ref_column_rejected	unsupported
-relation_pattern_wrong_target_rejected	unsupported
-relation_ref_column_fed_by_ref_variable_accepted	diff
-relation_ref_column_fed_by_text_variable_rejected	unsupported
-relation_reference_target_and_parent_share_tick	diff
-relation_value_in_edge_rule_rejected	unsupported
-relation_value_under_negation_rejected	unsupported
-repeat_is_a_self_carry_chain	runtime-error
-replace_rewrites_all_occurrences	clean
-repo_on_bind_watch_is_refused	unsupported
-reserved_namespace_declared_rel	unsupported
-reserved_namespace_derived_head	unsupported
-retention_count_prunes_oldest	diff
-retention_head_conflict_risk_rejected	unsupported
-retention_prune_is_a_visible_minus	diff
-retention_single_arm_still_prunes	runtime-error
-retraction_only_tick_retracts_level_view	runtime-error
-rev_fill_not_behind_keeps_stale_pin_empty	runtime-error
-rtrim_strips_trailing_chars	clean
-same_tick_error_then_fresh_chains_arms	unsupported
-scan_is_a_named_unsupported	unsupported
-scan_is_a_named_unsupported_at_five_arguments	unsupported
-scope_done_three_spellings	unsupported
-seed_and_transition_are_disjoint	unsupported
-seeded_one_arm_fold_matches_two_arms	runtime-error
-seeded_pre_multicolumn_fee_stats_fold	runtime-error
-seeded_pre_reads_a_body_bound_value	runtime-error
-seeded_pre_text_breadcrumb_fold	runtime-error
-seq_wire_hand	runtime-error
-seq_wire_surface	runtime-error
-set_dedups_log_stacks	runtime-error
-set_rel_identical_arrival_is_one_occurrence	runtime-error
-shared_demand_refcount	runtime-error
-shuffled_arrival_reorders_log_deltas	runtime-error
-stale_keyed_retraction_keeps_replacement	diff
-state_flap_nets_to_zero_scope_churn	runtime-error
-struct_arrival_field_type_rejected	unsupported
-struct_arrival_functor_term_rejected	unsupported
-struct_arrival_key_order_canonicalized	diff
-struct_arrival_missing_key_rejected	unsupported
-struct_arrival_unknown_key_rejected	unsupported
-struct_column_renders_canonical_json	diff
-struct_column_type_unknown_rejected	unsupported
-struct_decode_field_unknown_rejected	unsupported
-struct_ghcacher_stars_normalization	diff
-struct_host_output_schedule_answer_interned	diff
-struct_host_output_type_unknown_rejected	unsupported
-struct_intern_order_a	diff
-struct_intern_order_b	diff
-struct_nested_value_renders_whole_tree	diff
-struct_shared_child_survives_one_release	runtime-error
-struct_span_columns_are_int_after_decode	diff
-struct_type_cycle_rejected	unsupported
-struct_type_mutual_cycle_rejected	unsupported
-subscribe_is_a_named_unsupported	unsupported
-sum_min_max_group_by_plain_columns	clean
-switch_as_keyed_replace	runtime-error
-take_until_keyed_replace_negated_done	runtime-error
-terminal_is_terminal	diff
-text_one_and_numeric_one_are_not_equal	unsupported
-text_one_and_numeric_one_never_join	unsupported
-text_rejects_number_ingress	unsupported
-tightened_baseline_catches_regrowth	clean
-trigger_marker_is_what_stops_backlog_replay	unsupported
-two_pins_dedup_to_one_demand_row	runtime-error
-typed_int_contradicts_text_witness	unsupported
-typed_int_without_literal_witness	clean
-unmarked_chain_replays_to_late_subscriber	unsupported
-unmarked_edge_replays_backlog	runtime-error
-unmarked_first_stage_refires_on_late_watch	unsupported
-unordered_program_level_fold_reaches_three_links	runtime-error
-unsubscribe_is_a_named_unsupported	unsupported
-unwrap_aggregate_and_interpolation	clean
-unwrap_below_budget_silent	clean
-unwrap_unchanged_file_silent	clean
-variant_field_bool_stays_bool	clean
-variant_field_float_stays_float	clean
-variant_field_int_and_text_unchanged	diff
-variant_field_typed_as_json_stays_json	clean
-variant_field_typed_as_struct_is_a_ref	diff
-waiver_range_join_exact_rows	clean
-wide_int_refused_at_undeclared_column	unsupported
-wide_int_refused_inside_json_document	unsupported
-worktree_edit_identical_resave_is_silent	runtime-error
-worktree_edit_replaces_digest_and_flips_kind_view	runtime-error
-world_fed_keyed_arrival_replaces	diff
-wrong_element_type_is_refused	unsupported
-xref_rev_is_pin_data_not_live_head	runtime-error
-zip_is_a_named_unsupported	unsupported
-zombie_scope_negative_case_a2b	diff
+aggregate_count_min_max_track_arrivals_and_retraction	diff	-{"tick":1,"deltas":{"star_row":{"add":[["cli",4],["shell",7]],"del":[]},"stat":{"add":[["cli",1,4,4],["shell",1,7,7]],"del":[]}}}
+aggregate_in_edge_head_rejected	unsupported	aggregate_in_edge_head(total/1)
+aggregate_min_recomputes_when_the_minimum_is_retracted	diff	-{"tick":1,"deltas":{"star_row":{"add":[],"del":[["cli",4]]},"stat":{"add":[["cli",2,6,10]],"del":[["cli",3,4,10]]}}}
+aggregate_sum_tracks_a_growing_and_shrinking_group	diff	-{"tick":1,"deltas":{"budget":{"add":[["core",22]],"del":[["core",15]]},"spend":{"add":[["core","net",7]],"del":[]}}}
+any_two_tagged_arms_land_on_one_tick	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_note":{"add":[[1,"acked"],[1,"sealed"]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]}}}
+arithmetic_rejects_non_int_operand_at_runtime	unsupported	arith_operand_not_number(_+1,_,text)
+arrival_affinity_rewrite_keeps_delta	clean	byte-clean
+arrival_dup_batch_partial_ignore	diff	-{"tick":1,"deltas":{"derived":{"add":[["alpha"],["gamma"]],"del":[]},"seen":{"add":[["alpha"],["gamma"]],"del":[]}}}
+async_state_machine_with_pattern_scan	unsupported	trigger_arg_not_var(fresh(_,_))
+backslash_in_string_literal_survives_both_doors	diff	-{"tick":1,"deltas":{"hit":{"add":[["digit \\d here"]],"del":[]},"raw":{"add":[["digit \\d here"],["digit d here"]],"del":[]}}}
+batched_increments_both_count	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",2]],"del":[["clicks",0]]},"increment":{"add":[["clicks","ev1"],["clicks","ev2"]],"del":[]}}}
+bind_computes_derived_value_then_comparison_filters	clean	byte-clean
+bool_identity_comparison_filters	error	error(type_error(json_term,bool_lit(true)),_)
+bool_literals_round_trip	error	error(type_error(json_term,bool_lit(true)),_)
+bool_rejects_text_ingress	unsupported	type_arrival_shape_mismatch(flag/1,value,bool,field_not_bool(true))
+bool_relation_negation_is_two_valued	error	error(type_error(json_term,bool_lit(true)),_)
+braces_in_head_position	clean	byte-clean
+braces_literal_canonicalizes	clean	byte-clean
+callgraph_derivation_over_extraction	diff	-{"tick":1,"deltas":{"def":{"add":[["a.rs","helper","method"],["a.rs","main","function"]],"del":[]},"node_fact":{"add":[["a.rs","node","function","main"],["a.rs","node","method","h
+callgraph_unused_inverts_with_the_call_set	diff	-{"tick":1,"deltas":{"def":{"add":[["a.rs","helper","method"],["a.rs","main","function"]],"del":[]},"node_fact":{"add":[["a.rs","node","function","main"],["a.rs","node","method","h
+chain_into_keyed_head_replaces	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_))))
+changed_since_ignores_events_before_turn	diff	-{"tick":1,"deltas":{"agent_turn":{"add":[["turn_only",1]],"del":[]},"turn_marker":{"add":[["turn_only"]],"del":[]}}}
+changed_since_spans_two_turns	diff	-{"tick":1,"deltas":{"agent_turn":{"add":[["turn_a",1]],"del":[]},"turn_marker":{"add":[["turn_a"]],"del":[]}}}
+clean_state_gate_and_exit_zero	clean	byte-clean
+clean_state_no_diags	clean	byte-clean
+clock_rel_join_storms	diff	-{"tick":1,"deltas":{"diag_history":{"add":[["a_rs",3,"eprintln_ban",1],["a_rs",5,"eprintln_ban",1]],"del":[]},"diag_seen":{"add":[["a_rs",3,"eprintln_ban",1],["a_rs",3,"eprintln_b
+coalesce_default_returns_when_source_retracts	diff	-{"tick":1,"deltas":{"latest_commit":{"add":[["alpha","sha-1"]],"del":[]},"repo_latest":{"add":[["alpha","sha-1"]],"del":[["alpha","absent"]]}}}
+coalesce_defaults_the_absent_row	clean	byte-clean
+coalesce_in_edge_body_samples	diff	-{"tick":1,"deltas":{"labelled":{"add":[[1,"oak"],[2,"unnamed"]],"del":[]},"ping":{"add":[[1],[2]],"del":[]}}}
+coalesce_over_derived_source	clean	byte-clean
+coalesce_under_negation_is_refused	unsupported	coalesce_not_top_level(latest_commit/2)
+coalesce_with_a_variable_default_is_refused	unsupported	coalesce_default_not_literal(latest_commit/2,variable)
+coalesce_with_two_outputs_is_refused	unsupported	coalesce_multiple_outputs(commit_by/3,2)
+coalesce_without_an_output_is_refused	unsupported	coalesce_no_output(archived/1)
+combine_edge_is_the_conjunction_spelling	diff	-{"tick":1,"deltas":{"pair":{"add":[[1,2]],"del":[]},"source_a":{"add":[[1]],"del":[]},"source_b":{"add":[[2]],"del":[]}}}
+combine_level_is_the_conjunction_spelling	clean	byte-clean
+comparison_filters_rows	clean	byte-clean
+complete_is_a_named_unsupported	unsupported	lifecycle_arm(complete)
+completion_propagation_lattice_tick	diff	-{"tick":2,"deltas":{"end_a_signal":{"add":[["outer_x"],["outer_y"]],"del":[]}}}
+concat_fold_follows_arrival_order	diff	-{"tick":1,"deltas":{"append_line":{"add":[["main","a"],["main","b"]],"del":[]},"log_text":{"add":[["main","ab"]],"del":[["main",""]]}}}
+concat_fold_reversed_arrival_reverses_result	diff	-{"tick":1,"deltas":{"append_line":{"add":[["main","a"],["main","b"]],"del":[]},"log_text":{"add":[["main","ba"]],"del":[["main",""]]}}}
+concat_program_queue	diff	-{"tick":1,"deltas":{"demanded":{"add":[["tab(tab_a)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_a"]],"del":[]},"open_request":{"add":[["session_one","tab_a"]
+conjunction_edge_control_for_combine	diff	-{"tick":1,"deltas":{"pair":{"add":[[1,2]],"del":[]},"source_a":{"add":[[1]],"del":[]},"source_b":{"add":[[2]],"del":[]}}}
+conjunction_level_control_for_combine	clean	byte-clean
+count_is_bag_of_derivations	clean	byte-clean
+counter_fold_matches_hand_computation	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",1]],"del":[["clicks",0]]},"increment":{"add":[["clicks","ev1"]],"del":[]}}}
+created_at_pinned_updated_at_advances	diff	-{"tick":1,"deltas":{"arrive":{"add":[[1,"a"]],"del":[]},"thing":{"add":[[1,"a",1,1]],"del":[]}}}
+declaration_order_preserves_struct_refs	clean	byte-clean
+decode_missing_key_fails_quietly	unsupported	decode_source_not_struct(decode(_,{absent_key:_}))
+decode_open_pattern_binds_nested	unsupported	decode_source_not_struct(decode(_,{name:_}))
+demand_laziness_effect_rows	diff	-{"tick":1,"deltas":{"demanded":{"add":[["alpha","session_one"]],"del":[]},"effect_call":{"add":[["alpha"]],"del":[]},"open_feed":{"add":[["session_one","alpha"]],"del":[]}}}
+demand_view_fires_its_consumer_once	diff	-{"tick":1,"deltas":{"fetch_call":{"add":[["repos/cli/cli"]],"del":[]},"fetch_demand":{"add":[["repos/cli/cli"]],"del":[]},"stale":{"add":[["repos/cli/cli"]],"del":[]}}}
+departed_fires_next_tick_on_retraction	diff	-{"tick":1,"deltas":{"mirror":{"add":[["alpha"]],"del":[]},"source_row":{"add":[["alpha"]],"del":[]}}}
+derive_directory_prefix_via_rtrim_replace	clean	byte-clean
+desugared_trace_equals_hand_written	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
+diag_scenario_seven_ticks_end_to_end	diff	-{"tick":1,"deltas":{"diag_history":{"add":[["a_rs",3,"eprintln_ban",1],["a_rs",5,"eprintln_ban",1]],"del":[]},"diagnostic":{"add":[["a_rs",3,"eprintln_ban","warning"],["a_rs",5,"e
+dirty_derives_from_digest_mismatch	diff	-{"tick":1,"deltas":{"dirty":{"add":[["src/lib.rs"]],"del":[]},"worktree_edit":{"add":[["src/lib.rs","sha_dirty"]],"del":[]},"worktree_file":{"add":[["src/lib.rs","sha_dirty"]],"de
+dirty_retracts_on_matching_commit	diff	-{"tick":1,"deltas":{"dirty":{"add":[["src/lib.rs"]],"del":[]},"worktree_edit":{"add":[["src/lib.rs","sha_v2"]],"del":[]},"worktree_file":{"add":[["src/lib.rs","sha_v2"]],"del":[["
+division_truncates_toward_zero_mod_follows_divisor_sign	clean	byte-clean
+duplicate_host_name_is_refused	unsupported	duplicate_host_decl(look)
+edge_chain_hops_tick_per_stage	diff	-{"tick":1,"deltas":{"source_ev":{"add":[["alpha"]],"del":[]},"stage_one":{"add":[["alpha"]],"del":[]}}}
+edge_into_unkeyed_set_rejected	unsupported	edge_into_unkeyed_set(sink/1)
+edge_trigger_literal_filters_on_the_oracle_door	unsupported	trigger_arg_not_var(200)
+enum_decl_two_variants_union_in_tag_view	diff	-{"tick":1,"deltas":{"result_error":{"add":[[302,"failed"]],"del":[]},"result_ok":{"add":[[301,"ready"]],"del":[]},"result_tag":{"add":[[301,"ok"],[302,"error"]],"del":[]}}}
+enum_decl_variant_name_collision_is_refused	unsupported	enum_variant_name_collision(page)
+enum_decl_variant_rows_round_trip_through_tag_view	diff	-{"tick":2,"deltas":{"body_redirect":{"add":[[202,"/next"]],"del":[]},"body_tag":{"add":[[202,"redirect"]],"del":[]}}}
+enum_name_is_a_column_type	clean	byte-clean
+enum_nullary_variant_boots_and_tags	diff	-{"tick":2,"deltas":{"maybe_text_some":{"add":[[2,"hi"]],"del":[]},"maybe_text_tag":{"add":[[2,"some"]],"del":[]}}}
+enum_variant_field_typed_as_rel_is_a_ref	diff	-{"tick":1,"deltas":{"grade_ripe":{"add":[[1,{"name":"oak","tree_id":1000}]],"del":[]},"grade_tag":{"add":[[1,"ripe"]],"del":[]},"tree":{"add":[[1000,"oak"]],"del":[]}}}
+enum_variant_field_undeclared_type_still_throws	unsupported	column_type_unknown(treee)
+error_is_a_named_unsupported	unsupported	lifecycle_arm(error)
+exhaust_policy	diff	-{"tick":1,"deltas":{"demanded":{"add":[["tab(tab_a)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_a"]],"del":[]},"open_request":{"add":[["session_one","tab_a"]
+extraction_fork_callgraph	diff	-{"tick":1,"deltas":{"__host_response_sg":{"add":[["witness|sg|file_digest:text=d1|query_digest:text=q_calls",0,"d1","q_calls","foo","bar",0,3]],"del":[]},"call_edge":{"add":[["a",
+extraction_fork_span_line	diff	-{"tick":1,"deltas":{"__host_response_span_scan":{"add":[["witness|span_scan|file_digest:text=d1|query_digest:text=q_lines",0,"d1","q_lines",10,"old"]],"del":[]},"span_line":{"add"
+fill_as_cache_update_swr	diff	-{"tick":1,"deltas":{"demanded":{"add":[["alpha","session_one"]],"del":[]},"open_feed":{"add":[["session_one","alpha"]],"del":[]}}}
+filter_map_is_a_level_rule	diff	-{"tick":1,"deltas":{"doubled":{"add":[["net",60]],"del":[]},"reading":{"add":[["net",30]],"del":[]}}}
+finalize_over_log_fires_on_retention_prune	diff	-{"tick":1,"deltas":{"ev":{"add":[[1,"a"]],"del":[]}}}
+fix_by_waiver_returns_to_clean	clean	byte-clean
+flagship_flow_reach_over_batched_resolved_edges	diff	-{"tick":1,"deltas":{"flow_edge":{"add":[["app","entry","lib","decode"],["lib","decode","sink","persist"]],"del":[]},"flow_reach":{"add":[["app","entry","lib","decode"],["app","ent
+flagship_flow_reach_over_resolved_edges	diff	-{"tick":1,"deltas":{"flow_edge":{"add":[["app","entry","lib","decode"]],"del":[]},"flow_reach":{"add":[["app","entry","lib","decode"]],"del":[]},"resolved_call_edge":{"add":[["app
+float_arithmetic_is_binary64	clean	byte-clean
+float_avg_is_grouped	clean	byte-clean
+float_avg_retracts_to_empty_group	diff	-{"tick":1,"deltas":{"mean":{"add":[["a",1.5]],"del":[["a",1]]},"score":{"add":[],"del":[["a",0.5]]}}}
+float_exact_comparison_has_no_epsilon	clean	byte-clean
+float_exact_join_has_no_epsilon	clean	byte-clean
+float_integral_value_keeps_real_storage	clean	byte-clean
+float_negative_zero_canonical_boundary	clean	byte-clean
+float_rejects_non_float_ingress	unsupported	type_arrival_shape_mismatch(score/1,value,float,field_not_finite_float(not_a_number))
+float_shortest_round_trip_wire	diff	-{"tick":1,"deltas":{"sample":{"add":[[1e-7]],"del":[]}}}
+float_widens_integer_ingress	clean	byte-clean
+float_widens_wide_integer_ingress	clean	byte-clean
+flow_arg_param_hop_is_positional_and_site_pinned	diff	-{"tick":1,"deltas":{"df_arg":{"add":[["src/main.rs",10,15,-1,"receiver",17],["src/main.rs",10,15,0,"secret",16],["src/main.rs",30,35,0,"benign",36]],"del":[]},"df_param":{"add":[[
+flow_sig_owner_join_types_the_resolved_callee	diff	-{"tick":1,"deltas":{"df_param":{"add":[["src/f.rs","f_param",0,120]],"del":[]},"flow_node_type":{"add":[["f_param","src/f.rs","f","string"]],"del":[]},"flow_param_type":{"add":[["
+fork_join_error_arm_is_a_value	unsupported	compound_pattern_on_arrival_rel(outcome_a/1,1,ok(_))
+fork_join_is_a_conjunctive_body	diff	-{"tick":1,"deltas":{"result_a":{"add":[["alpha"]],"del":[]}}}
+generic_expansion_end_to_end	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[101,"first"]],"del":[]},"__opt_text_tag":{"add":[[101,"some"]],"del":[]},"author_audit":{"add":[[10,"some"]],"del":[]},"person":{"ad
+ghcacher_host_program_term	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
+ghcacher_json_normalization	unsupported	level_body_goal(pull_request(_,_,_,_,_),json_each(_,_))
+group_concat_one_argument_joins_members	diff	-{"tick":1,"deltas":{"member_of":{"add":[["ada"],["grace"]],"del":[]},"roster":{"add":[["ada,grace"]],"del":[]}}}
+groupby_aggregate_two_bare_integer_literals	diff	-{"tick":1,"deltas":{"source":{"add":[["alpha"]],"del":[]},"tallied":{"add":[[0,0,1]],"del":[]}}}
+groupby_two_bare_integer_literals	diff	-{"tick":1,"deltas":{"classified":{"add":[["alpha",0,0]],"del":[]},"source":{"add":[["alpha"]],"del":[]}}}
+guard_stage_fires_on_negation_and_comparison	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
+guard_stage_silent_below_threshold	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
+guard_stage_silent_when_muted	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_),_>100,not(muted(_))))
+head_column_int_widens_into_float	clean	byte-clean
+head_column_list_and_json_share_storage	clean	byte-clean
+head_column_type_conflict_is_refused	unsupported	head_column_type_conflict(target/1,total,int,source/1,name,text)
+head_expression_evaluates_derived_column	clean	byte-clean
+head_move_flips_current_tree_in_one_tick	diff	-{"tick":1,"deltas":{"current_tree":{"add":[["src/a.rs","sha_a2"],["src/b.rs","sha_b2"],["src/c.rs","sha_c1"]],"del":[["src/a.rs","sha_a1"],["src/b.rs","sha_b1"]]},"head":{"add":[[
+head_move_replaces_key	diff	-{"tick":1,"deltas":{"head":{"add":[[1,200]],"del":[[1,100]]},"head_move":{"add":[[1,200]],"del":[]}}}
+higher_order_call_goal_rejected	unsupported	dynamic_relation_name(call/3)
+higher_order_call_over_atom_rejected	unsupported	dynamic_relation_name(call/1)
+host_free_query_leaves_a_derived_rel_unsubscribed	diff	-{"tick":1,"deltas":{"audit_trail":{"add":[[7]],"del":[]},"audited":{"add":[[7]],"del":[]},"reading":{"add":[["beta",7]],"del":[]},"watched":{"add":[["beta"]],"del":[]}}}
+host_input_column_shadows_runtime_witness	unsupported	host_column_shadows_runtime(peek,input,witness_digest)
+host_output_column_shadows_runtime_ordinal	unsupported	host_column_shadows_runtime(look,output,ordinal)
+identical_demand_dedups	diff	-{"tick":1,"deltas":{"demand":{"add":[["src","sha_aaa"]],"del":[]},"watch_request":{"add":[["alice","src","sha_aaa"],["bob","src","sha_aaa"]],"del":[]}}}
+identical_increments_stack_as_log_deltas	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",3]],"del":[["clicks",0]]},"increment":{"add":[["clicks"],["clicks"],["clicks"]],"del":[]}}}
+increment_decrement_same_tick_nets_zero	diff	-{"tick":1,"deltas":{"decrement":{"add":[["clicks","ev2"]],"del":[]},"increment":{"add":[["clicks","ev1"]],"del":[]}}}
+int_accepts_integral_float	clean	byte-clean
+int_float_arithmetic_keeps_real_result	clean	byte-clean
+int_out_of_range_is_named_unsupported	unsupported	int_out_of_range(measure/1,value,9007199254740993)
+int_rejects_fractional_ingress	unsupported	type_arrival_shape_mismatch(measure/1,value,int,field_not_int(1.5))
+interpolation_desugars_to_concat	clean	byte-clean
+json_absent_key_yields_no_row_under_arrivals	diff	-{"tick":1,"deltas":{"found":{"add":[["present","here"]],"del":[]},"raw_doc":{"add":[[{"present":"here"}]],"del":[]}}}
+json_array_groups_and_nests	unsupported	aggregate_head(json_array(_))
+json_array_keeps_bag_duplicates	unsupported	aggregate_head(json_array(_))
+json_array_spread_fans_out_correlated_siblings	clean	byte-clean
+json_array_spread_skips_non_matching_elements	clean	byte-clean
+json_capture_type_bool_is_refused	unsupported	json_capture_type_unknown(bool)
+json_capture_type_typo_is_refused	unsupported	json_capture_type_unknown(itn)
+json_control_escapes_inside_a_document	clean	byte-clean
+json_deep_exact_key_chain_binds	clean	byte-clean
+json_descent_into_scalars_is_silent	clean	byte-clean
+json_descent_matches_at_any_depth	clean	byte-clean
+json_each_fans_out	unsupported	level_body_goal(repo_lang(_),json_each(_,_))
+json_empty_containers_nest	clean	byte-clean
+json_empty_object_pattern_matches_any_object	clean	byte-clean
+json_empty_string_key_round_trips	clean	byte-clean
+json_key_capture_binds_key_and_value	clean	byte-clean
+json_key_capture_nests_and_fans_out	clean	byte-clean
+json_marker_shaped_keys_are_ordinary_data	clean	byte-clean
+json_nfc_and_nfd_keys_stay_distinct	clean	byte-clean
+json_non_ascii_keys_sort_by_code_point	clean	byte-clean
+json_null_round_trips_byte_identical	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"a":null,"b":1,"c":2}]],"del":[["alpha",{"a":null,"b":1}]]},"metric_sample":{"add":[["alpha",{"c":2}]],"del":[]}}}
+json_object_builds_document	clean	byte-clean
+json_object_dup_key_rejected	compiled	no oracle tick log
+json_object_groups_rows_into_documents	clean	byte-clean
+json_object_orders_keys	clean	byte-clean
+json_object_throws_on_duplicate_keys	compiled	no oracle tick log
+json_patch_fold_merges_arrival_documents	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"cpu":1,"mem":2}]],"del":[["alpha",{"cpu":1}]]},"metric_sample":{"add":[["alpha",{"mem":2}]],"del":[]}}}
+json_patch_fold_result_is_key_sorted	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"alpha_key":2,"zeta":1}]],"del":[["alpha",{"zeta":1}]]},"metric_sample":{"add":[["alpha",{"alpha_key":2}]],"del":[]}}}
+json_patch_merges_nested_objects_recursively	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"cpu":{"sys":9,"user":1}}]],"del":[["alpha",{"cpu":{"sys":2,"user":1}}]]},"metric_sample":{"add":[["alpha",{"cpu":{"sys":9}}]],"
+json_patch_non_object_patch_replaces_the_document	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",[7,8]]],"del":[["alpha",{"cpu":1}]]},"metric_sample":{"add":[["alpha",[7,8]]],"del":[]}}}
+json_patch_non_object_target_becomes_empty	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"cpu":1}]],"del":[["alpha",[7,8]]]},"metric_sample":{"add":[["alpha",{"cpu":1}]],"del":[]}}}
+json_patch_null_value_composes	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"b":2}]],"del":[["alpha",{"a":1,"b":2}]]},"metric_sample":{"add":[["alpha",{"a":null}]],"del":[]}}}
+json_patch_null_value_sets_key	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{}]],"del":[["alpha",{"cpu":1}]]},"metric_sample":{"add":[["alpha",{"cpu":null}]],"del":[]}}}
+json_patch_replaces_arrays_wholesale	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"tags":["blue"]}]],"del":[["alpha",{"tags":["red","green"]}]]},"metric_sample":{"add":[["alpha",{"tags":["blue"]}]],"del":[]}}}
+json_round_trip_decode_to_document	unsupported	level_body_goal(repo_lang(_,_),json_each(_,_))
+json_safe_integer_boundary_survives_both_doors	diff	-{"tick":1,"deltas":{"carried":{"add":[["max_safe",9007199254740991],["min_safe",-9007199254740991],["small",1]],"del":[]},"measure":{"add":[["max_safe",9007199254740991],["min_saf
+json_spread_and_capture_and_descent_multiply	clean	byte-clean
+json_string_control_escapes_are_valid_json	diff	-{"tick":1,"deltas":{"note":{"add":[["back\bspace"],["carriage\rreturn"],["form\ffeed"],["line\nfeed"],["tab\there"],["unit\u0001sep"]],"del":[]},"seen":{"add":[["back\bspace"],["c
+json_top_level_scalar_document_is_a_value	diff	-{"tick":1,"deltas":{"echoed":{"add":[["negative",-7],["number",42],["object",{"a":1}],["text_scalar","\"quoted\""]],"del":[]},"label":{"add":[["looks_like_json","{\"a\":1}"],["loo
+json_typed_capture_filters_a_wrong_typed_value	diff	-{"tick":1,"deltas":{"counted":{"add":[["cli",4]],"del":[]},"event":{"add":[[{"repo":"cli","stars":4}],[{"repo":"web","stars":"many"}],[{"repo":7,"stars":1}]],"del":[]}}}
+json_typed_capture_folds_into_a_keyed_int_total	diff	-{"tick":1,"deltas":{"event":{"add":[[{"repo":"cli","stars":4}]],"del":[]},"star_event":{"add":[["cli",4]],"del":[]},"total":{"add":[["cli",4]],"del":[]}}}
+json_untyped_capture_binds_without_a_type	diff	-{"tick":1,"deltas":{"event":{"add":[[{"stars":"lots"}],[{"stars":"many"}]],"del":[]},"seen":{"add":[["lots"],["many"]],"del":[]}}}
+keep_on_non_log_rel_rejected	unsupported	keep_on_non_log_rel(state/1)
+key_identical_write_is_silent	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
+key_last_write_wins	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
+key_range_reported_before_unknown_column_type	unsupported	key_position_out_of_range(finding/2,3,2)
+key_same_tick_ordered_not_conflict	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"from_push":{"add":[["cli","v2"]],"del":[]},"latest":{"add":[["cli","v2"]],"del":[]}}}
+keyed_edge_head_still_replaces	diff	-{"tick":1,"deltas":{"current_value":{"add":[["cli","v1"]],"del":[]},"update_value":{"add":[["cli","v1"]],"del":[]}}}
+keyed_level_head_is_refused	unsupported	keyed_level_head(current_value/2)
+keyed_log_rejected	unsupported	keyed_log_rel(latest/2,[1])
+keyed_replace_departs_the_old_row	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
+latest_in_level_rule_rejected	unsupported	latest_in_level_rule(source_item/1)
+level_view_reads_set_projection_not_occurrences	diff	-{"tick":1,"deltas":{"line":{"add":[[1,"a.ts","alpha"]],"del":[]},"seen":{"add":[["a.ts"]],"del":[]}}}
+list_bare_column_round_trips	diff	-{"tick":1,"deltas":{"__gen__list_text_df210f232c1299bd":{"add":[[100]],"del":[]},"__gen__list_text_df210f232c1299bd__member":{"add":[[100,0,"alpha"],[100,1,"beta"]],"del":[]},"box
+list_bare_text_door	clean	byte-clean
+list_column_fans_out_through_spread	clean	byte-clean
+list_dense_sequence_text_door	clean	byte-clean
+list_entity_dense_sequence_end_to_end	diff	-{"tick":1,"deltas":{"__gen__list_entity_dense_sequence_text_f22da23f5c6":{"add":[[100]],"del":[]},"__gen__list_entity_dense_sequence_text_f22da23f5c6__member":{"add":[[100,0,"a"]]
+list_entity_linked_sequence_end_to_end	diff	-{"tick":1,"deltas":{"__gen__list_entity_linked_sequence_text_e34f8b0a209ed35":{"add":[[300]],"del":[]},"__gen__list_entity_linked_sequence_text_e34f8b0a209ed35__link":{"add":[[21,
+list_interned_set_dictionary_content_deduplicates	unsupported	emitter returned false
+list_interned_set_end_to_end	unsupported	emitter returned false
+list_interned_set_relation_element_refused	unsupported	list_interned_set_relation_element(fighter_summary)
+list_interned_set_text_door	clean	byte-clean
+list_linked_sequence_text_door	clean	byte-clean
+list_of_json_documents_round_trips	clean	byte-clean
+list_of_relation_refs_still_refused	unsupported	list_of_relation_refs(span)
+live_nonzero_exit_keeps_rows	diff	-{"tick":1,"deltas":{"stream_item":{"add":[["src",1,"alpha"]],"del":[]}}}
+log_deltas_follow_arrival_order	diff	-{"tick":1,"deltas":{"line":{"add":[[1,"a.ts","alpha"],[1,"a.ts","beta"],[1,"b.ts","gamma"]],"del":[]},"seen":{"add":[["a.ts"],["b.ts"]],"del":[]}}}
+log_driver_fold_needs_no_id_column	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",2]],"del":[["clicks",0]]},"increment":{"add":[["clicks"],["clicks"]],"del":[]}}}
+log_on_level_headed_rel_rejected	unsupported	log_on_level_headed_rel(derived_event/1)
+log_rel_identical_arrival_is_two_occurrences	diff	-{"tick":1,"deltas":{"ev":{"add":[["alpha"],["alpha"]],"del":[]},"fired":{"add":[["alpha"],["alpha"]],"del":[]}}}
+log_retraction_rejected	compiled	no oracle tick log
+log_stacks_within_tick_and_across_ticks	diff	-{"tick":1,"deltas":{"heard":{"add":[["alpha"],["alpha"]],"del":[]},"heard_count":{"add":[["alpha"],["alpha"]],"del":[]}}}
+log_without_retention_rejected	unsupported	missing_retention(event/1)
+lww_fold_follows_arrival_order	diff	-{"tick":1,"deltas":{"latest":{"add":[["cli","v1"]],"del":[["cli","v0"]]},"set_value":{"add":[["cli","v1"],["cli","v2"]],"del":[]}}}
+marker_stops_backlog_replay	diff	-{"tick":1,"deltas":{"subscriber":{"add":[["alice"]],"del":[]}}}
+match_classify_response	diff	-{"tick":1,"deltas":{"fetch_result_error":{"add":[["worker",503]],"del":[]},"fetch_result_fresh":{"add":[["api","etag_","payload_"]],"del":[]},"fetch_result_unchanged":{"add":[["ap
+match_classify_response_desugared	diff	-{"tick":1,"deltas":{"fetch_result_error":{"add":[["worker",503]],"del":[]},"fetch_result_fresh":{"add":[["api","etag_","payload_"]],"del":[]},"fetch_result_unchanged":{"add":[["ap
+match_edge_arm_keeps_edge_semantics	diff	-{"tick":1,"deltas":{"cache":{"add":[["cli","v1"]],"del":[]},"poll_result":{"add":[["cli","v1"]],"del":[]}}}
+match_enum_nonexhaustive_is_refused	unsupported	match_nonexhaustive(body,redirect)
+merge_batches_per_tick	diff	-{"tick":1,"deltas":{"event_a":{"add":[["alpha"]],"del":[]},"out":{"add":[["alpha"]],"del":[]}}}
+merge_never_retracts	diff	-{"tick":1,"deltas":{"event_a":{"add":[["alpha"]],"del":[]},"out":{"add":[["alpha"]],"del":[]}}}
+merge_policy	diff	-{"tick":1,"deltas":{"demanded":{"add":[["tab(tab_a)","session_one"],["tab(tab_b)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_a"],["session_one","tab_b"]],"de
+module_path_and_option_column_coexist	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[801,"gala"]],"del":[]},"__opt_text_tag":{"add":[[801,"some"]],"del":[]}}}
+module_path_in_body_reads_the_flat_rel	clean	byte-clean
+module_path_in_head_resolves_and_contributes	clean	byte-clean
+module_path_local_name_binds_before_the_dotted_one	clean	byte-clean
+module_path_off_the_decl_tree_refuses	unsupported	unresolvable_path([orchard,north,tree])
+module_path_three_segments_resolve_through_the_rooms	clean	byte-clean
+mutual_recursion_matches_oracle	diff	-{"tick":1,"deltas":{"clock":{"add":[["go"]],"del":[]},"even":{"add":[[0],[3]],"del":[]},"odd":{"add":[[0],[3]],"del":[]},"seed":{"add":[[0],[3]],"del":[]}}}
+native_ts_query_term	clean	byte-clean
+negated_identity_guard_flips_to_complement	clean	byte-clean
+negated_ordered_guard_flips_to_complement	clean	byte-clean
+nested_body_atom_reads_every_partition	clean	byte-clean
+nested_child_and_an_option_column_coexist	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[801,"gala"]],"del":[]},"__opt_text_tag":{"add":[[801,"some"]],"del":[]}}}
+nested_child_carries_the_parent_reference	clean	byte-clean
+nested_head_without_a_parent_atom_refuses	unsupported	nested_parent_unbound(orchard__tree)
+nested_list_of_text_round_trips	clean	byte-clean
+nested_list_text_door	clean	byte-clean
+nested_parent_with_no_rows_yields_an_empty_child	clean	byte-clean
+nested_rel_element_list_round_trips	diff	-{"tick":1,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
+nested_three_levels_chain_the_references	clean	byte-clean
+nested_two_parent_rows_partition_the_child	diff	-{"tick":1,"deltas":{"orchard":{"add":[[1],[2]],"del":[]},"orchard__tree":{"add":[[{"orchard_id":1},7],[{"orchard_id":1},8],[{"orchard_id":2},9]],"del":[]},"per_orchard":{"add":[[1
+nested_zero_column_child_is_one_row_per_parent	clean	byte-clean
+new_file_diag_at_hit_line_exact_rows	clean	byte-clean
+new_file_no_exceeded_diag	clean	byte-clean
+new_salt_refires_fresh_stream	diff	-{"tick":1,"deltas":{"demand":{"add":[["src","sha_aaa"]],"del":[]},"watch_request":{"add":[["alice","src","sha_aaa"]],"del":[]}}}
+next_edge_is_the_bare_atom_spelling	diff	-{"tick":1,"deltas":{"seen":{"add":[[1]],"del":[]},"source":{"add":[[1]],"del":[]}}}
+next_level_is_the_bare_atom_spelling	clean	byte-clean
+non_array_value_at_list_column_is_refused	unsupported	type_arrival_shape_mismatch(batch/2,payloads,json_list(json),field_not_array(42))
+now_reads_the_tick	diff	-{"tick":1,"deltas":{"ping":{"add":[["alpha"]],"del":[]},"seen_at":{"add":[["alpha",1]],"del":[]}}}
+numeric_equality_operator_filters	clean	byte-clean
+numeric_inequality_operator_filters	clean	byte-clean
+one_attempt_bounded_log_two_arms_refused	unsupported	retention_head_conflict_risk(dispatch_first/2,count(1))
+one_attempt_guard_by_negation_arrival_order_beats_arm_order	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_first":{"add":[[1,"sealed"]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]}}}
+one_attempt_guard_by_negation_lands_one_unnamed_winner	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_first":{"add":[[1,"acked"]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]}}}
+one_attempt_keyed_head_loses_the_first_arm_silently	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]},"dispatch_winner":{"add":[[1,"sealed"]],"del":[]}}}
+one_occurrence_two_rows_still_conflicts	unsupported	edge_head_conflict_risk(latest/2,[ping/1])
+option_companion_name_collision_is_named	unsupported	option_companion_name_collision(pair_holder__before/1,pair_holder/2,before)
+option_dense_sequence_of_rel_round_trips_absent_and_present	diff	-{"tick":1,"deltas":{"__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42":{"add":[[100]],"del":[]},"__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d
+option_in_key_column_is_refused	unsupported	option_in_key_column(session/2,token)
+option_list_column_roundtrips_null_and_present	diff	-{"tick":1,"deltas":{"__gen__list_int_e673312e7575f":{"add":[[100]],"del":[]},"__gen__list_int_e673312e7575f__member":{"add":[[100,0,7],[100,1,9]],"del":[]},"__gen__list_text_df210
+option_list_of_rel_round_trips_absent_and_present	diff	-{"tick":1,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
+option_list_of_scalar_and_of_rel_in_one_rel	diff	-{"tick":2,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
+option_list_of_unknown_name_keeps_its_stop	unsupported	column_type_unknown(fighter_summry)
+option_of_interned_set_of_rel_is_refused	unsupported	list_interned_set_relation_element(fighter_summary)
+option_of_json_list_keeps_its_stop	unsupported	option_element_type_unknown(json_list(int))
+option_of_option_of_scalar_keeps_its_stop	unsupported	option_element_type_unknown(option(int))
+option_rel_on_a_reference_target_round_trips_absent_and_present	diff	-{"tick":1,"deltas":{"audit":{"add":[[1,{"id":101}],[2,{"id":102}]],"del":[]},"commit":{"add":[[101],[102]],"del":[]},"person":{"add":[[7,"ada"]],"del":[]}}}
+option_rel_ref_desugars_to_companion_split_rel	diff	-{"tick":1,"deltas":{"person":{"add":[[7,"ada"]],"del":[]}}}
+option_scalar_enums_mint_per_element_type	diff	-{"tick":1,"deltas":{"__opt_int_none":{"add":[[701]],"del":[]},"__opt_int_tag":{"add":[[701,"none"]],"del":[]},"__opt_text_some":{"add":[[601,"warm"]],"del":[]},"__opt_text_tag":{"
+option_text_column_reads_through_tag_join	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[501,"chris@example.com"]],"del":[]},"__opt_text_tag":{"add":[[501,"some"]],"del":[]}}}
+ordered_aggregate_retraction_rebuild	diff	-{"tick":1,"deltas":{"item":{"add":[],"del":[["north",1,"pear"]]},"ordered_values":{"add":[["north",["orange","apple"]]],"del":[["north",["pear","orange","apple"]]]}}}
+ordered_fragment_line_assembly	clean	byte-clean
+ordered_group_concat_explicit_comma_matches_one_argument	clean	byte-clean
+ordered_group_concat_one_argument_defaults_to_comma	clean	byte-clean
+ordered_group_concat_ordinal	clean	byte-clean
+ordered_group_concat_value	clean	byte-clean
+ordered_group_rels_json_head	clean	byte-clean
+ordered_group_rels_v5_collect	clean	byte-clean
+ordered_json_group_array_integer_values	clean	byte-clean
+ordered_json_group_array_nested_json	clean	byte-clean
+ordered_json_group_array_ordinal	clean	byte-clean
+ordered_json_group_array_value	clean	byte-clean
+ordered_mermaid_line_assembly	clean	byte-clean
+ordered_program_level_fold_reaches_three_links	clean	byte-clean
+over_baseline_count_row	clean	byte-clean
+over_baseline_diag_exact_rows	clean	byte-clean
+over_baseline_gate_blocks_commit_only	clean	byte-clean
+pairwise_pairs_adjacent_values_when_the_source_idles	diff	-{"tick":1,"deltas":{"reading":{"add":[["north",10]],"del":[]}}}
+pairwise_reads_state_at_the_departure_tick	diff	-{"tick":1,"deltas":{"reading":{"add":[["north",10]],"del":[]}}}
+paren_in_literal_inside_wrapper	clean	byte-clean
+pin_to_unknown_repo_derives_repo_candidate	diff	-{"tick":1,"deltas":{"pin_extracted":{"add":[[10,2,501,"vendor/lib.rs","import"]],"del":[]},"xref":{"add":[[10,2,501,"vendor/lib.rs","none","import"]],"del":[]}}}
+pipe_stage_costs_one_tick	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
+pr_size_decodes_files_and_rolls_up	clean	byte-clean
+pre_in_level_rule_rejected	unsupported	pre_in_level_rule(source_item/1)
+probe_output_comparison_guard	diff	-{"tick":1,"deltas":{"__host_response_score":{"add":[["witness|score|path:text=a",0,"a",12]],"del":[]},"accepted":{"add":[["a",12]],"del":[]}}}
+quote_in_literal_doubles_the_escape	clean	byte-clean
+range_join_over_arithmetic	clean	byte-clean
+reference_target_emptied_by_option_split_is_named	unsupported	reference_target_has_no_columns(squad/0)
+regexp_non_match	clean	byte-clean
+regexp_operand_not_text	unsupported	regexp_operand_not_text(source/1,value,int)
+regexp_pattern_invalid	unsupported	regexp_pattern_invalid("[","Syntax error: missing terminating ] for character class")
+regexp_pattern_not_literal	unsupported	regexp_pattern_not_literal
+regexp_pattern_outside_subset	unsupported	regexp_pattern_outside_subset("a(?=b)")
+regexp_positive_match	clean	byte-clean
+regexp_retraction_flip	diff	-{"tick":1,"deltas":{"matched":{"add":[],"del":[["abc"]]},"source":{"add":[],"del":[["abc"]]}}}
+rel_element_list_round_trips	diff	-{"tick":1,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
+relation_depth2_chained_decode	diff	-{"tick":1,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
+relation_depth2_construct_and_read	diff	-{"tick":1,"deltas":{"coord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"a
+relation_depth2_dot_read	diff	-{"tick":2,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
+relation_depth2_literal_leaf_selects_zero_and_one	diff	-{"tick":1,"deltas":{"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"hit":{"add":[[10]],"del":[]},"raw":{"add":[["acme","sr
+relation_depth2_many_rows_share_one_leaf	diff	-{"tick":1,"deltas":{"coord":{"add":[["a.rs",1,2],["b.rs",3,4],["c.rs",5,6]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"a.rs"}],[{"name":"acme"},{"name":"b.rs"}],[{"name":"
+relation_depth2_member_dot_pattern	diff	-{"tick":2,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
+relation_depth2_nested_decode_pattern	diff	-{"tick":2,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
+relation_depth3_chained_decode	diff	-{"tick":1,"deltas":{"dfound":{"add":[["src/a.rs","def"]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"located
+relation_depth3_construct_and_read	diff	-{"tick":1,"deltas":{"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"found":{"add":[["src/a.rs","def"]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"located"
+relation_depth3_many_rows	diff	-{"tick":1,"deltas":{"file":{"add":[[{"name":"acme"},{"name":"a.rs"}],[{"name":"acme"},{"name":"b.rs"}]],"del":[]},"found":{"add":[["a.rs","def"],["a.rs","ref"],["b.rs","def"]],"de
+relation_pattern_target_arity_rejected	unsupported	relation_pattern_not_a_relation_value(span/3,file,file,file(repo(acme)))
+relation_pattern_text_literal_in_ref_column_rejected	unsupported	relation_pattern_not_a_relation_value(span/3,file,file,'src/a.rs')
+relation_pattern_wrong_target_rejected	unsupported	relation_pattern_not_a_relation_value(span/3,file,file,fpath('a.rs'))
+relation_ref_column_fed_by_ref_variable_accepted	diff	-{"tick":1,"deltas":{"fpath":{"add":[["src/a.rs"]],"del":[]},"loc":{"add":[[{"name":"src/a.rs"},10]],"del":[]},"raw":{"add":[["src/a.rs",10]],"del":[]},"seen":{"add":[[{"name":"src
+relation_ref_column_fed_by_text_variable_rejected	unsupported	relation_column_type_conflict(span/3,file,file,raw3/3,file,text)
+relation_reference_target_and_parent_share_tick	diff	-{"tick":1,"deltas":{"finding":{"add":[[{"end":9,"start":3}]],"del":[]},"span":{"add":[[3,9]],"del":[]},"span_seen":{"add":[[3,9]],"del":[]}}}
+relation_value_in_edge_rule_rejected	unsupported	relation_value_in_edge_rule(span/3,file,file,file(repo(acme),fpath('src/a.rs')))
+relation_value_under_negation_rejected	unsupported	relation_value_under_negation(span/3,file,file,file(repo(acme),fpath('missing.rs')))
+repeat_is_a_self_carry_chain	diff	-{"tick":1,"deltas":{"kick":{"add":[["go"]],"del":[]},"pulse":{"add":[[1]],"del":[]}}}
+replace_rewrites_all_occurrences	clean	byte-clean
+repo_on_bind_watch_is_refused	unsupported	bind_repo_column(watch)
+reserved_namespace_declared_rel	unsupported	reserved_rel_namespace('__txt_reach')
+reserved_namespace_derived_head	unsupported	reserved_rel_namespace('__str_stats')
+retention_count_prunes_oldest	diff	-{"tick":1,"deltas":{"event":{"add":[["one"]],"del":[]}}}
+retention_head_conflict_risk_rejected	unsupported	retention_head_conflict_risk(journal/1,count(1))
+retention_prune_is_a_visible_minus	diff	-{"tick":1,"deltas":{"event":{"add":[["one"]],"del":[]}}}
+retention_single_arm_still_prunes	diff	-{"tick":1,"deltas":{"journal":{"add":[["a"]],"del":[]},"ping":{"add":[["a"]],"del":[]}}}
+retraction_only_tick_retracts_level_view	diff	-{"tick":1,"deltas":{"mirror":{"add":[["alpha"],["beta"]],"del":[]},"source_row":{"add":[["alpha"],["beta"]],"del":[]}}}
+rev_fill_not_behind_keeps_stale_pin_empty	diff	-{"tick":1,"deltas":{"demand_rev":{"add":[[11,"release"]],"del":[]},"pin_want":{"add":[[4,11,"release"]],"del":[]}}}
+rtrim_strips_trailing_chars	clean	byte-clean
+same_tick_error_then_fresh_chains_arms	unsupported	trigger_arg_not_var(error(_))
+scan_is_a_named_unsupported	unsupported	removed_word(scan)
+scan_is_a_named_unsupported_at_five_arguments	unsupported	removed_word(scan)
+scope_done_three_spellings	unsupported	trigger_arg_not_var(done)
+seed_and_transition_are_disjoint	unsupported	edge_body_with_negation((increment(_,_),not(pre(counter(_,_)))))
+seeded_one_arm_fold_matches_two_arms	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",1]],"del":[]},"increment":{"add":[["clicks","ev1"]],"del":[]}}}
+seeded_pre_multicolumn_fee_stats_fold	diff	-{"tick":1,"deltas":{"fee":{"add":[["merchant",5],["merchant",7]],"del":[]},"fee_stats":{"add":[["merchant",12]],"del":[]}}}
+seeded_pre_reads_a_body_bound_value	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",5]],"del":[]},"increment":{"add":[["clicks",4]],"del":[]}}}
+seeded_pre_text_breadcrumb_fold	diff	-{"tick":1,"deltas":{"breadcrumb":{"add":[["main","home/docs"]],"del":[]},"step":{"add":[["main","/"],["main","docs"],["main","home"]],"del":[]}}}
+seq_wire_hand	diff	-{"tick":1,"deltas":{"arrival":{"add":[["one"]],"del":[]},"numbered":{"add":[[1,"one"]],"del":[]},"seq_numbered_":{"add":[["q",1]],"del":[]}}}
+seq_wire_surface	diff	-{"tick":1,"deltas":{"arrival":{"add":[["one"]],"del":[]},"numbered":{"add":[[1,"one"]],"del":[]},"seq_numbered_":{"add":[["q",1]],"del":[]}}}
+set_dedups_log_stacks	diff	-{"tick":1,"deltas":{"heard":{"add":[["alpha"],["alpha"]],"del":[]},"heard_count":{"add":[["alpha"],["alpha"]],"del":[]},"seen":{"add":[["alpha"]],"del":[]},"seen_count":{"add":[["
+set_rel_identical_arrival_is_one_occurrence	diff	-{"tick":1,"deltas":{"ev":{"add":[["alpha"]],"del":[]},"fired":{"add":[["alpha"]],"del":[]}}}
+shared_demand_refcount	diff	-{"tick":1,"deltas":{"demanded":{"add":[["alpha","session_one"],["alpha","session_two"]],"del":[]},"effect_call":{"add":[["alpha"]],"del":[]},"open_feed":{"add":[["session_one","al
+shuffled_arrival_reorders_log_deltas	diff	-{"tick":1,"deltas":{"line":{"add":[[1,"a.ts","alpha"],[1,"a.ts","beta"],[1,"b.ts","gamma"]],"del":[]},"seen":{"add":[["a.ts"],["b.ts"]],"del":[]}}}
+stale_keyed_retraction_keeps_replacement	diff	-{"tick":1,"deltas":{"current_value":{"add":[["item","v1"]],"del":[]}}}
+state_flap_nets_to_zero_scope_churn	diff	-{"tick":1,"deltas":{"fetch_result":{"add":[["gh_repos","error(500)"]],"del":[]},"poll_due":{"add":[["gh_repos"]],"del":[]}}}
+struct_arrival_field_type_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,field_not_int(span,end,nine))
+struct_arrival_functor_term_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,not_an_object(span,span(3,9)))
+struct_arrival_key_order_canonicalized	diff	-{"tick":1,"deltas":{"finding":{"add":[["a.rs",{"end":9,"start":3}]],"del":[]},"span":{"add":[[3,9]],"del":[]}}}
+struct_arrival_missing_key_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,missing_key(span,end))
+struct_arrival_unknown_key_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,unknown_key(span,extra))
+struct_column_renders_canonical_json	diff	-{"tick":1,"deltas":{"finding":{"add":[["a.rs",{"end":9,"start":3}]],"del":[]},"span":{"add":[[3,9]],"del":[]},"touched":{"add":[["a.rs"]],"del":[]}}}
+struct_column_type_unknown_rejected	unsupported	column_type_unknown(spann)
+struct_decode_field_unknown_rejected	unsupported	decode_field_unknown(span,beginning)
+struct_ghcacher_stars_normalization	diff	-{"tick":1,"deltas":{"current_body":{"add":[["repo",{"full_name":"cli","stargazers_count":17}]],"del":[]},"repo_body":{"add":[["cli",17]],"del":[]},"stars":{"add":[["repo",17]],"de
+struct_host_output_schedule_answer_interned	diff	-{"tick":1,"deltas":{"__host_response_scan_span":{"add":[["witness|scan_span|path:text=a.rs",0,"a.rs",{"end":42,"start":17}]],"del":[]},"host_span":{"add":[["a.rs",{"end":42,"start
+struct_host_output_type_unknown_rejected	unsupported	column_type_unknown(spann)
+struct_intern_order_a	diff	-{"tick":1,"deltas":{"mark":{"add":[[{"end":2,"start":1}]],"del":[]},"span":{"add":[[1,2]],"del":[]}}}
+struct_intern_order_b	diff	-{"tick":1,"deltas":{"mark":{"add":[[{"end":4,"start":3}]],"del":[]},"span":{"add":[[3,4]],"del":[]}}}
+struct_nested_value_renders_whole_tree	diff	-{"tick":1,"deltas":{"diag":{"add":[[{"at":{"end":9,"start":3},"file":"a.rs"},"unused"]],"del":[]},"diag_file":{"add":[["a.rs"]],"del":[]},"place":{"add":[["a.rs",{"end":9,"start":
+struct_shared_child_survives_one_release	diff	-{"tick":1,"deltas":{"hit":{"add":[["left",{"end":2,"start":1}],["right",{"end":2,"start":1}]],"del":[]},"span":{"add":[[1,2]],"del":[]}}}
+struct_span_columns_are_int_after_decode	diff	-{"tick":1,"deltas":{"def_start":{"add":[["a.rs",17]],"del":[]},"node_fact":{"add":[["a.rs","main",{"end":42,"start":17}]],"del":[]},"span":{"add":[[42,17]],"del":[]}}}
+struct_type_cycle_rejected	unsupported	type_cycle([node])
+struct_type_mutual_cycle_rejected	unsupported	type_cycle([left,right])
+subscribe_is_a_named_unsupported	unsupported	lifecycle_arm(subscribe)
+sum_min_max_group_by_plain_columns	clean	byte-clean
+switch_as_keyed_replace	diff	-{"tick":1,"deltas":{"demanded":{"add":[["route_data(settings)","session_one"]],"del":[]},"open_scope":{"add":[["session_one","route_data(settings)"]],"del":[]},"route_change":{"ad
+take_until_keyed_replace_negated_done	diff	-{"tick":1,"deltas":{"demanded":{"add":[["fetch_of(gh_repos)","gh_repos"]],"del":[]},"live_fetch":{"add":[["gh_repos"]],"del":[]},"open_fetch":{"add":[["gh_repos"]],"del":[]},"phas
+terminal_is_terminal	diff	-{"tick":1,"deltas":{"stream_item":{"add":[["src",1,"alpha"]],"del":[]},"stream_status":{"add":[["src","running"]],"del":[]}}}
+text_one_and_numeric_one_are_not_equal	unsupported	comparison_type_mismatch(_==_,text,int)
+text_one_and_numeric_one_never_join	unsupported	join_column_type_mismatch('b1."value"',int,'b0."value"',text)
+text_rejects_number_ingress	unsupported	type_arrival_shape_mismatch(label/1,value,text,field_not_text(4))
+tightened_baseline_catches_regrowth	clean	byte-clean
+trigger_marker_is_what_stops_backlog_replay	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
+two_pins_dedup_to_one_demand_row	diff	-{"tick":1,"deltas":{"demand_rev":{"add":[[9,"main"]],"del":[]},"pin_want":{"add":[[1,9,"main"],[5,9,"main"]],"del":[]}}}
+typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))
+typed_int_without_literal_witness	clean	byte-clean
+unmarked_chain_replays_to_late_subscriber	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
+unmarked_edge_replays_backlog	diff	-{"tick":1,"deltas":{"subscriber":{"add":[["alice"]],"del":[]}}}
+unmarked_first_stage_refires_on_late_watch	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
+unordered_program_level_fold_reaches_three_links	clean	byte-clean
+unsubscribe_is_a_named_unsupported	unsupported	lifecycle_arm(unsubscribe)
+unwrap_aggregate_and_interpolation	clean	byte-clean
+unwrap_below_budget_silent	clean	byte-clean
+unwrap_unchanged_file_silent	clean	byte-clean
+variant_field_bool_stays_bool	clean	byte-clean
+variant_field_float_stays_float	clean	byte-clean
+variant_field_int_and_text_unchanged	diff	-{"tick":2,"deltas":{"record_tag":{"add":[[2,"word"]],"del":[]},"record_word":{"add":[[2,"hi"]],"del":[]}}}
+variant_field_typed_as_json_stays_json	clean	byte-clean
+variant_field_typed_as_struct_is_a_ref	diff	-{"tick":1,"deltas":{"loc_here":{"add":[[2,{"hi":42,"lo":40}]],"del":[]},"loc_tag":{"add":[[2,"here"]],"del":[]},"span":{"add":[[40,42]],"del":[]}}}
+waiver_range_join_exact_rows	clean	byte-clean
+wide_int_refused_at_undeclared_column	unsupported	int_out_of_range(untyped/1,1,9007199254740993)
+wide_int_refused_inside_json_document	unsupported	int_out_of_range(payload/1,document,9007199254740993)
+worktree_edit_identical_resave_is_silent	diff	-{"tick":1,"deltas":{"worktree_edit":{"add":[["README.md","sha_r1","doc"]],"del":[]},"worktree_file":{"add":[["README.md","sha_r1","doc"]],"del":[]}}}
+worktree_edit_replaces_digest_and_flips_kind_view	diff	-{"tick":1,"deltas":{"rust_file":{"add":[["src/main.rs"]],"del":[]},"worktree_edit":{"add":[["src/main.rs","sha_a1","rust"]],"del":[]},"worktree_file":{"add":[["src/main.rs","sha_a
+world_fed_keyed_arrival_replaces	diff	-{"tick":1,"deltas":{"world_mode":{"add":[[1,"a"]],"del":[]}}}
+wrong_element_type_is_refused	unsupported	type_arrival_shape_mismatch(batch/2,payloads,json_list(text),list_element_shape(2,field_not_text(42)))
+xref_rev_is_pin_data_not_live_head	diff	-{"tick":1,"deltas":{"pin_extracted":{"add":[[20,2,777,"docs/api.md","doc_link"]],"del":[]},"xref":{"add":[[20,2,777,"docs/api.md","none","doc_link"]],"del":[]}}}
+zip_is_a_named_unsupported	unsupported	zip
+zombie_scope_negative_case_a2b	diff	-{"tick":1,"deltas":{"demanded":{"add":[["detail(item_a)","pane_one"]],"del":[]},"live_detail":{"add":[["pane_one","detail(item_a)"]],"del":[]},"open_detail":{"add":[["pane_one","i

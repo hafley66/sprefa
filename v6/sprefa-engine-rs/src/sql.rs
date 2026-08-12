@@ -5,7 +5,10 @@
 
 use std::collections::HashMap;
 
+use regex::Regex;
+use rusqlite::functions::FunctionFlags;
 use rusqlite::{params_from_iter, Connection, OptionalExtension, Row};
+use std::sync::Arc;
 
 use crate::types::{QueryResult, SqlStatement, Value};
 
@@ -29,11 +32,13 @@ pub struct SqliteSeam {
 impl SqliteSeam {
     pub fn in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
+        install_regexp(&conn)?;
         Ok(SqliteSeam { conn })
     }
 
     pub fn open(url: &str) -> Result<Self> {
         let conn = Connection::open(url)?;
+        install_regexp(&conn)?;
         Ok(SqliteSeam { conn })
     }
 
@@ -43,6 +48,26 @@ impl SqliteSeam {
         }
         Ok(())
     }
+}
+
+fn install_regexp(conn: &Connection) -> Result<()> {
+    conn.create_scalar_function(
+        "regexp",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let pattern: Arc<Regex> = ctx.get_or_create_aux(
+                0,
+                |value| -> std::result::Result<_, Box<dyn std::error::Error + Send + Sync>> {
+                    Ok(Regex::new(value.as_str()?)?)
+                },
+            )?;
+            let Ok(text) = ctx.get_raw(1).as_str() else {
+                return Ok(false);
+            };
+            Ok(pattern.is_match(text))
+        },
+    )
 }
 
 fn to_param(value: &Value) -> rusqlite::types::Value {
