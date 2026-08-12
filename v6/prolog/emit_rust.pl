@@ -131,14 +131,20 @@ relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements, Dict
 
 edge_dict(RelPlans,
           edgestmt(HeadRef, _Trigger, HeadColumns, KeyColumns, _Proj, _Write,
-                   DeltaProjectSql, _Kind, _Interns), Dict) :-
+                   DeltaProjectSql, _Kind, edgeinterns(_, DeltaInternSqls)),
+          Dict) :-
     ref_name(HeadRef, HeadName),
     relplan_shape(RelPlans, HeadRef, HeadKind, _Columns, _Key, _Types),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
+    intern_field(DeltaInternSqls, InternField),
     Dict = _{ head_rel: HeadName, head_columns: HeadColumns,
               head_table_name: HeadName, head_delta_table_name: DeltaTable, head_kind: HeadKind,
-              key_indices: KeyIndices, project_sql: DeltaProjectSql }.
+              key_indices: KeyIndices, project_sql: DeltaProjectSql,
+              intern_sql: InternField }.
+
+intern_field([], null) :- !.
+intern_field(InternSqls, InternSqls).
 head_to_key_indices(HeadColumns, KeyColumns, Indices) :-
     maplist(key_index(HeadColumns), KeyColumns, Indices).
 key_index(Columns, Col, Index) :- nth0(Index, Columns, Col).
@@ -147,7 +153,7 @@ edges_list(RelPlans, EdgeStatements, Dicts) :-
     maplist(edge_dict(RelPlans), EdgeStatements, Dicts).
 
 level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                                RefCountSql, AggregateSql, _DeltaInternSqls),
+                                RefCountSql, AggregateSql, DeltaInternSqls),
            Dict) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
@@ -159,7 +165,9 @@ level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
     refcount_fields(RefCountSql, SupportField, ExpandField, DredField,
                     SupportInternField),
     aggregate_field(AggregateSql, AggregateField),
+    intern_field(DeltaInternSqls, InternField),
     Dict = _{ head_rel: HeadName,
+              intern_sql: InternField,
               head_delta_table_name: DeltaTable,
               head_columns: HeadColumns,
               head_column_types: HeadTypes,

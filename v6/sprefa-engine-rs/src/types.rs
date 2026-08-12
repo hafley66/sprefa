@@ -208,6 +208,8 @@ pub struct IncrementalLevelStatement {
     pub head_columns: Vec<String>,
     pub head_column_types: Vec<RowColumnType>,
     pub insert_sql: Option<String>,
+    #[serde(default)]
+    pub intern_sql: Option<Vec<String>>,
     pub select_sql: String,
     pub recompute_sql: String,
     pub support_sql: Option<Vec<String>>,
@@ -225,6 +227,8 @@ pub struct IncrementalEdgeStatement {
     pub head_kind: RelationKind,
     pub key_indices: Vec<usize>,
     pub project_sql: String,
+    #[serde(default)]
+    pub intern_sql: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
