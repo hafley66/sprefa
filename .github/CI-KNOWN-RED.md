@@ -19,7 +19,6 @@ Rows removed by re-measure at base `259e0289`: `flagship`, `getting-started`,
 | leg | exact failure text | throw site |
 |---|---|---|
 | roundtrip | `G1 round-trip: 391 / 392 fixtures pass` then `FAIL mutual_recursion_matches_oracle (.../fixtures/engine_core.pl): fail(not_variant)` | `v6/prolog/compile/scripts/roundtrip.sh:132` |
-| getting-started | `FAIL block 24: output does not match the doc`; engine emits `rule-index unavailable: unsupported_construct...`, doc block 24 still prints the old `broken.dl6:4: unsupported_construct...` message; 1 of 24 blocks disagree | `v6/tsv2/scripts/getting-started.sh:224` |
 | golden-flex | `GOLDEN_COVERAGE FAIL: json_object/2 is excused as 'registry status refused' but its registry status is now live -- the excuse is stale`; `GOLDEN_COVERAGE FAIL: json_patch/2 (expression) is a registry construct the golden does not exercise`; `GOLDEN_COVERAGE 69 registry constructs, 2 unaccounted for` | `v6/prolog/compile/scripts/golden_coverage.pl:174,178` |
 | tsv2-test | `hostDecode.test.ts:144`: decoded row count per demand `[2,1,2,3]`; actual `[1,2,2,3]` expected `[0,1,2,3]` (needs `gen_emitted/` present, produced by `just sweep`) | `v6/tsv2/tests/hostDecode.test.ts:144` |
 | rtkq-golden | `ERR_ASSERTION` `deepStrictEqual` at `labs/1_rtkq-extraction-golden.ts:200`: `api_endpoint` rows emit `updateUser`-before-`listUsers`, order-sensitive golden expects `listUsers`-first (spans identical, not a corpus move) | `v6/tsv2/labs/1_rtkq-extraction-golden.ts:200` |
@@ -48,7 +47,6 @@ allow: compile-speed
 allow: tsv2-test
 allow: lsp-diags
 allow: golden-flex
-allow: getting-started
 allow: scale-floor
 allow: memory-soak
 allow: roundtrip

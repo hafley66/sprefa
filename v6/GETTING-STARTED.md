@@ -365,20 +365,22 @@ cannot disagree.
 `log` declares an append-only relation, and `beat` is also the head of a
 derived rule (`<-`). Those two cannot both be true: a derived view is
 recomputed from its inputs, so there is no append for the log plane to record.
-The refusal names the file and the line (`broken.dl6:4`, the rule), the check
+The refusal names the file, the check
 (`log_on_level_headed_rel`), the relation (`beat/1`), and the functor you can
 grep the compiler for — that check lives in `v6/prolog/0_program_check.pl`
 with the one-sentence reason above it. Dropping `log keep(all)` from line 3 is
 the fix.
 
-The location comes from the compile door itself, so running the same file
-through the compile script directly reports the same line:
+`bop check` below reports the diagnostic with the source line set (line 3).
+Running the same file through the compile script directly reaches the same
+refusal, but the compile door emits the rule-index form with no source line
+(line 0):
 
 <!-- gs:run -->
 ```console
 $ bash "$SPREFA/v6/prolog/compile/scripts/compile_dl6.sh" broken.dl6 /dev/null; echo "exit $?"
-{"code":"log_on_level_headed_rel/1","message":"broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)","range": {"end": {"character":0,"line":3},"start": {"character":0,"line":3}},"severity":1,"source":"dl6","uri":"file://broken.dl6"}
-ERROR: [Thread main] -g compile_dl6('broken.dl6', '/dev/null'): broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
+{"code":"log_on_level_headed_rel/1","message":"rule-index unavailable: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)","range": {"end": {"character":0,"line":0},"start": {"character":0,"line":0}},"severity":1,"source":"dl6","uri":"file://broken.dl6"}
+ERROR: [Thread main] -g compile_dl6('broken.dl6', '/dev/null'): rule-index unavailable: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
 exit 2
 ```
 
