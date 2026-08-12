@@ -287,8 +287,13 @@ arrival_target_refs(Rules, ArrivalRefs) :-
 % findall/bagof would COPY_TERM every solution's Args, severing the ==/2
 % identity the Bindings match depends on; only member/2 over ORIGINAL terms.
 
+% numlist/3 FAILS at arity 0 (high below low), and a bare failure here silently
+% drops the whole rel from RelPlans instead of naming anything.
 rel_columns(Rules, Bindings, Name/Arity, Columns) :-
-    numlist(1, Arity, Positions),
+    (   Arity =:= 0
+    ->  Positions = []
+    ;   numlist(1, Arity, Positions)
+    ),
     ref_occurrence_args_list(Rules, Name/Arity, Occurrences),
     maplist(column_name_at(Occurrences, Bindings), Positions, Columns).
 
@@ -521,7 +526,10 @@ raw_contribution(open(Type), Type).
 seed_column_contributions(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
                           Seeds) :-
     Ref = _Name/Arity,
-    numlist(1, Arity, Positions),
+    (   Arity =:= 0
+    ->  Positions = []
+    ;   numlist(1, Arity, Positions)
+    ),
     maplist(seed_column_contribution(Decls, Types, Rules, Initial, Schedule,
                                      Ref, Columns),
             Positions, Seeds).
