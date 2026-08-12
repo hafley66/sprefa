@@ -80,12 +80,12 @@ impl LaneChannel for OpencodeChannel {
         }))
     }
 
-    fn close(&mut self) -> Result<i32> {
+    fn close(&mut self) -> Result<()> {
         if let Some(mut turn) = self.turn.take() {
             let _ = turn.kill();
             let _ = turn.wait();
         }
-        Ok(0)
+        Ok(())
     }
 }
 

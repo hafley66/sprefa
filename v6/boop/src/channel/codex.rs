@@ -139,7 +139,7 @@ impl LaneChannel for CodexChannel {
         }
     }
 
-    fn close(&mut self) -> Result<i32> {
+    fn close(&mut self) -> Result<()> {
         self.rpc.close()
     }
 }

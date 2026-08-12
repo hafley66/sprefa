@@ -41,7 +41,7 @@ impl LaneChannel for KimiChannel {
             anyhow::bail!("a kimi turn is already running");
         }
         let mut command = Command::new("kimi");
-        command.args(["--output-format", "stream-json"]).arg("-y");
+        command.args(["--output-format", "stream-json"]);
         if let Some(model) = self.model.as_deref().filter(|value| !value.is_empty()) {
             command.args(["-m", model]);
         }
@@ -109,12 +109,12 @@ impl LaneChannel for KimiChannel {
         }))
     }
 
-    fn close(&mut self) -> Result<i32> {
+    fn close(&mut self) -> Result<()> {
         if let Some(mut turn) = self.turn.take() {
             let _ = turn.kill();
             let _ = turn.wait();
         }
-        Ok(0)
+        Ok(())
     }
 }
 

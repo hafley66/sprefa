@@ -122,10 +122,10 @@ impl RpcChild {
     }
 
     /// Close stdin and reap the child.
-    pub fn close(&mut self) -> Result<i32> {
+    pub fn close(&mut self) -> Result<()> {
         let _ = self.child.kill();
-        let status = self.child.wait().context("wait rpc child")?;
-        Ok(status.code().unwrap_or(-1))
+        self.child.wait().context("wait rpc child")?;
+        Ok(())
     }
 }
 

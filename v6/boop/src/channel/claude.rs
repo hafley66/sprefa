@@ -129,10 +129,10 @@ impl LaneChannel for ClaudeChannel {
         }
     }
 
-    fn close(&mut self) -> Result<i32> {
+    fn close(&mut self) -> Result<()> {
         drop(std::mem::replace(&mut self.stdin, blackhole()?));
-        let status = self.child.wait().context("wait claude child")?;
-        Ok(status.code().unwrap_or(-1))
+        self.child.wait().context("wait claude child")?;
+        Ok(())
     }
 }
 

@@ -82,8 +82,8 @@ pub trait LaneChannel: Send {
     /// still running, which is when the supervisor offers it new text.
     fn poll_turn(&mut self, timeout: std::time::Duration) -> Result<Option<TurnEnd>>;
 
-    /// Release the harness child and report its exit code.
-    fn close(&mut self) -> Result<i32>;
+    /// Release the harness child.
+    fn close(&mut self) -> Result<()>;
 }
 
 /// Quote one value as a single shell word.

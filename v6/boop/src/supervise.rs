@@ -81,7 +81,7 @@ pub fn run(lane: LaneRun, channel: &mut dyn LaneChannel) -> Result<i32> {
                 match channel.steer(&hail_text(&hail))? {
                     Delivery::MidTurn => {
                         println!("[boop] hail {} delivered midturn", hail.id);
-                        ack(&lane.mail_dir, &lane.lane, &hail, Delivery::MidTurn);
+                        record_delivery(&lane.mail_dir, &lane.lane, &hail, Delivery::MidTurn);
                     }
                     Delivery::NextTurn => {
                         println!("[boop] hail {} held for the next turn", hail.id);
@@ -97,12 +97,16 @@ pub fn run(lane: LaneRun, channel: &mut dyn LaneChannel) -> Result<i32> {
             held.push(hail);
         }
         if held.is_empty() {
-            return channel.close();
+            channel.close()?;
+            return Ok(match end.ok {
+                true => 0,
+                false => 1,
+            });
         }
         turn = held
             .drain(..)
             .map(|hail| {
-                ack(&lane.mail_dir, &lane.lane, &hail, Delivery::NextTurn);
+                record_delivery(&lane.mail_dir, &lane.lane, &hail, Delivery::NextTurn);
                 hail_text(&hail)
             })
             .collect::<Vec<_>>()
@@ -136,9 +140,8 @@ fn record_conversation(dir: &Path, lane: &str, conversation: &str) {
     });
 }
 
-/// Stamp the mailbox row delivered and record the tier as a control edge, so
-/// `boop db` can answer "did the lane get it, and did it land mid-turn".
-pub fn ack(dir: &Path, lane: &str, hail: &Hail, tier: Delivery) {
+/// Stamp the mailbox row delivered so no later read re-offers it.
+pub fn ack(dir: &Path, hail: &Hail) {
     let mut rows = Vec::new();
     for path in bus::read_boxes(dir).unwrap_or_default() {
         rows.extend(bus::parse_box(&path));
@@ -149,18 +152,26 @@ pub fn ack(dir: &Path, lane: &str, hail: &Hail, tier: Delivery) {
     row.to_timestamp = Some(bus::now_iso());
     let line = bus::message_line(&row);
     let path = dir.join("bus.ndjson");
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        use std::io::Write;
-        let _ = writeln!(file, "{line}");
-    }
-    if let Ok(store) = crate::Store::default_path().and_then(crate::Store::open) {
-        let _ = store.add_edge_at(
-            &row.from,
-            lane,
-            &format!("deliver-{}", tier.as_str()),
-            crate::channel::now_ms(),
-        );
-    }
+    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    use std::io::Write;
+    let _ = writeln!(file, "{line}");
+}
+
+/// Ack plus a store edge naming the tier, so `boop db` answers "did the lane
+/// get it, and did it land mid-turn".
+fn record_delivery(dir: &Path, lane: &str, hail: &Hail, tier: Delivery) {
+    ack(dir, hail);
+    let Ok(store) = crate::Store::default_path().and_then(crate::Store::open) else {
+        return;
+    };
+    let _ = store.add_edge_at(
+        &hail.from,
+        lane,
+        &format!("deliver-{}", tier.as_str()),
+        crate::channel::now_ms(),
+    );
 }
 
 #[cfg(test)]
@@ -242,7 +253,7 @@ mod tests {
         let dir = tempdir();
         write_box(&dir, &[message("m1", "mine", "request")]);
         let hail = pending(&dir, "mine", &BTreeSet::new()).unwrap().remove(0);
-        ack(&dir, "mine", &hail, Delivery::NextTurn);
+        ack(&dir, &hail);
         assert!(pending(&dir, "mine", &BTreeSet::new()).unwrap().is_empty());
     }
 
