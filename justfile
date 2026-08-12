@@ -185,3 +185,39 @@ perf-reactivity-build:
 perf-reactivity out="target/reactivity/probe" repeats="5" warmup="1":
     @test -x "{{repo}}/target/release/examples/reactivity_probe" || { echo "missing release probe: run 'just perf-reactivity-build' explicitly"; exit 2; }
     CARGO_BUILD_JOBS=2 DL_RAYON_THREADS=2 python3 "{{repo}}/bench/reactivity/probe.py" --harness "{{repo}}/target/release/examples/reactivity_probe" --output "{{repo}}/{{out}}" --repeats {{repeats}} --warmup {{warmup}}
+
+# Bring a worktree to the level the pre-commit hook needs: the extractor binary
+# plus the two node_modules trees. Warm worktrees are a fast no-op.
+boop-start:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    started=$SECONDS
+    cache="${BOOP_START_CACHE:-$HOME/.cache/boop}"
+    shared="${BOOP_CARGO_TARGET_DIR:-$cache/cargo-target}"
+    binary=v6/sprefa-extract/target/release/extract
+    digest=$(find v6/sprefa-extract/src v6/sprefa-extract/Cargo.toml -type f \
+             | sort | xargs shasum | shasum | cut -c1-16)
+    keyed="$cache/extract/$digest"
+    if [ -x "$binary" ]; then
+      echo "boop-start: extractor already built"
+    elif [ -x "$keyed" ]; then
+      mkdir -p "$(dirname "$binary")" && cp "$keyed" "$binary"
+      echo "boop-start: extractor from cache $digest"
+    else
+      echo "boop-start: building extractor, shared target $shared"
+      (cd v6/sprefa-extract && CARGO_TARGET_DIR="$shared" \
+         cargo build --release --features cli --bin extract)
+      mkdir -p "$(dirname "$binary")" "$cache/extract"
+      cp "$shared/release/extract" "$binary"
+      cp "$binary" "$keyed"
+      echo "boop-start: extractor built and cached as $digest"
+    fi
+    for dir in v6/tsv2 v6/sprefa-store/js; do
+      if [ -d "$dir/node_modules" ]; then
+        echo "boop-start: $dir node_modules present"
+      else
+        (cd "$dir" && pnpm install --silent)
+        echo "boop-start: $dir installed"
+      fi
+    done
+    echo "boop-start: ready in $((SECONDS - started))s"
