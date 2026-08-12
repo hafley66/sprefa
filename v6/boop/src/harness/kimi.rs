@@ -22,7 +22,10 @@ impl Harness for Kimi {
         &self,
         spec: &crate::channel::ChannelSpec,
     ) -> anyhow::Result<Box<dyn crate::channel::LaneChannel>> {
-        Ok(Box::new(crate::channel::kimi::KimiChannel::open(spec)?))
+        let profile = crate::channel::tui::kimi_profile(spec);
+        Ok(Box::new(crate::channel::tui::TuiChannel::open(
+            profile, spec, None,
+        )?))
     }
 
 

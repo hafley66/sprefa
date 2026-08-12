@@ -10,6 +10,7 @@ pub mod codex;
 pub mod jsonrpc;
 pub mod kimi;
 pub mod opencode;
+pub mod tui;
 
 /// Where a delivered message landed relative to the turn that was running.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

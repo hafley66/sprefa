@@ -50,6 +50,23 @@ pub trait Multiplexer {
     ) -> Result<()>;
     /// Send a literal line then Enter into a pane.
     fn send_keys_literal(&self, socket: Option<&str>, pane: &str, body: &str) -> Result<()>;
+
+    /// Send literal text with NO trailing Enter. A TUI that binds Enter to
+    /// submit needs the text and the submit as separate steps.
+    fn send_text(&self, socket: Option<&str>, pane: &str, body: &str) -> Result<()>;
+
+    /// Send one tmux key name (`Enter`, `C-s`, `Escape`).
+    fn send_key_named(&self, socket: Option<&str>, pane: &str, key: &str) -> Result<()>;
+
+    /// Open a window in an existing session and return its target.
+    fn new_window(
+        &self,
+        socket: Option<&str>,
+        session: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+    ) -> Result<String>;
 }
 
 /// The one `Multiplexer` implementation: tmux itself, driven by a mix of raw
@@ -217,6 +234,40 @@ impl Multiplexer for Tmux {
     fn send_keys_literal(&self, socket: Option<&str>, pane: &str, body: &str) -> Result<()> {
         send_keys(socket, &["-t", pane, "-l", "--", body])?;
         send_keys(socket, &["-t", pane, "Enter"])
+    }
+
+    fn send_text(&self, socket: Option<&str>, pane: &str, body: &str) -> Result<()> {
+        send_keys(socket, &["-t", pane, "-l", "--", body])
+    }
+
+    fn send_key_named(&self, socket: Option<&str>, pane: &str, key: &str) -> Result<()> {
+        send_keys(socket, &["-t", pane, key])
+    }
+
+    fn new_window(
+        &self,
+        socket: Option<&str>,
+        session: &str,
+        name: &str,
+        cwd: &str,
+        command: &str,
+    ) -> Result<String> {
+        let mut builder = Command::new("tmux");
+        if let Some(socket) = socket {
+            builder.arg("-L").arg(socket);
+        }
+        builder.args([
+            "new-window", "-d", "-P", "-F", "#{session_name}:#{window_index}", "-t", session, "-n",
+            name, "-c", cwd, command,
+        ]);
+        let output = builder.output().context("tmux new-window")?;
+        if !output.status.success() {
+            anyhow::bail!(
+                "new-window in {session}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     }
 }
 
