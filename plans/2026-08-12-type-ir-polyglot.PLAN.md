@@ -260,7 +260,7 @@ No language-design fork is selected in this recon. Process decisions fixed by th
 | Input parser boundary | `v6/prolog/compile/parse_dl_dcg.pl:510-534` | Canonical type grammar verified |
 | Reverse-DCG constraint | `plans/2026-08-12-cleanroom-dcg-bakeoff.md:24-45` | 2 of 2 attempts added handwritten printers |
 | Fork completeness | Authority, input syntax, collection fidelity, null, integer and execution tables | No branch selected |
-| Plan index | `dl examples/gen-plans-index.dl --check` | Run after final todo set |
+| Plan index | `dl examples/gen-plans-index.dl --check` | Exit 1 with 9 unrelated pre-existing drift/orphan diagnostics in `src/cst.rs`, `src/engine/lang_tables.rs`, `plans/2026-08-10-docs-from-comments.PLAN.md`, and `plans/2026-08-11-dd-mutual-recursion.md`; these owned documents contain 0 todo comments |
 
 ## Staffing
 
