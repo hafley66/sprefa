@@ -7,7 +7,7 @@ here="$root/v6/dd-runner"
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-arm=${DD_RUNNER_ARM:---sqlite}
+arm=${DD_RUNNER_ARM:---dd-diet-rust-sqlite}
 corpus="$scratch/corpus"
 mkdir -p "$corpus"
 
@@ -20,6 +20,12 @@ swipl -q -l "$root/v6/prolog/compile/6_emit_dd_plan.pl" -l "$here/sweep_plans.pl
   -g "sweep('$root','$corpus','$scratch/plans.tsv')" -g halt
 ( cd "$root/v6/prolog/conformance" && swipl -q -l ticklog.pl -l "$here/sweep_oracle.pl" \
   -g "sweep_oracle('$corpus','$scratch/oracle.tsv')" -g halt )
+
+# One ratchet per arm: each arm names its own graded.tsv, so a rename cannot
+# leave the sqlite arm silently grading against a kernel-arm expectation.
+# arm is a leading-dash flag (--dd-diet-rust-sqlite); strip the dashes for the
+# file name (graded.dd-diet-rust-sqlite.tsv).
+ratchet="$here/graded.${arm#--}.tsv"
 
 # Peak RSS is the whole point of the ceiling: in TypeScript an unbounded row
 # unload OOMed and announced itself, in Rust it grows quietly.
@@ -53,7 +59,7 @@ for plan in "$corpus"/*.json; do
 done
 
 sort "$verdicts" -o "$verdicts"
-graded="$here/graded.tsv"
+graded="$ratchet"
 clean_now=$(awk -F'\t' '$2=="clean"' "$verdicts" | wc -l | tr -d ' ')
 graded_total=$(wc -l <"$verdicts" | tr -d ' ')
 
@@ -68,11 +74,11 @@ if [ -f "$graded" ]; then
     status=1
   fi
   if [ -n "$gained" ]; then
-    printf 'GRADE RATCHET, newly byte-clean; copy the run into graded.tsv:\n%s\n' "$gained"
+    printf 'GRADE RATCHET, newly byte-clean; copy the run into %s:\n%s\n' "$(basename "$graded")" "$gained"
     status=1
   fi
 else
-  printf 'graded.tsv missing; writing the current run is a human decision\n'
+  printf '%s missing; writing the current run for arm %s is a human decision\n' "$(basename "$graded")" "$arm"
   status=1
 fi
 [ -n "${DD_RUNNER_WRITE_GRADED:-}" ] && cp "$verdicts" "$graded"

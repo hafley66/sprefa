@@ -134,8 +134,12 @@ dl-test:
 store-test:
     cd {{ v6 }}/sprefa-store/js && npm test
 
-# rust x sqlite arm vs the swipl oracle tick log, byte-diff + peak-RSS ceiling
-# (expect: DD-GRADE arm=--sqlite graded=200 byte-clean=131 ... DD-GRADE HOLDS)
+# rust x sqlite arm vs the swipl oracle tick log, byte-diff + peak-RSS ceiling.
+# Arms are named for what they are, not what they are not: the sqlite arm
+# (dd-diet-rust-sqlite) is the default; the pure-RAM arm (dd-diet-rust-rust)
+# runs with DD_RUNNER_ARM=--dd-diet-rust-rust. Each arm has its own graded.tsv
+# ratchet in v6/dd-runner/.
+# (expect: DD-GRADE arm=--dd-diet-rust-sqlite graded=203 byte-clean=134 ... DD-GRADE HOLDS)
 dd-grade:
     bash {{ v6 }}/dd-runner/grade.sh
 
