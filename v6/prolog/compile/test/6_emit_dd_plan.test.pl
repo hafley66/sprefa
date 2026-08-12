@@ -1,8 +1,9 @@
 :- begin_tests(emit_dd_plan).
 
 :- use_module('../6_emit_dd_plan', [dd_plan_text/2, fixture_dd_plan_text/3, fixture_dd_plan_json_text/3]).
-:- use_module('../../compile', [program_plan/2, read_fixture_term/4]).
+:- use_module('../../compile', [program_plan/2, read_fixture_term/4, compile_dl6/3]).
 :- use_module('../../analyze', [body_ref_uses/2]).
+:- use_module('../../lower', [lower_program/2]).
 :- use_module(library(http/json), [json_read_dict/3]).
 
 :- op(1150, xfx, <-).
@@ -242,6 +243,43 @@ test(edge_rule_operator_serializes_with_classification) :-
            get_dict(Key, Op, Value)),
     get_dict(rules, Dict, Rules),
     Rules == [].
+
+% The seam entry, emit_program/5, carries Initial and Schedule from the text
+% door's out-of-band context into the JSON, since the seam's five arguments do
+% not include them. Exercised through the real text door (compile_dl6/3 with
+% the emitter + schedule options), so the seed facts a .dl6 surfaces and the
+% external arrival schedule both land in the emitted dd_plan JSON.
+test(text_door_dd_emit_seeds_initial_and_schedule) :-
+    tmp_file_prefix(Prefix),
+    atomic_list_concat([Prefix, '.dl6'], Dl6),
+    atomic_list_concat([Prefix, '.sched.json'], Sched),
+    atomic_list_concat([Prefix, '.out.json'], Out),
+    write_string_file(Dl6,
+        "rel probe_in(probe_value) log keep(all).\nprobe_out(ProbeValue) <- probe_in(ProbeValue).\nprobe_in(\"a\").\n"),
+    write_string_file(Sched,
+        "[[{\"rel\":\"probe_in\",\"sign\":\"add\",\"row\":[\"b\"]}]]"),
+    compile_dl6(Dl6, Out,
+                [emitter(emit_dd_plan:emit_program), schedule(Sched)]),
+    setup_call_cleanup(true,
+        ( read_file_to_string(Out, Text, []),
+          json_text_dict(Text, Dict),
+          get_dict(initial, Dict, [SeedRow]),
+          get_dict(rel, SeedRow, 'probe_in/1'),
+          get_dict(values, SeedRow, ['a']),
+          get_dict(schedule, Dict, [[Arrival]]),
+          get_dict(rel, Arrival, 'probe_in/1'),
+          get_dict(sign, Arrival, 1),
+          get_dict(values, Arrival, ['b']) ),
+        ( delete_file(Dl6), delete_file(Sched), catch(delete_file(Out), _, true) )).
+
+write_string_file(Path, String) :-
+    setup_call_cleanup(open(Path, write, Stream),
+                       format(Stream, "~s", [String]),
+                       close(Stream)).
+
+tmp_file_prefix(Prefix) :-
+    current_prolog_flag(pid, Pid),
+    format(atom(Prefix), '/tmp/v6_seam_~w', [Pid]).
 
 json_text_dict(Text, Dict) :-
     atom_string(Atom, Text),

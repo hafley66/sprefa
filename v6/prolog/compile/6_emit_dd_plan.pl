@@ -1,6 +1,7 @@
 % Emit a deterministic target-neutral DD plan term.
 :- module(emit_dd_plan,
-          [ emit_dd_plan/2,
+          [ emit_program/5,
+            emit_dd_plan/2,
             dd_plan_text/2,
             fixture_dd_plan_text/3,
             fixture_dd_plan_json_text/3,
@@ -10,7 +11,7 @@
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
-:- use_module('../compile', [read_fixture_term/4, program_plan/2]).
+:- use_module('../compile', [read_fixture_term/4, program_plan/2, dd_emit_context/2]).
 :- use_module('../analyze', [body_ref_uses/2, rule_head_ref/2,
                               rule_is_aggregate/1,
                               aggregate_head_template/2]).
@@ -45,6 +46,22 @@ emit_dd_plan(Plan, Path) :-
     setup_call_cleanup(open(Path, write, Stream),
                        format(Stream, '~s', [Text]),
                        close(Stream)).
+
+% The seam entry: emit_program/5, the same shape emit_ts:emit_program uses, so
+% the text door routes to this module with no call-site special case.
+% BootStatements is emit_ts's boot shape; the dd plan embeds its own initial
+% rows, so that argument is taken and ignored. Initial and Schedule are not
+% among the seam's five arguments, so compile.pl hands them over out of band
+% through dd_emit_context/2; when the door passes none they stay empty.
+emit_program(_Name, Plan, Lowered, _BootStatements, Text) :-
+    (   dd_emit_context(Initial, Schedule)
+    ->  true
+    ;   Initial = [], Schedule = []
+    ),
+    dd_plan_term(Plan, Lowered, DdPlan),
+    dd_plan_json_dict(Plan, Lowered, DdPlan, Initial, Schedule, Dict),
+    with_output_to(string(Text),
+                   ( json_write_dict(current_output, Dict, [width(0)]), nl )).
 
 dd_plan_text(Plan, Text) :-
     lower_program(Plan, Lowered),
