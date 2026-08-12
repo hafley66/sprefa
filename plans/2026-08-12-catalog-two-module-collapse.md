@@ -28,12 +28,11 @@ identifier.
    - Rejected alternative: a composite text catalog key. `__rel.rel_id`
      remains the integer surrogate key.
 
-3. Type emitters raise
-   `unsupported_construct(type_name_collision(TypeName, Modules))` before
-   rendering declarations. The payload identifies the rendered identifier
-   and the module id plus local relation name for the first collision pair.
-   - Rejected alternative: suffixes, prefixes, and mangling. Identifier
-     spelling remains a language decision.
+3. Type emitters retain the bare relation type name when it is unique. When
+   multiple relation names render to the same target identifier, every member
+   of that collision set receives its declaring module name as a PascalCase
+   prefix. `http_response` from `transport_a.dl6` therefore renders as
+   `TransportAHttpResponse`.
 
 ## Design
 
@@ -42,7 +41,8 @@ identifier.
 ```prolog
 catalog_rel_plans(+Decls, +RelPlans, -CatalogRelPlans, -CatalogRelModules).
 catalog_rel_module_ids(+CatalogRelModules, +HashIdMap, -CatalogRelModulesWithIds).
-check_type_name_collisions(+RelRows).
+collision_type_names(+RelRows, -CollisionTypeNames).
+emitted_type_name(+Rows, +CollisionTypeNames, +RelRow, -TypeName).
 ```
 
 `catalog_rel_plans/4` walks the declaration sequence, captures each file's
@@ -52,9 +52,12 @@ has its own declared column list. `catalog_rel_rows/11` consumes the matching
 module entry and writes that module's integer id into the relation and column
 rows.
 
-`check_type_name_collisions/1` maps every renderable relation row to
-`TypeName-module(ModuleId, LocalName)`, sorts by `TypeName`, and throws when
-two adjacent entries share the key.
+`collision_type_names/2` maps every renderable relation row through the
+existing relation-name renderer and retains duplicate target identifiers.
+`emitted_type_name/4` returns the bare identifier outside that set. Inside the
+set it reads the relation row's integer module id, finds the matching module
+row, normalizes the module name to PascalCase, and prepends it. Relation-typed
+columns use the same lookup through their type id.
 
 ### Instance timeline
 
@@ -65,7 +68,8 @@ two adjacent entries share the key.
 3. Catalog declaration planning expands the repeated module declarations.
 4. Catalog rows receive consecutive integer `rel_id` values. The existing
    physical-plane rows attach to the first declaration row.
-5. Type rendering validates the catalog rows before output text is built.
+5. Type rendering computes the collision set and resolves each declaration
+   and relation-typed column through its catalog relation row.
 
 ### Stored identities and reads
 
@@ -81,13 +85,18 @@ Fixture files:
 - `v6/dl/fixtures/catalog-two-module-collapse.dl6`
 - `v6/dl/fixtures/catalog-two-module-collapse-a.dl6`
 - `v6/dl/fixtures/catalog-two-module-collapse-b.dl6`
+- `v6/dl/fixtures/type-name-module-prefix.dl6`
+- `v6/dl/fixtures/type-name-module-prefix-a.dl6`
+- `v6/dl/fixtures/type-name-module-prefix-b.dl6`
 
 The entry fixture imports both modules. Its emitted catalog contains two
 `item` relation rows: the A row owns `sku: text`; the B row owns `qty: int`.
 
-The collision receipt constructs catalog rows for `http_response` and
-`httpResponse`. Both type emitters throw
-`unsupported_construct(type_name_collision('HttpResponse', ...))`.
+The prefix fixture imports `http_response(code: int)` from module A and
+`httpResponse(body: text)` from module B. Its TypeScript output contains
+`TypeNameModulePrefixAHttpResponse` and
+`TypeNameModulePrefixBHttpResponse`; its Rust output contains structs with the
+same two names. The entry relation remains the bare `TypeNameRows`.
 
 Required gates run three times each:
 
@@ -95,6 +104,7 @@ Required gates run three times each:
 cd v6/tsv2 && bash scripts/sweep.sh
 just conformance
 swipl -g go -t halt v6/prolog/ARCH.pl
+bash v6/sprefa-engine-rs/grade.sh
 ```
 
 ## Staffing

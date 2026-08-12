@@ -1,0 +1,4 @@
+use "type-name-module-prefix-a.dl6".
+use "type-name-module-prefix-b.dl6".
+
+rel type_name_rows(row: text).
