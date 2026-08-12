@@ -620,6 +620,21 @@ decl_a_stmt([enum_decl(Name, VariantTerms)], S0, S) :-
     lit_dcg(`.`, S9, S),
     record_enum_column_orders(Name, VariantTerms).
 
+% A template mints no col_type/kind entry, so its name is not a declared rel
+% and no phase after the parser sees it: this ONE term is the whole record.
+decl_a_stmt([rel_template(Segments, Parameters, Specs)], S0, S) :-
+    word(`rel`, S0, S1),
+    ws0(S1, S2),
+    dotted_path(Segments, S2, S3),
+    ws0(S3, S4),
+    generic_parameters(Parameters, S4, S5),
+    lit_dcg(`(`, S5, S6),
+    decl_a_columns(Specs, S6, S7),
+    ws0(S7, S8),
+    lit_dcg(`)`, S8, S9),
+    ws0(S9, S10),
+    lit_dcg(`.`, S10, S).
+
 decl_a_stmt(DeclList, S0, S) :-
     word(`rel`, S0, S1),
     ws0(S1, S2),
@@ -637,11 +652,76 @@ decl_a_stmt(DeclList, S0, S) :-
     ws0(S8, S9),
     typed_decl_entries(Ref, Specs, TypedDecls),
     decl_a_modifiers(Ref, Modifiers, S9, S10),
+    is_clause(Ref, ConformanceDecls, S10, S10a),
     module_path_decls(Segments, Ref, PathDecls),
     column_less_decls(Ref, Specs, Modifiers, UnitDecls),
-    append([TypedDecls, Modifiers, PathDecls, UnitDecls], DeclList),
-    ws0(S10, S11),
+    append([TypedDecls, Modifiers, PathDecls, UnitDecls, ConformanceDecls],
+           DeclList),
+    ws0(S10a, S11),
     lit_dcg(`.`, S11, S).
+
+% Parameters only when a SECOND group follows; the peek below decides it
+% standing at the first group's closing paren.
+generic_parameters(Parameters, S0, S) :-
+    lit_dcg(`(`, S0, S1),
+    generic_parameter_names(Parameters, S1, S2),
+    Parameters \== [],
+    ws0(S2, S3),
+    lit_dcg(`)`, S3, S4),
+    ws0(S4, S),
+    peek(0'(, S, S),
+    check_distinct_parameters(Parameters).
+
+generic_parameter_names([Parameter | Rest], S0, S) :-
+    ws0(S0, S1),
+    ident(Parameter, S1, S2),
+    ws0(S2, S3),
+    ( lit_dcg(`,`, S3, S4) -> generic_parameter_names(Rest, S4, S)
+    ; Rest = [], S = S3
+    ).
+
+% Decidable inside the one production, with no other declaration in hand.
+check_distinct_parameters(Parameters) :-
+    ( append(_, [Parameter | Tail], Parameters),
+      memberchk(Parameter, Tail)
+    -> record_finding(unsupported_surface(duplicate_generic_parameter(Parameter)))
+    ;  true
+    ).
+
+% Arity and interface existence are NOT checked here: the single-pass parser
+% holds no other declaration when this clause runs.
+is_clause(Ref, [rel_is_implementation(Ref, Applications)], S0, S) :-
+    word(`is`, S0, S1),
+    ws0(S1, S2),
+    type_applications(Applications, S2, S).
+is_clause(_, [], S, S).
+
+type_applications([First | Rest], S0, S) :-
+    type_application(First, S0, S1),
+    ws0(S1, S2),
+    ( lit_dcg(`,`, S2, S3) -> ws0(S3, S4), type_applications(Rest, S4, S)
+    ; Rest = [], S = S2
+    ).
+
+type_application(Application, S0, S) :-
+    ident(Name, S0, S1),
+    ws0(S1, S2),
+    (   lit_dcg(`(`, S2, S3)
+    ->  ws0(S3, S4),
+        type_application_arguments(Arguments, S4, S5),
+        ws0(S5, S6),
+        lit_dcg(`)`, S6, S),
+        Arguments \== [],
+        Application =.. [Name | Arguments]
+    ;   Application = Name, S = S2
+    ).
+
+type_application_arguments([First | Rest], S0, S) :-
+    typed_column_type(First, S0, S1),
+    ws0(S1, S2),
+    ( lit_dcg(`,`, S2, S3) -> ws0(S3, S4), type_application_arguments(Rest, S4, S)
+    ; Rest = [], S = S2
+    ).
 
 % A module IS a rel/0, so the degenerate rel has to be declarable; with no
 % column, kind/2 is the only entry that can carry that it was declared.

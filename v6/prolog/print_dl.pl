@@ -224,6 +224,7 @@ shadowed_by_type_decl(Decls, Name/Arity) :-
     length(Specs, Arity).
 
 decl_order_item(enum_decl(Name, Variants), enum_decl(Name, Variants)).
+decl_order_item(Decl, Decl) :- Decl = rel_template(_, _, _).
 decl_order_item(Decl, Decl) :- Decl = type_decl(_, _).
 decl_order_item(Decl, Decl) :- Decl = sh_decl(_, _, _, _).
 decl_order_item(Decl, Decl) :- Decl = bind_decl(_, _).
@@ -255,11 +256,22 @@ decl_line(_, _, _, enum_decl(Name, Variants), Line) :-
     !,
     print_enum_variants(Variants, VariantsText),
     format(atom(Line), "rel ~w(~w).~n", [Name, VariantsText]).
-decl_line(_, _, _, type_decl(Name, Specs), Line) :-
+% Two parenthesized groups is the whole surface of a template, and its record
+% holds the path segments, so the printed name is rebuilt from them.
+decl_line(_, _, _, rel_template(Segments, Parameters, Specs), Line) :-
+    !,
+    atomic_list_concat(Segments, '.', Name),
+    atomic_list_concat(Parameters, ', ', ParametersText),
+    maplist(print_template_column, Specs, ColumnTexts),
+    atomic_list_concat(ColumnTexts, ', ', ColumnsText),
+    format(atom(Line), "rel ~w(~w)(~w).~n", [Name, ParametersText, ColumnsText]).
+decl_line(Decls, _, _, type_decl(Name, Specs), Line) :-
     !,
     maplist(print_host_column, Specs, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
-    format(atom(Line), "rel ~w(~w).~n", [Name, ColumnsText]).
+    length(Specs, Arity),
+    is_clause_text(Decls, Name/Arity, ConformanceText),
+    format(atom(Line), "rel ~w(~w)~w.~n", [Name, ColumnsText, ConformanceText]).
 decl_line(_, _, _, sh_decl(Name, Inputs, Outputs, template(Template)), Line) :-
     !,
     maplist(print_host_column, Inputs, InputTexts),
@@ -285,7 +297,9 @@ decl_line(Decls, _Rules, _Bindings, Name/0, Line) :-
     -> ModifiersText = '', Sep = ''
     ; atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
     ),
-    format(atom(Line), "rel ~w()~w~w.~n", [Spelling, Sep, ModifiersText]).
+    is_clause_text(Decls, Name/0, ConformanceText),
+    format(atom(Line), "rel ~w()~w~w~w.~n",
+           [Spelling, Sep, ModifiersText, ConformanceText]).
 decl_line(Decls, Rules, Bindings, Ref, Line) :-
     decl_ref_spelling(Decls, Ref, Name),
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
@@ -297,7 +311,35 @@ decl_line(Decls, Rules, Bindings, Ref, Line) :-
     -> ModifiersText = '', Sep = ''
     ; atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
     ),
-    format(atom(Line), "rel ~w(~w)~w~w.~n", [Name, ColsText, Sep, ModifiersText]).
+    is_clause_text(Decls, Ref, ConformanceText),
+    format(atom(Line), "rel ~w(~w)~w~w~w.~n",
+           [Name, ColsText, Sep, ModifiersText, ConformanceText]).
+
+% The `is` clause follows every modifier, so it prints as one suffix rather
+% than joining the modifier list.
+is_clause_text(Decls, Ref, Text) :-
+    (   memberchk(rel_is_implementation(Ref, Applications), Decls)
+    ->  maplist(print_type_application, Applications, ApplicationTexts),
+        atomic_list_concat(ApplicationTexts, ', ', ApplicationsText),
+        format(atom(Text), " is ~w", [ApplicationsText])
+    ;   Text = ''
+    ).
+
+print_type_application(Application, Text) :-
+    (   compound(Application)
+    ->  Application =.. [Name | Arguments],
+        maplist(print_column_type, Arguments, ArgumentTexts),
+        atomic_list_concat(ArgumentTexts, ', ', ArgumentsText),
+        format(atom(Text), "~w(~w)", [Name, ArgumentsText])
+    ;   Text = Application
+    ).
+
+print_template_column(column(Name, none), Text) :-
+    !,
+    Text = Name.
+print_template_column(column(Name, Type), Text) :-
+    print_column_type(Type, TypeText),
+    format(atom(Text), "~w: ~w", [Name, TypeText]).
 
 % The flat name is the mangle the dot phase resolves TO; printing it would
 % strand every dotted atom in the rules on a reparse.
