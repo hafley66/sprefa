@@ -138,7 +138,64 @@ Job B also includes imports, constructors, narrowing, serialization behavior, te
 
 ## Input choices
 
-Input-side pricing arrives in deliverable 4.
+```text
+1. CHANGE THE .dl6 PARSER
+
+.dl6 containing tagged Rust/TS type syntax
+  -> canonical parser
+  -> type IR
+
+touches: parser + printer + editor grammar + tests
+price for two small subsets: about 440-940 lines
+each added language subset: about 100-250 lines before semantic features
+```
+
+```text
+2. PREPROCESS .dl6
+
+original .dl6
+  -> foreign-fragment parser
+  -> canonical .dl6 text + source map
+  -> canonical parser
+  -> type IR
+
+touches: preprocessor + span map + adapters + CLI/LSP + tests
+price for first language: about 750-1,460 lines
+```
+
+```text
+3. SEPARATE FRONT END
+
+.ts / .rs / .go / .py
+  -> that language's parser or compiler API
+  -> resolved type graph
+  -> type IR
+
+touches: orchestration + adapter + resolver + fixtures
+price per language subset: about 900-2,400 lines
+```
+
+One declarative language description can cover primitive names, list syntax, optional syntax, record fields, union forms, delimiters, precedence, and output templates.
+
+Compiler knowledge remains code:
+
+```text
+imports and aliases
+TypeScript conditional and mapped types
+Rust macros and associated types
+Go type-set constraints
+Python annotations that depend on imports or execution
+```
+
+Round-trip has three distinct meanings:
+
+```text
+foreign input -> canonical .dl6 output      use the existing .dl6 printer
+foreign input -> same language output       add a language printer
+foreign input -> exact original text        retain CST/source slices
+```
+
+Running the character-level DCG backward is excluded by the measured result: two independent implementations both failed to terminate and both wrote printers.
 
 ## Forks for a human ruling
 
