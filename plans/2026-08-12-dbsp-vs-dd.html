@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DBSP vs Differential Dataflow</title>
+<style>
+  :root { --bg: #fbfaf8; --fg: #1c1b19; --muted: #6b6862; --rule: #ddd9d2;
+          --card: #fff; --code-bg: #f4f2ee; --dd: #2f6f9f; --dbsp: #a35c2a;
+          --both: #4a7c59; --warn: #8a3324; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16171a; --fg: #e8e6e3; --muted: #9a968f; --rule: #2f3136;
+            --card: #1d1f23; --code-bg: #212429; --dd: #6aa8d8; --dbsp: #d99a63;
+            --both: #7fb08d; --warn: #d98878; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--fg); margin: 0;
+    font: 16px/1.6 ui-serif, Georgia, "Times New Roman", serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 3rem 1.5rem 6rem; }
+  h1 { font-size: 2.4rem; line-height: 1.15; margin: 0 0 .4rem; letter-spacing: -.02em; }
+  h2 {
+    font-size: 1.5rem; margin: 3.5rem 0 1rem; padding-top: 1.2rem;
+    border-top: 1px solid var(--rule); letter-spacing: -.01em;
+  }
+  h3 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
+  .sub { color: var(--muted); font-size: 1.05rem; margin: 0 0 2rem; font-style: italic; }
+  code, .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .87em; background: var(--code-bg);
+    padding: .12em .35em; border-radius: 3px;
+  }
+  pre {
+    background: var(--code-bg); padding: 1rem 1.1rem; border-radius: 6px;
+    overflow-x: auto; border: 1px solid var(--rule);
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: .82rem; line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  table { border-collapse: collapse; width: 100%; margin: 1.2rem 0; font-size: .92rem; }
+  th, td { text-align: left; padding: .6rem .7rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th { font-weight: 600; color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { text-align: right; font-family: ui-monospace, monospace; }
+  .card {
+    background: var(--card); border: 1px solid var(--rule);
+    border-radius: 8px; padding: 1.2rem 1.4rem; margin: 1.5rem 0;
+  }
+  .dd    { color: var(--dd); }
+  .dbsp  { color: var(--dbsp); }
+  .both  { color: var(--both); }
+  .tag {
+    display: inline-block; font-size: .7rem; text-transform: uppercase;
+    letter-spacing: .06em; padding: .15em .5em; border-radius: 3px;
+    border: 1px solid currentColor; font-family: ui-sans-serif, system-ui;
+    vertical-align: middle;
+  }
+  .toc { background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 1.2rem 1.4rem; }
+  .toc ol { margin: .4rem 0 0; padding-left: 1.3rem; }
+  .toc li { margin: .25rem 0; }
+  a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--rule); }
+  a:hover { border-bottom-color: currentColor; }
+  figure { margin: 1.8rem 0; }
+  figcaption { color: var(--muted); font-size: .85rem; margin-top: .6rem; font-style: italic; }
+  svg { max-width: 100%; height: auto; display: block; }
+  .keyline { border-left: 3px solid var(--both); padding-left: 1rem; margin: 1.5rem 0; }
+  .warn { border-left: 3px solid var(--warn); padding-left: 1rem; margin: 1.5rem 0; }
+  .warn strong { color: var(--warn); }
+  ul.tight li { margin: .3rem 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>DBSP vs Differential Dataflow</h1>
+<p class="sub">Same algebra underneath. Different theory of time on top. Written for the sprefa engine work, 2026-08-12.</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#problem">The problem both solve</a></li>
+    <li><a href="#zset">The shared core: Z-sets</a></li>
+    <li><a href="#dbsp">DBSP: streams and circuits</a></li>
+    <li><a href="#dd">Differential Dataflow: partially ordered time</a></li>
+    <li><a href="#same">Where they agree</a></li>
+    <li><a href="#diff">Where they diverge</a></li>
+    <li><a href="#learn">Topics to learn, in order</a></li>
+    <li><a href="#repo">Where each one lives in this repo</a></li>
+  </ol>
+</div>
+
+<h2 id="problem">1. The problem both solve</h2>
+
+<p>You have a query over some data. The data changes. Recomputing the whole query
+from scratch on every change is the naive answer, and it is what most systems do.</p>
+
+<p><strong>Incremental View Maintenance</strong> is the alternative: given a change to
+the input, compute only the corresponding change to the output. The hard part is that
+this must work for <em>every</em> operator, including joins, aggregations, and
+recursion, and the deltas must compose so a hundred-operator query still only
+touches what moved.</p>
+
+<p>DBSP and Differential Dataflow are two answers. They were built by overlapping
+people. Frank McSherry is an author on both.</p>
+
+<h2 id="zset">2. The shared core: Z-sets</h2>
+
+<p>This is the one idea. Learn it and both systems open up.</p>
+
+<div class="keyline">
+A <strong>Z-set</strong> is a relation where every row carries an <strong>integer
+weight</strong>. Not a boolean "present / absent". An integer, and it is allowed to
+be negative.
+</div>
+
+<pre><code>ordinary set        Z-set
+------------        -----------------
+{ alice }           { alice: 1 }
+{ alice, bob }      { alice: 1, bob: 1 }
+                    { alice: 2 }        alice, twice (a multiset)
+                    { alice: -1 }       a RETRACTION of alice</code></pre>
+
+<p>A <em>change</em> to a collection is itself a Z-set. Inserting <code>bob</code> and
+deleting <code>alice</code> is one value:</p>
+
+<pre><code>delta = { bob: +1, alice: -1 }</code></pre>
+
+<p>Applying a change is just addition, weight by weight. Rows that reach weight 0
+vanish.</p>
+
+<figure>
+<svg viewBox="0 0 700 150" role="img" aria-label="Z-set addition">
+  <style>
+    .lbl { font: 13px ui-monospace, monospace; fill: currentColor; }
+    .op  { font: 20px ui-serif, serif; fill: currentColor; }
+    .bx  { fill: none; stroke: currentColor; stroke-width: 1.2; opacity: .35; rx: 5; }
+    .cap { font: 11px ui-sans-serif, system-ui; fill: currentColor; opacity: .6; }
+  </style>
+  <rect class="bx" x="10" y="30" width="170" height="80"/>
+  <text class="cap" x="16" y="24">current</text>
+  <text class="lbl" x="26" y="60">alice:  1</text>
+  <text class="lbl" x="26" y="82">carol:  1</text>
+
+  <text class="op" x="200" y="76">+</text>
+
+  <rect class="bx" x="230" y="30" width="170" height="80"/>
+  <text class="cap" x="236" y="24">change</text>
+  <text class="lbl" x="246" y="60">alice: -1</text>
+  <text class="lbl" x="246" y="82">bob:   +1</text>
+
+  <text class="op" x="420" y="76">=</text>
+
+  <rect class="bx" x="450" y="30" width="170" height="80"/>
+  <text class="cap" x="456" y="24">next</text>
+  <text class="lbl" x="466" y="60">carol:  1</text>
+  <text class="lbl" x="466" y="82">bob:    1</text>
+  <text class="cap" x="466" y="104">(alice hit 0, gone)</text>
+</svg>
+<figcaption>A retraction is a negative weight. Deletion needs no special machinery.</figcaption>
+</figure>
+
+<p>Why this matters: Z-sets form an <strong>abelian group</strong>. There is a zero,
+addition is associative and commutative, and <em>every element has an inverse</em>.
+That last property is what ordinary sets lack, and it is exactly what lets you
+subtract one state from another to get a change.</p>
+
+<p>Operators are then classified by how they interact with <code>+</code>:</p>
+
+<table>
+<tr><th>class</th><th>property</th><th>examples</th><th>consequence</th></tr>
+<tr><td><strong>linear</strong></td><td><code>f(a + b) = f(a) + f(b)</code></td><td>select, project, map</td><td>the delta of the output is just <code>f</code> of the delta. Free.</td></tr>
+<tr><td><strong>bilinear</strong></td><td>linear in each argument separately</td><td>join</td><td>needs the product rule; must remember past state</td></tr>
+<tr><td><strong>neither</strong></td><td>&mdash;</td><td>distinct, min/max, aggregation</td><td>needs bespoke incremental treatment</td></tr>
+</table>
+
+<p>The join case is worth seeing, because it is where both systems spend their
+engineering. From the product rule:</p>
+
+<pre><code>Δ(A ⋈ B)  =  ΔA ⋈ B_old  +  A_old ⋈ ΔB  +  ΔA ⋈ ΔB</code></pre>
+
+<p>To compute a join's delta you must have <code>A_old</code> and <code>B_old</code>
+on hand. That stored, indexed history is the thing DD calls an <em>arrangement</em>
+and DBSP calls an <em>integrator</em>, and it is the main memory cost of both.</p>
+
+<h2 id="dbsp">3. DBSP: streams and circuits <span class="tag dbsp">Feldera</span></h2>
+
+<p>DBSP models everything as a <strong>stream</strong>: a value for each tick of a
+clock, <code>S : ℕ → A</code>. A query becomes a <strong>circuit</strong> of operators
+wired together, and it is evaluated tick by tick.</p>
+
+<p>Three primitives carry the whole theory:</p>
+
+<table>
+<tr><th>operator</th><th>meaning</th><th>definition</th></tr>
+<tr><td><code>z⁻¹</code></td><td>delay by one tick</td><td><code>(z⁻¹ s)[t] = s[t-1]</code>, and <code>0</code> at <code>t=0</code></td></tr>
+<tr><td><code>D</code></td><td>differentiate: stream of changes</td><td><code>D(s)[t] = s[t] − s[t−1]</code></td></tr>
+<tr><td><code>I</code></td><td>integrate: running total</td><td><code>I(s)[t] = s[0] + s[1] + … + s[t]</code></td></tr>
+</table>
+
+<p><code>D</code> and <code>I</code> are exact inverses. That is the hinge of the whole
+system.</p>
+
+<figure>
+<svg viewBox="0 0 700 210" role="img" aria-label="The incrementalization theorem as a circuit">
+  <style>
+    .b   { fill: none; stroke: currentColor; stroke-width: 1.4; rx: 6; opacity:.75; }
+    .t   { font: 14px ui-monospace, monospace; fill: currentColor; text-anchor: middle; }
+    .s   { font: 11px ui-sans-serif, system-ui; fill: currentColor; opacity: .6; text-anchor: middle; }
+    .ar  { stroke: currentColor; stroke-width: 1.3; fill: none; opacity: .6; marker-end: url(#a); }
+    .ttl { font: 13px ui-sans-serif, system-ui; fill: currentColor; opacity:.75; }
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor" opacity=".6"/>
+    </marker>
+  </defs>
+
+  <text class="ttl" x="10" y="22">the query you wrote, over whole collections</text>
+  <line class="ar" x1="20" y1="60" x2="300" y2="60"/>
+  <rect class="b" x="300" y="38" width="90" height="44"/>
+  <text class="t" x="345" y="65">Q</text>
+  <line class="ar" x1="390" y1="60" x2="660" y2="60"/>
+  <text class="s" x="150" y="50">collection</text>
+  <text class="s" x="530" y="50">collection</text>
+
+  <text class="ttl" x="10" y="132">its incremental form, over changes: Q<tspan font-size="10">Δ</tspan> = D ∘ Q ∘ I</text>
+  <line class="ar" x1="20" y1="170" x2="150" y2="170"/>
+  <rect class="b" x="150" y="148" width="80" height="44"/>
+  <text class="t" x="190" y="175">I</text>
+  <line class="ar" x1="230" y1="170" x2="300" y2="170"/>
+  <rect class="b" x="300" y="148" width="90" height="44"/>
+  <text class="t" x="345" y="175">Q</text>
+  <line class="ar" x1="390" y1="170" x2="460" y2="170"/>
+  <rect class="b" x="460" y="148" width="80" height="44"/>
+  <text class="t" x="500" y="175">D</text>
+  <line class="ar" x1="540" y1="170" x2="660" y2="170"/>
+  <text class="s" x="85" y="160">change</text>
+  <text class="s" x="600" y="160">change</text>
+</svg>
+<figcaption>Integrate the incoming changes back into a collection, run the original query, differentiate the result. Mechanically correct for any Q.</figcaption>
+</figure>
+
+<div class="keyline">
+<strong>The incrementalization theorem.</strong> For any query <code>Q</code>,
+its incremental version is <code>Q<sup>Δ</sup> = D ∘ Q ∘ I</code>. You do not
+design an incremental algorithm. You <em>derive</em> one.
+</div>
+
+<p>On its own that would be useless, since it just rebuilds the whole collection at
+<code>I</code> and runs <code>Q</code> in full. The payoff is the <strong>chain
+rule</strong>:</p>
+
+<pre><code>(Q₁ ∘ Q₂)Δ  =  Q₁Δ ∘ Q₂Δ</code></pre>
+
+<p>Incrementalization distributes over composition. So you push the transform down
+into each operator, the inner <code>I</code>/<code>D</code> pairs cancel, and what
+survives is a circuit where linear operators became free and only the bilinear ones
+kept an integrator. That cancellation is the actual engineering win.</p>
+
+<p><strong>Recursion</strong> is handled by <em>nesting</em> a circuit inside another
+with its own faster clock. The outer clock ticks once per input batch; the inner
+clock runs the fixpoint to convergence. Semi-naive evaluation falls out of applying
+the same incrementalization inside the inner loop.</p>
+
+<h2 id="dd">4. Differential Dataflow: partially ordered time <span class="tag dd">Timely</span></h2>
+
+<p>DD starts from the same Z-sets and asks a different question: what if time is not
+a single line?</p>
+
+<p>A collection in DD is a set of triples:</p>
+
+<pre><code>(data, time, diff)
+
+("alice", (epoch=3, iter=0), +1)
+("alice", (epoch=7, iter=0), -1)</code></pre>
+
+<p>The collection's contents at any time <code>t</code> is the sum of all
+<code>diff</code>s whose <code>time ≤ t</code>. Since <code>time</code> is drawn from
+a <strong>lattice</strong> rather than a line, "≤" is a <em>partial</em> order: two
+times can be incomparable.</p>
+
+<p>That is the entire reason DD exists. Recursion needs an iteration counter, and
+streaming needs an input epoch, and DD makes them <em>independent coordinates</em>
+instead of forcing one inside the other.</p>
+
+<figure>
+<svg viewBox="0 0 620 300" role="img" aria-label="A two dimensional timestamp lattice">
+  <style>
+    .gl  { stroke: currentColor; opacity: .16; stroke-width: 1; }
+    .ax  { stroke: currentColor; opacity: .55; stroke-width: 1.4; marker-end: url(#a2); }
+    .axl { font: 12px ui-sans-serif, system-ui; fill: currentColor; opacity: .7; }
+    .pt  { fill: currentColor; opacity: .3; }
+    .hi  { fill: var(--dd); }
+    .pl  { font: 11px ui-monospace, monospace; fill: currentColor; }
+    .fr  { stroke: var(--dd); stroke-width: 2; fill: none; stroke-dasharray: 5 3; }
+  </style>
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor" opacity=".55"/>
+    </marker>
+  </defs>
+
+  <g>
+    <line class="gl" x1="70" y1="250" x2="560" y2="250"/>
+    <line class="gl" x1="70" y1="200" x2="560" y2="200"/>
+    <line class="gl" x1="70" y1="150" x2="560" y2="150"/>
+    <line class="gl" x1="70" y1="100" x2="560" y2="100"/>
+    <line class="gl" x1="150" y1="60" x2="150" y2="260"/>
+    <line class="gl" x1="250" y1="60" x2="250" y2="260"/>
+    <line class="gl" x1="350" y1="60" x2="350" y2="260"/>
+    <line class="gl" x1="450" y1="60" x2="450" y2="260"/>
+  </g>
+
+  <line class="ax" x1="70" y1="250" x2="580" y2="250"/>
+  <line class="ax" x1="70" y1="250" x2="70" y2="70"/>
+  <text class="axl" x="470" y="278">epoch (input batch)</text>
+  <text class="axl" x="20" y="86">iteration</text>
+
+  <circle class="pt" cx="150" cy="250" r="5"/>
+  <circle class="pt" cx="250" cy="250" r="5"/>
+  <circle class="pt" cx="150" cy="200" r="5"/>
+  <circle class="pt" cx="350" cy="250" r="5"/>
+  <circle class="pt" cx="250" cy="200" r="5"/>
+  <circle class="pt" cx="150" cy="150" r="5"/>
+
+  <circle class="hi" cx="350" cy="150" r="6"/>
+  <text class="pl" x="362" y="146">(3, 2)</text>
+  <circle class="hi" cx="250" cy="100" r="6"/>
+  <text class="pl" x="262" y="96">(2, 3)</text>
+
+  <text class="pl" x="330" y="196" opacity=".7">these two are</text>
+  <text class="pl" x="330" y="212" opacity=".7">INCOMPARABLE</text>
+
+  <path class="fr" d="M 450 250 L 450 175 L 300 175 L 300 125 L 70 125"/>
+  <text class="pl" x="458" y="222" fill="var(--dd)">frontier</text>
+</svg>
+<figcaption>Timestamps are points in a lattice. (3,2) and (2,3) are incomparable, so neither has to wait for the other. The dashed line is a frontier: nothing at or before it will arrive again.</figcaption>
+</figure>
+
+<p>Two ideas do the heavy lifting:</p>
+
+<h3>Frontiers</h3>
+<p>A <strong>frontier</strong> is a set of mutually incomparable times representing
+"nothing earlier than this will ever arrive again". Timely Dataflow's progress
+tracking computes and broadcasts frontiers, and that is what tells an operator it may
+finally emit a result, or compact old state away. Progress tracking across a
+distributed cluster is essentially all of what Timely provides.</p>
+
+<h3>Arrangements</h3>
+<p>An <strong>arrangement</strong> is an indexed, compacted, shared trace of a
+collection's history. Several downstream operators can read one arrangement rather
+than each keeping its own copy of the same index. For join-heavy dataflows this is
+the difference between practical and not, and it has no direct DBSP counterpart at
+the API level.</p>
+
+<h2 id="same">5. Where they agree</h2>
+
+<ul class="tight">
+<li><strong>The algebra is identical.</strong> Z-sets, integer weights, negative weight means retraction.</li>
+<li><strong>Deltas, not recomputation.</strong> Both compute changes and compose them through the operator graph.</li>
+<li><strong>Linear operators are nearly free</strong>, joins need remembered state, aggregation and <code>distinct</code> need special handling. Same taxonomy.</li>
+<li><strong>Both do recursion / fixpoint</strong>, and both end up doing semi-naive evaluation, arrived at from different directions.</li>
+<li><strong>Both are single-writer, batch-tick systems</strong> at the core: you hand them a batch of changes, they hand you a batch of output changes.</li>
+<li><strong>Overlapping authorship.</strong> McSherry is on the 2013 DD paper and the 2023 DBSP paper.</li>
+</ul>
+
+<h2 id="diff">6. Where they diverge</h2>
+
+<table>
+<tr><th>axis</th><th class="dd">Differential Dataflow</th><th class="dbsp">DBSP</th></tr>
+<tr>
+  <td><strong>time</strong></td>
+  <td>a lattice, partially ordered, multi-dimensional</td>
+  <td>a total order, one clock per circuit</td>
+</tr>
+<tr>
+  <td><strong>recursion</strong></td>
+  <td>add a coordinate to the timestamp</td>
+  <td>nest a circuit with its own faster clock</td>
+</tr>
+<tr>
+  <td><strong>how you get incremental</strong></td>
+  <td>operators are written incrementally by hand, each one designed against the trace model</td>
+  <td>derived mechanically: <code>Q<sup>Δ</sup> = D ∘ Q ∘ I</code> plus the chain rule</td>
+</tr>
+<tr>
+  <td><strong>formal style</strong></td>
+  <td>operational; correctness argued per operator</td>
+  <td>denotational; the paper carries proofs about circuits</td>
+</tr>
+<tr>
+  <td><strong>shared state</strong></td>
+  <td>arrangements are explicit, first-class, shared across operators</td>
+  <td>integrators live inside operators</td>
+</tr>
+<tr>
+  <td><strong>runtime</strong></td>
+  <td>Timely Dataflow: multi-worker, distributed, frontier progress tracking</td>
+  <td>circuit evaluation, single-node oriented</td>
+</tr>
+<tr>
+  <td><strong>out-of-order input</strong></td>
+  <td>native. Incomparable times need no ordering</td>
+  <td>the clock is sequential; late data is an application concern</td>
+</tr>
+<tr>
+  <td><strong>front door</strong></td>
+  <td>a Rust API you build dataflows with</td>
+  <td>SQL, compiled to a circuit by Feldera</td>
+</tr>
+</table>
+
+<div class="warn">
+<strong>Naming, since it will end up in our identifiers.</strong> The algebra is
+<strong>Z-sets</strong>. The circuit theory is <strong>DBSP</strong>. <strong>Feldera</strong>
+is the company shipping the <code>dbsp</code> crate. There is no such thing as
+"Feldera algebra".
+</div>
+
+<h2 id="learn">7. Topics to learn, in order</h2>
+
+<table>
+<tr><th>#</th><th>topic</th><th>why it unlocks the next one</th></tr>
+<tr><td class="num">1</td><td>Abelian groups; why sets are not one and Z-sets are</td><td>the existence of an inverse is the whole reason deltas work</td></tr>
+<tr><td class="num">2</td><td>Z-sets / Z-relations, weights, retraction as negative weight</td><td>the shared vocabulary of both systems</td></tr>
+<tr><td class="num">3</td><td>Linear vs bilinear operators; the product rule for joins</td><td>explains where the memory goes in every IVM system</td></tr>
+<tr><td class="num">4</td><td>Streams, <code>z⁻¹</code>, <code>D</code>, <code>I</code>, and that <code>D</code> and <code>I</code> are inverses</td><td>the DBSP primitives</td></tr>
+<tr><td class="num">5</td><td><code>Q<sup>Δ</sup> = D ∘ Q ∘ I</code> and the chain rule</td><td>the DBSP payoff; why cancellation makes it fast</td></tr>
+<tr><td class="num">6</td><td>Partial orders and lattices; least upper bound</td><td>required before DD timestamps make any sense</td></tr>
+<tr><td class="num">7</td><td>Frontiers and progress tracking</td><td>how DD knows a result is final and old state may be compacted</td></tr>
+<tr><td class="num">8</td><td>Arrangements and traces</td><td>DD's main performance idea; the thing our kernel does not have</td></tr>
+<tr><td class="num">9</td><td>Semi-naive evaluation and fixpoint</td><td>connects both back to plain datalog, which is what we already emit</td></tr>
+<tr><td class="num">10</td><td>Nested circuits vs added timestamp coordinates</td><td>the real fork between the two systems</td></tr>
+</table>
+
+<p><strong>Primary sources.</strong> DBSP: <em>"DBSP: Automatic Incremental View
+Maintenance for Rich Query Languages"</em>, Budiu, McSherry, Ryzhyk, Tannen, VLDB
+2023. Differential Dataflow: <em>"Differential Dataflow"</em>, McSherry, Murray,
+Isaacs, Isard, CIDR 2013, plus the
+<span class="mono">timelydataflow.github.io/differential-dataflow</span> book.</p>
+
+<h2 id="repo">8. Where each one lives in this repo</h2>
+
+<table>
+<tr><th>thing</th><th>version</th><th>location</th><th>role today</th></tr>
+<tr><td><code>differential-dataflow</code></td><td>0.25</td><td><code>v6/sprefa-store</code></td><td><code>src/oracle.rs</code> <code>dd_reach</code>: correctness truth + resident-RAM yardstick</td></tr>
+<tr><td><code>timely</code></td><td>0.31</td><td>same</td><td>DD's runtime</td></tr>
+<tr><td><code>dbsp</code> (Feldera)</td><td>0.323</td><td>same, optional <code>with-dbsp</code></td><td>blocked: ICEs on the default nightly, needs a stable build with the lld flag</td></tr>
+<tr><td><code>salsa</code></td><td>0.28</td><td>same</td><td>a third IVM implementation, red-green, cross-checked in <code>tests/reconcile.rs</code></td></tr>
+<tr><td><code>dd-runner</code></td><td>&mdash;</td><td><code>v6/dd-runner</code></td><td><strong>contains no differential dataflow.</strong> Hand-written <code>BTreeMap</code> evaluator over our emitted plan JSON</td></tr>
+</table>
+
+<div class="warn">
+<strong>The name <code>dd-runner</code> is misleading and worth fixing.</strong> It runs
+a "dd plan" and contains none of the algebra described above. Its dependencies are
+<code>rusqlite</code>, <code>serde</code>, <code>serde_json</code>. Any performance
+number attributed to "dd" in <code>PERF-REPORT.md</code> belongs to the
+<em>differential-dataflow library oracle</em> in <code>sprefa-store</code>, on a
+different benchmark, not to anything our compiler emits.
+</div>
+
+<p>Our kernel currently has, in the vocabulary above: no signed weights (the relation
+type is <code>BTreeMap&lt;String, Vec&lt;Tuple&gt;&gt;</code>), no arrangements, no
+timestamps. Those are the three named unbuilt forks in <code>ARCH.pl</code>.
+Reading this page top to bottom is roughly the roadmap for closing them.</p>
+
+</div>
+</body>
+</html>
