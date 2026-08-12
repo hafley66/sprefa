@@ -13,9 +13,11 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(json)).
-:- use_module(lower, [ departure_frontier_table_name/2 ]).
+:- use_module(lower, [ departure_frontier_table_name/2,
+                       program_text_intern_plan/3 ]).
 :- use_module('0_rel_record').
-:- use_module(analyze, [ body_ref_uses/2, listened_departure_refs/2 ]).
+:- use_module(analyze, [ body_ref_uses/2, listened_departure_refs/2,
+                         program_uses_tick/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -130,14 +132,20 @@ relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements, Dict
 
 edge_dict(RelPlans,
           edgestmt(HeadRef, _Trigger, HeadColumns, KeyColumns, _Proj, _Write,
-                   DeltaProjectSql, _Kind, _Interns), Dict) :-
+                   DeltaProjectSql, _Kind, edgeinterns(_, DeltaInternSqls)),
+          Dict) :-
     ref_name(HeadRef, HeadName),
     relplan_shape(RelPlans, HeadRef, HeadKind, _Columns, _Key, _Types),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
+    intern_field(DeltaInternSqls, InternField),
     Dict = _{ head_rel: HeadName, head_columns: HeadColumns,
               head_table_name: HeadName, head_delta_table_name: DeltaTable, head_kind: HeadKind,
-              key_indices: KeyIndices, project_sql: DeltaProjectSql }.
+              key_indices: KeyIndices, project_sql: DeltaProjectSql,
+              intern_sql: InternField }.
+
+intern_field([], null) :- !.
+intern_field(InternSqls, InternSqls).
 head_to_key_indices(HeadColumns, KeyColumns, Indices) :-
     maplist(key_index(HeadColumns), KeyColumns, Indices).
 key_index(Columns, Col, Index) :- nth0(Index, Columns, Col).
@@ -146,7 +154,7 @@ edges_list(RelPlans, EdgeStatements, Dicts) :-
     maplist(edge_dict(RelPlans), EdgeStatements, Dicts).
 
 level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                                RefCountSql, AggregateSql, _DeltaInternSqls),
+                                RefCountSql, AggregateSql, DeltaInternSqls),
            Dict) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
@@ -158,7 +166,9 @@ level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
     refcount_fields(RefCountSql, SupportField, ExpandField, DredField,
                     SupportInternField),
     aggregate_field(AggregateSql, AggregateField),
+    intern_field(DeltaInternSqls, InternField),
     Dict = _{ head_rel: HeadName,
+              intern_sql: InternField,
               head_delta_table_name: DeltaTable,
               head_columns: HeadColumns,
               head_column_types: HeadTypes,
@@ -246,6 +256,14 @@ aggregate_field(avgsql(_ScopeCols, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
               insert_scoped_sql: InsertScopedSqls,
               intern_sql: null, delta_maintained: true }.
 
+% The same plan emit_ts.pl renders as TEXT_INTERN_PLAN. `none` at intern(direct)
+% and at any program whose columns are all unencoded.
+text_intern_field(none, null) :- !.
+text_intern_field(textintern(InternSql, LookupSql, RelColumns), Dict) :-
+    pairs_to_dict(RelColumns, ColumnsDict),
+    Dict = _{ intern_sql: InternSql, lookup_sql: LookupSql,
+              rel_columns: ColumnsDict }.
+
 % ═══ assemble the Rust source ════════════════════════════════════════════════
 
 emit_program(Name, Plan, Lowered, BootStatements, Text) :-
@@ -254,7 +272,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     plan_intern_mode(Plan, InternMode),
     include(is_level_statement, LevelStatements, RuleLevelStatements),
     include(is_retention_statement, LevelStatements, RetentionStatements),
-    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _, _, _),
+    Plan = plan(_, TickProg, _, _, _, _, _, _, _),
+    TickProg = prog(_, PlanRules),
+    program_uses_tick(TickProg, UsesTick),
     listened_departure_refs(PlanRules, DepartureRefs),
     reconcile_every_tick(Plan, ReconcileEveryTick),
 
@@ -275,6 +295,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     edges_list(RelPlans, EdgeStatements, Edges),
     levels_list(RuleLevelStatements, HeadTable, Levels),
     retentions_list(RetentionStatements, Retentions),
+    program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
+    text_intern_field(TextInternPlan, TextInternField),
 
     ProgramDict =
     _{ name: Name,
@@ -286,10 +308,12 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        boot: BootDicts,
        final_select: FinalSelect,
        arrival_templates: ArrivalTemplates,
+       text_intern_plan: TextInternField,
        relations: Relations,
        edges: Edges,
        levels: Levels,
        retentions: Retentions,
+       uses_tick: UsesTick,
        reconcile_every_tick: ReconcileEveryTick,
        incremental_safe: true },
     json_write_string(ProgramDict, ProgramJson),

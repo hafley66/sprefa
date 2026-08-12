@@ -25,10 +25,12 @@ pub struct GenProgram {
     pub boot: Vec<BootStatement>,
     pub final_select: HashMap<String, String>,
     pub arrival_templates: HashMap<String, ArrivalTemplate>,
+    pub text_intern_plan: Option<crate::types::TextInternPlan>,
     pub relations: Vec<IncrementalRelationPlan>,
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,
     pub retentions: Vec<IncrementalRetentionStatement>,
+    pub uses_tick: bool,
     pub reconcile_every_tick: bool,
     pub incremental_safe: bool,
 }
@@ -45,10 +47,12 @@ impl GenProgram {
             boot: pj.boot,
             final_select: pj.final_select,
             arrival_templates: pj.arrival_templates,
+            text_intern_plan: pj.text_intern_plan,
             relations: pj.relations,
             edges: pj.edges,
             levels: pj.levels,
             retentions: pj.retentions,
+            uses_tick: pj.uses_tick,
             reconcile_every_tick: pj.reconcile_every_tick,
             incremental_safe: pj.incremental_safe,
         }
@@ -64,9 +68,29 @@ impl GenProgram {
 
     pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> TickDeltas {
         incremental::prepare_tick(seam, &self.relations);
+        if self.uses_tick {
+            incremental::advance_tick(seam);
+        }
+        let interned = match &self.text_intern_plan {
+            Some(plan) => crate::text_plane::intern(seam, plan, arrivals),
+            None => arrivals.to_vec(),
+        };
+        let arrivals = interned.as_slice();
         incremental::apply_arrivals(seam, arrivals, &self.relations);
         incremental::apply_levels_before_edges(seam, &self.levels, &self.relations);
-        // Edge rules arrive in a later widening step.
+        if !self.edges.is_empty() {
+            incremental::recompute_levels_before_edges(
+                seam,
+                &self.levels,
+                &self.relations,
+                self.reconcile_every_tick,
+                arrivals.len(),
+            );
+            incremental::apply_edges(seam, &self.edges, &self.relations);
+            incremental::merge_next_into_current(seam, &self.relations);
+            incremental::apply_levels_after_edges(seam, &self.levels, &self.relations);
+        }
+        incremental::apply_retention(seam, &self.retentions, &self.relations);
         incremental::recompute_levels_after_edges(
             seam,
             &self.levels,

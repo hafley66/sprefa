@@ -48,7 +48,7 @@ while IFS=$'\t' read -r name compile_result compile_reason; do
       reason='byte-clean'
     else
       verdict=diff
-      reason=$({ diff -u "$oracle" "$output" || true; } | awk 'NR > 2 && /^[+-]/ { print; exit }' | reason_text)
+      reason='pending'
     fi
   else
     verdict=runtime-error
@@ -58,6 +58,7 @@ while IFS=$'\t' read -r name compile_result compile_reason; do
   printf '%s\t%s\t%s\n' "$name" "$verdict" "$reason" >>"$verdicts"
 done <"$scratch/compile.tsv"
 
+python3 "$here/diff_cause.py" "$corpus" "$scratch" "$verdicts"
 sort "$verdicts" -o "$verdicts"
 ratchet="$here/graded.tsv"
 clean_now=$(awk -F'\t' '$2=="clean"' "$verdicts" | wc -l | tr -d ' ')
