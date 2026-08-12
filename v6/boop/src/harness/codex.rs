@@ -26,7 +26,6 @@ impl Harness for Codex {
         Ok(Box::new(crate::channel::codex::CodexChannel::open(spec)?))
     }
 
-
     fn id(&self) -> &'static str {
         "codex"
     }

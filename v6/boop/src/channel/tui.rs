@@ -40,7 +40,11 @@ pub struct TuiChannel {
 }
 
 impl TuiChannel {
-    pub fn open(profile: TuiProfile, spec: &ChannelSpec, socket: Option<String>) -> Result<TuiChannel> {
+    pub fn open(
+        profile: TuiProfile,
+        spec: &ChannelSpec,
+        socket: Option<String>,
+    ) -> Result<TuiChannel> {
         let session = host_session(socket.as_deref())?;
         let cwd = spec.cwd.display().to_string();
         let target = crate::tmux::mux()
@@ -266,15 +270,25 @@ mod tests {
     #[test]
     fn both_profiles_run_auto_and_carry_the_model() {
         let opencode = opencode_profile(&spec(Some("openrouter/deepseek/deepseek-v4-flash-0731")));
-        assert!(opencode.command.starts_with("opencode --auto"), "{}", opencode.command);
         assert!(
-            opencode.command.contains("-m 'openrouter/deepseek/deepseek-v4-flash-0731'"),
+            opencode.command.starts_with("opencode --auto"),
+            "{}",
+            opencode.command
+        );
+        assert!(
+            opencode
+                .command
+                .contains("-m 'openrouter/deepseek/deepseek-v4-flash-0731'"),
             "{}",
             opencode.command
         );
         let kimi = kimi_profile(&spec(Some("kimi-code/k3")));
         assert!(kimi.command.starts_with("kimi --auto"), "{}", kimi.command);
-        assert!(kimi.command.contains("-m 'kimi-code/k3'"), "{}", kimi.command);
+        assert!(
+            kimi.command.contains("-m 'kimi-code/k3'"),
+            "{}",
+            kimi.command
+        );
     }
 
     #[test]

@@ -90,8 +90,8 @@ impl LaneChannel for KimiChannel {
         let Some(turn) = self.turn.as_mut() else {
             return Ok(Some(TurnEnd::failed("no kimi turn to join")));
         };
-        let Some(status) = crate::channel::opencode::wait_for(turn, timeout)
-            .context("wait kimi turn")?
+        let Some(status) =
+            crate::channel::opencode::wait_for(turn, timeout).context("wait kimi turn")?
         else {
             return Ok(None);
         };

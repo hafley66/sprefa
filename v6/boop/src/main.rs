@@ -4,6 +4,7 @@
 //! harness id and no direct `Command::new("tmux")` beyond the layer-1 helpers.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -30,7 +31,7 @@ WARMUP: after the worktree exists and before the agent starts, lane create runs
 SPAWN: every lane spawn goes through lane create; bare tmux spawns leave no
 edge and stay invisible to tracking:
     boop beep lane create --branch feature/<name> --brief <abs-path> \\
-      [--goal <text>] [--model <m>] [--wait] [--mail-dir <d>] [--dry-run]
+      [--goal <text>] [--model <m>] [--await] [--timeout <s>] [--mail-dir <d>] [--dry-run]
   ONE derivation, from the whole branch name: `feature/schema-emit` gives lane
   id and tmux session `feature-schema-emit` (`/` spelled `-`, the one character
   tmux cannot hold) and worktree `.boop-worktrees/feature/schema-emit` (the same
@@ -47,8 +48,8 @@ edge and stay invisible to tracking:
 
 COMPLETION: --parent appends an on-exit hail `lane <id> done rc=$rc` into the
   parent's mailbox. A lane spawned with --parent reports completion; do not poll.
-  `--wait` blocks on that row and exits with the lane's rc, so spawn-and-join is
-  one command; `--wait-timeout <s>` (default 3600, 0 waits forever) exits 124.
+  `--await` blocks on that row and exits with the lane's rc, so spawn-and-join
+  is one command; `--timeout <s>` (default 0, waits forever) exits 124.
   The same wait after the fact is `boop beep lane wait <lane>`.
 
 LIVENESS: a lane can die silently, producing nothing. Liveness is TWO checks:
@@ -579,8 +580,8 @@ fn main() -> Result<()> {
                 no_start: false,
                 mail_dir,
                 dry_run,
-                wait: false,
-                wait_timeout: 0,
+                await_result: false,
+                timeout: 0,
             },
         ),
         SubCmd::Adopt {
@@ -1220,6 +1221,9 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         args.to,
         session.tmux.as_deref().unwrap_or("-")
     );
+    std::io::stdout()
+        .flush()
+        .context("flush dispatched lane route")?;
     std::thread::sleep(std::time::Duration::from_secs(args.resolve_wait));
     Ok(())
 }
@@ -1394,7 +1398,10 @@ fn run_hail(
     // A lane pane runs the supervisor, which reads this mailbox directly;
     // typing at its stdout would reach no agent.
     if route.kind == "lane" {
-        println!("queued {} -> {to} (lane supervisor delivers it)", message.id);
+        println!(
+            "queued {} -> {to} (lane supervisor delivers it)",
+            message.id
+        );
         return Ok(());
     }
     let pane = route.tmux.as_deref();
@@ -1669,8 +1676,8 @@ struct LaneArgs {
     no_start: bool,
     mail_dir: Option<PathBuf>,
     dry_run: bool,
-    wait: bool,
-    wait_timeout: u64,
+    await_result: bool,
+    timeout: u64,
 }
 
 /// Register and spawn a lane. No match on harness id here; the adapter's own
@@ -1793,17 +1800,17 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
         if let Some(goal) = &args.goal {
             println!("goal: {goal}");
         }
-        if args.wait {
+        if args.await_result {
             println!(
-                "wait: for {} result, timeout {}s",
-                identity.lane, args.wait_timeout
+                "await: for {} result, timeout {}s",
+                identity.lane, args.timeout
             );
         }
         return Ok(());
     }
-    if args.wait && parent.parent.is_none() {
+    if args.await_result && parent.parent.is_none() {
         anyhow::bail!(
-            "--wait needs a parent: the result row it blocks on is written by the on-exit hail, which only exists with --parent <lane>"
+            "--await needs a parent: the result row it blocks on is written by the on-exit hail, which only exists with --parent <lane>"
         );
     }
     let lane_id = identity.lane.clone();
@@ -1852,9 +1859,10 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             warm_start: !args.no_start,
         },
     )?;
-    if args.wait {
+    if args.await_result {
         // Same code path as `beep lane wait`, which exits with the lane's rc.
-        return run_lane_wait(Some(&hail_mail_dir), &lane_id, args.wait_timeout);
+        std::io::stdout().flush().context("flush lane route")?;
+        return run_lane_wait(Some(&hail_mail_dir), &lane_id, args.timeout);
     }
     Ok(())
 }
@@ -2394,7 +2402,7 @@ mod tests {
     }
 
     /// RECEIPT. A lane that fails hands its rc back through the same row, and
-    /// an absent row is the 124 timeout `--wait-timeout` exits on.
+    /// an absent row is the 124 timeout `--timeout` exits on.
     #[test]
     fn wait_propagates_a_failing_rc_and_times_out_otherwise() {
         let dir = temp_mail_dir();
@@ -2818,13 +2826,13 @@ enum LaneCmd {
         /// Resolve a named provider/model entry from the platform Boop config.
         #[arg(long, conflicts_with = "model")]
         preset: Option<String>,
-        /// Block until the lane's on-exit result row lands, then exit with its
-        /// rc. Needs a parent, since that hail is what writes the row.
-        #[arg(long)]
-        wait: bool,
-        /// Seconds `--wait` blocks before exiting 124; 0 waits forever.
-        #[arg(long, default_value_t = 3600)]
-        wait_timeout: u64,
+        /// Spawn, then wait for the lane's result row and exit with its rc.
+        /// Needs a parent, since that hail writes the row.
+        #[arg(long = "await")]
+        await_result: bool,
+        /// Seconds `--await` waits before exiting 124; 0 waits forever.
+        #[arg(long, default_value_t = 0, requires = "await_result")]
+        timeout: u64,
         /// Overrides the lane id derived from `--branch`.
         #[arg(long)]
         lane: Option<String>,
@@ -3380,8 +3388,8 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             no_start,
             mail_dir,
             dry_run,
-            wait,
-            wait_timeout,
+            await_result,
+            timeout,
         } => run_lane(
             registry,
             LaneArgs {
@@ -3401,8 +3409,8 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 no_start,
                 mail_dir,
                 dry_run,
-                wait,
-                wait_timeout,
+                await_result,
+                timeout,
             },
         ),
         LaneCmd::Run {

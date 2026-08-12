@@ -110,5 +110,4 @@ mod tests {
         assert!(TurnEnd::ok("done").ok);
         assert!(!TurnEnd::failed("boom").ok);
     }
-
 }

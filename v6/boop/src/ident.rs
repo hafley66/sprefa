@@ -170,8 +170,8 @@ impl Store {
                 )?;
             }
             if store.schema_version()? < 8 {
-            store.connection.execute_batch(
-                "CREATE TABLE agent_pr_new (
+                store.connection.execute_batch(
+                    "CREATE TABLE agent_pr_new (
                    session_id INTEGER NOT NULL,
                    turn INTEGER NOT NULL,
                    pr_url_id INTEGER NOT NULL,
@@ -182,7 +182,7 @@ impl Store {
                  DROP TABLE agent_pr;
                  ALTER TABLE agent_pr_new RENAME TO agent_pr;
                  PRAGMA user_version = 8;",
-            )?;
+                )?;
             }
             if store.schema_version()? < 9 {
                 store.backfill_traces()?;
@@ -1850,14 +1850,23 @@ mod tests {
     #[test]
     fn one_trace_holds_every_session_id_a_lane_wears() {
         let (path, store) = fresh_store("trace");
-        store.attach_trace("lane-a", "trace-lane-a", "lane-create", 10).unwrap();
-        store.attach_trace("ses-1", "trace-lane-a", "supervisor-conversation", 11).unwrap();
-        store.attach_trace("ses-2", "trace-lane-a", "supervisor-conversation", 12).unwrap();
+        store
+            .attach_trace("lane-a", "trace-lane-a", "lane-create", 10)
+            .unwrap();
+        store
+            .attach_trace("ses-1", "trace-lane-a", "supervisor-conversation", 11)
+            .unwrap();
+        store
+            .attach_trace("ses-2", "trace-lane-a", "supervisor-conversation", 12)
+            .unwrap();
         assert_eq!(
             store.trace_sessions("trace-lane-a").unwrap(),
             vec!["lane-a".to_owned(), "ses-1".to_owned(), "ses-2".to_owned()]
         );
-        assert_eq!(store.trace_of("ses-2").unwrap().as_deref(), Some("trace-lane-a"));
+        assert_eq!(
+            store.trace_of("ses-2").unwrap().as_deref(),
+            Some("trace-lane-a")
+        );
         drop(store);
         let _ = std::fs::remove_file(&path);
     }
@@ -1867,9 +1876,16 @@ mod tests {
     #[test]
     fn a_session_never_moves_to_a_second_trace() {
         let (path, store) = fresh_store("trace2");
-        store.attach_trace("ses-1", "trace-one", "lane-create", 10).unwrap();
-        store.attach_trace("ses-1", "trace-two", "lane-create", 11).unwrap();
-        assert_eq!(store.trace_of("ses-1").unwrap().as_deref(), Some("trace-one"));
+        store
+            .attach_trace("ses-1", "trace-one", "lane-create", 10)
+            .unwrap();
+        store
+            .attach_trace("ses-1", "trace-two", "lane-create", 11)
+            .unwrap();
+        assert_eq!(
+            store.trace_of("ses-1").unwrap().as_deref(),
+            Some("trace-one")
+        );
         assert!(store.trace_sessions("trace-two").unwrap().is_empty());
         drop(store);
         let _ = std::fs::remove_file(&path);
@@ -1934,8 +1950,14 @@ mod tests {
         store.session_id("loner").unwrap();
         store.backfill_traces().unwrap();
         let root_trace = store.trace_of("root").unwrap().unwrap();
-        assert_eq!(store.trace_of("kid-a").unwrap().as_deref(), Some(root_trace.as_str()));
-        assert_eq!(store.trace_of("kid-b").unwrap().as_deref(), Some(root_trace.as_str()));
+        assert_eq!(
+            store.trace_of("kid-a").unwrap().as_deref(),
+            Some(root_trace.as_str())
+        );
+        assert_eq!(
+            store.trace_of("kid-b").unwrap().as_deref(),
+            Some(root_trace.as_str())
+        );
         assert_ne!(store.trace_of("kid-c").unwrap().unwrap(), root_trace);
         assert_eq!(store.trace_of("loner").unwrap(), None);
         drop(store);

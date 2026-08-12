@@ -28,7 +28,6 @@ impl Harness for Kimi {
         )?))
     }
 
-
     fn id(&self) -> &'static str {
         "kimi"
     }

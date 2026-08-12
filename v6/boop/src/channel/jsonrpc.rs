@@ -89,7 +89,9 @@ impl RpcChild {
         self.write_frame(&frame)
             .with_context(|| format!("write rpc {method}"))?;
         let (lock, condvar) = &*self.replies;
-        let mut map = lock.lock().map_err(|_| anyhow::anyhow!("rpc lock poisoned"))?;
+        let mut map = lock
+            .lock()
+            .map_err(|_| anyhow::anyhow!("rpc lock poisoned"))?;
         let deadline = std::time::Instant::now() + timeout;
         while !map.contains_key(&id) {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -183,7 +185,8 @@ mod tests {
 
     #[test]
     fn a_notification_reaches_the_queue() {
-        let script = r#"printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"n":7}}\n'; sleep 5"#;
+        let script =
+            r#"printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"n":7}}\n'; sleep 5"#;
         let child = std::process::Command::new("sh")
             .args(["-c", script])
             .stdin(std::process::Stdio::piped())

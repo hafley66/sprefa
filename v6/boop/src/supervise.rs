@@ -131,7 +131,12 @@ fn remember_conversation(lane: &LaneRun, channel: &dyn LaneChannel) {
         .flatten()
         .unwrap_or_else(|| format!("trace-{}", lane.lane));
     let _ = store.attach_trace(&lane.lane, &trace, "lane-run", crate::channel::now_ms());
-    let _ = store.attach_trace(&id, &trace, "supervisor-conversation", crate::channel::now_ms());
+    let _ = store.attach_trace(
+        &id,
+        &trace,
+        "supervisor-conversation",
+        crate::channel::now_ms(),
+    );
 }
 
 /// Write the harness's own conversation id onto the lane's registry route so a
@@ -166,7 +171,11 @@ pub fn ack(dir: &Path, hail: &Hail) {
     row.to_timestamp = Some(bus::now_iso());
     let line = bus::message_line(&row);
     let path = dir.join("bus.ndjson");
-    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
         return;
     };
     use std::io::Write;
@@ -251,7 +260,10 @@ mod tests {
             from: "coordinator".into(),
             body: "stop and write /tmp/x".into(),
         });
-        assert_eq!(text, "[boop hail m1 from coordinator] stop and write /tmp/x");
+        assert_eq!(
+            text,
+            "[boop hail m1 from coordinator] stop and write /tmp/x"
+        );
     }
 
     #[test]

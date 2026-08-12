@@ -180,7 +180,10 @@ mod tests {
             split_effort(Some("vendor@custom")),
             (Some("vendor@custom"), None)
         );
-        assert_eq!(split_effort(Some("gpt-5.6-sol")), (Some("gpt-5.6-sol"), None));
+        assert_eq!(
+            split_effort(Some("gpt-5.6-sol")),
+            (Some("gpt-5.6-sol"), None)
+        );
         assert_eq!(split_effort(None), (None, None));
         assert_eq!(split_effort(Some("")), (None, None));
     }

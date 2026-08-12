@@ -23,7 +23,6 @@ impl Harness for Claude {
         Ok(Box::new(crate::channel::claude::ClaudeChannel::open(spec)?))
     }
 
-
     fn id(&self) -> &'static str {
         "claude"
     }

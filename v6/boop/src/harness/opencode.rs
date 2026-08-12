@@ -26,7 +26,6 @@ impl Harness for Opencode {
         )?))
     }
 
-
     fn id(&self) -> &'static str {
         "opencode"
     }
