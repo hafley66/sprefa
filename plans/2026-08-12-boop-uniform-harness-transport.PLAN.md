@@ -789,8 +789,13 @@ Two spawns, two `agent_lane` rows, ONE `markdown_cache` row.
 
 ```
 $ cd /Users/chrishafley/projects/sprefa/v6/boop && cargo test --lib
-test result: FAILED. 145 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out
+test result: FAILED. 144 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out
 ```
+
+Run three times per the repo's measure-thrice rule: 144/2, 144/2, 144/2, the
+same two names every time. An earlier run counted 145 because two `query` tests
+only execute when the live store holds a matching session, so the passing count
+tracks store contents.
 
 The 2 failures are **pre-existing on the base commit**, verified by stashing
 this whole branch:
