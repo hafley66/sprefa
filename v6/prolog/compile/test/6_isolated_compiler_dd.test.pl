@@ -1,6 +1,6 @@
-:- begin_tests(emit_dd_plan).
+:- begin_tests(isolated_compiler_dd).
 
-:- use_module('../6_emit_dd_plan', [dd_plan_text/2, fixture_dd_plan_text/3, fixture_dd_plan_json_text/3]).
+:- use_module('../6_isolated_compiler_dd', [dd_plan_text/2, fixture_dd_plan_text/3, fixture_dd_plan_json_text/3]).
 :- use_module('../../compile', [program_plan/2, read_fixture_term/4, compile_dl6/3]).
 :- use_module('../../analyze', [body_ref_uses/2]).
 :- use_module('../../lower', [lower_program/2]).
@@ -232,8 +232,8 @@ test(description_join_keys_cover_body_argument_equalities) :-
 
 test(edge_rule_operator_serializes_with_classification) :-
     test_dir_fact(Here),
-    atomic_list_concat([Here, '/dd/emit_dd_plan_unsupported_fixture.pl'], Fixture),
-    fixture_dd_plan_json_text(Fixture, emit_dd_plan_edge_rule, Text),
+    atomic_list_concat([Here, '/dd/isolated_compiler_dd_unsupported_fixture.pl'], Fixture),
+    fixture_dd_plan_json_text(Fixture, isolated_compiler_dd_edge_rule, Text),
     json_text_dict(Text, Dict),
     get_dict(operators, Dict, Operators),
     member(Op, Operators),
@@ -244,7 +244,7 @@ test(edge_rule_operator_serializes_with_classification) :-
     get_dict(rules, Dict, Rules),
     Rules == [].
 
-% The seam entry, emit_program/5, carries Initial and Schedule from the text
+% The seam entry, compile_program/5, carries Initial and Schedule from the text
 % door's out-of-band context into the JSON, since the seam's five arguments do
 % not include them. Exercised through the real text door (compile_dl6/3 with
 % the emitter + schedule options), so the seed facts a .dl6 surfaces and the
@@ -259,7 +259,7 @@ test(text_door_dd_emit_seeds_initial_and_schedule) :-
     write_string_file(Sched,
         "[[{\"rel\":\"probe_in\",\"sign\":\"add\",\"row\":[\"b\"]}]]"),
     compile_dl6(Dl6, Out,
-                [emitter(emit_dd_plan:emit_program), schedule(Sched)]),
+                [emitter(isolated_compiler_dd:compile_program), schedule(Sched)]),
     setup_call_cleanup(true,
         ( read_file_to_string(Out, Text, []),
           json_text_dict(Text, Dict),
@@ -363,4 +363,4 @@ operator_has_wire(Id, Wires) :- memberchk(wire(_, Id, _), Wires).
 payload_statement(edgestmt(_, _, _, _, _, _, _, _, _)).
 payload_statement(levelstmt(_, _, _, _, _, _, _)).
 
-:- end_tests(emit_dd_plan).
+:- end_tests(isolated_compiler_dd).

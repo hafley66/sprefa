@@ -42,8 +42,8 @@ RUNNER="$ROOT/v6/dd-runner/target/release/dd-runner"
 # routed into a log so the compile cannot corrupt the tick log on stdout.
 compile_start=$(node -e 'process.stdout.write(String(Date.now()))')
 swipl -q -l "$ROOT/v6/prolog/compile.pl" \
-         -l "$ROOT/v6/prolog/compile/6_emit_dd_plan.pl" \
-      -g "compile_dl6('$PROGRAM','$PLAN',[emitter(emit_dd_plan:emit_program),schedule('$SCHEDULE')])" \
+         -l "$ROOT/v6/prolog/compile/6_isolated_compiler_dd.pl" \
+      -g "compile_dl6('$PROGRAM','$PLAN',[emitter(isolated_compiler_dd:compile_program),schedule('$SCHEDULE')])" \
       -g halt > "$COMPILE_LOG" 2>&1
 compile_status=$?
 compile_end=$(node -e 'process.stdout.write(String(Date.now()))')

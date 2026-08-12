@@ -1,17 +1,17 @@
 % Emit a deterministic target-neutral DD plan term.
-:- module(emit_dd_plan,
-          [ emit_program/5,
-            emit_dd_plan/2,
+:- module(isolated_compiler_dd,
+          [ compile_program/5,
+            write_dd_plan/2,
             dd_plan_text/2,
             fixture_dd_plan_text/3,
             fixture_dd_plan_json_text/3,
-            emit_fixture_dd_plan_json/3
+            write_fixture_dd_plan_json/3
           ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
 
-:- use_module('../compile', [read_fixture_term/4, program_plan/2, dd_emit_context/2]).
+:- use_module('../compile', [read_fixture_term/4, program_plan/2, dd_compile_context/2]).
 :- use_module('../analyze', [body_ref_uses/2, rule_head_ref/2,
                               rule_is_aggregate/1,
                               aggregate_head_template/2]).
@@ -25,7 +25,7 @@ fixture_dd_plan_text(FixtureFile, Name, Text) :-
            program_plan(Term-Bindings, Plan),
            dd_plan_text(Plan, Text) )).
 
-emit_fixture_dd_plan_json(FixtureFile, Name, Path) :-
+write_fixture_dd_plan_json(FixtureFile, Name, Path) :-
     fixture_dd_plan_json_text(FixtureFile, Name, Text),
     setup_call_cleanup(open(Path, write, Stream),
                        format(Stream, '~s', [Text]),
@@ -41,20 +41,20 @@ fixture_dd_plan_json_text(FixtureFile, Name, Text) :-
            with_output_to(string(Text),
                           ( json_write_dict(current_output, Dict, [width(0)]), nl )) )).
 
-emit_dd_plan(Plan, Path) :-
+write_dd_plan(Plan, Path) :-
     dd_plan_text(Plan, Text),
     setup_call_cleanup(open(Path, write, Stream),
                        format(Stream, '~s', [Text]),
                        close(Stream)).
 
-% The seam entry: emit_program/5, the same shape emit_ts:emit_program uses, so
+% The seam entry: compile_program/5, the same shape emit_ts:emit_program uses, so
 % the text door routes to this module with no call-site special case.
 % BootStatements is emit_ts's boot shape; the dd plan embeds its own initial
 % rows, so that argument is taken and ignored. Initial and Schedule are not
 % among the seam's five arguments, so compile.pl hands them over out of band
-% through dd_emit_context/2; when the door passes none they stay empty.
-emit_program(_Name, Plan, Lowered, _BootStatements, Text) :-
-    (   dd_emit_context(Initial, Schedule)
+% through dd_compile_context/2; when the door passes none they stay empty.
+compile_program(_Name, Plan, Lowered, _BootStatements, Text) :-
+    (   dd_compile_context(Initial, Schedule)
     ->  true
     ;   Initial = [], Schedule = []
     ),

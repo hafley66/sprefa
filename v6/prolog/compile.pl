@@ -23,15 +23,15 @@
             program_plan/2,
             program_plan/3,
             compiler_owned_contract/1,
-            dd_emit_context/2
+            dd_compile_context/2
           ]).
 
 % Out-of-band channel for the emitter seam. compile_program_phases/8 carries
 % Initial as an argument and Schedule inside the fixture term, but the seam
 % call emits _5 (Name, Plan, Lowered, BootStatements, Text); an emitter that
-% also needs Initial and Schedule (emit_dd_plan:emit_program) reads them from
+% also needs Initial and Schedule (isolated_compiler_dd:compile_program) reads them from
 % this thread-local, set immediately before the seam call and cleared after.
-:- thread_local dd_emit_context/2.
+:- thread_local dd_compile_context/2.
 
 % Without this, open/3 inherits the ambient locale: under LC_ALL=C the default
 % is `text` (ASCII) and any non-ASCII fixture throws on write.
@@ -514,8 +514,8 @@ write_compiled_output(OutFile, Text) :-
 % asserted around the seam call and retracted once it returns. emit_ts never
 % reads the context, so the statement does not move its output.
 with_emit_context(Initial, fixture(_, _, _, Schedule, _), Goal) :-
-    assertz(dd_emit_context(Initial, Schedule)),
-    setup_call_cleanup(true, Goal, retractall(dd_emit_context(_, _))).
+    assertz(dd_compile_context(Initial, Schedule)),
+    setup_call_cleanup(true, Goal, retractall(dd_compile_context(_, _))).
 
 run_compile_phase(_Phase, Goal, Measurement) :-
     measure_phase(Goal, Measurement, Outcome),
