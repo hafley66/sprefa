@@ -1,34 +1,42 @@
 # CI known-red allowlist
 
-Measured 2026-08-11 on base `91c5ea6e` via `just green-all` in a fresh
-worktree. The merge gate (`v6/justfile` green-all) is red on this base. The
-CI job runs the gate and uploads the raw log as an artifact; the job's own
-pass/fail is decided by the `allow:` lines below, so only a leg that fails
-and is NOT listed here turns the job red.
+Measured 2026-08-12 on base `154ae23c` in a fresh worktree, each leg run 3
+times one at a time on a quiet machine (all boop lanes <=0.2% cpu during the
+timing-sensitive legs). The merge gate (`v6/justfile` green-all) is red on this
+base. The CI job runs the gate and uploads the raw log as an artifact; the
+job's own pass/fail is decided by the `allow:` lines below, so only a leg that
+fails and is NOT listed here turns the job red.
 
-Each red leg is listed with its exact failure text. Do not edit this list as
-a way to make CI green; edit it only when the underlying defect is fixed and
-the leg measured green.
+Each red leg is listed with the exact failure text seen this measurement. Do
+not edit this list as a way to make CI green; edit it only when the underlying
+defect is fixed and the leg measured green.
 
 ## Red legs
 
-| leg | exact failure text |
-|---|---|
-| plunit | `catalog_plane_rail:level_plane_family_corpus_counts`, `plunit_tests.pl:1312`, 1 of 598 |
-| rtkq-golden | `missing release extractor: v6/sprefa-extract/target/release/extract` |
-| compile-speed | `COMPILE_SPEED regressions=16 improvements=0 FAIL`, baseline written 2026-08-07 |
-| tsv2-test | `hostDecode.test.ts:144` expected `[0,1,2,3]` actual `[1,2,2,3]` |
-| flagship | `FAIL  no release extractor. A gate does not build; run: cd v6/sprefa-extract && cargo build --release --features cli --bin extract` |
-| extraction-live | `FAIL  no release extractor. A gate does not build; run: cd v6/sprefa-extract && cargo build --release --features cli --bin extract` |
-| lsp-diags | `FAIL  no release extractor. A gate does not build; run: cd v6/sprefa-extract && cargo build --release --features cli --bin extract` |
-| golden-flex | `GOLDEN_COVERAGE FAIL: json_object/2 is excused as 'registry status refused' but its registry status is now live -- the excuse is stale` |
-| getting-started | `Warning: Clauses of parse_dl_dcg:lex_token/2 are not together in the source-file`, `parse_dl_dcg.pl:737`, earlier definition at `:372` |
-| scale-floor | `stmts/tick set @10000 [37,41] [39,43] FAIL` (load/timing sensitive) |
-| memory-soak | `FAIL  sqlite_page_count_flat: second-quarter mean 24.8, final-quarter mean 49.5, ceiling 27.2` |
+| leg | exact failure text | throw site |
+|---|---|---|
+| roundtrip | `G1 round-trip: 391 / 392 fixtures pass` then `FAIL mutual_recursion_matches_oracle (.../fixtures/engine_core.pl): fail(not_variant)` | `v6/prolog/compile/scripts/roundtrip.sh:132` |
+| getting-started | `FAIL block 24: output does not match the doc`; engine emits `rule-index unavailable: unsupported_construct...`, doc block 24 still prints the old `broken.dl6:4: unsupported_construct...` message; 1 of 24 blocks disagree | `v6/tsv2/scripts/getting-started.sh:224` |
+| flagship | `the corpus MOVED since the v5 golden was captured (golden b8d03946..., now 8e3874d5...)`; Regenerate from v6/tsv2 with `FLAGSHIP_V5_WRITE=1 bash scripts/flagship-callgraph.sh` | `v6/tsv2/scripts/flagship-callgraph.sh:287` |
+| golden-flex | `GOLDEN_COVERAGE FAIL: json_object/2 is excused as 'registry status refused' but its registry status is now live -- the excuse is stale`; `GOLDEN_COVERAGE FAIL: json_patch/2 (expression) is a registry construct the golden does not exercise`; `GOLDEN_COVERAGE 69 registry constructs, 2 unaccounted for` | `v6/prolog/compile/scripts/golden_coverage.pl:174,178` |
+| tsv2-test | `hostDecode.test.ts:144`: decoded row count per demand `[2,1,2,3]`; actual `[1,2,2,3]` expected `[0,1,2,3]` (needs `gen_emitted/` present, produced by `just sweep`) | `v6/tsv2/tests/hostDecode.test.ts:144` |
+| rtkq-golden | `ERR_ASSERTION` `deepStrictEqual` at `labs/1_rtkq-extraction-golden.ts:200`: `api_endpoint` rows emit `updateUser`-before-`listUsers`, order-sensitive golden expects `listUsers`-first (spans identical, not a corpus move) | `v6/tsv2/labs/1_rtkq-extraction-golden.ts:200` |
+| plunit | `6 tests failed` (of 621): `catalog_plane_rail:level_plane_family_corpus_counts`, `expression_inventory:inventory_is_exactly_the_expected_rows`, `rel_zero_arity:a_root_rel_zero_still_has_no_storage`, `json_merge_patch:json_patch_lowers_with_the_null_stand_in_guard`, `json_merge_patch:merge_patch_stops_on_the_json_null_stand_in` (no_exception), `json_merge_patch:merge_patch_stops_on_a_nested_json_null_stand_in` (no_exception) | `v6/prolog/compile/test/plunit_tests.pl:1314,4561,5809,7684,7739,7743` |
+| compile-speed | `COMPILE_SPEED regressions=16 improvements=0 FAIL` (baseline written 2026-08-07; golden-flex lower +178%, emit +120%) | `v6/prolog/compile/scripts/1_compile_speed.sh:248` |
+| scale-floor | `stmts/tick set @10000 [37,41] [39,43] FAIL`; the set is flat `[39,43]` at both 10k and 1k (delta-proportionality holds) but the expected pin `[37,41]` is stale by a constant +2 | `v6/tsv2/scripts/7_scale-floor.sh:240` |
+| memory-soak | `FAIL sqlite_page_count_flat: second-quarter mean 24.8, final-quarter mean 49.5, ceiling 27.2` | `v6/tsv2/scripts/memory-soak.ts:327` |
+| lsp-diags | `phase B1: the real LSP client never received both diagnostics for b.ts: READY`; needs the v5 `dl` binary present, then fails B1 deterministically (driver.log stalls at READY) | `v6/tsv2/scripts/lsp-diags.sh:266` |
 
-`leak-soak` and `serve-leak-soak` failed in the raw base run only from stale
-`mktemp` literal files left in `$TMPDIR`; with a clean `$TMPDIR` both pass
-(verified 2026-08-11) and are deliberately NOT allowlisted.
+`leak-soak` passes 3/3 with a clean `$TMPDIR` per run and is not allowlisted;
+it leaves a literal `dl-perf.XXXXXX.jsonl` file (the `mktemp` template has text
+after `XXXXXX`, so the suffix is never substituted and a reused `$TMPDIR`
+collides on the next run with `mktemp: mkstemp failed ... File exists`).
+
+## Flaky
+
+| leg | result | sensitive to |
+|---|---|---|
+| serve-leak-soak | 2 pass / 1 fail (clean TMPDIR per run) | a transient `setImmediate` handle pending at the resource-count sampling instant; `names_with_growth(handles)` after 20 swap cycles races the event loop (`tests/serveLeak.test.ts:148`). Not the stale-TMPDIR class. Allowlisted so a flake does not silently red the gate. |
 
 ## Allowlist
 
@@ -37,9 +45,10 @@ allow: rtkq-golden
 allow: compile-speed
 allow: tsv2-test
 allow: flagship
-allow: extraction-live
 allow: lsp-diags
 allow: golden-flex
 allow: getting-started
 allow: scale-floor
 allow: memory-soak
+allow: roundtrip
+allow: serve-leak-soak
