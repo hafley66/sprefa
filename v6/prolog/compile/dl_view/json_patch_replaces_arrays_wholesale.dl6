@@ -1,0 +1,7 @@
+rel metric_sample(session: text, patch: json) log keep(all).
+rel metric_doc(session: text, snapshot: json) key(1).
+
+metric_doc(SessionId, Next) <+
+  metric_sample(SessionId, Patch),
+  pre(metric_doc(SessionId, Prior)),
+  Next := json_patch(Prior, Patch).

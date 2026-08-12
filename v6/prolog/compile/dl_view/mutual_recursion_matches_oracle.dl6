@@ -1,0 +1,3 @@
+even(Value) <- seed(Value).
+even(Value) <- odd(Value).
+odd(Value) <- even(Value).
