@@ -28,6 +28,10 @@ pub struct GenProgram {
     pub text_intern_plan: Option<crate::types::TextInternPlan>,
     pub struct_types: Vec<crate::types::StructTypePlan>,
     pub struct_ref_columns: HashMap<String, Vec<Option<String>>>,
+    pub ordered_program: bool,
+    pub ordered_arms: Vec<crate::types::OrderedEdgeArm>,
+    pub ordered_pre_refs: Vec<String>,
+    pub ordered_recursive_levels: bool,
     pub relations: Vec<IncrementalRelationPlan>,
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,
@@ -52,6 +56,10 @@ impl GenProgram {
             text_intern_plan: pj.text_intern_plan,
             struct_types: pj.struct_types,
             struct_ref_columns: pj.struct_ref_columns,
+            ordered_program: pj.ordered_program,
+            ordered_arms: pj.ordered_arms,
+            ordered_pre_refs: pj.ordered_pre_refs,
+            ordered_recursive_levels: pj.ordered_recursive_levels,
             relations: pj.relations,
             edges: pj.edges,
             levels: pj.levels,
@@ -71,6 +79,9 @@ impl GenProgram {
     }
 
     pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> TickDeltas {
+        if self.ordered_program {
+            return crate::ordered::run_tick(self, seam, arrivals);
+        }
         incremental::prepare_tick(seam, &self.relations);
         if self.uses_tick {
             incremental::advance_tick(seam);

@@ -550,6 +550,62 @@ pub fn stage_departures(
     }
 }
 
+pub fn stage_ordered_frontiers(
+    seam: &SqliteSeam,
+    relations: &[IncrementalRelationPlan],
+    additions: &[crate::types::RelDelta],
+) -> bool {
+    let mut events_by_rel: HashMap<&str, Vec<DeltaEvent>> = HashMap::new();
+    let mut sequence = 0;
+    for delta in additions {
+        for row in &delta.add {
+            events_by_rel
+                .entry(delta.rel.as_str())
+                .or_default()
+                .push(DeltaEvent {
+                    rel: delta.rel.clone(),
+                    sign: 1,
+                    sequence,
+                    row: row.clone(),
+                });
+            sequence += 1;
+        }
+    }
+    let mut statements = Vec::new();
+    let mut carry_pending = false;
+    for relation in relations {
+        statements.push(SqlStatement {
+            sql: format!(
+                "DELETE FROM {}",
+                quote_identifier(&relation.frontier_table_name)
+            ),
+            args: vec![],
+        });
+        statements.push(SqlStatement {
+            sql: format!(
+                "DELETE FROM {}",
+                quote_identifier(&relation.next_frontier_table_name)
+            ),
+            args: vec![],
+        });
+        let Some(events) = events_by_rel.get(relation.rel.as_str()) else {
+            continue;
+        };
+        carry_pending = true;
+        statements.push(frontier_stage_statement(
+            relation,
+            &relation.frontier_table_name,
+            0,
+            events,
+        ));
+    }
+    if !statements.is_empty() {
+        seam.batch(&statements)
+            .expect("ordered frontier staging failed");
+    }
+    carry_pending
+}
+
 // Port of promote_frontiers: read carry, promote next into current.
 pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) -> bool {
     if relations.is_empty() {

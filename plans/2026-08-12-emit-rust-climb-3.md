@@ -183,7 +183,7 @@ pub fn intern(
     types: &[StructTypePlan],
     ref_columns: &HashMap<String, Vec<Option<String>>>,
     arrivals: &[Arrival],
-    apply_targets: impl Fn(&[Arrival]),
+    relations: &[IncrementalRelationPlan],
     text_plan: Option<&TextInternPlan>,
 ) -> Vec<Arrival>
 ```
@@ -223,6 +223,59 @@ The inherited six-row grouping included
 dispatches to `run_ordered_tick` at
 `v6/prolog/compile/out/take_until_keyed_replace_negated_done.ts:788-790`.
 It remains among the 27 ordered-program diffs.
+
+## Ordered program result
+
+Ordered tick execution moved the grade from 253 to 280. All 27 diffs present
+after departure staging became byte-clean. The emitted program now carries
+ordered occurrence arms, trigger kinds, evolving `pre/1` targets, and the
+separate delete and insert statements needed for recursive level closure.
+
+### Type signatures
+
+The emitted ordered arm has the runtime shape:
+
+```rust
+pub struct OrderedEdgeArm {
+    pub trigger_rel: String,
+    pub trigger_kind: OrderedTriggerKind,
+    pub head_rel: String,
+    pub head_kind: RelationKind,
+    pub head_columns: Vec<String>,
+    pub key_indices: Vec<usize>,
+    pub project_sql: String,
+    pub write_sql: String,
+    pub evolves_pre: bool,
+    pub intern_sql: Option<Vec<String>>,
+}
+
+pub fn run_tick(
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    arrivals: &[Arrival],
+) -> TickDeltas
+```
+
+The ordered runtime reads carry, departure, authored, and level occurrences;
+then applies each occurrence against its matching arm list in sequence.
+
+### Instance timeline
+
+The stored and decoded before snapshots live for one tick. The mid snapshot is
+taken after authored arrivals, the `pre/1` snapshot, and the first level
+closure. Each occurrence observes writes from earlier occurrences in the same
+tick. The after snapshots are taken after the second level closure and
+retention.
+
+### Storage and ordering
+
+Occurrence writes update relation tables immediately. Heads read through
+`pre/1` also update the corresponding `__pre_*` table after each write. Exact
+rows are deduplicated per head relation and keyed-set conflicts are checked per
+head key. Ordered additions stage the next arrival frontier in occurrence
+order. Net boundary deletions stage the departure frontier. Self-referential
+level programs clear once and repeat their emitted insert statements until the
+combined level row count stops changing.
 
 ## Verification
 

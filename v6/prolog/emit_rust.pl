@@ -17,8 +17,8 @@
                        program_text_intern_plan/3,
                        struct_type_plans/3 ]).
 :- use_module('0_rel_record').
-:- use_module(analyze, [ body_ref_uses/2, listened_departure_refs/2,
-                         program_uses_tick/2 ]).
+:- use_module(analyze, [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
+                         listened_departure_refs/2, program_uses_tick/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -154,6 +154,62 @@ key_index(Columns, Col, Index) :- nth0(Index, Columns, Col).
 edges_list(RelPlans, EdgeStatements, Dicts) :-
     maplist(edge_dict(RelPlans), EdgeStatements, Dicts).
 
+ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_arrival, _)).
+ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_departure, _)).
+
+ordered_program(EdgeStatements) :-
+    member(Statement, EdgeStatements),
+    ordered_edge_statement(Statement),
+    !.
+
+ordered_trigger_kind(ordered_departure, departure) :- !.
+ordered_trigger_kind(departure, departure) :- !.
+ordered_trigger_kind(_, arrival).
+
+plan_pre_refs(Rules, Refs) :-
+    findall(Ref,
+            ( member((_ <+ Body), Rules),
+              level_body_pre_ref(Body, Ref) ),
+            Refs0),
+    sort(Refs0, Refs).
+
+ordered_arm_dict(RelPlans, PreRefs,
+        edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql,
+                 WriteSql, _, EdgeTriggerKind,
+                 edgeinterns(ProjectInternSqls, _)), Dict) :-
+    ref_name(HeadRef, HeadName),
+    ref_name(TriggerRef, TriggerName),
+    relplan_shape(RelPlans, HeadRef, HeadKind, _, _, _),
+    ordered_trigger_kind(EdgeTriggerKind, TriggerKind),
+    head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
+    ( memberchk(HeadRef, PreRefs) -> EvolvesPre = true ; EvolvesPre = false ),
+    intern_field(ProjectInternSqls, InternField),
+    Dict = _{ trigger_rel: TriggerName, trigger_kind: TriggerKind,
+              head_rel: HeadName, head_kind: HeadKind,
+              head_columns: HeadColumns, key_indices: KeyIndices,
+              project_sql: ProjectSql, write_sql: WriteSql,
+              evolves_pre: EvolvesPre, intern_sql: InternField }.
+
+ordered_recursive_levels(Rules, Recursive) :-
+    ( member(Rule, Rules), Rule = (_ <- Body),
+      rule_head_ref(Rule, HeadRef),
+      body_ref_uses(Body, Uses),
+      memberchk(use(HeadRef, _, pos, _), Uses)
+    -> Recursive = true
+    ;  Recursive = false
+    ).
+
+ordered_fields(EdgeStatements, RelPlans, Rules, Ordered, Arms, PreNames,
+               RecursiveLevels) :-
+    ( ordered_program(EdgeStatements)
+    -> Ordered = true,
+       plan_pre_refs(Rules, PreRefs),
+       maplist(ordered_arm_dict(RelPlans, PreRefs), EdgeStatements, Arms),
+       maplist(ref_name, PreRefs, PreNames),
+       ordered_recursive_levels(Rules, RecursiveLevels)
+    ;  Ordered = false, Arms = [], PreNames = [], RecursiveLevels = false
+    ).
+
 level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
                                 RefCountSql, AggregateSql, DeltaInternSqls),
            Dict) :-
@@ -175,6 +231,8 @@ level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
               head_column_types: HeadTypes,
               insert_sql: InsertField,
               select_sql: SelectSql,
+              recompute_delete_sql: DeleteSql,
+              recompute_insert_sqls: InsertSqls,
               recompute_sql: RecomputeSql,
               support_sql: SupportField,
               support_intern_sql: SupportInternField,
@@ -324,6 +382,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     struct_type_plans(PlanDecls, LoweringTypes, StructPlans),
     maplist(struct_type_dict, StructPlans, StructTypes),
     struct_ref_columns_map(RelPlans, StructRefColumns),
+    ordered_fields(EdgeStatements, RelPlans, PlanRules,
+                   OrderedProgram, OrderedArms, OrderedPreRefs,
+                   OrderedRecursiveLevels),
 
     ProgramDict =
     _{ name: Name,
@@ -338,6 +399,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        text_intern_plan: TextInternField,
        struct_types: StructTypes,
        struct_ref_columns: StructRefColumns,
+       ordered_program: OrderedProgram,
+       ordered_arms: OrderedArms,
+       ordered_pre_refs: OrderedPreRefs,
+       ordered_recursive_levels: OrderedRecursiveLevels,
        relations: Relations,
        edges: Edges,
        levels: Levels,
