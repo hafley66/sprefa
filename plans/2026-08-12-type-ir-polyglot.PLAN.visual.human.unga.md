@@ -99,7 +99,42 @@ Before that path preserves current meaning, the schema emitter needs rows for pa
 
 ## Two jobs
 
-Population pricing arrives in deliverable 3.
+```text
+JOB A: TYPES FROM A .dl6 PROGRAM
+
+.dl6 -> parser -> type table + relation plan -> new emitter -> Rust types
+                         |
+                         +--------------------> existing schema output
+
+price:
+  1 emitter file                 about 250-450 lines
+  1 test/golden file             about 200-350 lines
+  focused fixtures               10-25
+  existing type migration        0 lines for first output
+
+first consumer:
+  Rust-SQLite generated program
+```
+
+```text
+JOB B: HANDWRITTEN LIBRARY TYPES
+
+current authority: split
+
+Rust extraction types             1,834 lines
+TSV2 runtime types                 1,069 lines
+DL TypeScript types                  630 lines
+store engine types                   546 lines
+lowering types                       170 lines
+                                    -----
+                                    4,249 lines
+
+chosen authority -> generator -> Rust output
+                              -> TypeScript output
+                              -> consumer migration
+```
+
+Job B also includes imports, constructors, narrowing, serialization behavior, tests, package order, and compatibility adapters. Those call sites have not been counted in this recon, so 4,249 is the declaration surface rather than the migration line count.
 
 ## Input choices
 

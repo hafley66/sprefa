@@ -104,7 +104,35 @@ No candidate implements `type-system-description(Language) -> parser + IR mappin
 
 ## Two populations
 
-Pricing pending in deliverable 3.
+Program-derived types deliver value first. Their authority and traversal input already exist in `Plan`, `Types`, `RelPlans`, and catalog rows (`v6/prolog/sweep.pl:103-121`). The Rust-SQLite emitter can consume generated row structs without first migrating library types.
+
+| Population | Authority today | Measured current surface | First useful output | Implementation price | Migration price | Forced later work |
+|---|---|---:|---|---|---|---|
+| Program-derived relation types | `.dl6` declarations, inferred relation plan, shared type table and lowered plan | Type plane 920 lines; JSON Schema emitter 176; OpenAPI emitter 103; these are compiler inputs/precedent rather than duplicated target types | Rust structs/enums for one compiled `.dl6`, beside `4_emit_jsonschema.pl` and `5_emit_openapi.pl` | 1 emitter file, about 250-450 Prolog lines; 1 test/golden file, about 200-350 lines; 10-25 focused fixtures. Add 50-120 lines if invoking a bought schema-to-Rust tool instead of rendering Rust in Prolog. | 0 existing handwritten type lines must move for the first output. The consuming Rust-SQLite lane changes its generated artifact boundary. | Reserved-word maps, stable naming, enum tag convention, null/absence ruling, i64 policy, and explicit generated representations for relational list flavors |
+| Handwritten library types | No single authority; Rust and TypeScript declarations are maintained in their respective packages | 4,249 lines across 5 measured files | One selected library model emitted compatibly into both Rust and TypeScript | IDL and generator integration: 2-4 config/schema entry files plus about 300-700 lines of adapters, annotations, or generator configuration. Authoritative schema size is proportional to the migrated declarations and is expected to replace, not add to, the 4,249 maintained lines. | Review and migrate 5 type files plus every import, constructor, narrowing site, serde/JSON boundary, and test snapshot that depends on their exact shapes. Budget as a separate multi-commit arc; line count cannot be priced from declaration files alone because call-site count has not been inventoried in this recon. | Generated-file ownership, package publishing/order, compatibility shims during migration, custom-code escape hatches, and one authority for serde tags/defaults and TS runtime validation |
+
+### Program-derived sequence
+
+| Step | Read | Write | Uniqueness condition |
+|---|---|---|---|
+| 1. Collect declarations | `Plan = plan(..., Types, RelPlans, ...)` and catalog rows, matching `sweep_one/5` at `v6/prolog/sweep.pl:103-121` | Ordered language-neutral declarations in memory | One declaration per fully qualified relation path; catalog row ids are lookup details, not emitted names |
+| 2. Classify constructors | `kind_schema/7` precedent and the unexpanded enum/list metadata | Target-neutral scalar, option, record, enum and collection cases | Every constructor must select one case; no default-to-JSON for target-language emission |
+| 3. Allocate names | Module path, local relation name, field/variant names | Target-safe type and member identifiers | Collision table includes case folding, reserved words and generated helper suffixes |
+| 4. Render or pass to generator | Classified declarations | One output module/file set | Deterministic topological order; named references resolve once |
+| 5. Verify | Golden fixture matrix | Snapshots and target compiler checks | Same IR produces byte-stable output and target compiler accepts it |
+
+### Handwritten-library sequence
+
+| Step | Read | Write | Uniqueness condition |
+|---|---|---|---|
+| 1. Inventory declarations and consumers | Five measured files plus imports and construction/narrowing sites | Migration manifest | Every exported type has one owner and every duplicate pair has an explicit correspondence |
+| 2. Select authority | External IDL, Rust, or expanded `.dl6` type plane, by human ruling | Canonical declarations | One authority per migrated type; generated outputs are never edited |
+| 3. Prove representation parity | Serde attributes, TS discriminants, optional fields, branded ids, recursive types | Golden JSON examples and compile fixtures | Each wire shape has one canonical encoding and decoding rule |
+| 4. Generate side by side | Canonical declarations | New Rust and TS artifacts | Generated names cannot collide with retained handwritten types |
+| 5. Migrate consumers in slices | Old and generated surfaces | Imports/call sites | One package boundary at a time; compatibility adapters have deletion receipts |
+| 6. Remove duplicates | Migration manifest | Reduced handwritten surfaces | Removal occurs only after reference count reaches zero and snapshots agree |
+
+The 4,249-line count is declaration-surface size, not migration size. A full price requires reference counts and serialization-boundary counts, which belong after the authority fork is ruled.
 
 ## Input side
 
@@ -126,6 +154,7 @@ No language-design fork is selected in this recon.
 | Owned paths only | `git status --short` | Run before every commit |
 | Constructor inventory | Parser, type plane, enum expansion, generic expansion receipts above | Complete |
 | External candidate facts | Linked primary documentation and project license files | Complete |
+| Population line counts | `wc -l` over the five named handwritten files | 4,249 |
 | Plan index | `dl examples/gen-plans-index.dl --check` | Run after final todo set |
 
 ## Staffing
