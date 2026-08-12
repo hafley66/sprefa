@@ -1,0 +1,10 @@
+# Lead 12 crossed with lead 5: an aggregate reading a RECURSIVE rel, then a
+# retraction that shrinks the closure.
+
+rel edge(from_node: text, to_node: text).
+rel reach(from_node: text, to_node: text).
+rel reach_count(from_node: text, total: int).
+
+reach(FromNode, ToNode) <- edge(FromNode, ToNode).
+reach(FromNode, ToNode) <- reach(FromNode, MidNode), edge(MidNode, ToNode).
+reach_count(FromNode, count(ToNode)) <- reach(FromNode, ToNode).

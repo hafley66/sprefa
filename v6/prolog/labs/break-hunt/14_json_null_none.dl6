@@ -1,0 +1,7 @@
+# Lead 8: JSON null arriving in a json column and read out through a brace
+# pattern.
+
+rel doc(doc_id: int, payload: json).
+rel doc_name(doc_id: int, name: text).
+
+doc_name(DocId, Name) <- doc(DocId, Payload), decode(Payload, {name: Name}).
