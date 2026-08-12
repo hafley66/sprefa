@@ -170,12 +170,15 @@ json_operator(OrderedRules, Arrangements, Operators,
     ref_name(HeadRef, Head),
     subtract(Refs, [HeadRef], Scoped),
     ref_name_list(Scoped, InputRefs),
-    reduce_arrangement_dict(Arrangements, Arrangement, GroupCols, ValueCols),
+    Semantics = semantics(Bindings, _, _),
+    reduce_arrangement_dict(Arrangements, Arrangement, ArrangementRef, GroupCols, ValueCols),
+    binding_alias(Bindings, ArrangementRef, GroupAlias),
+    qualify_columns(GroupAlias, GroupCols, GroupColumns),
     reduce_aggregate(Id, OrderedRules, AggregateKinds),
     op_semantics_json(Semantics, SemanticsJson),
     Dict = _{id:IdText, kind:reduce, head:Head, refs:InputRefs,
              arrangement:Arrangement,
-             aggregate:_{kind:AggregateKinds, group:GroupCols, value:ValueCols},
+             aggregate:_{kind:AggregateKinds, group:GroupColumns, value:ValueCols},
              classification:Classification,
              bindings:SemanticsJson.bindings,
              predicates:SemanticsJson.predicates,
@@ -269,8 +272,16 @@ arrangement_dict(Arrangements, ArrId,
     member(arr(ArrId, Ref, KeyColumns, ValueColumns, signed), Arrangements),
     ref_name(Ref, Name).
 
-reduce_arrangement_dict(Arrangements, ArrId, GroupCols, ValueCols) :-
-    member(arr(ArrId, _Ref, GroupCols, ValueCols, signed), Arrangements).
+reduce_arrangement_dict(Arrangements, ArrId, Ref, GroupCols, ValueCols) :-
+    member(arr(ArrId, Ref, GroupCols, ValueCols, signed), Arrangements).
+
+binding_alias([binding(Alias, Ref) | _], Ref, Alias) :- !.
+binding_alias([_ | Rest], Ref, Alias) :- binding_alias(Rest, Ref, Alias).
+
+qualify_columns(_, [], []).
+qualify_columns(Alias, [Column | Rest], [Text | More]) :-
+    col_text(Alias, Column, Text),
+    qualify_columns(Alias, Rest, More).
 
 reduce_aggregate(ReduceId, OrderedRules, Kinds) :-
     reduce_number(ReduceId, Number),
