@@ -85,17 +85,48 @@ message. The supervisor now does exactly that, by itself, in under a second.
 
 ## Which agent takes which
 
-| agent | interrupt mid-work? | why |
-|---|---|---|
-| claude | yes | it has a real input pipe that stays open while it works |
-| codex | yes | it has a background service mode with a "steer the current turn" command |
-| opencode | no | its runner does all the thinking inside one throwaway command with no way in |
-| kimi | no | same shape: the question is a command-line argument, and then the door shuts |
+All four take a message mid-work. It took two attempts to get there, and the
+first attempt was wrong in an instructive way.
 
-For the two that say no: we tried four different ways into opencode and all four
-were measured and failed. That is written down with the exact error messages, so
-nobody has to re-discover it. If opencode fixes its side, our side is about
-thirty lines.
+| agent | how the message gets in |
+|---|---|
+| claude | a real input pipe that stays open while it works |
+| codex | a background service mode with a "steer the current turn" command |
+| opencode | typed into its terminal window; plain Enter interrupts |
+| kimi | typed into its terminal window; Enter alone only queues, ctrl-s interrupts |
+
+### The wrong turn, and what fixed it
+
+Each of these tools has two personalities: a one-shot command that takes your
+question as a command-line argument and exits, and an interactive terminal app
+you sit in front of. The first attempt tried to find a back door into the
+one-shot version of opencode and kimi. There isn't one, and there was never
+going to be one: the question is an argument, the program answers it, the
+program exits.
+
+The interactive version is the one you can talk to, because talking to it is
+what it is for. Our lanes already run inside terminal windows, so "type into the
+window" was available the whole time.
+
+kimi even tells you the key. Type a message while it is working and it prints:
+
+```
+❯ STOP sleeping. Immediately run: echo ...
+  ↑ to edit · ctrl-s to steer immediately
+```
+
+So we send ctrl-s. Its own thinking then reads: "The user has interrupted with a
+new instruction."
+
+### Two things the terminal route forced us to solve
+
+| question | answer |
+|---|---|
+| a terminal app never exits, so how do we know a lane is done? | watch the window. Both apps animate a spinner while working and go still when they stop. We hash the window, ignore the bottom three lines of decoration, and call it done when the picture holds still for 20 seconds. |
+| some briefs are 8 KB. Can you type that into a text box? | yes. Measured: 7,599 characters landed in one hundredth of a second, all of it, and it did not submit early. Typing a newline and pressing Enter turn out to be different keys, which is exactly the behavior we needed. |
+
+The honest cost: for the two terminal-driven agents, "finished" means "stopped
+moving", not "succeeded". claude and codex still report a true pass or fail.
 
 ---
 
@@ -112,8 +143,8 @@ word is in the file, it heard us and obeyed.
 |---|---|---|---|---|
 | claude | yes | yes | mid-work | yes |
 | codex | yes | yes | mid-work | yes |
-| opencode | yes | yes | next turn | yes |
-| kimi | yes | yes | next turn | yes |
+| opencode | yes | yes | mid-work | yes |
+| kimi | yes | yes | mid-work | yes |
 
 And the proof is not a screenshot. The database records, for each message, that
 it was delivered and whether it landed mid-work or on the next turn.
@@ -188,13 +219,63 @@ rows, one stored copy.
 
 | thing | why not |
 |---|---|
-| interrupting opencode mid-work | its own runner has no door; four routes tried and measured |
-| interrupting kimi mid-work | same; there is a protocol mode that might work, unexplored |
+| a true pass/fail for the two terminal-driven agents | a terminal app never exits, so there is no exit code to read |
 | any new third-party library | checked twenty-odd candidates for process control, message queues, JSON-RPC clients, HTTP clients and hashing, and every one either did not fit the shape or cost more than it saved. Nothing new was added. |
 | watching the mailbox file instead of checking it 1.4 times a second | checking is currently too fast to measure; the swap is one function when it stops being |
 | catching up 1211 old sessions into traces | on purpose, see above |
 
-One loose thread worth naming: launching two lanes in the exact same instant
-once lost one of their entries in the routing file. Launching them one after
-another was clean every time. Not caused by this work, not fixed by it,
-written down.
+---
+
+## The other bug: lanes that worked and then lost the work
+
+Four lanes in one day wrote their entire deliverable and then failed to save it.
+
+```mermaid
+flowchart TD
+  A[lane does the work] --> B[lane runs git commit]
+  B --> C{a safety check runs first}
+  C -- needs 3 tools the<br/>fresh folder lacks --> D[check aborts]
+  D --> E[commit never happens]
+  E --> F[lane reports success and exits]
+  F --> G[work sits in a folder nobody looks at]
+```
+
+Every lane gets a brand new folder. The safety check that runs before each save
+needs a compiled program and two installed dependency trees, and a brand new
+folder has none of them. So the save fails, and nothing above it noticed.
+
+The fix is a warmup step that runs after the folder is made and before the agent
+starts. It does three things and it is fast the second time:
+
+| step | first ever run | every run after |
+|---|---|---|
+| build the compiled tool | 24 seconds | copied in 0.01 seconds |
+| install dependencies (twice) | under a second each | under a second each |
+| **whole warmup** | **27.6 seconds** | **1.5 seconds** |
+
+The trick for the 0.01 seconds: fingerprint the tool's source code, and if a
+copy built from that exact fingerprint is already sitting in a cache, copy it
+instead of rebuilding. The usual answer here would be a compiler cache, and one
+exists, but it would only get us from 24 seconds to maybe 8. Copying a finished
+program beats rebuilding it every time.
+
+Two decisions worth stating:
+
+- **If the warmup fails, the lane does not start.** Letting it start anyway
+  would recreate the exact bug: an agent that works hard and cannot save. One
+  clear error now beats four lost deliverables later. There is an escape switch
+  for the case where the failure is a network blip.
+- **A project without a warmup step is left alone.** No error, no warning. Not
+  every project needs one.
+
+Proven end to end: a lane in a brand new folder ran the warmup, did its work,
+and its commit is sitting at the top of the branch. A second brand new folder
+warmed up 18 times faster.
+
+---
+
+## Loose thread
+
+Launching two lanes in the exact same instant once lost one of their entries in
+the routing file. Launching them one after another was clean every time. Not
+caused by this work, not fixed by it, written down.
