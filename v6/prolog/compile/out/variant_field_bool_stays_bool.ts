@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('off'), ('on')`,
-  `CREATE TABLE "switch_off" ("id" INTEGER NOT NULL, "is_on" INTEGER NOT NULL CHECK ("is_on" IN (0,1)), PRIMARY KEY ("is_on")) WITHOUT ROWID`,
-  `CREATE TABLE "switch_on" ("id" INTEGER NOT NULL, "is_on" INTEGER NOT NULL CHECK ("is_on" IN (0,1)), PRIMARY KEY ("is_on")) WITHOUT ROWID`,
-  `CREATE TABLE "switch_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "switch_off" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "is_on" INTEGER NOT NULL CHECK ("is_on" IN (0,1)), UNIQUE ("is_on"))`,
+  `CREATE TABLE "switch_on" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "is_on" INTEGER NOT NULL CHECK ("is_on" IN (0,1)), UNIQUE ("is_on"))`,
+  `CREATE TABLE "switch_tag" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "tag"))`,
   `CREATE TEMP VIEW "__txt_switch_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "switch_tag" t`,
   `CREATE TEMP TABLE "__delta_switch_off" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "is_on" INTEGER NOT NULL CHECK ("is_on" IN (0,1)))`,
   `CREATE INDEX "__delta_switch_off_sign" ON "__delta_switch_off" ("_sign")`,

@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "fragment_line" ("fragment_name" INTEGER NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" INTEGER NOT NULL, PRIMARY KEY ("fragment_name", "line_ordinal", "line_text")) WITHOUT ROWID`,
+  `CREATE TABLE "fragment_line" ("__id" INTEGER PRIMARY KEY, "fragment_name" INTEGER NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" INTEGER NOT NULL, UNIQUE ("fragment_name", "line_ordinal", "line_text"))`,
   `CREATE TEMP VIEW "__txt_fragment_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."fragment_name") AS "fragment_name", t."line_ordinal" AS "line_ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."line_text") AS "line_text" FROM "fragment_line" t`,
-  `CREATE TABLE "fragment_text" ("fragment_name" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("fragment_name", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "fragment_text" ("__id" INTEGER PRIMARY KEY, "fragment_name" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("fragment_name", "col2"))`,
   `CREATE TEMP VIEW "__txt_fragment_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."fragment_name") AS "fragment_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."__refcount" AS "__refcount" FROM "fragment_text" t`,
   `CREATE TEMP TABLE "__delta_fragment_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "fragment_name" INTEGER NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_fragment_line_sign" ON "__delta_fragment_line" ("_sign")`,

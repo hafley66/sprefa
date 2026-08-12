@@ -171,7 +171,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP VIEW "__txt_from_poll" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "from_poll" t`,
   `CREATE TABLE "from_push" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_from_push" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "from_push" t`,
-  `CREATE TABLE "latest" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
+  `CREATE TABLE "latest" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("key"))`,
   `CREATE TEMP VIEW "__txt_latest" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "latest" t`,
   `CREATE TEMP TABLE "__delta_from_poll" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_from_poll_sign" ON "__delta_from_poll" ("_sign")`,

@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('blob'), ('none')`,
-  `CREATE TABLE "payload_blob" ("id" INTEGER NOT NULL, "data" TEXT NOT NULL CHECK (json_valid("data")), PRIMARY KEY ("data")) WITHOUT ROWID`,
-  `CREATE TABLE "payload_none" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "payload_tag" ("id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "payload_blob" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "data" TEXT NOT NULL CHECK (json_valid("data")), UNIQUE ("data"))`,
+  `CREATE TABLE "payload_none" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "payload_tag" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "tag"))`,
   `CREATE TEMP VIEW "__txt_payload_tag" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "payload_tag" t`,
   `CREATE TEMP TABLE "__delta_payload_blob" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "data" TEXT NOT NULL CHECK (json_valid("data")))`,
   `CREATE INDEX "__delta_payload_blob_sign" ON "__delta_payload_blob" ("_sign")`,

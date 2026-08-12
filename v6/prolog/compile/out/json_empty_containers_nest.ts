@@ -135,8 +135,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "echoed" ("body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("body")) WITHOUT ROWID`,
-  `CREATE TABLE "raw_doc" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TABLE "echoed" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("body"))`,
+  `CREATE TABLE "raw_doc" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
   `CREATE TEMP TABLE "__delta_echoed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_echoed_sign" ON "__delta_echoed" ("_sign")`,
   `CREATE INDEX "__delta_echoed_group" ON "__delta_echoed" ("body")`,

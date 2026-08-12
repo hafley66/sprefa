@@ -173,7 +173,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP VIEW "__txt_agent_turn" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id", t."tick" AS "tick" FROM "agent_turn" t`,
   `CREATE TABLE "change_event" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_change_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", t."tick" AS "tick" FROM "change_event" t`,
-  `CREATE TABLE "changed_since" ("turn_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("turn_id", "path")) WITHOUT ROWID`,
+  `CREATE TABLE "changed_since" ("__id" INTEGER PRIMARY KEY, "turn_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("turn_id", "path"))`,
   `CREATE TEMP VIEW "__txt_changed_since" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."__refcount" AS "__refcount" FROM "changed_since" t`,
   `CREATE TABLE "turn_marker" ("turn_id" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_turn_marker" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."turn_id") AS "turn_id" FROM "turn_marker" t`,

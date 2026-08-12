@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "matched" ("text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("text")) WITHOUT ROWID`,
+  `CREATE TABLE "matched" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("text"))`,
   `CREATE TEMP VIEW "__txt_matched" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", t."__refcount" AS "__refcount" FROM "matched" t`,
-  `CREATE TABLE "source" ("text" INTEGER NOT NULL, PRIMARY KEY ("text")) WITHOUT ROWID`,
+  `CREATE TABLE "source" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, UNIQUE ("text"))`,
   `CREATE TEMP VIEW "__txt_source" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text" FROM "source" t`,
   `CREATE TEMP TABLE "__delta_matched" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_matched_sign" ON "__delta_matched" ("_sign")`,

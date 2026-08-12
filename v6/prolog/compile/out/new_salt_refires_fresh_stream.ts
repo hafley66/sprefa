@@ -166,7 +166,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "demand" ("args" INTEGER NOT NULL, "salt" INTEGER NOT NULL, PRIMARY KEY ("args", "salt")) WITHOUT ROWID`,
+  `CREATE TABLE "demand" ("__id" INTEGER PRIMARY KEY, "args" INTEGER NOT NULL, "salt" INTEGER NOT NULL, UNIQUE ("args", "salt"))`,
   `CREATE TEMP VIEW "__txt_demand" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."salt") AS "salt" FROM "demand" t`,
   `CREATE TABLE "watch_request" ("col1" INTEGER NOT NULL, "args" INTEGER NOT NULL, "salt" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_watch_request" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."salt") AS "salt" FROM "watch_request" t`,

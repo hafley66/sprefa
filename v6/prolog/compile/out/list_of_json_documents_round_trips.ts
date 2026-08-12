@@ -135,8 +135,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "batch" ("id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'), PRIMARY KEY ("id", "payloads")) WITHOUT ROWID`,
-  `CREATE TABLE "carry" ("id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("id", "payloads")) WITHOUT ROWID`,
+  `CREATE TABLE "batch" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'), UNIQUE ("id", "payloads"))`,
+  `CREATE TABLE "carry" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("id", "payloads"))`,
   `CREATE TEMP TABLE "__delta_batch" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payloads" TEXT NOT NULL CHECK (json_valid("payloads") AND json_type("payloads") = 'array'))`,
   `CREATE INDEX "__delta_batch_sign" ON "__delta_batch" ("_sign")`,
   `CREATE INDEX "__delta_batch_group" ON "__delta_batch" ("id", "payloads")`,

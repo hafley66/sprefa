@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "slashed" ("text" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("text", "out")) WITHOUT ROWID`,
+  `CREATE TABLE "slashed" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("text", "out"))`,
   `CREATE TEMP VIEW "__txt_slashed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."out") AS "out", t."__refcount" AS "__refcount" FROM "slashed" t`,
-  `CREATE TABLE "text" ("text" INTEGER NOT NULL, PRIMARY KEY ("text")) WITHOUT ROWID`,
+  `CREATE TABLE "text" ("__id" INTEGER PRIMARY KEY, "text" INTEGER NOT NULL, UNIQUE ("text"))`,
   `CREATE TEMP VIEW "__txt_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."text") AS "text" FROM "text" t`,
   `CREATE TEMP TABLE "__delta_slashed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "text" INTEGER NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_slashed_sign" ON "__delta_slashed" ("_sign")`,

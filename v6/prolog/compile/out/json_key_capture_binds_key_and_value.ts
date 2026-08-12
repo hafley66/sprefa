@@ -146,9 +146,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "field" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "field" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("key", "value"))`,
   `CREATE TEMP VIEW "__txt_field" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."__refcount" AS "__refcount" FROM "field" t`,
-  `CREATE TABLE "raw_doc" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TABLE "raw_doc" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
   `CREATE TEMP TABLE "__delta_field" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_field_sign" ON "__delta_field" ("_sign")`,
   `CREATE INDEX "__delta_field_group" ON "__delta_field" ("key", "value")`,

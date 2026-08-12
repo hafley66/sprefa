@@ -147,7 +147,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "event" ("payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE TABLE "seen" ("value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "seen" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
   `CREATE TEMP VIEW "__txt_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."__refcount" AS "__refcount" FROM "seen" t`,
   `CREATE TEMP TABLE "__delta_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__delta_event_sign" ON "__delta_event" ("_sign")`,

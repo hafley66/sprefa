@@ -135,7 +135,7 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "score" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "score" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
   `CREATE TEMP TABLE "__delta_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_score_sign" ON "__delta_score" ("_sign")`,
   `CREATE INDEX "__delta_score_group" ON "__delta_score" ("value")`,

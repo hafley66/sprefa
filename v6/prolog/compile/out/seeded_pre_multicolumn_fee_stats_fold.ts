@@ -168,7 +168,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "fee" ("account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_fee" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."account") AS "account", t."amount" AS "amount" FROM "fee" t`,
-  `CREATE TABLE "fee_stats" ("account" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("account")) WITHOUT ROWID`,
+  `CREATE TABLE "fee_stats" ("__id" INTEGER PRIMARY KEY, "account" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("account"))`,
   `CREATE TEMP VIEW "__txt_fee_stats" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."account") AS "account", t."next" AS "next" FROM "fee_stats" t`,
   `CREATE TEMP TABLE "__delta_fee" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "account" INTEGER NOT NULL, "amount" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_fee_sign" ON "__delta_fee" ("_sign")`,

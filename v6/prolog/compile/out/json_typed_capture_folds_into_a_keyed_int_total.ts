@@ -167,9 +167,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "event" ("payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
-  `CREATE TABLE "star_event" ("repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
+  `CREATE TABLE "star_event" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("repo", "stars"))`,
   `CREATE TEMP VIEW "__txt_star_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."stars" AS "stars", t."__refcount" AS "__refcount" FROM "star_event" t`,
-  `CREATE TABLE "total" ("repo" INTEGER NOT NULL, "sum" INTEGER NOT NULL, PRIMARY KEY ("repo")) WITHOUT ROWID`,
+  `CREATE TABLE "total" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "sum" INTEGER NOT NULL, UNIQUE ("repo"))`,
   `CREATE TEMP VIEW "__txt_total" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."sum" AS "sum" FROM "total" t`,
   `CREATE TEMP TABLE "__delta_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__delta_event_sign" ON "__delta_event" ("_sign")`,

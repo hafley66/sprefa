@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "member_of" ("name" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "member_of" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
   `CREATE TEMP VIEW "__txt_member_of" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "member_of" t`,
-  `CREATE TABLE "roster" ("col1" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("col1")) WITHOUT ROWID`,
+  `CREATE TABLE "roster" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("col1"))`,
   `CREATE TEMP VIEW "__txt_roster" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", t."__refcount" AS "__refcount" FROM "roster" t`,
   `CREATE TEMP TABLE "__delta_member_of" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_member_of_sign" ON "__delta_member_of" ("_sign")`,

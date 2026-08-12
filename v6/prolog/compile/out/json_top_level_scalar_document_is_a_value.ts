@@ -149,13 +149,13 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "echoed" ("name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TABLE "echoed" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name", "body"))`,
   `CREATE TEMP VIEW "__txt_echoed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."body" AS "body", t."__refcount" AS "__refcount" FROM "echoed" t`,
-  `CREATE TABLE "label" ("name" INTEGER NOT NULL, "body" INTEGER NOT NULL, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TABLE "label" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "body" INTEGER NOT NULL, UNIQUE ("name", "body"))`,
   `CREATE TEMP VIEW "__txt_label" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body" FROM "label" t`,
-  `CREATE TABLE "labelled" ("name" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TABLE "labelled" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name", "body"))`,
   `CREATE TEMP VIEW "__txt_labelled" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body", t."__refcount" AS "__refcount" FROM "labelled" t`,
-  `CREATE TABLE "payload" ("name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("name", "body")) WITHOUT ROWID`,
+  `CREATE TABLE "payload" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("name", "body"))`,
   `CREATE TEMP VIEW "__txt_payload" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."body" AS "body" FROM "payload" t`,
   `CREATE TEMP TABLE "__delta_echoed" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "body" TEXT NOT NULL CHECK (json_valid("body")))`,
   `CREATE INDEX "__delta_echoed_sign" ON "__delta_echoed" ("_sign")`,

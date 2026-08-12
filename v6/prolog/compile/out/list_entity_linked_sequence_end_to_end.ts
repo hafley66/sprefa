@@ -146,12 +146,12 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link" ("before_member_id" INTEGER NOT NULL, "after_member_id" INTEGER NOT NULL, PRIMARY KEY ("before_member_id", "after_member_id")) WITHOUT ROWID`,
-  `CREATE TABLE "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member" ("member_id" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("member_id")) WITHOUT ROWID`,
+  `CREATE TABLE "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link" ("__id" INTEGER PRIMARY KEY, "before_member_id" INTEGER NOT NULL, "after_member_id" INTEGER NOT NULL, UNIQUE ("before_member_id", "after_member_id"))`,
+  `CREATE TABLE "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member" ("__id" INTEGER PRIMARY KEY, "member_id" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("member_id"))`,
   `CREATE TEMP VIEW "__txt___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member" AS SELECT t."member_id" AS "member_id", t."list_id" AS "list_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member" t`,
-  `CREATE TABLE "linked_parent" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "linked_parent__entries" ("linked_parent_id" INTEGER NOT NULL, "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35_id" INTEGER NOT NULL, PRIMARY KEY ("linked_parent_id")) WITHOUT ROWID`,
+  `CREATE TABLE "linked_parent" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "linked_parent__entries" ("__id" INTEGER PRIMARY KEY, "linked_parent_id" INTEGER NOT NULL, "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35_id" INTEGER NOT NULL, UNIQUE ("linked_parent_id"))`,
   `CREATE TEMP TABLE "__delta___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35_sign" ON "__delta___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" ("_sign")`,
   `CREATE INDEX "__delta___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35_group" ON "__delta___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" ("id")`,

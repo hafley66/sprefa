@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "explicit_joined" ("group" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "explicit_joined" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("group", "col2"))`,
   `CREATE TEMP VIEW "__txt_explicit_joined" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."__refcount" AS "__refcount" FROM "explicit_joined" t`,
-  `CREATE TABLE "item" ("group" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "item" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("group", "value"))`,
   `CREATE TEMP VIEW "__txt_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "item" t`,
   `CREATE TEMP TABLE "__delta_explicit_joined" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_explicit_joined_sign" ON "__delta_explicit_joined" ("_sign")`,

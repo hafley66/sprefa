@@ -148,11 +148,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "eprintln_hit" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
+  `CREATE TABLE "eprintln_hit" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, UNIQUE ("path", "line_number"))`,
   `CREATE TEMP VIEW "__txt_eprintln_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number" FROM "eprintln_hit" t`,
-  `CREATE TABLE "eprintln_waived" ("path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "line_number")) WITHOUT ROWID`,
+  `CREATE TABLE "eprintln_waived" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "line_number"))`,
   `CREATE TEMP VIEW "__txt_eprintln_waived" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line_number" AS "line_number", t."__refcount" AS "__refcount" FROM "eprintln_waived" t`,
-  `CREATE TABLE "eprintln_waiver_line" ("path" INTEGER NOT NULL, "waiver_line" INTEGER NOT NULL, PRIMARY KEY ("path", "waiver_line")) WITHOUT ROWID`,
+  `CREATE TABLE "eprintln_waiver_line" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "waiver_line" INTEGER NOT NULL, UNIQUE ("path", "waiver_line"))`,
   `CREATE TEMP VIEW "__txt_eprintln_waiver_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."waiver_line" AS "waiver_line" FROM "eprintln_waiver_line" t`,
   `CREATE TEMP TABLE "__delta_eprintln_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line_number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_eprintln_hit_sign" ON "__delta_eprintln_hit" ("_sign")`,

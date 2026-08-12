@@ -148,11 +148,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "demanded" ("target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("target", "session_id")) WITHOUT ROWID`,
+  `CREATE TABLE "demanded" ("__id" INTEGER PRIMARY KEY, "target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("target", "session_id"))`,
   `CREATE TEMP VIEW "__txt_demanded" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session_id") AS "session_id", t."__refcount" AS "__refcount" FROM "demanded" t`,
-  `CREATE TABLE "effect_call" ("target" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("target")) WITHOUT ROWID`,
+  `CREATE TABLE "effect_call" ("__id" INTEGER PRIMARY KEY, "target" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("target"))`,
   `CREATE TEMP VIEW "__txt_effect_call" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target", t."__refcount" AS "__refcount" FROM "effect_call" t`,
-  `CREATE TABLE "open_feed" ("session_id" INTEGER NOT NULL, "target" INTEGER NOT NULL, PRIMARY KEY ("session_id")) WITHOUT ROWID`,
+  `CREATE TABLE "open_feed" ("__id" INTEGER PRIMARY KEY, "session_id" INTEGER NOT NULL, "target" INTEGER NOT NULL, UNIQUE ("session_id"))`,
   `CREATE TEMP VIEW "__txt_open_feed" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session_id") AS "session_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."target") AS "target" FROM "open_feed" t`,
   `CREATE TEMP TABLE "__delta_demanded" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "target" INTEGER NOT NULL, "session_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_demanded_sign" ON "__delta_demanded" ("_sign")`,

@@ -168,11 +168,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('rust')`,
-  `CREATE TABLE "rust_file" ("path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "rust_file" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path"))`,
   `CREATE TEMP VIEW "__txt_rust_file" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."__refcount" AS "__refcount" FROM "rust_file" t`,
   `CREATE TABLE "worktree_edit" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "kind" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_worktree_edit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."kind") AS "kind" FROM "worktree_edit" t`,
-  `CREATE TABLE "worktree_file" ("path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "kind" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "worktree_file" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "digest" INTEGER NOT NULL, "kind" INTEGER NOT NULL, UNIQUE ("path"))`,
   `CREATE TEMP VIEW "__txt_worktree_file" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."digest") AS "digest", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."kind") AS "kind" FROM "worktree_file" t`,
   `CREATE TEMP TABLE "__delta_rust_file" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_rust_file_sign" ON "__delta_rust_file" ("_sign")`,

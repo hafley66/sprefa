@@ -154,9 +154,9 @@ function trigger_occurrences(
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "pair" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, PRIMARY KEY ("left")) WITHOUT ROWID`,
-  `CREATE TABLE "source_a" ("left" INTEGER NOT NULL, PRIMARY KEY ("left")) WITHOUT ROWID`,
-  `CREATE TABLE "source_b" ("right" INTEGER NOT NULL, PRIMARY KEY ("right")) WITHOUT ROWID`,
+  `CREATE TABLE "pair" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, UNIQUE ("left"))`,
+  `CREATE TABLE "source_a" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, UNIQUE ("left"))`,
+  `CREATE TABLE "source_b" ("__id" INTEGER PRIMARY KEY, "right" INTEGER NOT NULL, UNIQUE ("right"))`,
   `CREATE TEMP TABLE "__delta_pair" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_pair_sign" ON "__delta_pair" ("_sign")`,
   `CREATE INDEX "__delta_pair_group" ON "__delta_pair" ("left", "right")`,

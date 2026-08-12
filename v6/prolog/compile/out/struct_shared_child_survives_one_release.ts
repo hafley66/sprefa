@@ -157,7 +157,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "hit" ("owner" INTEGER NOT NULL, "at" INTEGER NOT NULL, PRIMARY KEY ("owner", "at")) WITHOUT ROWID`,
+  `CREATE TABLE "hit" ("__id" INTEGER PRIMARY KEY, "owner" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("owner", "at"))`,
   `CREATE TEMP VIEW "__txt_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."at" AS "at" FROM "hit" t`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
   `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "span" t`,

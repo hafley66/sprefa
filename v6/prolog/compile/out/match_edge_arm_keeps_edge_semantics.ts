@@ -166,7 +166,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "cache" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
+  `CREATE TABLE "cache" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("key"))`,
   `CREATE TEMP VIEW "__txt_cache" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "cache" t`,
   `CREATE TABLE "poll_result" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_poll_result" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "poll_result" t`,

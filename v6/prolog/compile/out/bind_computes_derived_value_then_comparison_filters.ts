@@ -148,11 +148,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "bump" ("name" INTEGER NOT NULL, "extra" INTEGER NOT NULL, PRIMARY KEY ("name", "extra")) WITHOUT ROWID`,
+  `CREATE TABLE "bump" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "extra" INTEGER NOT NULL, UNIQUE ("name", "extra"))`,
   `CREATE TEMP VIEW "__txt_bump" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."extra" AS "extra" FROM "bump" t`,
-  `CREATE TABLE "over_budget" ("name" INTEGER NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "sum")) WITHOUT ROWID`,
+  `CREATE TABLE "over_budget" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "sum" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name", "sum"))`,
   `CREATE TEMP VIEW "__txt_over_budget" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."sum" AS "sum", t."__refcount" AS "__refcount" FROM "over_budget" t`,
-  `CREATE TABLE "seen" ("name" INTEGER NOT NULL, "base" INTEGER NOT NULL, "col3" INTEGER NOT NULL, PRIMARY KEY ("name", "base", "col3")) WITHOUT ROWID`,
+  `CREATE TABLE "seen" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "base" INTEGER NOT NULL, "col3" INTEGER NOT NULL, UNIQUE ("name", "base", "col3"))`,
   `CREATE TEMP VIEW "__txt_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."base" AS "base", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col3") AS "col3" FROM "seen" t`,
   `CREATE TEMP TABLE "__delta_bump" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "extra" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_bump_sign" ON "__delta_bump" ("_sign")`,

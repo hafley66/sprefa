@@ -146,7 +146,7 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "mark" ("at" INTEGER NOT NULL, PRIMARY KEY ("at")) WITHOUT ROWID`,
+  `CREATE TABLE "mark" ("__id" INTEGER PRIMARY KEY, "at" INTEGER NOT NULL, UNIQUE ("at"))`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
   `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "span" t`,
   `CREATE TEMP TABLE "__delta_mark" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,

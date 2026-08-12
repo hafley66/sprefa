@@ -149,7 +149,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "line" ("_stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "_name" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_line" AS SELECT t."_stream_id" AS "_stream_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_name") AS "_name" FROM "line" t`,
-  `CREATE TABLE "seen" ("path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "seen" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path"))`,
   `CREATE TEMP VIEW "__txt_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."__refcount" AS "__refcount" FROM "seen" t`,
   `CREATE TEMP TABLE "__delta_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "_stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "_name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_line_sign" ON "__delta_line" ("_sign")`,
