@@ -2,13 +2,13 @@ aggregate_count_min_max_track_arrivals_and_retraction	runtime-error	arrival writ
 aggregate_in_edge_head_rejected	unsupported	aggregate_in_edge_head(total/1)
 aggregate_min_recomputes_when_the_minimum_is_retracted	diff	-{"tick":1,"deltas":{"star_row":{"add":[],"del":[["cli",4]]},"stat":{"add":[["cli",2,6,10]],"del":[["cli",3,4,10]]}}}
 aggregate_sum_tracks_a_growing_and_shrinking_group	diff	-{"tick":1,"deltas":{"budget":{"add":[["core",22]],"del":[["core",15]]},"spend":{"add":[["core","net",7]],"del":[]}}}
-any_two_tagged_arms_land_on_one_tick	runtime-error	parse program json: Error("missing field `head_kind`")
+any_two_tagged_arms_land_on_one_tick	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_note":{"add":[[1,"acked"],[1,"sealed"]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]}}}
 arithmetic_rejects_non_int_operand_at_runtime	unsupported	arith_operand_not_number(_+1,_,text)
 arrival_affinity_rewrite_keeps_delta	clean	byte-clean
 arrival_dup_batch_partial_ignore	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 async_state_machine_with_pattern_scan	unsupported	trigger_arg_not_var(fresh(_,_))
 backslash_in_string_literal_survives_both_doors	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-batched_increments_both_count	runtime-error	parse program json: Error("missing field `head_kind`")
+batched_increments_both_count	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 bind_computes_derived_value_then_comparison_filters	clean	byte-clean
 bool_identity_comparison_filters	error	error(type_error(json_term,bool_lit(true)),_)
 bool_literals_round_trip	error	error(type_error(json_term,bool_lit(true)),_)
@@ -19,46 +19,46 @@ braces_literal_canonicalizes	clean	byte-clean
 callgraph_derivation_over_extraction	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 callgraph_unused_inverts_with_the_call_set	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 chain_into_keyed_head_replaces	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_))))
-changed_since_ignores_events_before_turn	runtime-error	parse program json: Error("missing field `head_kind`")
-changed_since_spans_two_turns	runtime-error	parse program json: Error("missing field `head_kind`")
+changed_since_ignores_events_before_turn	diff	-{"tick":1,"deltas":{"agent_turn":{"add":[["turn_only",1]],"del":[]},"turn_marker":{"add":[["turn_only"]],"del":[]}}}
+changed_since_spans_two_turns	diff	-{"tick":1,"deltas":{"agent_turn":{"add":[["turn_a",1]],"del":[]},"turn_marker":{"add":[["turn_a"]],"del":[]}}}
 clean_state_gate_and_exit_zero	clean	byte-clean
 clean_state_no_diags	clean	byte-clean
-clock_rel_join_storms	runtime-error	parse program json: Error("missing field `head_kind`")
+clock_rel_join_storms	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 coalesce_default_returns_when_source_retracts	diff	-{"tick":1,"deltas":{"latest_commit":{"add":[["alpha","sha-1"]],"del":[]},"repo_latest":{"add":[["alpha","sha-1"]],"del":[["alpha","absent"]]}}}
 coalesce_defaults_the_absent_row	clean	byte-clean
-coalesce_in_edge_body_samples	runtime-error	parse program json: Error("missing field `head_kind`")
+coalesce_in_edge_body_samples	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 coalesce_over_derived_source	clean	byte-clean
 coalesce_under_negation_is_refused	unsupported	coalesce_not_top_level(latest_commit/2)
 coalesce_with_a_variable_default_is_refused	unsupported	coalesce_default_not_literal(latest_commit/2,variable)
 coalesce_with_two_outputs_is_refused	unsupported	coalesce_multiple_outputs(commit_by/3,2)
 coalesce_without_an_output_is_refused	unsupported	coalesce_no_output(archived/1)
-combine_edge_is_the_conjunction_spelling	runtime-error	parse program json: Error("missing field `head_kind`")
+combine_edge_is_the_conjunction_spelling	diff	-{"tick":1,"deltas":{"pair":{"add":[[1,2]],"del":[]},"source_a":{"add":[[1]],"del":[]},"source_b":{"add":[[2]],"del":[]}}}
 combine_level_is_the_conjunction_spelling	clean	byte-clean
 comparison_filters_rows	clean	byte-clean
 complete_is_a_named_unsupported	unsupported	lifecycle_arm(complete)
-completion_propagation_lattice_tick	runtime-error	parse program json: Error("missing field `head_kind`")
-concat_fold_follows_arrival_order	runtime-error	parse program json: Error("missing field `head_kind`")
-concat_fold_reversed_arrival_reverses_result	runtime-error	parse program json: Error("missing field `head_kind`")
-concat_program_queue	runtime-error	parse program json: Error("missing field `head_kind`")
-conjunction_edge_control_for_combine	runtime-error	parse program json: Error("missing field `head_kind`")
+completion_propagation_lattice_tick	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+concat_fold_follows_arrival_order	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+concat_fold_reversed_arrival_reverses_result	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+concat_program_queue	diff	-{"tick":1,"deltas":{"demanded":{"add":[["tab(tab_a)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_a"]],"del":[]},"open_request":{"add":[["session_one","tab_a"]
+conjunction_edge_control_for_combine	diff	-{"tick":1,"deltas":{"pair":{"add":[[1,2]],"del":[]},"source_a":{"add":[[1]],"del":[]},"source_b":{"add":[[2]],"del":[]}}}
 conjunction_level_control_for_combine	clean	byte-clean
 count_is_bag_of_derivations	clean	byte-clean
-counter_fold_matches_hand_computation	runtime-error	parse program json: Error("missing field `head_kind`")
-created_at_pinned_updated_at_advances	runtime-error	parse program json: Error("missing field `head_kind`")
+counter_fold_matches_hand_computation	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",1]],"del":[["clicks",0]]},"increment":{"add":[["clicks","ev1"]],"del":[]}}}
+created_at_pinned_updated_at_advances	diff	-{"tick":1,"deltas":{"arrive":{"add":[[1,"a"]],"del":[]},"thing":{"add":[[1,"a",1,1]],"del":[]}}}
 declaration_order_preserves_struct_refs	clean	byte-clean
 decode_missing_key_fails_quietly	unsupported	decode_source_not_struct(decode(_,{absent_key:_}))
 decode_open_pattern_binds_nested	unsupported	decode_source_not_struct(decode(_,{name:_}))
 demand_laziness_effect_rows	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-demand_view_fires_its_consumer_once	runtime-error	parse program json: Error("missing field `head_kind`")
-departed_fires_next_tick_on_retraction	runtime-error	parse program json: Error("missing field `head_kind`")
+demand_view_fires_its_consumer_once	diff	-{"tick":1,"deltas":{"fetch_call":{"add":[["repos/cli/cli"]],"del":[]},"fetch_demand":{"add":[["repos/cli/cli"]],"del":[]},"stale":{"add":[["repos/cli/cli"]],"del":[]}}}
+departed_fires_next_tick_on_retraction	diff	-{"tick":1,"deltas":{"mirror":{"add":[["alpha"]],"del":[]},"source_row":{"add":[["alpha"]],"del":[]}}}
 derive_directory_prefix_via_rtrim_replace	clean	byte-clean
 desugared_trace_equals_hand_written	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
-diag_scenario_seven_ticks_end_to_end	runtime-error	parse program json: Error("missing field `head_kind`")
-dirty_derives_from_digest_mismatch	runtime-error	parse program json: Error("missing field `head_kind`")
-dirty_retracts_on_matching_commit	runtime-error	parse program json: Error("missing field `head_kind`")
+diag_scenario_seven_ticks_end_to_end	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+dirty_derives_from_digest_mismatch	diff	-{"tick":1,"deltas":{"dirty":{"add":[["src/lib.rs"]],"del":[]},"worktree_edit":{"add":[["src/lib.rs","sha_dirty"]],"del":[]},"worktree_file":{"add":[["src/lib.rs","sha_dirty"]],"de
+dirty_retracts_on_matching_commit	diff	-{"tick":1,"deltas":{"dirty":{"add":[["src/lib.rs"]],"del":[]},"worktree_edit":{"add":[["src/lib.rs","sha_v2"]],"del":[]},"worktree_file":{"add":[["src/lib.rs","sha_v2"]],"del":[["
 division_truncates_toward_zero_mod_follows_divisor_sign	clean	byte-clean
 duplicate_host_name_is_refused	unsupported	duplicate_host_decl(look)
-edge_chain_hops_tick_per_stage	runtime-error	parse program json: Error("missing field `head_kind`")
+edge_chain_hops_tick_per_stage	diff	-{"tick":1,"deltas":{"source_ev":{"add":[["alpha"]],"del":[]},"stage_one":{"add":[["alpha"]],"del":[]}}}
 edge_into_unkeyed_set_rejected	unsupported	edge_into_unkeyed_set(sink/1)
 edge_trigger_literal_filters_on_the_oracle_door	unsupported	trigger_arg_not_var(200)
 enum_decl_two_variants_union_in_tag_view	diff	-{"tick":1,"deltas":{"result_error":{"add":[[302,"failed"]],"del":[]},"result_ok":{"add":[[301,"ready"]],"del":[]},"result_tag":{"add":[[301,"ok"],[302,"error"]],"del":[]}}}
@@ -69,12 +69,12 @@ enum_nullary_variant_boots_and_tags	diff	-{"tick":2,"deltas":{"maybe_text_some":
 enum_variant_field_typed_as_rel_is_a_ref	diff	-{"tick":1,"deltas":{"grade_ripe":{"add":[[1,{"name":"oak","tree_id":1000}]],"del":[]},"grade_tag":{"add":[[1,"ripe"]],"del":[]},"tree":{"add":[[1000,"oak"]],"del":[]}}}
 enum_variant_field_undeclared_type_still_throws	unsupported	column_type_unknown(treee)
 error_is_a_named_unsupported	unsupported	lifecycle_arm(error)
-exhaust_policy	runtime-error	parse program json: Error("missing field `head_kind`")
+exhaust_policy	diff	-{"tick":1,"deltas":{"demanded":{"add":[["tab(tab_a)","session_one"]],"del":[]},"live_tab":{"add":[["session_one","tab_a"]],"del":[]},"open_request":{"add":[["session_one","tab_a"]
 extraction_fork_callgraph	diff	-{"tick":1,"deltas":{"__host_response_sg":{"add":[["witness|sg|file_digest:text=d1|query_digest:text=q_calls",0,"d1","q_calls","foo","bar",0,3]],"del":[]},"call_edge":{"add":[["a",
 extraction_fork_span_line	diff	-{"tick":1,"deltas":{"__host_response_span_scan":{"add":[["witness|span_scan|file_digest:text=d1|query_digest:text=q_lines",0,"d1","q_lines",10,"old"]],"del":[]},"span_line":{"add"
-fill_as_cache_update_swr	runtime-error	parse program json: Error("missing field `head_kind`")
+fill_as_cache_update_swr	diff	-{"tick":1,"deltas":{"demanded":{"add":[["alpha","session_one"]],"del":[]},"open_feed":{"add":[["session_one","alpha"]],"del":[]}}}
 filter_map_is_a_level_rule	diff	-{"tick":1,"deltas":{"doubled":{"add":[["net",60]],"del":[]},"reading":{"add":[["net",30]],"del":[]}}}
-finalize_over_log_fires_on_retention_prune	runtime-error	parse program json: Error("missing field `head_kind`")
+finalize_over_log_fires_on_retention_prune	diff	-{"tick":1,"deltas":{"ev":{"add":[[1,"a"]],"del":[]}}}
 fix_by_waiver_returns_to_clean	clean	byte-clean
 flagship_flow_reach_over_batched_resolved_edges	runtime-error	parse program json: Error("invalid type: map, expected a string")
 flagship_flow_reach_over_resolved_edges	runtime-error	parse program json: Error("invalid type: map, expected a string")
@@ -106,16 +106,16 @@ head_column_int_widens_into_float	clean	byte-clean
 head_column_list_and_json_share_storage	clean	byte-clean
 head_column_type_conflict_is_refused	unsupported	head_column_type_conflict(target/1,total,int,source/1,name,text)
 head_expression_evaluates_derived_column	clean	byte-clean
-head_move_flips_current_tree_in_one_tick	runtime-error	parse program json: Error("missing field `head_kind`")
-head_move_replaces_key	runtime-error	parse program json: Error("missing field `head_kind`")
+head_move_flips_current_tree_in_one_tick	diff	-{"tick":1,"deltas":{"current_tree":{"add":[["src/a.rs","sha_a2"],["src/b.rs","sha_b2"],["src/c.rs","sha_c1"]],"del":[["src/a.rs","sha_a1"],["src/b.rs","sha_b1"]]},"head":{"add":[[
+head_move_replaces_key	diff	-{"tick":1,"deltas":{"head":{"add":[[1,200]],"del":[[1,100]]},"head_move":{"add":[[1,200]],"del":[]}}}
 higher_order_call_goal_rejected	unsupported	dynamic_relation_name(call/3)
 higher_order_call_over_atom_rejected	unsupported	dynamic_relation_name(call/1)
 host_free_query_leaves_a_derived_rel_unsubscribed	diff	-{"tick":1,"deltas":{"audit_trail":{"add":[[7]],"del":[]},"audited":{"add":[[7]],"del":[]},"reading":{"add":[["beta",7]],"del":[]},"watched":{"add":[["beta"]],"del":[]}}}
 host_input_column_shadows_runtime_witness	unsupported	host_column_shadows_runtime(peek,input,witness_digest)
 host_output_column_shadows_runtime_ordinal	unsupported	host_column_shadows_runtime(look,output,ordinal)
-identical_demand_dedups	runtime-error	parse program json: Error("missing field `head_kind`")
-identical_increments_stack_as_log_deltas	runtime-error	parse program json: Error("missing field `head_kind`")
-increment_decrement_same_tick_nets_zero	runtime-error	parse program json: Error("missing field `head_kind`")
+identical_demand_dedups	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+identical_increments_stack_as_log_deltas	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+increment_decrement_same_tick_nets_zero	diff	-{"tick":1,"deltas":{"decrement":{"add":[["clicks","ev2"]],"del":[]},"increment":{"add":[["clicks","ev1"]],"del":[]}}}
 int_accepts_integral_float	clean	byte-clean
 int_float_arithmetic_keeps_real_result	clean	byte-clean
 int_out_of_range_is_named_unsupported	unsupported	int_out_of_range(measure/1,value,9007199254740993)
@@ -141,37 +141,37 @@ json_key_capture_nests_and_fans_out	clean	byte-clean
 json_marker_shaped_keys_are_ordinary_data	clean	byte-clean
 json_nfc_and_nfd_keys_stay_distinct	clean	byte-clean
 json_non_ascii_keys_sort_by_code_point	clean	byte-clean
-json_null_round_trips_byte_identical	runtime-error	parse program json: Error("missing field `head_kind`")
+json_null_round_trips_byte_identical	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"a":null,"b":1,"c":2}]],"del":[["alpha",{"a":null,"b":1}]]},"metric_sample":{"add":[["alpha",{"c":2}]],"del":[]}}}
 json_object_builds_document	clean	byte-clean
 json_object_dup_key_rejected	compiled	no oracle tick log
 json_object_groups_rows_into_documents	clean	byte-clean
 json_object_orders_keys	clean	byte-clean
 json_object_throws_on_duplicate_keys	compiled	no oracle tick log
-json_patch_fold_merges_arrival_documents	runtime-error	parse program json: Error("missing field `head_kind`")
-json_patch_fold_result_is_key_sorted	runtime-error	parse program json: Error("missing field `head_kind`")
-json_patch_merges_nested_objects_recursively	runtime-error	parse program json: Error("missing field `head_kind`")
-json_patch_non_object_patch_replaces_the_document	runtime-error	parse program json: Error("missing field `head_kind`")
-json_patch_non_object_target_becomes_empty	runtime-error	parse program json: Error("missing field `head_kind`")
-json_patch_null_value_composes	runtime-error	parse program json: Error("missing field `head_kind`")
-json_patch_null_value_sets_key	runtime-error	parse program json: Error("missing field `head_kind`")
-json_patch_replaces_arrays_wholesale	runtime-error	parse program json: Error("missing field `head_kind`")
+json_patch_fold_merges_arrival_documents	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"cpu":1,"mem":2}]],"del":[["alpha",{"cpu":1}]]},"metric_sample":{"add":[["alpha",{"mem":2}]],"del":[]}}}
+json_patch_fold_result_is_key_sorted	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"alpha_key":2,"zeta":1}]],"del":[["alpha",{"zeta":1}]]},"metric_sample":{"add":[["alpha",{"alpha_key":2}]],"del":[]}}}
+json_patch_merges_nested_objects_recursively	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"cpu":{"sys":9,"user":1}}]],"del":[["alpha",{"cpu":{"sys":2,"user":1}}]]},"metric_sample":{"add":[["alpha",{"cpu":{"sys":9}}]],"
+json_patch_non_object_patch_replaces_the_document	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",[7,8]]],"del":[["alpha",{"cpu":1}]]},"metric_sample":{"add":[["alpha",[7,8]]],"del":[]}}}
+json_patch_non_object_target_becomes_empty	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"cpu":1}]],"del":[["alpha",[7,8]]]},"metric_sample":{"add":[["alpha",{"cpu":1}]],"del":[]}}}
+json_patch_null_value_composes	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"b":2}]],"del":[["alpha",{"a":1,"b":2}]]},"metric_sample":{"add":[["alpha",{"a":null}]],"del":[]}}}
+json_patch_null_value_sets_key	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{}]],"del":[["alpha",{"cpu":1}]]},"metric_sample":{"add":[["alpha",{"cpu":null}]],"del":[]}}}
+json_patch_replaces_arrays_wholesale	diff	-{"tick":1,"deltas":{"metric_doc":{"add":[["alpha",{"tags":["blue"]}]],"del":[["alpha",{"tags":["red","green"]}]]},"metric_sample":{"add":[["alpha",{"tags":["blue"]}]],"del":[]}}}
 json_round_trip_decode_to_document	unsupported	level_body_goal(repo_lang(_,_),json_each(_,_))
 json_safe_integer_boundary_survives_both_doors	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 json_spread_and_capture_and_descent_multiply	clean	byte-clean
 json_string_control_escapes_are_valid_json	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 json_top_level_scalar_document_is_a_value	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 json_typed_capture_filters_a_wrong_typed_value	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-json_typed_capture_folds_into_a_keyed_int_total	runtime-error	parse program json: Error("missing field `head_kind`")
+json_typed_capture_folds_into_a_keyed_int_total	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 json_untyped_capture_binds_without_a_type	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 keep_on_non_log_rel_rejected	unsupported	keep_on_non_log_rel(state/1)
-key_identical_write_is_silent	runtime-error	parse program json: Error("missing field `head_kind`")
-key_last_write_wins	runtime-error	parse program json: Error("missing field `head_kind`")
+key_identical_write_is_silent	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
+key_last_write_wins	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
 key_range_reported_before_unknown_column_type	unsupported	key_position_out_of_range(finding/2,3,2)
-key_same_tick_ordered_not_conflict	runtime-error	parse program json: Error("missing field `head_kind`")
-keyed_edge_head_still_replaces	runtime-error	parse program json: Error("missing field `head_kind`")
+key_same_tick_ordered_not_conflict	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"from_push":{"add":[["cli","v2"]],"del":[]},"latest":{"add":[["cli","v2"]],"del":[]}}}
+keyed_edge_head_still_replaces	diff	-{"tick":1,"deltas":{"current_value":{"add":[["cli","v1"]],"del":[]},"update_value":{"add":[["cli","v1"]],"del":[]}}}
 keyed_level_head_is_refused	unsupported	keyed_level_head(current_value/2)
 keyed_log_rejected	unsupported	keyed_log_rel(latest/2,[1])
-keyed_replace_departs_the_old_row	runtime-error	parse program json: Error("missing field `head_kind`")
+keyed_replace_departs_the_old_row	diff	-{"tick":1,"deltas":{"from_poll":{"add":[["cli","v1"]],"del":[]},"latest":{"add":[["cli","v1"]],"del":[]}}}
 latest_in_level_rule_rejected	unsupported	latest_in_level_rule(source_item/1)
 level_view_reads_set_projection_not_occurrences	diff	-{"tick":1,"deltas":{"line":{"add":[[1,"a.ts","alpha"]],"del":[]},"seen":{"add":[["a.ts"]],"del":[]}}}
 list_bare_column_round_trips	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
@@ -189,21 +189,21 @@ list_of_json_documents_round_trips	clean	byte-clean
 list_of_relation_refs_still_refused	unsupported	list_of_relation_refs(span)
 live_nonzero_exit_keeps_rows	diff	-{"tick":1,"deltas":{"stream_item":{"add":[["src",1,"alpha"]],"del":[]}}}
 log_deltas_follow_arrival_order	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-log_driver_fold_needs_no_id_column	runtime-error	parse program json: Error("missing field `head_kind`")
+log_driver_fold_needs_no_id_column	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 log_on_level_headed_rel_rejected	unsupported	log_on_level_headed_rel(derived_event/1)
-log_rel_identical_arrival_is_two_occurrences	runtime-error	parse program json: Error("missing field `head_kind`")
+log_rel_identical_arrival_is_two_occurrences	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 log_retraction_rejected	compiled	no oracle tick log
-log_stacks_within_tick_and_across_ticks	runtime-error	parse program json: Error("missing field `head_kind`")
+log_stacks_within_tick_and_across_ticks	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 log_without_retention_rejected	unsupported	missing_retention(event/1)
-lww_fold_follows_arrival_order	runtime-error	parse program json: Error("missing field `head_kind`")
-marker_stops_backlog_replay	runtime-error	parse program json: Error("missing field `head_kind`")
+lww_fold_follows_arrival_order	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+marker_stops_backlog_replay	diff	-{"tick":1,"deltas":{"subscriber":{"add":[["alice"]],"del":[]}}}
 match_classify_response	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 match_classify_response_desugared	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-match_edge_arm_keeps_edge_semantics	runtime-error	parse program json: Error("missing field `head_kind`")
+match_edge_arm_keeps_edge_semantics	diff	-{"tick":1,"deltas":{"cache":{"add":[["cli","v1"]],"del":[]},"poll_result":{"add":[["cli","v1"]],"del":[]}}}
 match_enum_nonexhaustive_is_refused	unsupported	match_nonexhaustive(body,redirect)
-merge_batches_per_tick	runtime-error	parse program json: Error("missing field `head_kind`")
-merge_never_retracts	runtime-error	parse program json: Error("missing field `head_kind`")
-merge_policy	runtime-error	parse program json: Error("missing field `head_kind`")
+merge_batches_per_tick	diff	-{"tick":1,"deltas":{"event_a":{"add":[["alpha"]],"del":[]},"out":{"add":[["alpha"]],"del":[]}}}
+merge_never_retracts	diff	-{"tick":1,"deltas":{"event_a":{"add":[["alpha"]],"del":[]},"out":{"add":[["alpha"]],"del":[]}}}
+merge_policy	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 module_path_and_option_column_coexist	diff	-{"tick":1,"deltas":{"__opt_text_some":{"add":[[801,"gala"]],"del":[]},"__opt_text_tag":{"add":[[801,"some"]],"del":[]}}}
 module_path_in_body_reads_the_flat_rel	clean	byte-clean
 module_path_in_head_resolves_and_contributes	clean	byte-clean
@@ -227,17 +227,17 @@ nested_two_parent_rows_partition_the_child	runtime-error	arrival write failed: S
 nested_zero_column_child_is_one_row_per_parent	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 new_file_diag_at_hit_line_exact_rows	clean	byte-clean
 new_file_no_exceeded_diag	clean	byte-clean
-new_salt_refires_fresh_stream	runtime-error	parse program json: Error("missing field `head_kind`")
-next_edge_is_the_bare_atom_spelling	runtime-error	parse program json: Error("missing field `head_kind`")
+new_salt_refires_fresh_stream	diff	-{"tick":1,"deltas":{"demand":{"add":[["src","sha_aaa"]],"del":[]},"watch_request":{"add":[["alice","src","sha_aaa"]],"del":[]}}}
+next_edge_is_the_bare_atom_spelling	diff	-{"tick":1,"deltas":{"seen":{"add":[[1]],"del":[]},"source":{"add":[[1]],"del":[]}}}
 next_level_is_the_bare_atom_spelling	clean	byte-clean
 non_array_value_at_list_column_is_refused	unsupported	type_arrival_shape_mismatch(batch/2,payloads,json_list(json),field_not_array(42))
-now_reads_the_tick	runtime-error	parse program json: Error("missing field `head_kind`")
+now_reads_the_tick	diff	-{"tick":1,"deltas":{"ping":{"add":[["alpha"]],"del":[]},"seen_at":{"add":[["alpha",1]],"del":[]}}}
 numeric_equality_operator_filters	clean	byte-clean
 numeric_inequality_operator_filters	clean	byte-clean
 one_attempt_bounded_log_two_arms_refused	unsupported	retention_head_conflict_risk(dispatch_first/2,count(1))
-one_attempt_guard_by_negation_arrival_order_beats_arm_order	runtime-error	parse program json: Error("missing field `head_kind`")
-one_attempt_guard_by_negation_lands_one_unnamed_winner	runtime-error	parse program json: Error("missing field `head_kind`")
-one_attempt_keyed_head_loses_the_first_arm_silently	runtime-error	parse program json: Error("missing field `head_kind`")
+one_attempt_guard_by_negation_arrival_order_beats_arm_order	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_first":{"add":[[1,"sealed"]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]}}}
+one_attempt_guard_by_negation_lands_one_unnamed_winner	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_first":{"add":[[1,"acked"]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]}}}
+one_attempt_keyed_head_loses_the_first_arm_silently	diff	-{"tick":1,"deltas":{"dispatch_ack":{"add":[[1]],"del":[]},"dispatch_seal":{"add":[[1]],"del":[]},"dispatch_winner":{"add":[[1,"sealed"]],"del":[]}}}
 one_occurrence_two_rows_still_conflicts	unsupported	edge_head_conflict_risk(latest/2,[ping/1])
 option_companion_name_collision_is_named	unsupported	option_companion_name_collision(pair_holder__before/1,pair_holder/2,before)
 option_dense_sequence_of_rel_round_trips_absent_and_present	diff	-{"tick":1,"deltas":{"__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42":{"add":[[100]],"del":[]},"__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d
@@ -266,14 +266,14 @@ ordered_json_group_array_nested_json	clean	byte-clean
 ordered_json_group_array_ordinal	clean	byte-clean
 ordered_json_group_array_value	clean	byte-clean
 ordered_mermaid_line_assembly	clean	byte-clean
-ordered_program_level_fold_reaches_three_links	runtime-error	parse program json: Error("missing field `head_kind`")
+ordered_program_level_fold_reaches_three_links	runtime-error	parse program json: Error("invalid type: map, expected a string")
 over_baseline_count_row	clean	byte-clean
 over_baseline_diag_exact_rows	clean	byte-clean
 over_baseline_gate_blocks_commit_only	clean	byte-clean
-pairwise_pairs_adjacent_values_when_the_source_idles	runtime-error	parse program json: Error("missing field `head_kind`")
-pairwise_reads_state_at_the_departure_tick	runtime-error	parse program json: Error("missing field `head_kind`")
+pairwise_pairs_adjacent_values_when_the_source_idles	diff	-{"tick":1,"deltas":{"reading":{"add":[["north",10]],"del":[]}}}
+pairwise_reads_state_at_the_departure_tick	diff	-{"tick":1,"deltas":{"reading":{"add":[["north",10]],"del":[]}}}
 paren_in_literal_inside_wrapper	clean	byte-clean
-pin_to_unknown_repo_derives_repo_candidate	runtime-error	parse program json: Error("missing field `head_kind`")
+pin_to_unknown_repo_derives_repo_candidate	diff	-{"tick":1,"deltas":{"pin_extracted":{"add":[[10,2,501,"vendor/lib.rs","import"]],"del":[]},"xref":{"add":[[10,2,501,"vendor/lib.rs","none","import"]],"del":[]}}}
 pipe_stage_costs_one_tick	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 pr_size_decodes_files_and_rolls_up	clean	byte-clean
 pre_in_level_rule_rejected	unsupported	pre_in_level_rule(source_item/1)
@@ -307,7 +307,7 @@ relation_ref_column_fed_by_text_variable_rejected	unsupported	relation_column_ty
 relation_reference_target_and_parent_share_tick	diff	-{"tick":1,"deltas":{"finding":{"add":[[{"end":9,"start":3}]],"del":[]},"span":{"add":[[3,9]],"del":[]},"span_seen":{"add":[[3,9]],"del":[]}}}
 relation_value_in_edge_rule_rejected	unsupported	relation_value_in_edge_rule(span/3,file,file,file(repo(acme),fpath('src/a.rs')))
 relation_value_under_negation_rejected	unsupported	relation_value_under_negation(span/3,file,file,file(repo(acme),fpath('missing.rs')))
-repeat_is_a_self_carry_chain	runtime-error	parse program json: Error("missing field `head_kind`")
+repeat_is_a_self_carry_chain	diff	-{"tick":1,"deltas":{"kick":{"add":[["go"]],"del":[]},"pulse":{"add":[[1]],"del":[]}}}
 replace_rewrites_all_occurrences	clean	byte-clean
 repo_on_bind_watch_is_refused	unsupported	bind_repo_column(watch)
 reserved_namespace_declared_rel	unsupported	reserved_rel_namespace('__txt_reach')
@@ -315,27 +315,27 @@ reserved_namespace_derived_head	unsupported	reserved_rel_namespace('__str_stats'
 retention_count_prunes_oldest	diff	-{"tick":1,"deltas":{"event":{"add":[["one"]],"del":[]}}}
 retention_head_conflict_risk_rejected	unsupported	retention_head_conflict_risk(journal/1,count(1))
 retention_prune_is_a_visible_minus	diff	-{"tick":1,"deltas":{"event":{"add":[["one"]],"del":[]}}}
-retention_single_arm_still_prunes	runtime-error	parse program json: Error("missing field `head_kind`")
+retention_single_arm_still_prunes	diff	-{"tick":1,"deltas":{"journal":{"add":[["a"]],"del":[]},"ping":{"add":[["a"]],"del":[]}}}
 retraction_only_tick_retracts_level_view	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
-rev_fill_not_behind_keeps_stale_pin_empty	runtime-error	parse program json: Error("missing field `head_kind`")
+rev_fill_not_behind_keeps_stale_pin_empty	diff	-{"tick":1,"deltas":{"demand_rev":{"add":[[11,"release"]],"del":[]},"pin_want":{"add":[[4,11,"release"]],"del":[]}}}
 rtrim_strips_trailing_chars	clean	byte-clean
 same_tick_error_then_fresh_chains_arms	unsupported	trigger_arg_not_var(error(_))
 scan_is_a_named_unsupported	unsupported	removed_word(scan)
 scan_is_a_named_unsupported_at_five_arguments	unsupported	removed_word(scan)
 scope_done_three_spellings	unsupported	trigger_arg_not_var(done)
 seed_and_transition_are_disjoint	unsupported	edge_body_with_negation((increment(_,_),not(pre(counter(_,_)))))
-seeded_one_arm_fold_matches_two_arms	runtime-error	parse program json: Error("missing field `head_kind`")
-seeded_pre_multicolumn_fee_stats_fold	runtime-error	parse program json: Error("missing field `head_kind`")
-seeded_pre_reads_a_body_bound_value	runtime-error	parse program json: Error("missing field `head_kind`")
-seeded_pre_text_breadcrumb_fold	runtime-error	parse program json: Error("missing field `head_kind`")
-seq_wire_hand	runtime-error	parse program json: Error("missing field `head_kind`")
-seq_wire_surface	runtime-error	parse program json: Error("missing field `head_kind`")
-set_dedups_log_stacks	runtime-error	parse program json: Error("missing field `head_kind`")
-set_rel_identical_arrival_is_one_occurrence	runtime-error	parse program json: Error("missing field `head_kind`")
+seeded_one_arm_fold_matches_two_arms	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",1]],"del":[]},"increment":{"add":[["clicks","ev1"]],"del":[]}}}
+seeded_pre_multicolumn_fee_stats_fold	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+seeded_pre_reads_a_body_bound_value	diff	-{"tick":1,"deltas":{"counter":{"add":[["clicks",5]],"del":[]},"increment":{"add":[["clicks",4]],"del":[]}}}
+seeded_pre_text_breadcrumb_fold	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+seq_wire_hand	diff	-{"tick":1,"deltas":{"arrival":{"add":[["one"]],"del":[]},"numbered":{"add":[[1,"one"]],"del":[]},"seq_numbered_":{"add":[["q",1]],"del":[]}}}
+seq_wire_surface	diff	-{"tick":1,"deltas":{"arrival":{"add":[["one"]],"del":[]},"numbered":{"add":[[1,"one"]],"del":[]},"seq_numbered_":{"add":[["q",1]],"del":[]}}}
+set_dedups_log_stacks	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
+set_rel_identical_arrival_is_one_occurrence	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 shared_demand_refcount	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 shuffled_arrival_reorders_log_deltas	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 stale_keyed_retraction_keeps_replacement	diff	-{"tick":1,"deltas":{"current_value":{"add":[["item","v1"]],"del":[]}}}
-state_flap_nets_to_zero_scope_churn	runtime-error	parse program json: Error("missing field `head_kind`")
+state_flap_nets_to_zero_scope_churn	diff	-{"tick":1,"deltas":{"fetch_result":{"add":[["gh_repos","error(500)"]],"del":[]},"poll_due":{"add":[["gh_repos"]],"del":[]}}}
 struct_arrival_field_type_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,field_not_int(span,end,nine))
 struct_arrival_functor_term_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,not_an_object(span,span(3,9)))
 struct_arrival_key_order_canonicalized	diff	-{"tick":1,"deltas":{"finding":{"add":[["a.rs",{"end":9,"start":3}]],"del":[]},"span":{"add":[[3,9]],"del":[]}}}
@@ -356,19 +356,19 @@ struct_type_cycle_rejected	unsupported	type_cycle([node])
 struct_type_mutual_cycle_rejected	unsupported	type_cycle([left,right])
 subscribe_is_a_named_unsupported	unsupported	lifecycle_arm(subscribe)
 sum_min_max_group_by_plain_columns	clean	byte-clean
-switch_as_keyed_replace	runtime-error	parse program json: Error("missing field `head_kind`")
-take_until_keyed_replace_negated_done	runtime-error	parse program json: Error("missing field `head_kind`")
+switch_as_keyed_replace	diff	-{"tick":1,"deltas":{"demanded":{"add":[["route_data(settings)","session_one"]],"del":[]},"open_scope":{"add":[["session_one","route_data(settings)"]],"del":[]},"route_change":{"ad
+take_until_keyed_replace_negated_done	diff	-{"tick":1,"deltas":{"demanded":{"add":[["fetch_of(gh_repos)","gh_repos"]],"del":[]},"live_fetch":{"add":[["gh_repos"]],"del":[]},"open_fetch":{"add":[["gh_repos"]],"del":[]},"phas
 terminal_is_terminal	diff	-{"tick":1,"deltas":{"stream_item":{"add":[["src",1,"alpha"]],"del":[]},"stream_status":{"add":[["src","running"]],"del":[]}}}
 text_one_and_numeric_one_are_not_equal	unsupported	comparison_type_mismatch(_==_,text,int)
 text_one_and_numeric_one_never_join	unsupported	join_column_type_mismatch('b1."value"',int,'b0."value"',text)
 text_rejects_number_ingress	unsupported	type_arrival_shape_mismatch(label/1,value,text,field_not_text(4))
 tightened_baseline_catches_regrowth	clean	byte-clean
 trigger_marker_is_what_stops_backlog_replay	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
-two_pins_dedup_to_one_demand_row	runtime-error	parse program json: Error("missing field `head_kind`")
+two_pins_dedup_to_one_demand_row	runtime-error	arrival write failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("malformed JSON"))
 typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))
 typed_int_without_literal_witness	clean	byte-clean
 unmarked_chain_replays_to_late_subscriber	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
-unmarked_edge_replays_backlog	runtime-error	parse program json: Error("missing field `head_kind`")
+unmarked_edge_replays_backlog	diff	-{"tick":1,"deltas":{"subscriber":{"add":[["alice"]],"del":[]}}}
 unmarked_first_stage_refires_on_late_watch	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 unordered_program_level_fold_reaches_three_links	runtime-error	parse program json: Error("invalid type: map, expected a string")
 unsubscribe_is_a_named_unsupported	unsupported	lifecycle_arm(unsubscribe)
@@ -383,10 +383,10 @@ variant_field_typed_as_struct_is_a_ref	diff	-{"tick":1,"deltas":{"loc_here":{"ad
 waiver_range_join_exact_rows	clean	byte-clean
 wide_int_refused_at_undeclared_column	unsupported	int_out_of_range(untyped/1,1,9007199254740993)
 wide_int_refused_inside_json_document	unsupported	int_out_of_range(payload/1,document,9007199254740993)
-worktree_edit_identical_resave_is_silent	runtime-error	parse program json: Error("missing field `head_kind`")
-worktree_edit_replaces_digest_and_flips_kind_view	runtime-error	parse program json: Error("missing field `head_kind`")
+worktree_edit_identical_resave_is_silent	diff	-{"tick":1,"deltas":{"worktree_edit":{"add":[["README.md","sha_r1","doc"]],"del":[]},"worktree_file":{"add":[["README.md","sha_r1","doc"]],"del":[]}}}
+worktree_edit_replaces_digest_and_flips_kind_view	diff	-{"tick":1,"deltas":{"rust_file":{"add":[["src/main.rs"]],"del":[]},"worktree_edit":{"add":[["src/main.rs","sha_a1","rust"]],"del":[]},"worktree_file":{"add":[["src/main.rs","sha_a
 world_fed_keyed_arrival_replaces	diff	-{"tick":1,"deltas":{"world_mode":{"add":[[1,"a"]],"del":[]}}}
 wrong_element_type_is_refused	unsupported	type_arrival_shape_mismatch(batch/2,payloads,json_list(text),list_element_shape(2,field_not_text(42)))
-xref_rev_is_pin_data_not_live_head	runtime-error	parse program json: Error("missing field `head_kind`")
+xref_rev_is_pin_data_not_live_head	diff	-{"tick":1,"deltas":{"pin_extracted":{"add":[[20,2,777,"docs/api.md","doc_link"]],"del":[]},"xref":{"add":[[20,2,777,"docs/api.md","none","doc_link"]],"del":[]}}}
 zip_is_a_named_unsupported	unsupported	zip
 zombie_scope_negative_case_a2b	diff	-{"tick":1,"deltas":{"demanded":{"add":[["detail(item_a)","pane_one"]],"del":[]},"live_detail":{"add":[["pane_one","detail(item_a)"]],"del":[]},"open_detail":{"add":[["pane_one","i
