@@ -3,8 +3,8 @@
   "rows": 10000,
   "control_rows": 1000,
   "statements_per_tick_set": [
-    37,
-    41
+    39,
+    43
   ],
   "tick_count": 100,
   "arrivals": 10000,
