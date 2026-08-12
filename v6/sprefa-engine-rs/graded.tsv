@@ -50,7 +50,7 @@ decode_missing_key_fails_quietly	unsupported	decode_source_not_struct(decode(_,{
 decode_open_pattern_binds_nested	unsupported	decode_source_not_struct(decode(_,{name:_}))
 demand_laziness_effect_rows	clean	byte-clean
 demand_view_fires_its_consumer_once	clean	byte-clean
-departed_fires_next_tick_on_retraction	diff	missing-tick first-tick=3
+departed_fires_next_tick_on_retraction	clean	byte-clean
 derive_directory_prefix_via_rtrim_replace	clean	byte-clean
 desugared_trace_equals_hand_written	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 diag_scenario_seven_ticks_end_to_end	clean	byte-clean
@@ -74,7 +74,7 @@ extraction_fork_callgraph	clean	byte-clean
 extraction_fork_span_line	clean	byte-clean
 fill_as_cache_update_swr	clean	byte-clean
 filter_map_is_a_level_rule	clean	byte-clean
-finalize_over_log_fires_on_retention_prune	diff	mixed(missing-rel+missing-tick) first-tick=4
+finalize_over_log_fires_on_retention_prune	clean	byte-clean
 fix_by_waiver_returns_to_clean	clean	byte-clean
 flagship_flow_reach_over_batched_resolved_edges	clean	byte-clean
 flagship_flow_reach_over_resolved_edges	clean	byte-clean
@@ -171,7 +171,7 @@ key_same_tick_ordered_not_conflict	clean	byte-clean
 keyed_edge_head_still_replaces	clean	byte-clean
 keyed_level_head_is_refused	unsupported	keyed_level_head(current_value/2)
 keyed_log_rejected	unsupported	keyed_log_rel(latest/2,[1])
-keyed_replace_departs_the_old_row	diff	mixed(missing-rel+missing-tick) first-tick=3
+keyed_replace_departs_the_old_row	clean	byte-clean
 latest_in_level_rule_rejected	unsupported	latest_in_level_rule(source_item/1)
 level_view_reads_set_projection_not_occurrences	clean	byte-clean
 list_bare_column_round_trips	clean	byte-clean
@@ -270,8 +270,8 @@ ordered_program_level_fold_reaches_three_links	clean	byte-clean
 over_baseline_count_row	clean	byte-clean
 over_baseline_diag_exact_rows	clean	byte-clean
 over_baseline_gate_blocks_commit_only	clean	byte-clean
-pairwise_pairs_adjacent_values_when_the_source_idles	diff	mixed(missing-rel+missing-tick) first-tick=3
-pairwise_reads_state_at_the_departure_tick	diff	mixed(missing-rel+missing-tick) first-tick=3
+pairwise_pairs_adjacent_values_when_the_source_idles	clean	byte-clean
+pairwise_reads_state_at_the_departure_tick	clean	byte-clean
 paren_in_literal_inside_wrapper	clean	byte-clean
 pin_to_unknown_repo_derives_repo_candidate	clean	byte-clean
 pipe_stage_costs_one_tick	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))

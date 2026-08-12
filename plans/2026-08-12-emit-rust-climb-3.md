@@ -170,7 +170,7 @@ The direct refusal sites used by the table include
 
 Measured result: `RUST-GRADE graded=392 byte-clean=248`, a transition from
 230 to 248. The ratchet listed the same 18 fixtures assigned to the struct
-plane before implementation. The remaining diff count is 32.
+plane before implementation. The remaining diff count was 32.
 
 ### Type signatures
 
@@ -207,6 +207,22 @@ arrivals, reads their dense ids, and records one id per semantic key. Parent
 arrival rows are rewritten only after every required target id exists. A
 target key may occur more than once in the input batch; the per-type map retains
 one collected row for that semantic key.
+
+## Departure frontier result
+
+Departure staging moved the grade from 248 to 253. The five gained fixtures
+are `departed_fires_next_tick_on_retraction`,
+`finalize_over_log_fires_on_retention_prune`,
+`keyed_replace_departs_the_old_row`,
+`pairwise_pairs_adjacent_values_when_the_source_idles`, and
+`pairwise_reads_state_at_the_departure_tick`.
+
+The inherited six-row grouping included
+`take_until_keyed_replace_negated_done`. Its source has no `finalize/1` arm at
+`v6/prolog/conformance/fixtures/scopes.pl:273-296`, and its emitted TypeScript
+dispatches to `run_ordered_tick` at
+`v6/prolog/compile/out/take_until_keyed_replace_negated_done.ts:788-790`.
+It remains among the 27 ordered-program diffs.
 
 ## Verification
 

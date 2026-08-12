@@ -110,6 +110,7 @@ impl GenProgram {
             self.reconcile_every_tick,
         );
         let rels = incremental::read_boundary(seam, &self.relations);
+        incremental::stage_departures(seam, &self.relations, &rels);
         let carry_pending = incremental::promote_frontiers(seam, &self.relations);
         TickDeltas {
             rels,
