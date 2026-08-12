@@ -78,7 +78,14 @@ boundary_type_name(json, json) :- !.
 boundary_type_name(json_list(_), json) :- !.
 boundary_type_name(T, T).
 
-boot_dict(bootstmt(Rel, Sql, Params), _{rel: Rel, sql: Sql, params: Params}).
+boot_dict(bootstmt(Rel, Sql, Params), _{rel: Rel, sql: Sql, params: JsonParams}) :-
+    maplist(boot_param, Params, JsonParams).
+
+% A text param stays a JSON string even when it spells `true`/`false`/`null`,
+% which json_write_dict would otherwise emit as the bare JSON literal.
+boot_param(bool_lit(Boolean), Boolean) :- !.
+boot_param(Param, Param) :- number(Param), !.
+boot_param(Param, Text) :- atom_string(Param, Text).
 
 final_select_entry(deltastmt(Ref, Sql, _, _, _), Name-Sql) :- ref_name(Ref, Name).
 
