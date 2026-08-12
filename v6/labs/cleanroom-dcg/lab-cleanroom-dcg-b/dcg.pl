@@ -250,8 +250,9 @@ name_dots([]) --> [].
 
 dotname(Ds) --> literal("."), bident(D), dotname(Ds0), { Ds = [D|Ds0] }.
 dotname([]) --> [].
-dotfields(Fs) --> literal("."), bident(F), dotfields(Fs0), { Fs = [F|Fs0] }.
-dotfields([]) --> [].
+dotfields([F|Fs]) --> literal("."), bident(F), dotfields_rest(Fs).
+dotfields_rest([]) --> [].
+dotfields_rest([F|Fs]) --> literal("."), bident(F), dotfields_rest(Fs).
 
 join_dots([H], H) :- !.
 join_dots([H|T], A) :- join_dots(T, A0), atom_concat(H, '.', H1), atom_concat(H1, A0, A).
