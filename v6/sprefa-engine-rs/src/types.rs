@@ -1,7 +1,10 @@
 // Declared column types a row column can carry. Mirrors IRowColumnType in the
 // TS runtime; drives ticklog encoding and boundary normalization.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RowColumnType {
     Text,
     Int,
@@ -29,7 +32,8 @@ impl RowColumnType {
 // holds at boundary time in the TS runtime: integers, floats, booleans, and
 // text (json/document text rides as Text).
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum Value {
     Integer(i64),
     Real(f64),
@@ -62,7 +66,7 @@ pub enum ArrivalSign {
     Del,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RelDelta {
     pub rel: String,
     pub add: Vec<Row>,
@@ -75,14 +79,15 @@ pub struct TickDeltas {
     pub carry_pending: bool,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootStatement {
     pub rel: String,
     pub sql: String,
     pub params: Vec<Value>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum InternMode {
     Dict,
     Direct,
@@ -98,7 +103,7 @@ impl InternMode {
 }
 
 // A prepared SQL statement plus its bound args, the unit the seam executes.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SqlStatement {
     pub sql: String,
     pub args: Vec<Value>,
@@ -113,7 +118,7 @@ pub struct QueryResult {
 
 // One IIncrementalRelationPlan: the per-relation table names and statement
 // text the tick engine stages events through.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalRelationPlan {
     pub rel: String,
     pub kind: RelationKind,
@@ -130,13 +135,42 @@ pub struct IncrementalRelationPlan {
     pub boundary_sql: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum RelationKind {
     Set,
     Log,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DredPlan {
+    pub clear_ping_sql: String,
+    pub clear_pong_sql: String,
+    pub clear_cone_sql: String,
+    pub assert_seed_sqls: Vec<String>,
+    pub assert_hop_ab_sql: String,
+    pub assert_hop_ba_sql: String,
+    pub commit_a_sql: String,
+    pub commit_b_sql: String,
+    pub arrival_a_sql: String,
+    pub arrival_b_sql: String,
+    pub dred_seed_sqls: Vec<String>,
+    pub dred_hop_ab_sql: String,
+    pub dred_hop_ba_sql: String,
+    pub cone_absorb_a_sql: String,
+    pub cone_absorb_b_sql: String,
+    pub cone_trim_sql: String,
+    pub head_delete_sql: String,
+    pub rederive_seed_sqls: Vec<String>,
+    pub revive_hop_ab_sql: String,
+    pub revive_hop_ba_sql: String,
+    pub cone_drop_a_sql: String,
+    pub cone_drop_b_sql: String,
+    pub stage_retract_sql: String,
+    pub head_count_sql: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregateLevelPlan {
     pub scope_clear_sql: String,
     pub scope_seed_sql: Vec<String>,
@@ -146,7 +180,7 @@ pub struct AggregateLevelPlan {
     pub delta_maintained: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalLevelStatement {
     pub head_rel: String,
     pub head_delta_table_name: String,
@@ -158,11 +192,11 @@ pub struct IncrementalLevelStatement {
     pub support_sql: Option<Vec<String>>,
     pub support_intern_sql: Option<Vec<String>>,
     pub expand_sql: Option<String>,
-    pub dred_sql: Option<String>,
+    pub dred_sql: Option<DredPlan>,
     pub aggregate_sql: Option<AggregateLevelPlan>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalEdgeStatement {
     pub head_rel: String,
     pub head_columns: Vec<String>,
@@ -172,15 +206,35 @@ pub struct IncrementalEdgeStatement {
     pub project_sql: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalRetentionStatement {
     pub rel: String,
     pub delete_sql: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArrivalTemplate {
     pub kind: RelationKind,
     pub add_sql: String,
     pub del_sql: Option<String>,
+}
+
+// The serde mirror of the emitted program: one JSON object per fixture.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProgramJson {
+    pub name: String,
+    pub intern_mode: InternMode,
+    pub ddl: Vec<String>,
+    pub rel_columns: std::collections::HashMap<String, Vec<String>>,
+    pub rel_column_types: std::collections::HashMap<String, Vec<RowColumnType>>,
+    pub arrival_targets: Vec<String>,
+    pub boot: Vec<BootStatement>,
+    pub final_select: std::collections::HashMap<String, String>,
+    pub arrival_templates: std::collections::HashMap<String, ArrivalTemplate>,
+    pub relations: Vec<IncrementalRelationPlan>,
+    pub edges: Vec<IncrementalEdgeStatement>,
+    pub levels: Vec<IncrementalLevelStatement>,
+    pub retentions: Vec<IncrementalRetentionStatement>,
+    pub reconcile_every_tick: bool,
+    pub incremental_safe: bool,
 }

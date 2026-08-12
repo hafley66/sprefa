@@ -12,9 +12,8 @@ use crate::incremental;
 use crate::sql::{SqlRunner, SqliteSeam};
 use crate::types::{
     Arrival, ArrivalTemplate, BootStatement, IncrementalEdgeStatement, IncrementalLevelStatement,
-    IncrementalRelationPlan, IncrementalRetentionStatement, InternMode, TickDeltas,
+    IncrementalRelationPlan, IncrementalRetentionStatement, InternMode, ProgramJson, TickDeltas,
 };
-
 #[derive(Clone)]
 pub struct GenProgram {
     pub name: String,
@@ -35,6 +34,26 @@ pub struct GenProgram {
 }
 
 impl GenProgram {
+    pub fn from_json(pj: ProgramJson) -> Self {
+        GenProgram {
+            name: pj.name,
+            intern_mode: pj.intern_mode,
+            ddl: pj.ddl,
+            rel_columns: pj.rel_columns,
+            rel_column_types: pj.rel_column_types,
+            arrival_targets: pj.arrival_targets,
+            boot: pj.boot,
+            final_select: pj.final_select,
+            arrival_templates: pj.arrival_templates,
+            relations: pj.relations,
+            edges: pj.edges,
+            levels: pj.levels,
+            retentions: pj.retentions,
+            reconcile_every_tick: pj.reconcile_every_tick,
+            incremental_safe: pj.incremental_safe,
+        }
+    }
+
     pub fn tick<'a>(
         &'a self,
         seam: &'a SqliteSeam,
