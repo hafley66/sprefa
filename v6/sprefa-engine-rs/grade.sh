@@ -62,7 +62,12 @@ sort "$verdicts" -o "$verdicts"
 ratchet="$here/graded.tsv"
 clean_now=$(awk -F'\t' '$2=="clean"' "$verdicts" | wc -l | tr -d ' ')
 graded_total=$(wc -l <"$verdicts" | tr -d ' ')
+minimum_byte_clean=230
 status=0
+if [ "$clean_now" -lt "$minimum_byte_clean" ]; then
+  printf 'RUST-GRADE REGRESSION byte-clean=%s minimum=%s\n' "$clean_now" "$minimum_byte_clean"
+  status=1
+fi
 if [ -f "$ratchet" ]; then
   lost=$(comm -23 <(awk -F'\t' '$2=="clean" {print $1}' "$ratchet") <(awk -F'\t' '$2=="clean" {print $1}' "$verdicts"))
   gained=$(comm -13 <(awk -F'\t' '$2=="clean" {print $1}' "$ratchet") <(awk -F'\t' '$2=="clean" {print $1}' "$verdicts"))

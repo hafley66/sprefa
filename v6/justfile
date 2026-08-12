@@ -143,6 +143,10 @@ store-test:
 dd-grade:
     bash {{ v6 }}/dd-runner/grade.sh
 
+# (expect: RUST-GRADE graded=392 byte-clean=230)
+rust-grade:
+    bash {{ v6 }}/sprefa-engine-rs/grade.sh
+
 # THE END GOAL, executable: kill -9 mid-delay, reboot, value lands exactly once
 endurance:
     bash {{ v6 }}/dl/scripts/goal-endurance.sh
@@ -467,7 +471,7 @@ perf-all-deep:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test dd-grade
+green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test dd-grade rust-grade
 
 # everything, phased: scale-floor alone (its verdict is a wall reading), then
 # the memory leak test alone (its flatness check reddens under a load ramp),
