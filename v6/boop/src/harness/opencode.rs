@@ -549,6 +549,7 @@ mod tests {
             tmux: None,
             lane: "lane-test".to_owned(),
             mail_dir: std::env::temp_dir(),
+            warm_start: false,
         }
     }
 

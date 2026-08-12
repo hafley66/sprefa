@@ -195,6 +195,8 @@ pub struct SpawnSpec {
     pub lane: String,
     /// The mailbox directory the lane's inbox lives in.
     pub mail_dir: PathBuf,
+    /// Run the repo's `boop-start` recipe in a new worktree before spawning.
+    pub warm_start: bool,
 }
 
 impl SpawnSpec {

@@ -503,6 +503,7 @@ fn main() -> Result<()> {
                 worktree_dir: None,
                 parent: None,
                 on_exit: None,
+                warm_start: true,
             },
         ),
         SubCmd::Resolve { to, mail_dir } => run_resolve(&to, mail_dir.as_deref()),
@@ -568,6 +569,7 @@ fn main() -> Result<()> {
                 socket,
                 goal,
                 trace: None,
+                no_start: false,
                 mail_dir,
                 dry_run,
                 wait: false,
@@ -1126,6 +1128,8 @@ struct DispatchArgs {
     /// Shell appended after the harness command; `lane create --parent`
     /// composes the completion hail here.
     on_exit: Option<String>,
+    /// Run the repo's `boop-start` recipe in a new worktree before spawning.
+    warm_start: bool,
 }
 
 fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
@@ -1182,6 +1186,7 @@ fn run_dispatch(registry: &Registry, args: DispatchArgs) -> Result<()> {
         tmux: args.tmux.clone(),
         lane: args.to.clone(),
         mail_dir: dir.clone(),
+        warm_start: args.warm_start,
     };
     let session = adapter.spawn(&spec)?;
 
@@ -1654,6 +1659,7 @@ struct LaneArgs {
     socket: Option<String>,
     goal: Option<String>,
     trace: Option<String>,
+    no_start: bool,
     mail_dir: Option<PathBuf>,
     dry_run: bool,
     wait: bool,
@@ -1752,6 +1758,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             tmux: Some(identity.tmux.clone()),
             lane: identity.lane.clone(),
             mail_dir: hail_mail_dir.clone(),
+            warm_start: !args.no_start,
         };
         let command = adapter
             .preview_command(&spec)
@@ -1835,6 +1842,7 @@ fn run_lane(registry: &Registry, args: LaneArgs) -> Result<()> {
             parent: parent.parent,
             goal: args.goal.clone(),
             on_exit,
+            warm_start: !args.no_start,
         },
     )?;
     if args.wait {
@@ -2783,6 +2791,9 @@ enum LaneCmd {
         /// lane. Every session this lane runs joins it.
         #[arg(long)]
         trace: Option<String>,
+        /// Skip the repo's `boop-start` warmup in the new worktree.
+        #[arg(long)]
+        no_start: bool,
         /// Repo to branch from; defaults to the repo the caller stands in.
         #[arg(long)]
         cwd: Option<String>,
@@ -3359,6 +3370,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
             socket,
             goal,
             trace,
+            no_start,
             mail_dir,
             dry_run,
             wait,
@@ -3379,6 +3391,7 @@ fn run_beep_lane(registry: &Registry, cmd: LaneCmd) -> Result<()> {
                 socket,
                 goal,
                 trace,
+                no_start,
                 mail_dir,
                 dry_run,
                 wait,
