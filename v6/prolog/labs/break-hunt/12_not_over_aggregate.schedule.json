@@ -1,0 +1,5 @@
+[
+  [ {"rel":"team_name","sign":"add","row":["red"]} ],
+  [ {"rel":"spend","sign":"add","row":["red","nails",10]} ],
+  [ {"rel":"spend","sign":"del","row":["red","nails",10]} ]
+]

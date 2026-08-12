@@ -2,7 +2,7 @@
 //! default (branch at the stated base sha) and refuses a non-fast-forward;
 //! working in the main tree requires `main_tree: true`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
@@ -39,10 +39,56 @@ pub fn prepare_spawn_dir(spec: &SpawnSpec) -> Result<PathBuf> {
         ],
     )?;
     merge_ff_only(&worktree, &spec.base_sha)?;
+    if spec.warm_start {
+        warm_start(&worktree)?;
+    }
     for command in &spec.setup {
         run_shell(&worktree, command)?;
     }
     Ok(worktree)
+}
+
+/// Run the repo's `boop-start` recipe in a fresh worktree. A repo without one
+/// needs no warmup and is skipped in silence.
+///
+/// A failure BLOCKS the spawn. The recipe exists because a worktree missing the
+/// pre-commit hook's inputs makes every `git commit` abort, and a lane reads
+/// that abort as success; warning instead would reproduce the loss it prevents.
+pub fn warm_start(worktree: &Path) -> Result<()> {
+    if !has_recipe(worktree, "boop-start") {
+        return Ok(());
+    }
+    let started = std::time::Instant::now();
+    let output = Command::new("just")
+        .arg("boop-start")
+        .current_dir(worktree)
+        .output()
+        .context("run just boop-start")?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        println!("  {line}");
+    }
+    if !output.status.success() {
+        anyhow::bail!(
+            "just boop-start failed in {}: {}\n\
+             the pre-commit hook needs it, so a lane spawned now could not commit; \
+             fix it or respawn with --no-start",
+            worktree.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    println!("boop-start: {:.1}s", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+/// True when `just` is on PATH and this tree declares `name`.
+fn has_recipe(worktree: &Path, name: &str) -> bool {
+    Command::new("just")
+        .args(["--show", name])
+        .current_dir(worktree)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 /// `git -C repo merge --ff-only <sha>`; a non-fast-forward is an error.
@@ -84,6 +130,31 @@ fn run_shell(cwd: &PathBuf, command: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// A repo with no justfile needs no warmup, so the spawn path stays quiet
+    /// instead of failing on a recipe nobody declared.
+    #[test]
+    fn warm_start_is_a_no_op_where_no_recipe_is_declared() {
+        let dir = std::env::temp_dir().join(format!("boop-nostart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!super::has_recipe(&dir, "boop-start"));
+        super::warm_start(&dir).expect("no recipe means no work");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A declared recipe is found and run, and its failure blocks the spawn.
+    #[test]
+    fn a_failing_boop_start_blocks_the_spawn() {
+        let dir = std::env::temp_dir().join(format!("boop-badstart-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("justfile"), "boop-start:\n    @exit 3\n").unwrap();
+        assert!(super::has_recipe(&dir, "boop-start"));
+        let error = super::warm_start(&dir).unwrap_err().to_string();
+        assert!(error.contains("could not commit"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use std::process::Command;
 
     use crate::harness::SpawnSpec;
@@ -162,6 +233,9 @@ mod tests {
             model: None,
             on_exit: None,
             tmux: None,
+            lane: "lane-test".to_owned(),
+            mail_dir: std::env::temp_dir(),
+            warm_start: false,
         }
     }
 

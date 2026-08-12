@@ -1,0 +1,4 @@
+[
+  [ {"rel":"event","sign":"add","row":[1,"boot"]} ],
+  [ {"rel":"event","sign":"add","row":[2,"ready"]} ]
+]

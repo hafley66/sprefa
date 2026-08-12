@@ -1,0 +1,6 @@
+[
+  [ {"rel":"edge","sign":"add","row":["a","b"]} ],
+  [ {"rel":"edge","sign":"add","row":["b","c"]} ],
+  [ {"rel":"edge","sign":"add","row":["c","a"]} ],
+  [ {"rel":"edge","sign":"del","row":["c","a"]} ]
+]

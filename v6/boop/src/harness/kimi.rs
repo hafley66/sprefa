@@ -9,15 +9,88 @@ use anyhow::Context;
 use serde_json::Value;
 
 use crate::event::AgentEvent;
-use crate::harness::{Harness, Ingested, ReadChunk, SessionRef};
+use crate::harness::{
+    Capabilities, Harness, Ingested, ReadChunk, SendOutcome, SessionRef, SpawnSpec,
+};
 use crate::ident::{Store, SyncStat, UsageRow};
 use crate::tail;
 
 pub struct Kimi;
 
 impl Harness for Kimi {
+    fn open_channel(
+        &self,
+        spec: &crate::channel::ChannelSpec,
+    ) -> anyhow::Result<Box<dyn crate::channel::LaneChannel>> {
+        let profile = crate::channel::tui::kimi_profile(spec);
+        Ok(Box::new(crate::channel::tui::TuiChannel::open(
+            profile, spec, None,
+        )?))
+    }
+
+
     fn id(&self) -> &'static str {
         "kimi"
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            send_midflight: true,
+            resume: true,
+            spawn: true,
+            subagent_visible: true,
+        }
+    }
+
+    fn preview_command(&self, spec: &SpawnSpec) -> Option<String> {
+        Some(crate::harness::supervisor_command(spec))
+    }
+
+    fn spawn(&self, spec: &SpawnSpec) -> anyhow::Result<SessionRef> {
+        let tmux_name = spec
+            .tmux
+            .clone()
+            .unwrap_or_else(|| format!("boop-{}", spec.lane));
+        let cwd = crate::worktree::prepare_spawn_dir(spec)?;
+        let command = crate::harness::supervisor_command(spec);
+        crate::tmux::mux().new_detached_session(
+            spec.socket.as_deref(),
+            &tmux_name,
+            &cwd.display().to_string(),
+            &command,
+        )?;
+        Ok(SessionRef {
+            harness: "kimi",
+            session_id: spec.lane.clone(),
+            nickname: spec.lane.clone(),
+            path: kimi_sessions_dir().unwrap_or_else(|_| cwd.join(".kimi-sessions")),
+            cwd: Some(cwd.display().to_string()),
+            git_branch: Some(spec.branch.clone()),
+            modified_ms: crate::channel::now_ms(),
+            size: 0,
+            tmux: Some(tmux_name),
+            tmux_socket: spec.socket.clone(),
+            parent: None,
+        })
+    }
+
+    fn send(&self, session: &SessionRef, text: &str) -> anyhow::Result<SendOutcome> {
+        match &session.tmux {
+            Some(tmux) => {
+                crate::tmux::mux().send_keys_literal(session.tmux_socket.as_deref(), tmux, text)?;
+                Ok(SendOutcome::Injected)
+            }
+            None => Ok(SendOutcome::QueuedForNextSpawn),
+        }
+    }
+
+    fn stop(&self, session: &SessionRef) -> anyhow::Result<()> {
+        if let Some(tmux) = &session.tmux {
+            if crate::tmux::mux().has_session(session.tmux_socket.as_deref(), tmux)? {
+                crate::tmux::mux().kill_session(session.tmux_socket.as_deref(), tmux)?;
+            }
+        }
+        Ok(())
     }
 
     fn sessions(&self) -> anyhow::Result<Vec<SessionRef>> {
@@ -454,12 +527,12 @@ mod tests {
     }
 
     #[test]
-    fn kimi_capabilities_default_to_all_false() {
+    fn kimi_spawns_and_resumes_like_every_other_harness() {
         let caps = Kimi.capabilities();
-        assert!(!caps.send_midflight);
-        assert!(!caps.resume);
-        assert!(!caps.spawn);
-        assert!(!caps.subagent_visible);
+        assert!(caps.send_midflight);
+        assert!(caps.resume);
+        assert!(caps.spawn);
+        assert!(caps.subagent_visible);
     }
 
     #[test]

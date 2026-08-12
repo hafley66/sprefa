@@ -19,6 +19,14 @@ use crate::tail;
 pub struct Codex;
 
 impl Harness for Codex {
+    fn open_channel(
+        &self,
+        spec: &crate::channel::ChannelSpec,
+    ) -> anyhow::Result<Box<dyn crate::channel::LaneChannel>> {
+        Ok(Box::new(crate::channel::codex::CodexChannel::open(spec)?))
+    }
+
+
     fn id(&self) -> &'static str {
         "codex"
     }
@@ -35,7 +43,7 @@ impl Harness for Codex {
     }
 
     fn preview_command(&self, spec: &SpawnSpec) -> Option<String> {
-        Some(launch_command(spec))
+        Some(crate::harness::supervisor_command(spec))
     }
 
     fn spawn(&self, spec: &SpawnSpec) -> anyhow::Result<SessionRef> {
@@ -45,7 +53,7 @@ impl Harness for Codex {
             .clone()
             .unwrap_or_else(|| format!("boop-{session_id}"));
         let cwd = crate::worktree::prepare_spawn_dir(spec)?;
-        let command = launch_command(spec);
+        let command = crate::harness::supervisor_command(spec);
         crate::tmux::mux().new_detached_session(
             spec.socket.as_deref(),
             &tmux_name,
@@ -662,6 +670,9 @@ mod tests {
             model: None,
             on_exit: None,
             tmux: None,
+            lane: "lane-test".to_owned(),
+            mail_dir: std::env::temp_dir(),
+            warm_start: false,
         }
     }
 

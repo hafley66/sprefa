@@ -16,6 +16,14 @@ use crate::tail;
 pub struct Claude;
 
 impl Harness for Claude {
+    fn open_channel(
+        &self,
+        spec: &crate::channel::ChannelSpec,
+    ) -> anyhow::Result<Box<dyn crate::channel::LaneChannel>> {
+        Ok(Box::new(crate::channel::claude::ClaudeChannel::open(spec)?))
+    }
+
+
     fn id(&self) -> &'static str {
         "claude"
     }
@@ -56,6 +64,10 @@ impl Harness for Claude {
         }
     }
 
+    fn preview_command(&self, spec: &SpawnSpec) -> Option<String> {
+        Some(crate::harness::supervisor_command(spec))
+    }
+
     fn spawn(&self, spec: &SpawnSpec) -> anyhow::Result<SessionRef> {
         let session_id = format!("agent-{}", random_hex());
         let tmux_name = spec
@@ -63,7 +75,7 @@ impl Harness for Claude {
             .clone()
             .unwrap_or_else(|| format!("boop-{session_id}"));
         let cwd = crate::worktree::prepare_spawn_dir(spec)?;
-        let command = launch_command(spec);
+        let command = crate::harness::supervisor_command(spec);
         crate::tmux::mux().new_detached_session(
             spec.socket.as_deref(),
             &tmux_name,
@@ -493,6 +505,9 @@ mod tests {
             model: None,
             on_exit: None,
             tmux: None,
+            lane: "lane-test".to_owned(),
+            mail_dir: std::env::temp_dir(),
+            warm_start: false,
         }
     }
 

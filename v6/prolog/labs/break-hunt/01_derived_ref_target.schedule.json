@@ -1,0 +1,4 @@
+[
+  [ {"rel":"tree","sign":"add","row":[1,"oak"]} ],
+  [ {"rel":"finding","sign":"add","row":[7,{"tree_id":1,"species":"oak"}]} ]
+]
