@@ -7,6 +7,7 @@
 //! pins the exact call per view.
 
 pub mod bus;
+pub mod channel;
 #[cfg(feature = "agent-read")]
 pub mod chat;
 pub mod config;
