@@ -1,0 +1,5 @@
+# import-mini.dl6 -- minimal program exercising the `import` statement, used
+# as the fail-first / green receipt for the DCG statement (Piece 1). The import
+# parses and records its own span (0,0,0,21) into an `import_decl/5` decl.
+import "pokeapi.json".
+rel greeting(name: text).

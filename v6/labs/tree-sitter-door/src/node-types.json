@@ -846,6 +846,10 @@
         {
           "type": "shell_declaration",
           "named": true
+        },
+        {
+          "type": "string",
+          "named": true
         }
       ]
     }
@@ -1054,6 +1058,10 @@
   {
     "type": "identifier",
     "named": true
+  },
+  {
+    "type": "import",
+    "named": false
   },
   {
     "type": "integer",

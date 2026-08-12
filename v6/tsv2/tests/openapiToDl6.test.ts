@@ -216,8 +216,7 @@ test("openapiToDl6: strict drops a ref target whose every column is a nullable r
   assert.equal(r.code, 0, `strict empty ref target compile failed:\n${r.stdout}`);
 });
 
-test("openapiToDl6: snake_casing name collision refused loudly", () => {
-  const doc = {
+test("openapiToDl6: snake_casing name collision refused loudly", () => {  const doc = {
     components: {
       schemas: {
         FooBar: { type: "object", properties: { a: { type: "string" } } },
@@ -234,4 +233,18 @@ test("openapiToDl6: snakeCase keeps digit runs intact", () => {
   assert.equal(snakeCase("iso639"), "iso639");
   assert.equal(snakeCase("iso3166"), "iso3166");
   assert.equal(snakeCase("HTTPResponse"), "http_response");
+});
+
+test("openapiToDl6: expansionDl6 emits one schema_expansion fact per rel, compiles", () => {
+  const c = new OpenapiToDl6(fixture, "full");
+  const exp = c.expansionDl6();
+  assert.ok(exp.startsWith("rel schema_expansion(source: text, rel: text, decl: text)."));
+  // a component rel carries its PascalCase source and a decl naming the rel
+  assert.match(exp, /schema_expansion\('AbilityDetail', 'ability_detail', 'rel ability_detail\(/);
+  // a lifted inline-object rel inherits its component's source
+  assert.match(exp, /schema_expansion\('AbilityDetail', 'ability_detail__meta', 'rel ability_detail__meta\(/);
+  const tmp = path.join(os.tmpdir(), "openapi_expansion.dl6");
+  fs.writeFileSync(tmp, exp);
+  const r = compile(tmp);
+  assert.equal(r.code, 0, `expansion compile failed:\n${r.stdout}`);
 });

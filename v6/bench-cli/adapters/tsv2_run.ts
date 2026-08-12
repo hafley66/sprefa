@@ -23,7 +23,7 @@ import { concatMap, forkJoin, map, of, toArray, type Observable } from "rxjs";
 import { stmt_counter } from "sprefa-store-engine/src/engine/counter.ts";
 
 import { BootRunner } from "../runtime/2_boot.ts";
-import { rowValueFromSql } from "../runtime/rows.ts";
+import { row_value_from_sql as rowValueFromSql } from "../runtime/rows.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import { TickFold } from "../runtime/tickLoop.ts";
@@ -36,10 +36,10 @@ import type {
   ISqlSeam,
 } from "../runtime/types.ts";
 
-/** emit_ts.pl adds `boot` and `finalSelect` beyond IGenProgram's five pinned names. */
+/** emit_ts.pl adds `boot` and `final_select` beyond IGenProgram's five pinned names. */
 type EmittedProgram = IGenProgram & {
   readonly boot: readonly IBootStatement[];
-  readonly finalSelect: Record<string, string>;
+  readonly final_select: Record<string, string>;
 };
 
 interface IArgs {
@@ -73,26 +73,15 @@ function parseArgs(argv: readonly string[]): IArgs | null {
 }
 
 /**
- * FINAL STATE — the contract's third check (CONTRACT.md section 2.7).
- *
- * The three functions below are a deliberate mirror of `v6/tsv2/scripts/
- * sweep.ts`'s `finalValueJson` / `finalStateLine` / `readFinalState`, and the
- * mirror is stated rather than hidden: sweep.ts is a self-executing script
- * with no exports, and importing it here would run a 190-fixture sweep as a
- * side effect of a bench run. What matters is that the two copies cannot
- * drift on the ENCODING, which is the part a divergence would hide: both
- * delegate every value to `TickLogEmitter.valueText` and every column read to
- * `rowValueFromSql`, the shared runtime encoders. Only the assembly (sort the
- * rel names, sort the row texts, drop empty rels) is restated, and it is
- * restated byte-for-byte so that the hash computed here is comparable with
- * the `<name>.oracle.final.jsonl` artifacts the sweep already diffs against.
+ * Mirror of sweep.ts's final-state encoder, byte-for-byte, so the final-state
+ * hash stays comparable with the <name>.oracle.final.jsonl artifacts (2.7).
  */
 function finalValueJson(value: unknown, type?: IRowColumnType): string {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" || typeof value === "boolean") {
-    return TickLogEmitter.valueText(value as IRowValue, type);
+    return TickLogEmitter.value_text(value as IRowValue, type);
   }
-  return TickLogEmitter.valueText(String(value), type);
+  return TickLogEmitter.value_text(String(value), type);
 }
 
 function finalStateLine(
@@ -114,16 +103,16 @@ function finalStateLine(
 }
 
 function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<string> {
-  const relNames = Object.keys(program.finalSelect);
+  const relNames = Object.keys(program.final_select);
   if (relNames.length === 0) return of(finalStateLine({}));
   return forkJoin(
     relNames.map((rel) =>
-      seam.runner.execute(seam.db, program.finalSelect[rel]!).pipe(
+      seam.runner.execute(seam.db, program.final_select[rel]!).pipe(
         map((result) => ({
           rel,
           rows: result.rows.map((row) =>
-            (program.relColumns[rel] ?? []).map((column, index) =>
-              rowValueFromSql(program.relColumnTypes?.[rel]?.[index], row[column]),
+            (program.rel_columns[rel] ?? []).map((column, index) =>
+              rowValueFromSql(program.rel_column_types?.[rel]?.[index], row[column]),
             ),
           ),
         })),
@@ -133,7 +122,7 @@ function readFinalState(seam: ISqlSeam, program: EmittedProgram): Observable<str
     map((entries) => {
       const rowsByRel: Record<string, readonly (readonly unknown[])[]> = {};
       for (const entry of entries) rowsByRel[entry.rel] = entry.rows;
-      return finalStateLine(rowsByRel, program.relColumnTypes);
+      return finalStateLine(rowsByRel, program.rel_column_types);
     }),
   );
 }

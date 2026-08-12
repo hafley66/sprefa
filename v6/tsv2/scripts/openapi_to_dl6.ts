@@ -37,6 +37,9 @@ export interface IRelColumn {
 export interface IRelDecl {
   name: string;
   columns: IRelColumn[];
+  /** The component schema (PascalCase) this rel was expanded from, propagated
+   * to any lifted inline-object / payload-enum rel it mints. */
+  source?: string;
   /** When set, the rel is a payload enum spelled `variant(payload: rel)` entries. */
   enumVariants?: readonly string[];
 }
@@ -156,6 +159,9 @@ export class OpenapiToDl6 {
   private readonly mode: "full" | "safe" | "strict";
   private readonly gaps: string[] = [];
   private resolved?: IRelDecl[];
+  // The PascalCase component currently being expanded; every rel minted inside
+  // buildRel (lifted inline objects, payload enums) inherits it as `source`.
+  private activeSource?: string;
 
   constructor(doc: IOpenApiV3, mode: "full" | "safe" | "strict" = "strict") {
     this.schemas = doc.components?.schemas ?? {};
@@ -183,12 +189,26 @@ export class OpenapiToDl6 {
     return lines.join("\n") + (lines.length ? "\n" : "");
   }
 
+  /** Emit the per-schema expansion as a `schema_expansion` rel the hover
+   * rule reads; no re-derivation in prolog. */
+  expansionDl6(): string {
+    const rels = this.resolve();
+    const lines: string[] = ["rel schema_expansion(source: text, rel: text, decl: text)."];
+    for (const r of rels) {
+      const source = r.source ?? r.name;
+      lines.push(`schema_expansion('${dl6Quoted(source)}', '${dl6Quoted(r.name)}', '${dl6Quoted(relLine(r))}') <- true.`);
+    }
+    return lines.join("\n") + "\n";
+  }
+
   private resolve(): IRelDecl[] {
     if (this.resolved === undefined) {
       this.rels.length = 0;
       for (const pascal of Object.keys(this.schemas)) {
+        this.activeSource = pascal;
         this.rels.push(this.buildRel(this.relNameOf(pascal), this.schemas[pascal]!));
       }
+      this.activeSource = undefined;
       this.resolved =
         this.mode === "safe"
           ? this.applySafeFalls()
@@ -246,7 +266,7 @@ export class OpenapiToDl6 {
         }
         return { name: c.name, type: t };
       });
-      out.push({ name: r.name, columns: cols });
+      out.push({ name: r.name, columns: cols, source: r.source });
     }
     return out;
   }
@@ -279,7 +299,7 @@ export class OpenapiToDl6 {
         }
         return c;
       });
-      return { name: r.name, columns: cols };
+      return { name: r.name, columns: cols, source: r.source };
     });
     return [...out, ...enums];
   }
@@ -301,7 +321,7 @@ export class OpenapiToDl6 {
     for (const prop of Object.keys(props)) {
       columns.push({ name: columnName(prop), type: this.propertyType(relName, prop, props[prop]!) });
     }
-    return { name: relName, columns };
+    return { name: relName, columns, source: this.activeSource };
   }
 
   private propertyType(parent: string, prop: string, schema: IJsonSchema): string {
@@ -372,6 +392,7 @@ export class OpenapiToDl6 {
     const name = nullable ? `${stem}_object` : stem;
     this.claimName(name, `lifted@${parent}#${prop}`);
     const lifted = this.buildRel(name, objectSchema);
+    lifted.source = this.activeSource;
     this.rels.push(lifted);
     return name;
   }
@@ -383,7 +404,7 @@ export class OpenapiToDl6 {
       const v = `variant_${String(i + 1)}`;
       return `${v}(payload: ${this.resolveRef(t)})`;
     });
-    this.rels.push({ name, columns: [], enumVariants: variants });
+    this.rels.push({ name, columns: [], enumVariants: variants, source: this.activeSource });
     return name;
   }
 }
@@ -393,6 +414,12 @@ function relLine(rel: IRelDecl): string {
     return `rel ${rel.name}(${rel.enumVariants.join(" ; ")}).`;
   }
   return `rel ${rel.name}(${rel.columns.map((c) => `${c.name}: ${c.type}`).join(", ")}).`;
+}
+
+// The .dl6 surface quotes strings in single quotes; double a quote to escape,
+// per quoted/3 in parse_dl_dcg.pl. A rel declaration contains no quotes.
+function dl6Quoted(value: string): string {
+  return value.replace(/'/g, "''");
 }
 
 // Peels option()/list() to any depth, scoped to names byName declares, so a

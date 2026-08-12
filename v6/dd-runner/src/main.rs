@@ -96,6 +96,9 @@ const PHASE_GAPS: &[(&str, &str)] = &[
 enum Arm {
     Sqlite,
     Kernel,
+    /// The differential-dataflow crate arm: a reserved slot, built in a
+    /// separate arc, not present in this binary.
+    RustDd,
 }
 
 fn main() {
@@ -104,16 +107,21 @@ fn main() {
     let mut phases_only = false;
     for argument in env::args().skip(1) {
         match argument.as_str() {
-            "--sqlite" => arm = Arm::Sqlite,
-            "--kernel" => arm = Arm::Kernel,
+            "--dd-diet-rust-sqlite" => arm = Arm::Sqlite,
+            "--dd-diet-rust-rust" => arm = Arm::Kernel,
+            "--dd-rust-dd" => arm = Arm::RustDd,
             "--phases" => phases_only = true,
             other => path = Some(other.to_owned()),
         }
     }
     let Some(path) = path else {
-        println!("usage: dd-runner PLAN.json [--sqlite|--kernel] [--phases]");
+        println!("usage: dd-runner PLAN.json [--dd-diet-rust-sqlite|--dd-diet-rust-rust|--dd-rust-dd] [--phases]");
         process::exit(2);
     };
+    if matches!(arm, Arm::RustDd) {
+        println!("dd-runner: arm dd-rust-dd is not built yet (the differential-dataflow crate arc is a separate lane)");
+        process::exit(2);
+    }
     let input = fs::read_to_string(path).unwrap_or_else(|error| fail(error));
     let plan: Plan = serde_json::from_str(&input).unwrap_or_else(|error| fail(error));
     if phases_only {
@@ -132,6 +140,7 @@ fn main() {
             kernel::run(&plan.rels, &plan.initial, &plan.schedule, &operators)
                 .unwrap_or_else(|error| fail(error));
         }
+        Arm::RustDd => unreachable!("guarded before dispatch"),
     }
 }
 
