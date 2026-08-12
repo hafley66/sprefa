@@ -112,6 +112,7 @@
 :- ensure_loaded('diag.test.pl').
 :- ensure_loaded('2_subscribe.plt').
 :- ensure_loaded('6_isolated_compiler_dd.test.pl').
+:- ensure_loaded('emit_type_renderers.test.pl').
 :- ensure_loaded('parse_parity.test.pl').
 :- ensure_loaded('../../conformance/fixtures/0_generic_expand.pl').
 
