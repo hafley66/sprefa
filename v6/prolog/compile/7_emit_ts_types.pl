@@ -4,6 +4,7 @@
 
 ts_types_text(_Name, Rows, Text) :-
     findall(RelRow, renderable_rel(Rows, RelRow), RelRows),
+    check_type_name_collisions(RelRows),
     maplist(ts_rel_text(Rows), RelRows, Parts),
     atomic_list_concat(Parts, '\n', Atom),
     atom_string(Atom, Text).
@@ -20,6 +21,21 @@ renderable_rel(Rows, RelRow) :-
     maplist(ts_column_type(Rows), Columns, _).
 
 compiler_helper_rel(Name) :- sub_atom(Name, _, _, _, '__').
+
+check_type_name_collisions(RelRows) :-
+    findall(TypeName-module(ModuleId, Name),
+            ( member(row(_, _, _, Name, rel, _, _, ModuleId, _, _, _), RelRows),
+              type_name(Name, TypeName) ),
+            TypeNames0),
+    keysort(TypeNames0, TypeNames),
+    type_name_collision(TypeNames).
+
+type_name_collision([]).
+type_name_collision([_]).
+type_name_collision([TypeName-First, TypeName-Second | _]) :-
+    !,
+    throw(unsupported_construct(type_name_collision(TypeName, [First, Second]))).
+type_name_collision([_ | Rest]) :- type_name_collision(Rest).
 
 rel_columns(Rows, row(RelId, _, _, _, rel, _, _, _, _, _, _), Columns) :-
     findall(Ord-Name-TypeId,
