@@ -62,10 +62,9 @@ fn install_regexp(conn: &Connection) -> Result<()> {
                     Ok(Regex::new(value.as_str()?)?)
                 },
             )?;
-            let text = ctx
-                .get_raw(1)
-                .as_str()
-                .map_err(|error| rusqlite::Error::UserFunctionError(error.into()))?;
+            let Ok(text) = ctx.get_raw(1).as_str() else {
+                return Ok(false);
+            };
             Ok(pattern.is_match(text))
         },
     )
