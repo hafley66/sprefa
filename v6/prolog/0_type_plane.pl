@@ -706,6 +706,7 @@ type_field_json(_, _, ChildValue, Text) :- canonical_json_text(ChildValue, Text)
 
 canonical_json_text(Value, Text) :- integer(Value), !, format(atom(Text), '~w', [Value]).
 canonical_json_text(bool_lit(Boolean), Text) :- !, format(atom(Text), '~w', [Boolean]).
+canonical_json_text(none, null) :- !.
 canonical_json_text(Value, Text) :- float(Value), !, finite_float_json(Value, Text).
 canonical_json_text(Value, Text) :- json_object_value(Value, Pairs), !,
     findall(Entry,

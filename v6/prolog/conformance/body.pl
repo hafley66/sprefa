@@ -201,17 +201,14 @@ braces_pairs(Key: Raw, [Key-Value]) :- json_canon(Raw, Value).
 %   §2 `Target[Name] = MergePatch(Target[Name], Value)`
 %       objects merge recursively, key by key.
 %   §1/§2 `if Value is null: remove the Name/Value pair from Target`
-%       NOT IMPLEMENTED, and stopped rather than guessed: this language has
-%       no term that renders as JSON null. 0_json_arrival.pl:92 folds null
-%       onto the atom `none` and canonical_json_text/2 renders `none` as the
-%       string "none", so the delete clause has no surface spelling. Picking
-%       one is a language decision, so a patch carrying the json-null
-%       stand-in throws here and fails its statement on the compiled side.
+%       the json-null stand-in `none` merges as a VALUE, not a deletion: the
+%       decision (2026-08-11) makes JSON null the atom `none`, and a
+%       none-valued key is kept and rendered `"key":null` (the rendering rule
+%       in the lane brief). json_merge_patch/3 already does this through its
+%       scalar fallback, so a patch carrying `none` composes to a null-valued
+%       key instead of throwing.
 json_scalar_value(json_patch, [Target, Patch], Out) :-
-    (   json_patch_carries_null(Patch)
-    ->  throw(json_patch_null_unruled)
-    ;   json_merge_patch(Target, Patch, Out)
-    ).
+    json_merge_patch(Target, Patch, Out).
 
 json_merge_patch(Target, Patch, obj(Sorted)) :-
     nonvar(Patch), Patch = obj(PatchPairs), !,
@@ -222,6 +219,8 @@ json_merge_patch(_, Patch, Patch).
 
 % A key the target lacks recurses against `absent`, which is not an object,
 % so an object value there reduces to the value itself.
+json_merge_patch_pair(Key-none, Pairs0, Rest) :- !,
+    ( selectchk(Key-_, Pairs0, Rest) -> true ; Rest = Pairs0 ).
 json_merge_patch_pair(Key-Value, Pairs0, [Key-Merged | Rest]) :-
     ( selectchk(Key-Prior, Pairs0, Rest) -> true ; Prior = absent, Rest = Pairs0 ),
     json_merge_patch(Prior, Value, Merged).

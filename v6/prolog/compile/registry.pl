@@ -245,8 +245,8 @@ expression('=<'/2,   ordered_comparison,  0, infix('<='),            both_number
 expression('>'/2,    ordered_comparison,  0, infix('>'),             both_number).
 expression('>='/2,   ordered_comparison,  0, infix('>='),            both_number).
 
-expression('=='/2,   identity_comparison, 0, infix('='),             same_type).
-expression('\\=='/2, identity_comparison, 0, infix('<>'),            same_type).
+expression('=='/2,   identity_comparison, 0, infix('IS'),             same_type).
+expression('\\=='/2, identity_comparison, 0, infix('IS NOT'),         same_type).
 
 % Numeric (arithmetically-evaluated) equality pair; an operator with no
 % expression/5 row refused by name (unknown_comparison_operator).

@@ -302,13 +302,13 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "metric_doc", rule_id: "json_patch_non_object_target_becomes_empty:metric_doc/2#1", head_kind: "set", head_table_name: "metric_doc", head_delta_table_name: "__delta_metric_doc", head_columns: ["session", "snapshot"], key_indices: [0], project_sql: `SELECT d0."session" AS "session", CASE WHEN EXISTS (SELECT 1 FROM json_tree(json(d0."patch")) WHERE "type" = 'null' OR "atom" = 'none') THEN json('json_patch_null_unruled') ELSE json_patch(json(b0."snapshot"), json(d0."patch")) END AS "snapshot" FROM "__frontier_metric_sample" d0, "__pre_metric_doc" b0 WHERE d0."_phase" >= 0 AND b0."session" = d0."session" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "metric_doc", rule_id: "json_patch_non_object_target_becomes_empty:metric_doc/2#1", head_kind: "set", head_table_name: "metric_doc", head_delta_table_name: "__delta_metric_doc", head_columns: ["session", "snapshot"], key_indices: [0], project_sql: `SELECT d0."session" AS "session", json_patch(json(b0."snapshot"), json(d0."patch")) AS "snapshot" FROM "__frontier_metric_sample" d0, "__pre_metric_doc" b0 WHERE d0."_phase" >= 0 AND b0."session" = d0."session" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_METRIC_DOC_0_PROJECT_SQL = `SELECT ?1 AS "session", CASE WHEN EXISTS (SELECT 1 FROM json_tree(json(?2)) WHERE "type" = 'null' OR "atom" = 'none') THEN json('json_patch_null_unruled') ELSE json_patch(json(b0."snapshot"), json(?2)) END AS "snapshot" FROM "__pre_metric_doc" b0 WHERE b0."session" = ?1`;
+const EDGE_METRIC_DOC_0_PROJECT_SQL = `SELECT ?1 AS "session", json_patch(json(b0."snapshot"), json(?2)) AS "snapshot" FROM "__pre_metric_doc" b0 WHERE b0."session" = ?1`;
 const EDGE_METRIC_DOC_0_WRITE_SQL = `INSERT INTO "metric_doc" ("session", "snapshot") VALUES (?, ?) ON CONFLICT("session") DO UPDATE SET "snapshot" = excluded."snapshot"`;
 const EDGE_METRIC_DOC_0_HEAD_COLUMNS: readonly string[] = ["session", "snapshot"];
 const EDGE_METRIC_DOC_0_KEY_INDICES: readonly number[] = [0];
@@ -363,7 +363,7 @@ function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null 
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { trigger_rel: "metric_sample", trigger_kind: "arrival", head_rel: "metric_doc", head_kind: "set", head_columns: ["session", "snapshot"], key_indices: [0], project_sql: `SELECT ?1 AS "session", CASE WHEN EXISTS (SELECT 1 FROM json_tree(json(?2)) WHERE "type" = 'null' OR "atom" = 'none') THEN json('json_patch_null_unruled') ELSE json_patch(json(b0."snapshot"), json(?2)) END AS "snapshot" FROM "__pre_metric_doc" b0 WHERE b0."session" = ?1`, write_sql: `INSERT INTO "metric_doc" ("session", "snapshot") VALUES (?, ?) ON CONFLICT("session") DO UPDATE SET "snapshot" = excluded."snapshot"`, evolves_pre: true },
+  { trigger_rel: "metric_sample", trigger_kind: "arrival", head_rel: "metric_doc", head_kind: "set", head_columns: ["session", "snapshot"], key_indices: [0], project_sql: `SELECT ?1 AS "session", json_patch(json(b0."snapshot"), json(?2)) AS "snapshot" FROM "__pre_metric_doc" b0 WHERE b0."session" = ?1`, write_sql: `INSERT INTO "metric_doc" ("session", "snapshot") VALUES (?, ?) ON CONFLICT("session") DO UPDATE SET "snapshot" = excluded."snapshot"`, evolves_pre: true },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [

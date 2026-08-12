@@ -144,7 +144,7 @@ json_value_json({}(Fields), Json) :- !,
     json_canon({}(Fields), Canon),
     json_value_json(Canon, Json).
 json_value_json(List, Json) :- is_list(List), !,
-    maplist(value_json, List, Values),
+    maplist(json_document_value, List, Values),
     atomic_list_concat(Values, ',', Inner),
     format(atom(Json), '[~w]', [Inner]).
 json_value_json(obj(Pairs), Json) :-
@@ -155,8 +155,17 @@ json_value_json(obj(Pairs), Json) :-
 
 json_object_entry(Key-Value, Json) :-
     string_json(Key, KeyJson),
-    value_json(Value, ValueJson),
+    json_document_value(Value, ValueJson),
     format(atom(Json), '~w:~w', [KeyJson, ValueJson]).
+
+% Inside a JSON document the atom `none` IS the JSON literal null (decision
+% 2026-08-11: "null can be synonym for none from optional"). A TOP-LEVEL row
+% value that is the atom `none` keeps rendering as the JSON string "none",
+% because that slot cannot know its column type and a plain text atom named
+% none (option tags, labels) must not collapse to null.
+json_document_value(none, null) :- !.
+json_document_value(Value, Json) :- value_json(Value, Json).
+
 
 % A compound term's canonical prolog text form, e.g. route_data(settings) ->
 % 'route_data(settings)'. Recurses so a deeper compound argument (not
