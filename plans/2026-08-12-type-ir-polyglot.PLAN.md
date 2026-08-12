@@ -197,11 +197,56 @@ The canonical parser rejects variable input before entering its DCG (`v6/prolog/
 
 ## Language-design forks
 
-Forks pending in deliverable 5.
+### Fork A: authority
+
+| Branch | What it is | Cost in files and lines | Forces later | Forecloses | Price receipts |
+|---|---|---|---|---|---|
+| A1. `.dl6` type plane is the IDL | Relation declarations and their retained enum/list metadata remain authoritative; every other form lowers into or emits from this IR | Extend 3-5 existing Prolog IR/catalog files by about 250-500 lines to retain enum and collection metadata; 1 emitter plus tests per direct target, about 450-800 lines each; 1 adapter plus tests per source language, priced in Input side | Versioned type-plane semantics, explicit loss diagnostics, one output naming/tag/null policy per target | External-IDL-only features remain annotations or cannot round-trip through `.dl6`; consumers cannot use an external compiler as the authority | Current table is built from `type_decl/2` (`v6/prolog/0_type_plane.pl:64-75`); enums are erased by expansion (`v6/prolog/0_enum_expand.pl:12-16`, `:55-61`); JSON Schema output already walks catalog rows (`v6/prolog/compile/4_emit_jsonschema.pl:109-160`) |
+| A2. External IDL is the authority and `.dl6` is generated | TypeSpec, JSON Schema, protobuf, Cap'n Proto, or Smithy owns portable declarations; `.dl6`, Rust and TS are generated targets | 1 authority file set; 1 external-IDL-to-`.dl6` adapter about 400-900 lines plus 250-500 tests; generator config 100-300; migrate 5 handwritten type files and consumers as a later arc | External compiler/runtime in build order, external naming/evolution rules, generated `.dl6` ownership, escape syntax for relation/storage features absent in the IDL | Hand-authored `.dl6` relation declarations cannot remain independently authoritative; `.dl6`-only list semantics require external annotations/helper models | TypeSpec has models/unions and coded emitters ([unions](https://typespec.io/docs/language-basics/unions/), [emitter framework](https://typespec.io/docs/extending-typespec/emitter-framework/)); protobuf adds field numbers and fixed field grammar ([edition spec](https://protobuf.dev/reference/protobuf/edition-2023-spec/)); current OpenAPI ingest already generates `.dl6` (`v6/tsv2/scripts/openapi_to_dl6.ts:327-416`) |
+| A3. Split authority by population | `.dl6` owns program-derived relations while an external IDL or Rust owns handwritten library types; both lower to a common generation graph | Program path about 450-800 lines for first emitter; library path 2-4 authority/config files plus 300-700 integration lines; 1 shared graph/boundary about 250-500 lines and cross-authority collision tests 150-300 | Explicit boundary between program API models and compiler/runtime library models; shared scalar/tag/naming policy must be tested across both | A single file cannot describe every program and library type; cross-population references require bridge declarations | The measured populations already have separate authorities and costs: registry/plan at `v6/prolog/sweep.pl:103-121` versus 4,249 handwritten lines in the five files listed under Context |
+
+### Fork B: author-facing foreign syntax
+
+| Branch | What it is | Cost in files and lines | Forces later | Forecloses | Price receipts |
+|---|---|---|---|---|---|
+| B1. Tagged foreign fragments inside `.dl6` | A relation column selects a Rust-shaped, TS-shaped, or other supported type expression within explicit delimiters | About 440-940 lines for two small subsets across parser, printer, editor grammar and tests; 100-250 per additional syntax-only subset | Language tags/delimiters, canonicalization rule, printer per emitted spelling, parser rebase after concurrent work | Exact unmarked native-language syntax; compiler-dependent types without a language adapter | Canonical type grammar is `type_expr//1` (`v6/prolog/compile/parse_dl_dcg.pl:510-534`); editor CST shape is declared at `:37-67` |
+| B2. One context-selected type dialect per `.dl6` file/block | A directive selects how all type expressions in a scope parse | About 500-1,000 lines across directive grammar, scoped parser state, printer, editor grammar and tests | Scope and import inheritance rules; files mixing generated sources need nested or per-declaration overrides | Freely mixing TS and Rust spellings in the same scope without tags | Parser entry owns one source and global parse state (`v6/prolog/compile/parse_dl_dcg.pl:92-128`) |
+| B3. Separate source front ends | Authors provide normal `.ts`, `.rs`, `.go`, or `.py` declarations that lower into the type IR | About 900-2,400 lines per language subset including orchestration, parser/compiler adapter, resolver and fixtures | File discovery, language versions, import graph, incremental invalidation and loss reports | Embedding foreign spelling directly beside `.dl6` relation columns | Input-side table above; syntax trees alone cannot resolve the semantic cases listed under Declarative adapter boundary |
+
+### Fork C: output fidelity for relational collections
+
+| Branch | What it is | Cost in files and lines | Forces later | Forecloses | Price receipts |
+|---|---|---|---|---|---|
+| C1. Value projection | Every list flavor emits as the nearest target collection and reports lost identity/storage behavior | Per backend 40-100 mapping lines plus 80-160 golden/loss tests | Machine-readable loss report and a rule for whether lossy output exits successfully | Reconstructing owner/refcount, intern ids, member ids, or link edges from generated types | Four distinct wrappers are registered at `v6/prolog/0_type_plane.pl:147-151`; artifacts differ at `v6/prolog/0_generic_expand.pl:125-176` |
+| C2. Public helper models | Generated APIs expose list entity, member, owner/refcount, value dictionary and link records | Shared model expansion 120-250 lines; per backend 120-250 rendering lines; tests 200-400 | Stable public names and evolution policy for compiler-minted relations | A collection-only ergonomic API unless an additional facade is generated | Artifact shapes and suffixes are explicit at `v6/prolog/0_generic_expand.pl:125-176`, `:217-231` |
+| C3. Dual view | Generate ergonomic value collections plus identity-bearing helper models and conversions | Shared expansion/conversion plan 250-500 lines; per backend 200-400; tests 300-600 | Synchronization semantics, conversion direction and duplicate-surface naming | A minimal generated surface | Current `json_list(T)` already demonstrates a value carrier distinct from relational list storage (`v6/prolog/0_type_plane.pl:92-118`) |
+
+### Fork D: null and absence
+
+| Branch | What it is | Cost in files and lines | Forces later | Forecloses | Price receipts |
+|---|---|---|---|---|---|
+| D1. Preserve current single state | `option(T)` means `none`, encoded as JSON null; generated object properties remain required unless another feature adds absence | JSON Schema emitter 20-40 lines; ingest 30-70; each target mapping 20-50; fixtures 80-150 | Change current schema output so option properties no longer become optional, or document why missing normalizes to `none` | Distinguishing missing from explicitly null at the IR level | `none` becomes JSON null at `v6/prolog/0_type_plane.pl:709`; current emitter removes any `anyOf` property from `required` at `v6/prolog/compile/4_emit_jsonschema.pl:120-132` |
+| D2. Add separate nullable and optional dimensions | The IR can represent present-null, missing, and present-value distinctly | Parser/type-plane/catalog/schema changes across 5-8 files, about 350-750 lines; migration fixtures 250-500; every backend adds 30-80 lines | Three-state arrival/storage behavior, defaults, pattern matching and wire normalization | Treating all existing `option` values as interchangeable missing/null without a compatibility rule | TypeSpec and JSON Schema distinguish optional properties from null unions; TypeSpec union syntax is documented in [TypeSpec unions](https://typespec.io/docs/language-basics/unions/) |
+
+### Fork E: integer contract across JSON and TypeScript
+
+| Branch | What it is | Cost in files and lines | Forces later | Forecloses | Price receipts |
+|---|---|---|---|---|---|
+| E1. Preserve i64 and expose target friction | Rust uses `i64`; schema carries bounds/format; TS uses branded/string/bigint policy selected separately | Type plane/schema metadata 40-100 lines; TS runtime and generator 80-200; tests 120-240 | One JSON encoding for values outside the safe integer range and target-specific conversion APIs | Plain JSON-number round-trip through all TS values | Plane gate names signed-64 overflow at `v6/prolog/0_type_plane.pl:513-545`; protobuf has explicit integer widths in its [field grammar](https://protobuf.dev/reference/protobuf/edition-2023-spec/) |
+| E2. Restrict portable generated integers to JSON safe range | Generated contracts narrow `int` to ±(2^53-1) when crossing JSON/TS | Gate/config 40-90 lines; schema bounds 20-40; tests 100-180 | Context-sensitive or global narrowing rule and diagnostics for existing i64 values | Full current `int` range in portable generated APIs | Current gate admits signed 64-bit values (`v6/prolog/0_type_plane.pl:513-545`) |
+| E3. Add width-specific constructors | `i32`, `i64`, `u32`, `u64` and perhaps safe-int become explicit IR constructors | Parser, type plane, inference, storage, emitters and tests across 8-12 files, about 700-1,400 lines | Widening/coercion lattice, SQLite checks, inference rules and migration of bare `int` | A single undifferentiated integer type | Existing storage classification has one `int` clause (`v6/prolog/0_type_plane.pl:80`); protobuf and TypeSpec already expose width-specific scalars |
+
+### Fork F: target generation execution
+
+| Branch | What it is | Cost in files and lines | Forces later | Forecloses | Price receipts |
+|---|---|---|---|---|---|
+| F1. Direct Prolog emitters | Each target is a module beside the existing schema emitters and reads the shared graph | About 450-800 lines per target including tests; shared naming graph 150-300 once | Handwritten target backend, formatter invocation, target compiler gates | Receiving fixes/new targets from an upstream generator without porting them | Existing emitter pattern is 176 lines for JSON Schema and 103 for OpenAPI (`v6/prolog/compile/4_emit_jsonschema.pl`, `5_emit_openapi.pl`) |
+| F2. Schema/IDL bridge to bought generators | Prolog emits JSON Schema, OpenAPI, TypeSpec, Smithy, protobuf or Cap'n Proto; external tools emit languages | Fidelity work 250-600 lines; tool invocation/config 50-150; golden integration tests 150-300 for first path | Version pins, generator options/templates, deterministic post-formatting, mapping of diagnostics back to declarations | Target semantics absent from the chosen middle schema unless encoded as extensions/helper models | Existing JSON Schema and OpenAPI seams are cited in Context; candidate backend and license links are in Build-versus-buy |
+| F3. Hybrid per target | Use a bought generator where its mapping fits and a direct backend for targets or constructors outside it | Shared graph 150-300; bridge 250-600; each exceptional direct backend 450-800; parity tests 150-300 | A target capability matrix and common golden cases across both execution paths | One uniform generator implementation and option surface | Candidate matrix records direction and missing constructors for each tool |
 
 ## Decisions
 
-No language-design fork is selected in this recon.
+No language-design fork is selected in this recon. Process decisions fixed by the brief are: zero production code, program-derived and handwritten populations priced separately, every unsupported mapping named, and both human and cited documents retained.
 
 ## Verification
 
@@ -214,6 +259,7 @@ No language-design fork is selected in this recon.
 | Population line counts | `wc -l` over the five named handwritten files | 4,249 |
 | Input parser boundary | `v6/prolog/compile/parse_dl_dcg.pl:510-534` | Canonical type grammar verified |
 | Reverse-DCG constraint | `plans/2026-08-12-cleanroom-dcg-bakeoff.md:24-45` | 2 of 2 attempts added handwritten printers |
+| Fork completeness | Authority, input syntax, collection fidelity, null, integer and execution tables | No branch selected |
 | Plan index | `dl examples/gen-plans-index.dl --check` | Run after final todo set |
 
 ## Staffing

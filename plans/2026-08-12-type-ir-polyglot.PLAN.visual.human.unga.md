@@ -199,4 +199,51 @@ Running the character-level DCG backward is excluded by the measured result: two
 
 ## Forks for a human ruling
 
-Forks arrive in deliverable 5. No fork is selected in this document.
+No fork is selected in this document.
+
+```text
+A. WHO OWNS THE TYPES?
+
+[ ] .dl6 owns program and library types
+[ ] external IDL owns them; .dl6 is generated
+[ ] split: .dl6 owns program types, external IDL/Rust owns library types
+```
+
+```text
+B. WHERE DOES COMFY FOREIGN SYNTAX LIVE?
+
+[ ] tagged fragments inside .dl6
+[ ] one selected dialect per file or block
+[ ] normal .ts/.rs/.go/.py files through separate front ends
+```
+
+```text
+C. WHAT DO RELATIONAL LISTS BECOME?
+
+[ ] value collections, with a recorded loss of identity
+[ ] public helper records that retain identity and links
+[ ] both value collections and identity-bearing helper records
+```
+
+```text
+D. HOW MANY EMPTY STATES EXIST?
+
+[ ] one: none, encoded as JSON null
+[ ] three: missing, present-null, present-value
+```
+
+```text
+E. WHAT DOES INTEGER MEAN ACROSS JSON AND TYPESCRIPT?
+
+[ ] keep signed 64-bit and select a TS/JSON encoding
+[ ] narrow portable output to the JSON safe-integer range
+[ ] add width-specific integer constructors to the IR
+```
+
+```text
+F. WHO PRINTS TARGET LANGUAGES?
+
+[ ] direct Prolog emitters
+[ ] JSON Schema or another IDL passed to existing generators
+[ ] select direct or bought generation per target
+```
