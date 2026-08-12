@@ -67,7 +67,35 @@ TypeScript `number` cannot exactly carry every signed 64-bit integer. Optional o
 
 ## Candidates
 
-Candidate comparison arrives in deliverable 2.
+```text
+fixed neutral model
+  TypeSpec        -> emitters
+  Protocol Buffers -> compiler plugins
+  Cap'n Proto     -> compiler plugins
+  Smithy          -> generators
+
+JSON interchange already beside the type plane
+  JSON Schema -> quicktype -> TS / Rust / Go / Python / ...
+              -> Typify -> Rust
+              -> schema-to-TS -> TypeScript
+  OpenAPI     -> OpenAPI Generator -> clients / servers / models
+
+Rust as the starting point
+  Rust -> ts-rs / Specta -> TypeScript
+       -> Schemars -> JSON Schema
+       -> Typeshare -> Kotlin / Swift / Scala / TS / Go
+       -> Serde registry -> generated languages
+```
+
+Every candidate has one fixed middle model and code for each input or output. None takes a declarative description of Rust, TypeScript, Go, or Python and derives both parsing and printing from it.
+
+The shortest already-connected experiment is:
+
+```text
+.dl6 registry -> existing JSON Schema emitter -> quicktype -> language types
+```
+
+Before that path preserves current meaning, the schema emitter needs rows for payload enums, signed-64 bounds, a null-versus-missing rule, and an explicit representation for each relational list constructor.
 
 ## Two jobs
 
