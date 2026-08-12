@@ -13,7 +13,8 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(json)).
-:- use_module(lower, [ departure_frontier_table_name/2 ]).
+:- use_module(lower, [ departure_frontier_table_name/2,
+                       program_text_intern_plan/3 ]).
 :- use_module('0_rel_record').
 :- use_module(analyze, [ body_ref_uses/2, listened_departure_refs/2 ]).
 
@@ -246,6 +247,14 @@ aggregate_field(avgsql(_ScopeCols, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
               insert_scoped_sql: InsertScopedSqls,
               intern_sql: null, delta_maintained: true }.
 
+% The same plan emit_ts.pl renders as TEXT_INTERN_PLAN. `none` at intern(direct)
+% and at any program whose columns are all unencoded.
+text_intern_field(none, null) :- !.
+text_intern_field(textintern(InternSql, LookupSql, RelColumns), Dict) :-
+    pairs_to_dict(RelColumns, ColumnsDict),
+    Dict = _{ intern_sql: InternSql, lookup_sql: LookupSql,
+              rel_columns: ColumnsDict }.
+
 % ═══ assemble the Rust source ════════════════════════════════════════════════
 
 emit_program(Name, Plan, Lowered, BootStatements, Text) :-
@@ -275,6 +284,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     edges_list(RelPlans, EdgeStatements, Edges),
     levels_list(RuleLevelStatements, HeadTable, Levels),
     retentions_list(RetentionStatements, Retentions),
+    program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
+    text_intern_field(TextInternPlan, TextInternField),
 
     ProgramDict =
     _{ name: Name,
@@ -286,6 +297,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        boot: BootDicts,
        final_select: FinalSelect,
        arrival_templates: ArrivalTemplates,
+       text_intern_plan: TextInternField,
        relations: Relations,
        edges: Edges,
        levels: Levels,
