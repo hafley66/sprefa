@@ -11,13 +11,15 @@ Each red leg is listed with the exact failure text seen this measurement. Do
 not edit this list as a way to make CI green; edit it only when the underlying
 defect is fixed and the leg measured green.
 
+Rows removed by re-measure at base `259e0289`: `flagship`, `getting-started`,
+`scale-floor` (each measured green 3/3 after its stale pin was refreshed).
+
 ## Red legs
 
 | leg | exact failure text | throw site |
 |---|---|---|
 | roundtrip | `G1 round-trip: 391 / 392 fixtures pass` then `FAIL mutual_recursion_matches_oracle (.../fixtures/engine_core.pl): fail(not_variant)` | `v6/prolog/compile/scripts/roundtrip.sh:132` |
 | getting-started | `FAIL block 24: output does not match the doc`; engine emits `rule-index unavailable: unsupported_construct...`, doc block 24 still prints the old `broken.dl6:4: unsupported_construct...` message; 1 of 24 blocks disagree | `v6/tsv2/scripts/getting-started.sh:224` |
-| flagship | `the corpus MOVED since the v5 golden was captured (golden b8d03946..., now 8e3874d5...)`; Regenerate from v6/tsv2 with `FLAGSHIP_V5_WRITE=1 bash scripts/flagship-callgraph.sh` | `v6/tsv2/scripts/flagship-callgraph.sh:287` |
 | golden-flex | `GOLDEN_COVERAGE FAIL: json_object/2 is excused as 'registry status refused' but its registry status is now live -- the excuse is stale`; `GOLDEN_COVERAGE FAIL: json_patch/2 (expression) is a registry construct the golden does not exercise`; `GOLDEN_COVERAGE 69 registry constructs, 2 unaccounted for` | `v6/prolog/compile/scripts/golden_coverage.pl:174,178` |
 | tsv2-test | `hostDecode.test.ts:144`: decoded row count per demand `[2,1,2,3]`; actual `[1,2,2,3]` expected `[0,1,2,3]` (needs `gen_emitted/` present, produced by `just sweep`) | `v6/tsv2/tests/hostDecode.test.ts:144` |
 | rtkq-golden | `ERR_ASSERTION` `deepStrictEqual` at `labs/1_rtkq-extraction-golden.ts:200`: `api_endpoint` rows emit `updateUser`-before-`listUsers`, order-sensitive golden expects `listUsers`-first (spans identical, not a corpus move) | `v6/tsv2/labs/1_rtkq-extraction-golden.ts:200` |
@@ -44,7 +46,6 @@ allow: plunit
 allow: rtkq-golden
 allow: compile-speed
 allow: tsv2-test
-allow: flagship
 allow: lsp-diags
 allow: golden-flex
 allow: getting-started
