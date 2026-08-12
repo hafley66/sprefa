@@ -5,6 +5,7 @@ pub enum Family {
     Chain,
     Layered,
     Grid,
+    Cycle,
 }
 
 pub fn family_name(family: Family) -> &'static str {
@@ -12,6 +13,7 @@ pub fn family_name(family: Family) -> &'static str {
         Family::Chain => "chain",
         Family::Layered => "layered",
         Family::Grid => "grid",
+        Family::Cycle => "cycle",
     }
 }
 
@@ -28,6 +30,10 @@ pub enum Params {
     Grid {
         rows: u32,
         cols: u32,
+    },
+    Cycle {
+        component_size: u32,
+        components: u32,
     },
 }
 
@@ -49,6 +55,15 @@ pub fn params_label(family: Family, params: Params) -> String {
         (Family::Grid, Params::Grid { rows, cols }) => {
             format!("rows={rows} cols={cols}")
         }
+        (
+            Family::Cycle,
+            Params::Cycle {
+                component_size,
+                components,
+            },
+        ) => {
+            format!("component_size={component_size} components={components}")
+        }
         (family, params) => panic!("params/family mismatch: {family:?} {params:?}"),
     }
 }
@@ -68,6 +83,10 @@ pub fn generate(_family: Family, params: Params, scale: u32, seed: u64) -> Gener
             fanout,
         } => generate_layered(layers, width, fanout, seed),
         Params::Grid { rows, cols } => generate_grid(rows, cols),
+        Params::Cycle {
+            component_size,
+            components,
+        } => generate_cycle(component_size, components),
     }
 }
 
@@ -145,6 +164,25 @@ fn generate_grid(rows: u32, cols: u32) -> Generated {
     Generated {
         edge_count: edges.len() as u32,
         node_count: rows * cols,
+        edges,
+    }
+}
+
+fn generate_cycle(component_size: u32, components: u32) -> Generated {
+    if component_size < 2 || components < 1 {
+        panic!("cycle params out of range");
+    }
+    let node_count = component_size * components;
+    let mut edges = Vec::with_capacity(node_count as usize);
+    for component in 0..components {
+        let start = component * component_size;
+        for offset in 0..component_size {
+            edges.push((start + offset, start + (offset + 1) % component_size));
+        }
+    }
+    Generated {
+        edge_count: edges.len() as u32,
+        node_count,
         edges,
     }
 }

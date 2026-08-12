@@ -16,13 +16,14 @@ history, and the bank each bench writes its numbers to.
 1. [The truth stack](#the-truth-stack)
 2. [perf-all, the consolidated command](#perf-all-the-consolidated-command)
 3. [rust shootout](#rust-shootout---in-ram-engines-build-throughput)
-4. [dl6 emitted bench](#dl6-emitted-bench---the-ratchet-subject)
-5. [dl6 retraction ticks](#dl6-retraction-ticks---in-place-dred-vs-refcount)
-6. [store retraction rig](#store-retraction-rig---hermetic-engines)
-7. [dred profile](#dred-profile---single-retract-flame)
-8. [dl6 budget cell](#dl6-budget-cell---the-regression-gate)
-9. [sqlite build baseline](#sqlite-build-baseline---landing)
-10. [Open items](#open-items)
+4. [dd_plan rust arms](#dd_plan-rust-arms---correctness-only-throughput-gap)
+5. [dl6 emitted bench](#dl6-emitted-bench---the-ratchet-subject)
+6. [dl6 retraction ticks](#dl6-retraction-ticks---in-place-dred-vs-refcount)
+7. [store retraction rig](#store-retraction-rig---hermetic-engines)
+8. [dred profile](#dred-profile---single-retract-flame)
+9. [dl6 budget cell](#dl6-budget-cell---the-regression-gate)
+10. [sqlite build baseline](#sqlite-build-baseline---landing)
+11. [Open items](#open-items)
 
 ## The truth stack
 
@@ -103,6 +104,49 @@ release builds; a cold build adds first-compile time).
 ceiling the emitted runtime is read against. The `STANDINGS.md` THE-number
 convention is the citation for every `~7e7`-class claim about the fixed build
 fixpoint.
+
+---
+
+## dd_plan rust arms — correctness only, throughput gap
+
+**Purpose.** The prolog compiler has three emitter outputs: tsv2, and the two
+dd_plan arms of `v6/dd-runner`. This row exists because the user asks that
+every emitter output be benched, and these two arms are the measured gap: they
+have a correctness gate but no throughput bench. The arms are named for what
+they are (diet = dd-shaped without the algebra):
+
+| arm | what it is | flags |
+|---|---|---|
+| `dd-diet-rust-sqlite` | rust + rusqlite, executes the tick phases against SQLite | `--dd-diet-rust-sqlite` (default), formerly `--sqlite` |
+| `dd-diet-rust-rust` | rust + hand-written in-RAM evaluator, zero SQLite | `--dd-diet-rust-rust`, formerly `--kernel` |
+| `dd-rust-dd` | the real thing on the differential-dataflow crate | `--dd-rust-dd` errors "not built yet"; a reserved arm slot for a separate arc |
+
+**Workload + engines (correctness).** `just dd-grade` sweeps every conformance
+fixture that has both a dd_plan JSON and an oracle tick log, runs the chosen
+arm under `/usr/bin/time -l`, and byte-diffs its stdout against the oracle.
+Each arm has its own ratchet (`v6/dd-runner/graded.<arm>.tsv`) plus an 8 MB
+peak-RSS ceiling. `dd-grade` is a green-all leg (32), not a perf bench.
+
+**Where numbers bank.** `v6/dd-runner/graded.<arm>.tsv` (byte-clean ratchet)
+and the `DD-GRADE` gate line. Measured this lane: sqlite arm 134 of 203
+byte-clean, peak RSS 4 MB; rust arm 104 of 203 byte-clean, peak RSS 2 MB.
+
+**Run command.** `cd v6 && just dd-grade` (sqlite arm, the default);
+`DD_RUNNER_ARM=--dd-diet-rust-rust just dd-grade` (rust arm).
+
+**Expected wall time.** ~a few minutes, the swipl emitter + oracle sweep over
+203 fixtures dominating.
+
+**History.** Renamed 2026-08-12 from `--sqlite` / `--kernel` because the binary
+contains zero differential-dataflow and the old "dd" naming misled a
+measurement into quoting a dd LIBRARY oracle row as though this compiler
+emitted it. The throughput gap is structural, not a size gap: entering the
+arms into the dl6-bench / dred / bench-cli harnesses needs a
+`.dl6`-text-to-dd_plan emitter door (`compile.pl:328` emits `emit_ts` only;
+the dd_plan JSON builder, `6_emit_dd_plan.pl:33`, takes a fixture term with
+embedded initial + schedule), which is compiler-side surface in files this
+lane is fenced out of. Priced in `v6/bench-cli/CONTRACT.md` section 6 and
+listed under Open items below.
 
 ---
 
@@ -290,6 +334,17 @@ build dominates, a few seconds warm.
 - **dl6-budget outer cap.** `perf-all` wraps dl6-budget in its own outer
   run-capped budget on top of budget-check.sh's internal `DL6_BUDGET_S` cap;
   the internal named line is the one that fires first, by design.
+- **dd_plan arms have no throughput bench (the user's stated gap).** The two
+  dd_plan arms are graded for correctness (`just dd-grade`) but timed in no
+  perf battery. Entering them into `dl6-bench` / `dl6-dred-bench` /
+  bench-cli requires a `.dl6`-text-to-dd_plan emitter door: `compile_dl6/3`
+  (`v6/prolog/compile/compile.pl:328`) hardcodes `emit_ts`, and the dd_plan
+  JSON builder (`v6/prolog/compile/6_emit_dd_plan.pl:33`) takes a conformance
+  fixture TERM whose initial + schedule are embedded, so it cannot take the
+  bench-cli / dl6-bench external schedule. Priced at
+  `v6/bench-cli/CONTRACT.md` section 6; a `perf-all` leg is withheld until the
+  emitter door lands, because a leg that only re-runs a correctness sweep
+  would bank no throughput number.
 
 Every number claimed above cites the file that banks it. The measured wall
 times are from this lane's `just perf-all` run at `e926a196` on 2026-08-10;

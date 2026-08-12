@@ -1,0 +1,37 @@
+# import-hover-rail.dl6 -- the hover_note bridge for the `import` statement.
+# A program that lays the 6-column `hover_note` sink rel (v5's LSP hover-note
+# schema: path, line, col, end_line, end_col, md, positions 0-based, end
+# inclusive) over the span of an `import "spec.json".` statement, driven by the
+# per-schema expansion DATA emitted alongside the spec (Piece 2's
+# `schema_expansion` rel) rather than by re-deriving the mapping in prolog.
+#
+# The span in `import_stmt` below is the recorded span the DCG's import
+# statement produces for THIS program's own `import "pokeapi.json".` line
+# (0,0..0,21): whatever lowers the import statement into a readable rel will
+# feed this same shape. The derive rule then heads one hover_note per expanded
+# rel, so every note on the import line shows (lsp.rs appends them all).
+#
+# Three explicit notes below also cover distinct columns on the same line,
+# each carrying a different markdown shape -- a fenced dl6 block, a markdown
+# table, and a raw-HTML tag -- so a renderer's handling of each is observable:
+# VS Code's hover MarkdownString renders the fenced block and the table and
+# strips the raw HTML.
+
+rel import_stmt(path: text, spec: text, line: int, col: int, end_line: int, end_col: int).
+import_stmt('import-hover-rail.dl6', 'pokeapi.json', 0, 0, 0, 21) <- true.
+
+rel schema_expansion(spec: text, rel: text, decl: text).
+schema_expansion('pokeapi.json', 'ability_detail',
+  '```dl6\nrel ability_detail(id: int, name: text, names: list(ability_name)).\n```') <- true.
+schema_expansion('pokeapi.json', 'ability_name',
+  '```dl6\nrel ability_name(name: text, language: language_summary).\n```') <- true.
+
+rel hover_note(path: text, line: int, col: int, end_line: int, end_col: int, md: text).
+hover_note(path, line, col, end_line, end_col, md) <-
+  import_stmt(path, spec, line, col, end_line, end_col),
+  schema_expansion(spec, _rel, md).
+
+hover_note('import-hover-rail.dl6', 0, 3, 0, 6,
+  '| native | dl6 |\n| --- | --- |\n| int | integer |\n| text | string |') <- true.
+hover_note('import-hover-rail.dl6', 0, 7, 0, 9,
+  '<b>raw html</b><script>evil()</script>') <- true.
