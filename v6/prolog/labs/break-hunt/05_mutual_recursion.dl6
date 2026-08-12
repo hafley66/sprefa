@@ -1,0 +1,9 @@
+# Lead 4: mutual recursion between two rels, with a retraction of the seed.
+
+rel seed(value: int).
+rel even_value(value: int).
+rel odd_value(value: int).
+
+even_value(Value) <- seed(Value).
+even_value(Value) <- odd_value(Value).
+odd_value(Value) <- even_value(Value).

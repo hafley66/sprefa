@@ -1,0 +1,10 @@
+# Lead 1: a DERIVED rel wired as a reference target.
+#
+# tall_tree is headed by a rule AND named in finding's column type, so the
+# nested ingress on finding writes tall_tree rows the rule already derived.
+
+rel tree(tree_id: int, species: text).
+rel tall_tree(tree_id: int, species: text).
+rel finding(finding_id: int, about: tall_tree).
+
+tall_tree(TreeId, Species) <- tree(TreeId, Species).

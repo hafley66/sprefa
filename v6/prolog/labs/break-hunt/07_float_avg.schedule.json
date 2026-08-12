@@ -1,0 +1,6 @@
+[
+  [ {"rel":"score","sign":"add","row":["a",1.0]} ],
+  [ {"rel":"score","sign":"add","row":["a",2.0]} ],
+  [ {"rel":"score","sign":"del","row":["a",1.0]} ],
+  [ {"rel":"score","sign":"del","row":["a",2.0]} ]
+]

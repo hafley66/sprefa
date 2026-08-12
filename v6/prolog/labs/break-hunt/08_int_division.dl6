@@ -1,0 +1,10 @@
+# Lead 7 second leg: `/` on two ints. The registry renders it
+# numeric_division; whether the result is int or float decides every
+# downstream column type.
+
+rel measurement(measurement_id: int, numerator: int, denominator: int).
+rel ratio(measurement_id: int, value: float).
+
+ratio(MeasurementId, Value) <-
+  measurement(MeasurementId, Numerator, Denominator),
+  Value := Numerator / Denominator.

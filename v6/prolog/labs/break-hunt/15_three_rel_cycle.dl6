@@ -1,0 +1,12 @@
+# Widening of the mutual-recursion case: a THREE rel cycle, retracting the
+# seed.
+
+rel seed(value: int).
+rel stage_a(value: int).
+rel stage_b(value: int).
+rel stage_c(value: int).
+
+stage_a(Value) <- seed(Value).
+stage_b(Value) <- stage_a(Value).
+stage_c(Value) <- stage_b(Value).
+stage_a(Value) <- stage_c(Value).

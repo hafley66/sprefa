@@ -1,0 +1,9 @@
+# Lead 2: bool as a declared column type. Guard equality against a bool
+# literal, and a bool column in group-by position.
+
+rel flag(item_id: int, active: bool).
+rel active_item(item_id: int).
+rel flag_count(active: bool, total: int).
+
+active_item(ItemId) <- flag(ItemId, Active), Active == true.
+flag_count(Active, count(ItemId)) <- flag(ItemId, Active).

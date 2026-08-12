@@ -1,0 +1,10 @@
+# Lead 12: not() over an AGGREGATE rel, and the retraction that empties the
+# group.
+
+rel team_name(team: text).
+rel spend(team: text, item: text, cost: int).
+rel budget(team: text, total: int).
+rel unbudgeted(team: text).
+
+budget(Team, sum(Cost)) <- spend(Team, _Item, Cost).
+unbudgeted(Team) <- team_name(Team), not(budget(Team, _Total)).
