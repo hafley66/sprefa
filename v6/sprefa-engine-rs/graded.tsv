@@ -281,13 +281,13 @@ probe_output_comparison_guard	diff	-{"tick":1,"deltas":{"__host_response_score":
 quote_in_literal_doubles_the_escape	clean	byte-clean
 range_join_over_arithmetic	clean	byte-clean
 reference_target_emptied_by_option_split_is_named	unsupported	reference_target_has_no_columns(squad/0)
-regexp_non_match	runtime-error	boot statement failed: SqlInputError { error: Error { code: Unknown, extended_code: 1 }, msg: "no such function: REGEXP", sql: "INSERT OR IGNORE INTO \"matched\" (\"text\") SELECT
+regexp_non_match	clean	byte-clean
 regexp_operand_not_text	unsupported	regexp_operand_not_text(source/1,value,int)
 regexp_pattern_invalid	unsupported	regexp_pattern_invalid("[","Syntax error: missing terminating ] for character class")
 regexp_pattern_not_literal	unsupported	regexp_pattern_not_literal
 regexp_pattern_outside_subset	unsupported	regexp_pattern_outside_subset("a(?=b)")
-regexp_positive_match	runtime-error	boot statement failed: SqlInputError { error: Error { code: Unknown, extended_code: 1 }, msg: "no such function: REGEXP", sql: "INSERT OR IGNORE INTO \"matched\" (\"text\") SELECT
-regexp_retraction_flip	runtime-error	boot statement failed: SqlInputError { error: Error { code: Unknown, extended_code: 1 }, msg: "no such function: REGEXP", sql: "INSERT OR IGNORE INTO \"matched\" (\"text\") SELECT
+regexp_positive_match	clean	byte-clean
+regexp_retraction_flip	runtime-error	level insert failed: SqliteFailure(Error { code: Unknown, extended_code: 1 }, Some("Invalid type"))
 rel_element_list_round_trips	diff	-{"tick":1,"deltas":{"__gen__list_fighter_summary_b424a4b49951eef7":{"add":[[100]],"del":[]},"__gen__list_fighter_summary_b424a4b49951eef7__member":{"add":[[100,0,{"name":"ada","ur
 relation_depth2_chained_decode	diff	-{"tick":1,"deltas":{"dcoord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"
 relation_depth2_construct_and_read	diff	-{"tick":1,"deltas":{"coord":{"add":[["src/a.rs",10,20]],"del":[]},"file":{"add":[[{"name":"acme"},{"name":"src/a.rs"}]],"del":[]},"fpath":{"add":[["src/a.rs"]],"del":[]},"raw":{"a
