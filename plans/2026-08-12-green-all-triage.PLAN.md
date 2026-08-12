@@ -28,6 +28,8 @@ whole gate. See `.github/CI-KNOWN-RED.md` for the allowlist this updates.
 | compile-speed | FAIL 3/3 | real | `COMPILE_SPEED regressions=16 improvements=0` vs 2026-08-07 baseline; golden-flex lower +178%, emit +120% | `v6/prolog/compile/scripts/1_compile_speed.sh:248` |
 | scale-floor | FAIL 3/3 | real | stmts/tick `[39,43]` flat at BOTH 10k and 1k (delta-proportionality holds) but expected pin `[37,41]` is stale by a constant +2 | `v6/tsv2/scripts/7_scale-floor.sh:240` |
 | memory-soak | FAIL 3/3 | real | sqlite page count grows ~2x across the soak: second-quarter 24.8 -> final-quarter 49.5 vs +10% ceiling 27.2; storage not flat | `v6/tsv2/scripts/memory-soak.ts:327` |
+| leak-soak | PASS 3/3 (fresh TMPDIR per run) | green (build artifact, not defect) | passes on a clean TMPDIR; the leg leaves a literal `dl-perf.XXXXXX.jsonl` (mktemp template has text after `XXXXXX`, so no substitution) that collides on TMPDIR reuse | n/a |
+| serve-leak-soak | PASS 2/3, FAIL 1/3 | flaky | 1/3 left a transient `Immediate 0->1` handle pending at the sampling instant after 20 swap cycles | `v6/tsv2/tests/serveLeak.test.ts:148` |
 
 ## 2. Real failures
 
@@ -56,7 +58,9 @@ The driver (`lsp_diag_driver.py`) logs `READY`, then never logs `PASS appeared`;
 
 ## 4. Flaky legs
 
-(none yet)
+| leg | result | sensitive to |
+|---|---|---|
+| serve-leak-soak | 2 pass / 1 fail (clean TMPDIR per run) | transient `setImmediate` handle pending at the resource-count sampling instant; the 20-cycle `names_with_growth(handles)` check (`serveLeak.test.ts:148`) races the event loop. Not the stale-TMPDIR class. |
 
 ## 5. Fix-these-first ranking
 
