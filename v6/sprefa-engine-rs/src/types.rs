@@ -137,6 +137,16 @@ pub enum RelationKind {
 }
 
 #[derive(Debug, Clone)]
+pub struct AggregateLevelPlan {
+    pub scope_clear_sql: String,
+    pub scope_seed_sql: Vec<String>,
+    pub intern_sql: Option<Vec<String>>,
+    pub delete_scoped_sql: String,
+    pub insert_scoped_sql: Vec<String>,
+    pub delta_maintained: bool,
+}
+
+#[derive(Debug, Clone)]
 pub struct IncrementalLevelStatement {
     pub head_rel: String,
     pub head_delta_table_name: String,
@@ -146,9 +156,10 @@ pub struct IncrementalLevelStatement {
     pub select_sql: String,
     pub recompute_sql: String,
     pub support_sql: Option<Vec<String>>,
+    pub support_intern_sql: Option<Vec<String>>,
     pub expand_sql: Option<String>,
     pub dred_sql: Option<String>,
-    pub aggregate_sql: Option<String>,
+    pub aggregate_sql: Option<AggregateLevelPlan>,
 }
 
 #[derive(Debug, Clone)]

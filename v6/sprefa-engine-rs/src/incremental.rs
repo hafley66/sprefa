@@ -535,3 +535,315 @@ pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan
     promote();
     carry_pending
 }
+
+// ═══ level phases (port of 1_incremental.ts apply_level_* + reconcile_*) ═══
+
+fn to_statements(texts: &[String]) -> Vec<SqlStatement> {
+    texts
+        .iter()
+        .map(|text| SqlStatement {
+            sql: text.clone(),
+            args: vec![],
+        })
+        .collect()
+}
+
+fn recursive_heads(
+    statements: &[crate::types::IncrementalLevelStatement],
+    relations: &[IncrementalRelationPlan],
+) -> Vec<String> {
+    let mut reads_frontier_of: Vec<(String, Vec<String>)> = Vec::new();
+    for statement in statements {
+        let mut sources = Vec::new();
+        for relation in relations {
+            let frontier = quote_identifier(&relation.frontier_table_name);
+            if let Some(insert_sql) = &statement.insert_sql {
+                if insert_sql.contains(&frontier) {
+                    sources.push(relation.rel.clone());
+                }
+            }
+        }
+        if let Some(entry) = reads_frontier_of
+            .iter_mut()
+            .find(|e| e.0 == statement.head_rel)
+        {
+            entry.1.extend(sources);
+        } else {
+            reads_frontier_of.push((statement.head_rel.clone(), sources));
+        }
+    }
+    fn reaches(
+        from: &str,
+        target: &str,
+        seen: &mut Vec<String>,
+        map: &[(String, Vec<String>)],
+    ) -> bool {
+        if seen.iter().any(|s| s == from) {
+            return false;
+        }
+        seen.push(from.to_string());
+        for source in map
+            .iter()
+            .find(|e| e.0 == from)
+            .map(|e| &e.1)
+            .unwrap_or(&vec![])
+        {
+            if source == target {
+                return true;
+            }
+            if reaches(source, target, seen, map) {
+                return true;
+            }
+        }
+        false
+    }
+    let mut heads = Vec::new();
+    for (head, _) in &reads_frontier_of {
+        if reaches(head, head, &mut Vec::new(), &reads_frontier_of) {
+            heads.push(head.clone());
+        }
+    }
+    heads
+}
+
+// The insert path: runs the level's insert_sql (with RETURNING) and stages the
+// produced rows as +1 events into the frontier for this pass.
+fn apply_level_statement(
+    seam: &SqliteSeam,
+    statement: &crate::types::IncrementalLevelStatement,
+    relations: &[IncrementalRelationPlan],
+    after_edges: bool,
+    next_sequence: &mut dyn FnMut() -> u64,
+) -> usize {
+    let relation = relations
+        .iter()
+        .find(|r| r.rel == statement.head_rel)
+        .expect("incremental level head relation missing");
+    if statement.aggregate_sql.is_some() {
+        return 0;
+    }
+    let insert_sql = statement
+        .insert_sql
+        .as_ref()
+        .expect("level statement has no insert_sql");
+    let result = seam
+        .execute(&SqlStatement {
+            sql: insert_sql.clone(),
+            args: vec![],
+        })
+        .expect("level insert failed");
+    let rows = result_rows(
+        &result,
+        &statement.head_columns,
+        &statement.head_column_types,
+    );
+    if rows.is_empty() {
+        return 0;
+    }
+    let events: Vec<DeltaEvent> = rows
+        .iter()
+        .map(|row| DeltaEvent {
+            rel: statement.head_rel.clone(),
+            sign: 1,
+            sequence: next_sequence(),
+            row: row.clone(),
+        })
+        .collect();
+    let copies: Vec<(String, i64)> = relations
+        .iter()
+        .filter(|r| r.rel == statement.head_rel)
+        .map(|r| {
+            let table = if after_edges {
+                &r.next_frontier_table_name
+            } else {
+                &r.frontier_table_name
+            };
+            (table.clone(), if after_edges { 1 } else { 2 })
+        })
+        .collect();
+    stage_events(seam, std::slice::from_ref(relation), &events, &copies);
+    rows.len()
+}
+
+// apply_levels_before_edges: dependency-ordered insert pass. A head on a level
+// cycle uses the support-count reconcile so the cycle closes in one pass.
+pub fn apply_levels_before_edges(
+    seam: &SqliteSeam,
+    statements: &[crate::types::IncrementalLevelStatement],
+    relations: &[IncrementalRelationPlan],
+) {
+    if statements.is_empty() {
+        return;
+    }
+    let feeds_another_round = recursive_heads(statements, relations);
+    let mut sequence = 0u64;
+    let mut next_sequence = || {
+        let current = sequence;
+        sequence += 1;
+        current
+    };
+    for statement in statements {
+        let closes_in_one_pass = feeds_another_round.iter().any(|h| h == &statement.head_rel)
+            && statement.support_sql.is_some();
+        if closes_in_one_pass {
+            let copies: Vec<(String, i64)> = relations
+                .iter()
+                .filter(|r| r.rel == statement.head_rel)
+                .map(|r| (r.frontier_table_name.clone(), 2))
+                .collect();
+            reconcile_ref_count_statement(seam, statement, relations, &copies);
+        } else {
+            apply_level_statement(seam, statement, relations, false, &mut next_sequence);
+        }
+    }
+}
+
+fn retraction_guard_sql(relations: &[IncrementalRelationPlan]) -> String {
+    let terms: Vec<String> = relations
+        .iter()
+        .map(|relation| {
+            format!(
+                "EXISTS (SELECT 1 FROM {} WHERE \"_sign\" = -1 LIMIT 1)",
+                quote_identifier(&relation.delta_table_name)
+            )
+        })
+        .collect();
+    if terms.is_empty() {
+        return "SELECT 0 AS has_retraction".to_string();
+    }
+    format!(
+        "SELECT CASE WHEN {} THEN 1 ELSE 0 END AS has_retraction",
+        terms.join(" OR ")
+    )
+}
+
+// Port of reconcile_ref_count_statement (1_incremental.ts:553). Non-skipped,
+// non-expand, non-dred path: reseed support from base tables, subtract into the
+// head's refcount, stage what fell to zero as -1 and what is newly derivable as
+// +1.
+fn reconcile_ref_count_statement(
+    seam: &SqliteSeam,
+    statement: &crate::types::IncrementalLevelStatement,
+    relations: &[IncrementalRelationPlan],
+    frontier_copies: &[(String, i64)],
+) {
+    let support_sql = statement
+        .support_sql
+        .as_ref()
+        .expect("level statement has no support_sql");
+    let relation = relations
+        .iter()
+        .find(|r| r.rel == statement.head_rel)
+        .expect("incremental level head relation missing");
+    let clear = &support_sql[0];
+    let update = &support_sql[2];
+    let stage_retract = &support_sql[3];
+    let collect_zero = &support_sql[4];
+    let clear_new = &support_sql[5];
+    let fill_new = &support_sql[6];
+    let stage_add = &support_sql[7];
+    let stage_frontier = &support_sql[8];
+    let stage_next_frontier = &support_sql[9];
+    let insert_new = &support_sql[10];
+
+    let tail_texts = vec![
+        update.clone(),
+        stage_retract.clone(),
+        collect_zero.clone(),
+        clear_new.clone(),
+        fill_new.clone(),
+        stage_add.clone(),
+    ];
+    let support_interns = statement.support_intern_sql.clone().unwrap_or_default();
+    let mut tail = to_statements(&tail_texts);
+    for (table_name, phase) in frontier_copies {
+        let stage = if *table_name == relation.next_frontier_table_name {
+            stage_next_frontier.clone()
+        } else {
+            stage_frontier.clone()
+        };
+        tail.push(SqlStatement {
+            sql: stage,
+            args: vec![Value::Integer(*phase)],
+        });
+    }
+    tail.push(SqlStatement {
+        sql: insert_new.clone(),
+        args: vec![],
+    });
+
+    if statement.expand_sql.is_none() {
+        let mut head = Vec::new();
+        head.push(SqlStatement {
+            sql: clear.clone(),
+            args: vec![],
+        });
+        head.extend(to_statements(&support_interns));
+        head.push(SqlStatement {
+            sql: statement.support_sql.as_ref().unwrap()[1].clone(),
+            args: vec![],
+        });
+        head.extend(tail);
+        seam.batch(&head).expect("reconcile batch failed");
+        return;
+    }
+    // The expand (wavefront) path joins in a later widening step. Until then a
+    // plain support close keeps the plan correct for additive deps.
+    let mut head = Vec::new();
+    head.push(SqlStatement {
+        sql: clear.clone(),
+        args: vec![],
+    });
+    head.extend(to_statements(&support_interns));
+    head.push(SqlStatement {
+        sql: statement.support_sql.as_ref().unwrap()[1].clone(),
+        args: vec![],
+    });
+    head.extend(to_statements(&tail_texts));
+    head.push(SqlStatement {
+        sql: insert_new.clone(),
+        args: vec![],
+    });
+    seam.batch(&head)
+        .expect("reconcile expand-placeholder failed");
+}
+
+// Port of recompute_levels_after_edges (1_incremental.ts:1243). Guarded by the
+// retraction guard; a purely additive tick skips the reconcile entirely.
+pub fn recompute_levels_after_edges(
+    seam: &SqliteSeam,
+    statements: &[crate::types::IncrementalLevelStatement],
+    relations: &[IncrementalRelationPlan],
+    reconcile_every_tick: bool,
+) {
+    if statements.is_empty() {
+        return;
+    }
+    let reconcile = |seam: &SqliteSeam| {
+        for statement in statements {
+            let _relation = relations
+                .iter()
+                .find(|r| r.rel == statement.head_rel)
+                .expect("incremental level head relation missing");
+            if let Some(aggregate) = &statement.aggregate_sql {
+                if aggregate.delta_maintained {
+                    continue;
+                }
+                continue;
+            }
+            reconcile_ref_count_statement(seam, statement, relations, &[]);
+        }
+    };
+    if reconcile_every_tick {
+        reconcile(seam);
+        return;
+    }
+    if relations.is_empty() {
+        return;
+    }
+    let guard = retraction_guard_sql(relations);
+    let has_retraction = seam.scalar(&guard).expect("retraction guard read failed") == 1;
+    if has_retraction {
+        reconcile(seam);
+    }
+}

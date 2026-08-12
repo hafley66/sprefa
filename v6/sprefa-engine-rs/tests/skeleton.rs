@@ -81,7 +81,32 @@ fn fixture_program() -> GenProgram {
         arrival_templates: HashMap::new(),
         relations,
         edges: vec![],
-        levels: vec![],
+        levels: vec![IncrementalLevelStatement {
+            head_rel: "seen".to_string(),
+            head_delta_table_name: "__delta_seen".to_string(),
+            head_columns: vec!["value".to_string()],
+            head_column_types: vec![RowColumnType::Int],
+            insert_sql: Some("INSERT OR IGNORE INTO \"seen\" (\"value\") SELECT DISTINCT d0.\"value\" FROM \"__frontier_source\" d0 WHERE d0.\"_phase\" >= 0 RETURNING \"value\"".to_string()),
+            select_sql: "SELECT \"value\" FROM \"seen\"".to_string(),
+            recompute_sql: "DELETE FROM \"seen\";\nINSERT OR IGNORE INTO \"seen\" (\"value\") SELECT b0.\"value\" FROM \"source\" b0".to_string(),
+            support_sql: Some(vec![
+                "DELETE FROM \"__support_next_seen\"".to_string(),
+                "INSERT INTO \"__support_next_seen\" (\"value\", \"__refcount\") SELECT \"value\", sum(\"__refcount\") FROM (SELECT b0.\"value\" AS \"value\", count(*) AS \"__refcount\" FROM \"source\" b0 GROUP BY b0.\"value\") GROUP BY \"value\"".to_string(),
+                "UPDATE \"seen\" AS h SET \"__refcount\" = COALESCE((SELECT n.\"__refcount\" FROM \"__support_next_seen\" n WHERE n.\"value\" = h.\"value\"), 0)".to_string(),
+                "INSERT INTO \"__delta_seen\" (\"_sign\", \"_sequence\", \"value\") SELECT -1, row_number() OVER () - 1, \"value\" FROM \"seen\" WHERE \"__refcount\" <= 0".to_string(),
+                "DELETE FROM \"seen\" WHERE \"__refcount\" <= 0".to_string(),
+                "DELETE FROM \"__new_seen\"".to_string(),
+                "INSERT INTO \"__new_seen\" (\"value\", \"__refcount\") SELECT n.\"value\", n.\"__refcount\" FROM \"__support_next_seen\" n LEFT JOIN \"seen\" h ON n.\"value\" = h.\"value\" WHERE h.\"value\" IS NULL".to_string(),
+                "INSERT INTO \"__delta_seen\" (\"_sign\", \"_sequence\", \"value\") SELECT 1, \"rowid\" - 1, \"value\" FROM \"__new_seen\"".to_string(),
+                "INSERT INTO \"__frontier_seen\" (\"_phase\", \"_sequence\", \"value\") SELECT ?, \"rowid\" - 1, \"value\" FROM \"__new_seen\"".to_string(),
+                "INSERT INTO \"__next_frontier_seen\" (\"_phase\", \"_sequence\", \"value\") SELECT ?, \"rowid\" - 1, \"value\" FROM \"__new_seen\"".to_string(),
+                "INSERT OR IGNORE INTO \"seen\" (\"value\", \"__refcount\") SELECT n.\"value\", n.\"__refcount\" FROM \"__support_next_seen\" n".to_string(),
+            ]),
+            support_intern_sql: None,
+            expand_sql: None,
+            dred_sql: None,
+            aggregate_sql: None,
+        }],
         retentions: vec![],
         reconcile_every_tick: false,
         incremental_safe: true,
@@ -89,7 +114,7 @@ fn fixture_program() -> GenProgram {
 }
 
 #[tokio::test]
-async fn skeleton_drains_one_arrival_and_diffs_source_boundary() {
+async fn skeleton_one_level_fixture_byte_identical() {
     let program = fixture_program();
     let seam = SqliteSeam::in_memory().expect("open seam");
     let schedule = vec![vec![Arrival {
@@ -99,16 +124,7 @@ async fn skeleton_drains_one_arrival_and_diffs_source_boundary() {
     }]];
     let fold = run_schedule(&program, &seam, &schedule, 100).await;
     assert_eq!(fold.lines.len(), 1, "one schedule tick, no drain");
-    let line = &fold.lines[0];
-    assert!(
-        line.contains("\"source\":{\"add\":[[1]]"),
-        "source boundary add present in {}",
-        line
-    );
-    // Levels are not wired in the skeleton; the seen rel is not yet derived.
-    assert!(
-        !line.contains("\"seen\""),
-        "seen not derived in skeleton: {}",
-        line
-    );
+    let expected =
+        "{\"tick\":1,\"deltas\":{\"seen\":{\"add\":[[1]],\"del\":[]},\"source\":{\"add\":[[1]],\"del\":[]}}}";
+    assert_eq!(fold.lines[0], expected, "byte-identical to oracle");
 }

@@ -46,7 +46,14 @@ impl GenProgram {
     pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> TickDeltas {
         incremental::prepare_tick(seam, &self.relations);
         incremental::apply_arrivals(seam, arrivals, &self.relations);
-        // Level and edge phases arrive in later spline steps.
+        incremental::apply_levels_before_edges(seam, &self.levels, &self.relations);
+        // Edge rules arrive in a later widening step.
+        incremental::recompute_levels_after_edges(
+            seam,
+            &self.levels,
+            &self.relations,
+            self.reconcile_every_tick,
+        );
         let rels = incremental::read_boundary(seam, &self.relations);
         let carry_pending = incremental::promote_frontiers(seam, &self.relations);
         TickDeltas {
