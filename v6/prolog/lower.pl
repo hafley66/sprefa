@@ -864,7 +864,13 @@ set_rel_key_positions(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
     ( set_rel_has_key(Ref, KeyOrNone, EdgeHeadedRefs, ArrivalTargetRefs,
                       KeyPositions)
     -> true
-    ;  length(Columns, Arity), numlist(1, Arity, KeyPositions)
+    ;  length(Columns, Arity),
+       % numlist/3 FAILS at arity 0 (high below low); a bare failure would
+       % drop the whole rel from RelPlans with no message.
+       (   Arity =:= 0
+       ->  KeyPositions = []
+       ;   numlist(1, Arity, KeyPositions)
+       )
     ).
 
 % A level-headed keyed rel must keep its all-column PK: that is what
