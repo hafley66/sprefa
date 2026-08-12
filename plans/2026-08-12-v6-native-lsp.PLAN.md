@@ -62,3 +62,59 @@ Net inventory: exactly ONE v6 editor feature is delivered through a running v5
 and measured working (diagnostics), and ONE was shipped dead on arrival even
 with v5 (hover). Everything else v5's LSP offers is independent of v6, not a
 v6-v5 dependency, and must be owned by v6 from zero if v6 wants it without v5.
+
+---
+
+## 3. Part 2, build-vs-buy: LSP server candidates, priced for the tsv2 runtime
+
+An LSP server is a common-shaped problem; the LAW requires researched candidate
+analysis before "write our own". The runtime under test is fixed: TypeScript,
+rxjs spine, `@libsql/client` store seam, an HTTP `serve` path already in the
+tree (`v6/tsv2/serve/4_http.ts:559` lines, `serve/main.ts` the single
+subscribe). The store's one Promise seam is `ISqlRunner` (`v6/sprefa-store/
+js/src/engine/types.ts:58`); everything above it is observables, and the
+one-manual-subscribe ratchet (`v6/tools/one-subscribe.sh:39-40`, baselines
+dl/src=1, tsv2/serve=1) is a standing law.
+
+### 3.1 Candidates
+
+| name | language | what it gives you | what it costs | what it forces on the architecture | fits TS+SQLite tsv2? |
+|---|---|---|---|---|---|
+| `vscode-languageserver` (npm 10.1.0) | TS | the full LSP server: Connection over stdio/pipe/socket, TextDocuments manager, feature registration, `sendDiagnostics`, handler types for every LSP 3.18 method (deps: vscode-languageserver-protocol 3.18.2) | pulls the whole connection + its async handler model; owns document text lifecycle; promise/thenable handler returns | an adapter between the rxjs spine and a promise/callback handler surface; diagnostics must be pushed through the connection's own send path, so the spine subscribes once and the connection drives the rest | partial. Small buy, but its async handler model collides with the promise-above-seam law and the one-subscribe rail unless the connection is walled behind one cold observable |
+| `vscode-jsonrpc` (npm 9.0.1) | TS | only the JSON-RPC wire: MessageReader/MessageWriter over stdio, Disposable, cancellation, request/response correlation. No feature server, no protocol types in this package | you assemble the LSP feature handling yourself; protocol types come separately | the reader is an event source that composes INTO the rxjs spine: one cold observable per process, requests answered by querying the served store. Keeps the one-subscribe law | yes. Smallest buy that still buys the wire; the store join is v6-owned |
+| `vscode-languageserver-types` (npm 3.18.0, zero deps) | TS | types only: every 3.18 data structure (Position, Range, MarkupContent, PublishDiagnosticsParams, ...). No transport, no connection | you also own Content-Length framing + error codes + cancellation | pure types, no runtime; pairs with any framing you choose | yes. Typed wire, all lifecycle is yours |
+| roll your own JSON-RPC + hand-typed protocol | TS | nothing bought | ~150-250 LOC Content-Length framing + error mapping + cancellation, and hand-rolling the ~hundreds of 3.18 types is unbounded; would re-implement vscode-languageserver-types almost for free | the full LSP owns you anyway | no. Fails infra-is-bought; the "buy" is the protocol types, not worth rebuilding |
+| `langium` (npm 4.3.1) | TS | a complete language-server framework: chevrotain parser, workspace manager, documents, references, default services; bundles vscode-languageserver ~10 + protocol | heavy: imposes its own parser + grammar + AST + document lifecycle | v6 has no parser here (tree-sitter extraction is the Rust crate) and a table-push server that needs none; langium wants to own the thing v6 deliberately does not have | no. Its one strength (grammar-driven AST) is the one thing this program lacks; adopting it means re-homing extraction in TS to feed a model v6 does not use |
+| `tower-lsp` / `lsp-server` crate (Rust, from the earlier v6-crate-map era) | Rust | battle-tested Rust LSP server on axum/tokio: `v6/plans/2026-07-19-v6-daemon.md:55` already picked `tower-lsp LspService` per UDS with a `dl lsp-proxy` stdio shim (biome pattern) | the current runtime is TS/tsv2, not the Rust crate the 0719 plan assumed; adopting it splits the editor face across two languages and two process models | the whole v6 runtime would have to be re-homed to Rust, or the Rust LSP server would talk to the TS store over a wire | no. The 0719 daemon direction predates the pivot; the runtime is TS now, so a Rust LSP is a second runtime, not a continuation |
+| `vscode-languageclient` / `monaco-languageclient` | TS | client-side / browser-host libraries | they are CLIENT libs; we build the server | / | N/A (opposite side of the wire), listed so the candidate set is not silently missing it |
+
+### 3.2 Neutral reading
+
+The wire and the types are the cheap, high-lottery buy
+(`vscode-jsonrpc` 9.0.1 + `vscode-languageserver-types` 3.18.0, both tiny, both
+from the MS monorepo, no transitive meaning). `vscode-languageserver` itself
+(10.1.0) is also a legitimate buy and is the conventional answer, but it arms
+its own async handler model and TextDocuments; under the promise-above-seam and
+one-subscribe laws it costs more integration than the bare wire does.
+`vscode-languageserver` is NOT dismissed: priced, it is the "convenient but
+architecture-hostile" option (3.1 row 1, partial fit); `vscode-jsonrpc +
+lsp-types` is the "typed wire, own the join" option (row 2, full fit). langium
+and the Rust crate are dismissed with the concrete reasons above (imposed AST /
+wrong runtime), not in one line. Roll-your-own framing is the counterfactual
+that makes the buy look cheap and is therefore what prices the two winners.
+
+### 3.3 The same service, one process or two (the full forks are part 4)
+
+The LSP is a read-mostly consumer of the same SQLite store the serve path
+already computes. Two honest shapes, priced by the `vscode-jsonrpc + lsp-types`
+buy and by not-yet-existing feature handlers:
+
+| shape | what it means | incremental cost | fits the standing laws |
+|---|---|---|---|
+| the LSP is a consumer of the existing serve process | `serve/main.ts` grows an LSP transport: requests answered by the same store, deltas flowed from the same tick chain | wire + feature handlers only (see forks); one process, one subscribe baseline stays 1 | best. Preserves one-subscribe and promise-above-seam; the connection is one more cold observable inside `serve_tsv2` |
+| a separate LSP server | a second entrypoint reusing the same runtime + store over the same SQLite file, mirroring v5's `--diag-db` poll or an SSE/EDB bridge | wire + feature handlers + a second process, a second `main.ts` subscribe (baseline 2) unless the entrypoint reuses `serve_tsv2` | weaker. A second manual subscribe unless reused; more process-contract surface |
+
+The pricing body for features lives in part 4. The candidate vote here: buy
+`vscode-jsonrpc` + `vscode-languageserver-types`, compose the connection into
+the existing serve spine, do not buy `vscode-languageserver`'s connection or
+langium.
