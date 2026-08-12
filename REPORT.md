@@ -1,233 +1,180 @@
-## codex-findings lane
+# REPORT: `import` statement + hover showing the expanded sprefa types
 
-- Commit: `3ea35633` (`boop: PASS: wire domain gap paths`)
-- Schema: version 7. `sync_cursor` now stores dictionary-backed `record_id`,
-  `turn`, and `timestamp`; existing version 6 stores migrate on open.
-- Observation receipt: `sync_session()` records `live` or `idle` status and
-  repeats fold without inserting another interval.
-- Cursor receipt: the Claude fixture returns a non-empty record ID and nonzero
-  turn and timestamp.
-- Temporal edges: hail, result, retry, resume, and cancel messages call
-  `add_edge_at()`.
-- Typed rows: `LiveSpanRow` is returned by both live-span queries. `StatusRow`
-  includes all Instant contract fields.
+Lane: `feature/import-openapi-hover`. All three pieces built and proven on the
+`.dl6`/engine side. The editor-side delivery (real VS Code hover) is gated on a
+v5 bridge that does not exist as the lane claimed; that finding is item 3 and
+section "v5 bridge finding" below.
 
-StatusRow fields with no source in the current store are `lane`, `rss_kb`,
-`cpu_pct`, and `uptime_sec`; they return `None`. `state`, `pid`, `tmux_pane`,
-`first_seen_ts`, `last_seen_ts`, and `died_ts` are sourced from stored live
-state and intervals. `lane` has no lane-registry join in the store schema.
+## 1. Import spelling and rationale
 
-Receipts from `v6/boop`:
+Surface: `import "spec.json".`
 
-```text
-cargo test
-test result: ok. 91 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-
-cargo clippy -- -D warnings
-Finished `dev` profile
+```
+import "pokeapi.json".
 ```
 
-The initial sandboxed test run could not create throwaway tmux sockets. The
-full receipt passed with tmux access. No requested path resisted.
+Spelling model is `use_item//1` in `parse_dl_dcg.pl` (a `kw` + `string_lit` +
+`.`, the same shape `use`/`rel`/`sh` use). It reuses the existing `string_lit`
+token and the existing position machinery (`here/1` + `remaining_line_column/3`,
+zero new position scheme). No new type spelling or language semantics were
+invented; the statement only records its own span 0-based/inclusive as
+`import_decl(File, Line, Col, EndLine, EndCol)`.
 
-## prolog-dead-trees lane
+Recorded span for `import "pokeapi.json".` is `import_decl(pokeapi.json, 0, 0, 0, 21)`
+(0-based lines/cols, end inclusive at the final `.`).
 
-STOPPED, no deletions made, no commit. Head verified `0a2b42a6` before any
-work. Receipts re-verified at that head:
+## 2. Fail-first receipts (red then green)
 
-| tree | verified | proof |
-|---|---|---|
-| v6/prolog/labs/** (4,635 lines, 18 .pl) | CONFIRMED dead | `grep -rn "use_module.*labs" --include=*.pl v6/prolog` empty; broad load-directive search (use_module/load_files/consult/ensure_loaded) empty; justfile labs refs point at `{{v6}}/labs/` (=v6/labs/, a separate dir that exists) |
-| v6/prolog/src/emit_ts.pl (239) | CONFIRMED dead | superseded marker at ARCH.pl:194 (brief cited :195, one-line offset) + task emit_ts_direct at ARCH.pl:700; never loaded by any use_module(emit_ts) (compile.pl/sweep.pl/6_profile.pl/plunit resolve to the root emit_ts.pl with emit_program/5, not src/) |
-| v6/prolog/src/checks.pl (42) | DEVIATION, blocked | brief proof "marked superseded at ARCH.pl:700" is FALSE: grep for `checks.pl` in ARCH.pl returns nothing; found a live loader: examples/ghcacher.pl:20 `use_module('../src/checks.pl')`, a self-documented runnable example (`swipl -q -l .../ghcacher.pl -g go -g halt`) that also imports kernel.pl and grader.pl |
+### Receipt 1: the import statement
 
-Per the brief's STOP rule ("a new loader since the recon means STOP AND
-REPORT, never delete anyway") and because the cited superseded marker does
-not exist, I stopped and made no deletions, ran no gates, created no commit.
+RED, against the pre-piece-1 parser (`git show HEAD:.../parse_dl_dcg.pl`):
 
-Note for resolution: the justfile ghcacher-golden gate runs the .dl6 golden
-at v6/tsv2/goldens/ghcacher_tick_golden/6_gate.sh, not examples/ghcacher.pl,
-so examples/ghcacher.pl may itself be an orphan. Resolving whether
-examples/ghcacher.pl is live (and what checks.pl really is) is the gate to
-retrying this lane.
-
-## boop-goal-edge lane
-
-Job 1 (`e5f4a899`) `boop: lanes carry a goal on the route and dispatch mail`:
-- `Route.goal: Option<String>` added in `v6/boop/src/bus.rs`; parsed in
-  `route_from_value`, written in `route_to_json` (main.rs). Missing field loads
-  as `None` via the manual `string_field` path (Route is not serde-derived; the
-  brief's "serde default" is honored behaviorally).
-- `--goal` wired into `lane create`, `dispatch --goal`, `adopt`, and
-  `lane patch`; therefore into `DispatchArgs`, `LaneArgs`, `run_adopt`.
-- Dispatch mail (kind=dispatch) embeds the goal in its body as
-  `\n[goal] <text>`, so history states it without a registry lookup.
-
-Job 2 (`86150f0d`) `boop: pstree prints the lane goal`:
-- `LaneNode.goal` threaded from the route through `build_lane_nodes`.
-- Text lane line gains a ` -- <goal>` suffix when present.
-- `--format ndjson` rows gain `"goal": <string|null>`.
-
-Tests (new, all pass): `route_goal_round_trips`, `a_route_round_trips_its_
-goal_field`, `a_registry_without_the_goal_field_still_loads`, `pstree_carries_
-the_goal`, `pstree_goal_null_when_absent`.
-
-Receipts from `v6/boop`:
-
-```text
-cargo test
-98 lib + 9 main + 2 bench = 109 ok (baseline 104, never drops)
-
-cargo clippy -- -D warnings
-clean (0 warnings / 0 errors; pre-existing linker_messages warning only)
+```
+error(dl_parse_error(statement,position(1,8)))
 ```
 
-Resisted note (corrected by the driver at harvest): the lane stalled on the
-pre-commit comment-budget rail, which needs the `v6/sprefa-extract` release
-binary at `<worktree>/v6/sprefa-extract/target/release/extract`
-(`v6/tsv2/scripts/comment-budget-rail.sh:16,19-20`). The lane did NOT build or
-bypass it and could not commit. The driver symlinked the main tree's existing
-binary into the worktree; the rail then returned rc 0 and the lane's next
-commit attempt succeeded. Nothing else resisted.
+The `import` token was not a statement; the parse died at col 8.
 
-Driver verification in the worktree, independent of the lane's own run:
+GREEN, with the piece-1 DCG change (`import-mini.dl6`):
 
-```text
-cargo test          109 ok (98 lib + 9 main + 2 bench), 2.35s
-cargo clippy --all-targets -- -D warnings    rc 0
-comment-budget-rail.sh                       rc 0
+```
+import_decl(pokeapi.json,3,0,3,21)
 ```
 
-Live pstree receipt against a throwaway `--mail-dir`:
+(Line 3 is 0-based because the fixture file carries a 2-line header comment;
+the identifier and inclusive end span are correct.)
 
-```text
-text:   demo-lane (-) [dead] -- prove the goal edge renders
-ndjson: {"lane":"demo-lane",...,"goal":"prove the goal edge renders",...}
-real registry: every row carries "goal":null
+### Receipt 2: hover_note rows before and after the derive rule
+
+A hover at the import span yields no note when the program derives no
+`hover_note` row, and yields notes when the rule heads the sink.
+
+RED, `hover-rail` without the `hover_note` rule: the emitted program has no
+`INSERT OR IGNORE INTO "hover_note"`, so the table never derives and no note
+exists.
+
+GREEN, with the `hover_note` rule in `import-hover-rail.dl6`: the derive emit
+appears
+
+```
+INSERT OR IGNORE INTO "hover_note" ("path", "line", "col", "end_line", "end_col", "md")
+  SELECT b0."path", b0."line", b0."col", b0."end_line", b0."end_col", b1."decl"
+  FROM "import_stmt" b0, "schema_expansion" b1 WHERE b1."spec" = b0."spec"
 ```
 
-## boop-store-close lane
+and the table is created with v5's exact 6-column shape `hover_note("path",
+"line", "col", "end_line", "end_col", "md")`.
 
-Agent key: `agent_pr`, StatusRow sources, sync cost gate + `agent_live.pid`,
-`beep lane wait`. Head was `29071a5b` (boop-goal-edge beneath). All in v6/boop.
+## 3. What VS Code actually rendered
 
-Job 1 (`22cdfaf8`) `boop: agent_pr PK collapse to (session_id, turn, pr_url_id)`:
-- `agent_pr` PRIMARY KEY changed from `(session_id, turn)` to
-  `(session_id, turn, pr_url_id)`: a turn mentioning two PRs keeps two rows.
-- SCHEMA_VERSION 7 -> 8; the migrate-on-open path now runs per version step, so
-  a v7 store that already applied the 6->7 record columns does not re-run those
-  ALTERs. The 7->8 step rebuilds `agent_pr` (create new, copy, drop, rename).
-- Tests: `two_prs_in_one_turn_survive_and_resync_dedups`,
-  `a_v7_store_migrates_agent_pr_onto_the_three_column_key`.
+I could not produce a live VS Code render in this environment, and the hover
+bridge (section below) is gated, so no note reached an editor. What I measured
+and state precisely:
 
-Job 2 (`e21a951c`) `boop: beep ps and db status report tree-summed rss/cpu`:
-- `proc.rs` gains `TreeSum`, `tree_sum_of`, and `uptime_secs`. `beep ps` and
-  `measure` sum rss_kb/cpu_pct across the pane pid's descendant tree and print
-  `now - start_time` (a duration) not the epoch start.
-- `status_rows` (query.rs) replaces the hardcoded `NULL AS rss_kb/cpu_pct/
-  uptime_sec` with the same tree-sum path when a live pid exists.
-- Lane join: `StatusRow.lane` stays `None` in the store row; `db status`
-  (main.rs) joins the lane by route session_id OR cwd, the clean join, never a
-  guess. Verified against the goal-edge lane's machinery.
-- Tests: `tree_sum_exceeds_pane_only_on_a_fixture_tree`,
-  `uptime_is_a_duration_not_an_epoch_stamp`, `live_pid_status_row_carries_
-  nonzero_rss`.
+Server payload (measured from `src/lsp.rs:904-909` and the note composition at
+`857-897`): v5 returns `HoverContents::Markup(MarkupContent{ kind: Markdown,
+value: <notes joined with "\n\n---\n\n"> })`. The server performs NO sanitization:
+raw HTML inside `md` passes through the payload byte for byte. The three note
+forms `import-hover-rail.dl6` carries are:
 
-Job 4 (`16b254a0`) `boop: gate sync re-reads on cursor length and lane pane pid`:
-- `run_sync_all` now skips any transcript whose length still equals its
-  consumed cursor (metadata.len -vs- `sync_cursor.offset`), the run_follow
-  freshness law. Cursor offsets load in one batched query
-  (`all_cursor_offsets`). A shorter file keeps the truncation path.
-- `sync_session_with_pid` stores the lane route's pane pid on `agent_live`;
-  `session_route_pid` resolves it by session id or cwd. Test:
-  `an_observed_live_lane_row_carries_its_pid`.
-- Cost receipt, `boop db sync create`, release binary, same real store:
+- fenced block: ` ```dl6\nrel ability_detail(id: int, name: text, ...).\n``` `
+- markdown table: `| native | dl6 |\n| --- | --- |\n| int | integer |\n...`
+- raw HTML: `<b>raw html</b><script>evil()</script>`
 
-```text
-before (brief, ungated):  11,331 ms  (24 events, ~2/s)
-after  (gated warm):       2,456 ms  (21 events, ~8/s)
-```
+VS Code renders untrusted hover markdown (`MarkdownString`, `isTrusted=false`)
+through its markdown-it sanitizer: fenced `dl6` code blocks and markdown tables
+render as a code block and a table; inline `dl6` code and bold render; raw HTML
+tags are stripped (the `<b>` is not applied as bold, the `<script>` is removed).
+This is VS Code's documented sanitizer behavior for hover, not verified by a GUI
+run here. Anyone who wants the byte-level editor truth must run a GUI VS Code
+against a v5 LSP; the payload above is the exact input it would render.
 
-The residual ~2.3s is harness discovery: `first_record_context`
-(v6/boop/src/harness/claude.rs:222) calls `read_complete_lines(file, 0)`,
-which reads the whole 2.86 GB corpus on every run. That lives in
-`src/harness/**`, where this lane is forbidden, so the gate alone cannot reach
-the 0.023 s walk floor. Reported rather than improvised into harness.
+## 4. Tree-sitter ratio before / after
 
-Job 3 (`961bc5b6`) `boop: add beep lane wait`:
-- `beep lane wait <lane>` polls the mailbox every second for a `kind=result`
-  row from the lane, exits with the rc its body names (`lane <id> done rc=N`);
-  `--timeout` seconds exits 124, a pre-existing row returns immediately. Reads
-  the same bus.ndjson bus.rs writes, no new mailbox format.
-- Smoke-verified exit codes 5 (result) and 124 (timeout).
-- Tests: `wait_returns_rc_from_a_preexisting_result_row`,
-  `wait_times_out_when_no_result_row_arrives`, `a_non_result_row_does_not_
-  satisfy_the_wait`.
+| metric | before | after |
+| --- | --- | --- |
+| identical hand-rule spans | 3426 | 3453 |
+| generated specialized rules | 934 | 934 |
+| emitted total | 4360 | 4387 |
+| remaining hand-rule overlay | 445 | 445 |
+| ratio | 0.1021 | 0.1014 |
+| TS_CORPUS | 288/288 | 288/288 |
+| TEXT_DOOR | 288/288/0 | 288/288/0 |
 
-Receipts from `v6/boop`:
+The `import` statement landed in the GENERATED rules (`seq("import", $.string,
+".")` inside `statement`), not the hand overlay: overlay stayed 445 while `ratio`
+fell. That is the favorable outcome; no hand-overlay finding to report.
 
-```text
-cargo test          118 ok (104 lib + 12 main + 2 bench), baseline 109, never drops
-cargo clippy --all-targets -- -D warnings   rc 0
-```
+Derived-grammar files were regenerated: `emitted-grammar.js > grammar.js` plus
+`src/{grammar.json,node-types.json,parser.c}`.
 
-Resisted: the compute cost of `beep ps`/`status_rows` by spawning a fresh
-sysinfo snapshot per row (it is captured once and queried many times).
-## tree-sitter-101-floor lane
+## 5. Gate commands
 
-Branch `fix/treesitter-101-floor`. User delegated the two "User call" rows in
-`plans/2026-08-11-tree-sitter-door.PLAN.md`. Decided both uniform:
-keep-editor-wider. No grammar change; decision recorded in
-`v6/labs/tree-sitter-door/classification.tsv` and the plan doc. Ratio stays
-0.1021, overlay 445.
+`cd v6/prolog && swipl -g go -t halt ARCH.pl` -> all PASS (ends
+`covers_endpoints_ground`).
 
-| rule | chars | decision |
-|---|---:|---|
-| `enum_variant` | 72 | keep-editor-wider |
-| `query` | 29 | keep-editor-wider |
+`cd v6/tsv2 && bash scripts/sweep.sh` -> `RUN total=286 identical=283 wrong=0
+emitted_crash=0 rejection=3`, `FINAL identical=283 wrong=0`. Matches the stated
+baseline (identical=283 wrong=0).
 
-Reasoning, uniform across both rows: an editor grammar wider than the parser
-is correct and better, because the editor highlights half-typed text the
-parser rejects. `enum_field//1` (`parse_dl_dcg.pl:521`) types a field with
-`ident//1`; the editor uses `$.type`, so `list(int)` and any type expression
-highlights while typing. `query_stmt//1` (`parse_dl_dcg.pl:750`) inlines
-`ident//1`/`head_args//1` and reads a plain `Name`; the editor keeps `$.atom`,
-so dotted query names and half-typed queries highlight. Narrowing either row
-only shrinks highlight coverage so the emitter can win 72 or 29 chars; that
-trade favors the emitter, not the editor. The 101 chars stay in the intended
-floor.
+`cd v6/labs/tree-sitter-door && ./run-tests.sh && python3 measure.py` -> exit 0,
+`TS_CORPUS total=288 clean=288 errors=0`, ratio 0.1014, `PASS parse:
+golden-flex.dl6 lines=630 errors=0`, `PASS format`.
 
-Gates:
+`just green-all` -> GREEN ALL FAILED, but every red leg is a pre-existing
+baseline failure, reproduced on a clean `HEAD` checkout (I stashed all my
+changes and re-ran): plunit 5 failures (json_merge_patch stand-in x3,
+catalog_plane corpus counts, expression inventory), tsv2 3 failures
+(bopCheck ghcacher exit code, the matching load-over-http check, one sh-host
+grid order), leak-soak (mktemp temp-file collision, an infra race), and
+rtkq-golden (row ordering nondeterminism). None touch import/hover/openapi. My
+own additions: tsv2 openapi suite 10/10 pass; `import-hover-receipt.sh` HOLDS.
 
-```text
-$ python3 measure.py
-identical hand-rule spans            3426
-generated specialized helper rules    934
-emitted total                        4360
-remaining hand-rule overlay           445
-ratio                              0.1021
-rules EMITTED-IDENTICAL=38 EMITTED-NEEDS-OVERLAY=5
+## 6. Full pokeapi spec
 
-$ cd v6/prolog && swipl -g go -t halt ARCH.pl
-PASS  sugar_grounds_out  ...  PASS  covers_endpoints_ground
-rc=0
+`openapi_roundtrip_check.ts` PASS: `componentName:212 propName:786
+kind:786/0/0 refTarget:257/0/0 nullable:786/0/0`. Piece 2 now also writes
+`gen/pokeapi_expansion.dl6` (373 `schema_expansion` facts, one per emitted rel,
+each carrying its PascalCase component source), which compiles clean
+(`COMPILE-TRACE ... total=1641`). Pieces 1 and 3 were proven on a tiny fixture
+first, per the lane order. The remaining 4 G1 drops are unchanged and blocked on
+the concurrent lane `fix-zero-column-ref-target`; they fall outside pieces 1-3
+and do not gate them.
 
-$ cd v6/labs/tree-sitter-door && ./run-tests.sh
-PASS generate: emitted-grammar.js
-PASS parse: golden-flex.dl6 lines=630 errors=0
-TS_CORPUS total=286 clean=286 errors=0
-PASS format: formatting law and idempotence
-rc=0
-```
+## 7. What I did NOT do
 
-`green-all` red set is the json-null merge base and ARCH.pl lane (ARCH-MAP
-stale at 255 tasks, catalog_plane_rail corpus counts, mutual_recursion fixture)
-plus the known soak/scale/compile environment list. None intersect my
-two-owned-file diff (classification.tsv, plan doc).
+- Did not edit any v5 Rust LSP code.
+- Did not build a CREATE VIEW or COALESCE projection bridge.
+- Did not use `--no-verify` (the pre-commit hooks, comment-budget rail and
+  `comment-prod`, both pass).
+- Did not invent type spellings or language semantics beyond the statement.
+- Did not widen a fixture to force a pass.
+- Did not spawn subagents.
+- Did not lower the `import` statement into a runnable rel (that needs the
+  compiler lowering, `0_generic_expand` / `1_expansion` / `lower.pl`, which are
+  outside my owned files). The hover derive reads the span from an
+  `import_stmt` data rel and the expansion from the Piece 2 data.
+- Did not deliver the hover to a real VS Code (headless plus the bridge wall).
 
-Files changed: `plans/2026-08-11-tree-sitter-door.PLAN.md` (floor table marked
-DECIDED, new "the two user calls, decided" section, "two language questions
-answered; one open"), `v6/labs/tree-sitter-door/classification.tsv` (reason
-strings for enum_variant and query).
+## v5 bridge finding (the gated delivery)
+
+The lane asserted a `.dl6` rel named `hover_note` (bare table `hover_note`)
+compiles to the table v5's `hover_notes_at/3` reads. That holds for the DIAG
+bridge (v5's `poll_diag_v5_once` selects the bare hardcoded identifier
+`diag_v5`, `src/lsp.rs:633`) but NOT for hover:
+
+- `hover_notes_at/3` (`src/engine/lens.rs:294`) reads `txt_tbl("hover_note")`
+  = `rel_hover_note_txt` (v5 naming, `src/lower.rs:10`), not the bare `hover_note`
+  a `.dl6` compile emits.
+- v5 has no `--hover-db` foreign-read mode. The `--diag-db` mode
+  (`run_diag_db_mode`, `src/lsp.rs:495`) polls only `diag_v5` and never answers
+  `textDocument/hover`. `hover_notes_at` runs only in the full `--lsp` engine
+  mode, against v5's own compiled db.
+- Therefore a v6-produced `hover_note` table never reaches v5's hover handler.
+
+Making hover reach an editor requires v5 Rust edits (a hover foreign-read seam,
+or aligning `hover_notes_at` to the bare/delta table). That is the exact "you
+took the wrong path" signal the lane defines, so I stopped there and report it
+rather than editing `src/**`. The `.dl6` side is complete and proven: the
+statement records its span, the converter emits the expansion as data, and a
+program heads the v5-shaped `hover_note` sink from that data.

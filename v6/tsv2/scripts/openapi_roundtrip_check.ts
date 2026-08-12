@@ -162,6 +162,8 @@ function main(): void {
   const prog = converter.convert();
   fs.mkdirSync(GEN_DIR, { recursive: true });
   fs.writeFileSync(GEN_DL6, prog);
+  // Expansion-as-data: the schema -> emitted-rel mapping a hover rule reads.
+  fs.writeFileSync(path.join(GEN_DIR, "pokeapi_expansion.dl6"), converter.expansionDl6());
 
   const rels = converter.declaredRels;
   const compRels = rels.filter((r) => sourceModel.has(r.name));

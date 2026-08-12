@@ -1,7 +1,7 @@
 # PokeAPI components round-trip report
 
-Source: `/Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1237a7d94bba8cfe/v6/dl/fixtures/pokeapi.openapi.yml`
-Generated: `/Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1237a7d94bba8cfe/v6/tsv2/gen/pokeapi_gen.dl6`
+Source: `/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/import-openapi-hover/v6/dl/fixtures/pokeapi.openapi.yml`
+Generated: `/Users/chrishafley/projects/sprefa/.boop-worktrees/feature/import-openapi-hover/v6/tsv2/gen/pokeapi_gen.dl6`
 
 compile (compile_dl6.sh) exit code: 0
 emit-back (4_emit_jsonschema / 5_emit_openapi): OK
@@ -62,9 +62,9 @@ source components: 212 | generated component rels: 212 | lifted/enum rels: 161
 
 ```
 wrote /var/folders/z2/cwfm40fn65n176q8m227wl0r0000gn/T/pe_pokeapi_gen.ts
-COMPILE-TRACE program=pokeapi_gen parse=1326/7711179 plan=958/9063849 lower=193/840598 boot=1/24516 emit=956/8329230 write=34/271 total=3468/25969643
-emit-back wrote /Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1237a7d94bba8cfe/v6/tsv2/gen/pe_emit/schema.json
-emit-back wrote /Users/chrishafley/projects/sprefa/.claude/worktrees/agent-a1237a7d94bba8cfe/v6/tsv2/gen/pe_emit/openapi.json
+COMPILE-TRACE program=pokeapi_gen parse=1540/7711179 plan=947/9063849 lower=190/840598 boot=2/24516 emit=914/8329951 write=36/271 total=3629/25970364
+emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/import-openapi-hover/v6/tsv2/gen/pe_emit/schema.json
+emit-back wrote /Users/chrishafley/projects/sprefa/.boop-worktrees/feature/import-openapi-hover/v6/tsv2/gen/pe_emit/openapi.json
 ```
 
 Converter strict-mode dropped columns (G1): 4; nullable-array drops (G2): 0 (option(list(..)) spelling emitted)
