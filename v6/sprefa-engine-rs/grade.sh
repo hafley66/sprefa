@@ -18,10 +18,31 @@ swipl -q -l "$root/v6/prolog/sweep.pl" -l "$here/grade.pl" \
 text_door_program="$scratch/text-door.rs"
 swipl -q -l "$root/v6/prolog/compile.pl" -l "$root/v6/prolog/emit_rust.pl" \
   -g "compile_dl6('$root/v6/dl/fixtures/door-handwritten.dl6','$text_door_program',[emitter(emit_rust:emit_program)])" -g halt
+raw_string_probe_source="$scratch/raw-string-delimiter-probe.dl6"
+raw_string_probe_program="$scratch/raw-string-delimiter-probe.rs"
+printf '%s\n' \
+  'rel seed(value: text).' \
+  'rel styled(value: text).' \
+  'styled(Style) <- seed(_), Style := '\''color="#1d4ed8"'\''.' \
+  >"$raw_string_probe_source"
+swipl -q -l "$root/v6/prolog/compile.pl" -l "$root/v6/prolog/emit_rust.pl" \
+  -g "compile_dl6('$raw_string_probe_source','$raw_string_probe_program',[emitter(emit_rust:emit_program)])" -g halt
+raw_string_hashes=$(sed -n 's/^pub const PROGRAM_JSON: &str = r\(\#*\)"$/\1/p' "$raw_string_probe_program")
+[ -n "$raw_string_hashes" ]
+raw_string_adversary_source="$scratch/raw-string-delimiter-adversary.dl6"
+raw_string_adversary_program="$scratch/raw-string-delimiter-adversary.rs"
+printf '%s\n' \
+  'rel seed(value: text).' \
+  'rel styled(value: text).' \
+  "styled(Style) <- seed(_), Style := 'quote\"$raw_string_hashes'." \
+  >"$raw_string_adversary_source"
+swipl -q -l "$root/v6/prolog/compile.pl" -l "$root/v6/prolog/emit_rust.pl" \
+  -g "compile_dl6('$raw_string_adversary_source','$raw_string_adversary_program',[emitter(emit_rust:emit_program)])" -g halt
 check_dir="$scratch/compile-check"
 mkdir -p "$check_dir/src"
 printf '[package]\nname = "emitted-rust-check"\nversion = "0.0.0"\nedition = "2021"\n\n[dependencies]\nserde_json = "1"\nsprefa-engine-rs = { path = "%s" }\n' "$here" >"$check_dir/Cargo.toml"
-printf 'include!("%s");\nfn main() { let _ = program(); }\n' "$text_door_program" >"$check_dir/src/main.rs"
+printf 'mod text_door { include!("%s"); }\nmod raw_string_probe { include!("%s"); }\nmod raw_string_adversary { include!("%s"); }\nfn main() { let _ = text_door::program(); let _ = raw_string_probe::program(); let _ = raw_string_adversary::program(); }\n' \
+  "$text_door_program" "$raw_string_probe_program" "$raw_string_adversary_program" >"$check_dir/src/main.rs"
 cargo build --quiet --manifest-path "$check_dir/Cargo.toml"
 
 verdicts="$scratch/verdicts.tsv"
