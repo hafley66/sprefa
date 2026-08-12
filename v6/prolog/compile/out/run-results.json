@@ -1407,6 +1407,20 @@
     "final_detail": ""
   },
   {
+    "name": "json_null_round_trips_byte_identical",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "json_patch_null_value_composes",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "json_patch_fold_merges_arrival_documents",
     "bucket": "identical",
     "detail": "",
@@ -1449,11 +1463,11 @@
     "final_detail": ""
   },
   {
-    "name": "json_patch_null_stand_in_stops_both_doors",
-    "bucket": "rejection",
-    "detail": "SQLITE_ERROR: malformed JSON",
-    "final_bucket": "no_oracle_final",
-    "final_detail": "oracle threw on this schedule too; no final state to diff"
+    "name": "json_patch_null_value_sets_key",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
   },
   {
     "name": "merge_batches_per_tick",

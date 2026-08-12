@@ -646,12 +646,11 @@ json_scalar_sql(Function, ArgumentSqls, Sql) :-
     expression(Function/Arity, json_scalar, _, Rendering, _),
     json_scalar_rendering(Rendering, ArgumentSqls, Sql).
 
-% body.pl's json_patch_carries_null/1, in SQL: a real JSON null and the string
-% it renders as both stop the statement instead of picking delete-or-string.
+% JSON null IS the atom `none` (decision 2026-08-11), so a patch carrying
+% `none` composes to a null-valued key via SQLite json_patch/2 instead of
+% stopping the statement. No json_patch_null_unruled guard is emitted.
 json_scalar_rendering(json_patch, [TargetSql, PatchSql], Sql) :-
-    format(atom(Sql),
-           'CASE WHEN EXISTS (SELECT 1 FROM json_tree(~w) WHERE "type" = \'null\' OR "atom" = \'none\') THEN json(\'json_patch_null_unruled\') ELSE json_patch(~w, ~w) END',
-           [PatchSql, TargetSql, PatchSql]).
+    format(atom(Sql), 'json_patch(~w, ~w)', [TargetSql, PatchSql]).
 
 % Without this guard the generic compound branch below wraps a braces literal
 % or a list in the json1 tagged-term encoding, a domain fact's rendering.

@@ -126,13 +126,10 @@ fixture(json_patch_non_object_target_becomes_empty,
   [ final(metric_doc/2, [ metric_doc(alpha, obj([cpu-1])) ]) ]).
 
 % RFC 7396 §1/§2, "Null values in the merge patch ... indicate the removal of
-% existing values": this language has NO term that renders as JSON null. The
-% arrival reader folds null onto the atom `none`
-% (compile/scripts/0_json_arrival.pl:92) and canonical_json_text/2 renders
-% `none` as the STRING "none", so the delete clause has no surface spelling
-% and picking one is a language decision. BOTH doors stop on a patch carrying
-% the json-null stand-in rather than guessing delete-or-string.
-fixture(json_patch_null_stand_in_stops_both_doors,
+% existing values": the json-null stand-in `none` now has a meaning (the
+% decision, 2026-08-11) so json_patch composes instead of throwing. A patch
+% key set to `none` removes that key, which is what SQLite json_patch/2 emits.
+fixture(json_patch_null_value_sets_key,
   prog([ col_type(metric_sample/2, session, text),
          col_type(metric_sample/2, patch, json),
          kind(metric_sample/2, log), keep(metric_sample/2, all),
@@ -140,8 +137,8 @@ fixture(json_patch_null_stand_in_stops_both_doors,
          col_type(metric_doc/2, snapshot, json),
          keyed(metric_doc/2, [1]) ],
        [ (metric_doc(SessionId, Next) <+ metric_sample(SessionId, Patch),
-                                         pre(metric_doc(SessionId, Prior)),
-                                         Next := json_patch(Prior, Patch)) ]),
+                                          pre(metric_doc(SessionId, Prior)),
+                                          Next := json_patch(Prior, Patch)) ]),
   [ metric_doc(alpha, {cpu: 1}) ],
   [ [ +metric_sample(alpha, {cpu: none}) ] ],
-  [ throws(json_patch_null_unruled) ]).
+  [ final(metric_doc/2, [ metric_doc(alpha, obj([])) ]) ]).
