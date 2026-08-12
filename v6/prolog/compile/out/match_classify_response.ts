@@ -149,11 +149,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "fetch_result_error" ("endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint", "status")) WITHOUT ROWID`,
+  `CREATE TABLE "fetch_result_error" ("__id" INTEGER PRIMARY KEY, "endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("endpoint", "status"))`,
   `CREATE TEMP VIEW "__txt_fetch_result_error" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."status" AS "status", t."__refcount" AS "__refcount" FROM "fetch_result_error" t`,
-  `CREATE TABLE "fetch_result_fresh" ("endpoint" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint", "tag", "body")) WITHOUT ROWID`,
+  `CREATE TABLE "fetch_result_fresh" ("__id" INTEGER PRIMARY KEY, "endpoint" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("endpoint", "tag", "body"))`,
   `CREATE TEMP VIEW "__txt_fetch_result_fresh" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body", t."__refcount" AS "__refcount" FROM "fetch_result_fresh" t`,
-  `CREATE TABLE "fetch_result_unchanged" ("endpoint" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("endpoint")) WITHOUT ROWID`,
+  `CREATE TABLE "fetch_result_unchanged" ("__id" INTEGER PRIMARY KEY, "endpoint" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("endpoint"))`,
   `CREATE TEMP VIEW "__txt_fetch_result_unchanged" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."__refcount" AS "__refcount" FROM "fetch_result_unchanged" t`,
   `CREATE TABLE "resp_raw" ("endpoint" INTEGER NOT NULL, "status" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_resp_raw" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."endpoint") AS "endpoint", t."status" AS "status", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."body") AS "body" FROM "resp_raw" t`,

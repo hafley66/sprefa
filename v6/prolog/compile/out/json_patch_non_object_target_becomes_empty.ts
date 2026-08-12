@@ -166,7 +166,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "metric_doc" ("session" INTEGER NOT NULL, "snapshot" TEXT NOT NULL CHECK (json_valid("snapshot")), PRIMARY KEY ("session")) WITHOUT ROWID`,
+  `CREATE TABLE "metric_doc" ("__id" INTEGER PRIMARY KEY, "session" INTEGER NOT NULL, "snapshot" TEXT NOT NULL CHECK (json_valid("snapshot")), UNIQUE ("session"))`,
   `CREATE TEMP VIEW "__txt_metric_doc" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session") AS "session", t."snapshot" AS "snapshot" FROM "metric_doc" t`,
   `CREATE TABLE "metric_sample" ("session" INTEGER NOT NULL, "patch" TEXT NOT NULL CHECK (json_valid("patch")))`,
   `CREATE TEMP VIEW "__txt_metric_sample" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."session") AS "session", t."patch" AS "patch" FROM "metric_sample" t`,

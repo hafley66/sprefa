@@ -146,9 +146,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "source" ("name" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "source" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
   `CREATE TEMP VIEW "__txt_source" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "source" t`,
-  `CREATE TABLE "tallied" ("line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("line", "column", "total")) WITHOUT ROWID`,
+  `CREATE TABLE "tallied" ("__id" INTEGER PRIMARY KEY, "line" INTEGER NOT NULL, "column" INTEGER NOT NULL, "total" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("line", "column", "total"))`,
   `CREATE TEMP TABLE "__delta_source" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_source_sign" ON "__delta_source" ("_sign")`,
   `CREATE INDEX "__delta_source_group" ON "__delta_source" ("name")`,

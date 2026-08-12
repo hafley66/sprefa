@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "directory" ("file" INTEGER NOT NULL, "dir" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file", "dir")) WITHOUT ROWID`,
+  `CREATE TABLE "directory" ("__id" INTEGER PRIMARY KEY, "file" INTEGER NOT NULL, "dir" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("file", "dir"))`,
   `CREATE TEMP VIEW "__txt_directory" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."file") AS "file", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."dir") AS "dir", t."__refcount" AS "__refcount" FROM "directory" t`,
-  `CREATE TABLE "file_path" ("file" INTEGER NOT NULL, PRIMARY KEY ("file")) WITHOUT ROWID`,
+  `CREATE TABLE "file_path" ("__id" INTEGER PRIMARY KEY, "file" INTEGER NOT NULL, UNIQUE ("file"))`,
   `CREATE TEMP VIEW "__txt_file_path" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."file") AS "file" FROM "file_path" t`,
   `CREATE TEMP TABLE "__delta_directory" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file" INTEGER NOT NULL, "dir" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_directory_sign" ON "__delta_directory" ("_sign")`,

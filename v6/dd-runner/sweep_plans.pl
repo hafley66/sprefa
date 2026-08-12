@@ -1,5 +1,5 @@
 % Emit a dd_plan JSON per conformance fixture into OutDir, bucketing throws.
-% swipl -q -l compile/6_emit_dd_plan.pl -l sweep_plans.pl -g "sweep(Root,OutDir,Report)" -g halt
+% swipl -q -l compile/6_isolated_compiler_dd.pl -l sweep_plans.pl -g "sweep(Root,OutDir,Report)" -g halt
 
 sweep(Root, OutDir, Report) :-
     atom_concat(Root, '/v6/prolog/conformance/fixtures/*.pl', Pattern),
@@ -29,7 +29,7 @@ scan_names(In, Names) :-
 
 sweep_one(File, Name, OutDir, Stream) :-
     format(atom(Path), '~w/~w.json', [OutDir, Name]),
-    (   catch(emit_dd_plan:emit_fixture_dd_plan_json(File, Name, Path), Error, true)
+    (   catch(isolated_compiler_dd:write_fixture_dd_plan_json(File, Name, Path), Error, true)
     ->  ( var(Error)
         -> format(Stream, '~w\temitted\tok~n', [Name])
         ;  catch(delete_file(Path), _, true),

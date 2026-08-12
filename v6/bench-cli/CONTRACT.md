@@ -369,8 +369,8 @@ calls identical on no evidence (`SCOREBOARD.md` Finding 2's vacuous-pass class).
 |---|---|---|
 | oracle (swipl reference engine) | `adapters/oracle.sh` | reference; produces the log every other engine is graded against |
 | tsv2 (prolog -> TS, compiled) | `adapters/tsv2.sh` + `adapters/tsv2_run.ts` | full |
-| dd-diet-rust-sqlite (dd_plan, rust + rusqlite) | `adapters/dd-diet-rust-sqlite.sh` | refused by design, clause 2.1 — **priced in §6** |
-| dd-diet-rust-rust (dd_plan, pure-RAM) | `adapters/dd-diet-rust-rust.sh` | refused by design, clause 2.1 — **priced in §6** |
+| dd-diet-rust-sqlite (dd_plan, rust + rusqlite) | `adapters/dd-diet-rust-sqlite.sh` | full (tick log; final-state unmet, §6) |
+| dd-diet-rust-rust (dd_plan, pure-RAM) | `adapters/dd-diet-rust-rust.sh` | runs (tick log; final-state unmet, §6) |
 | dd-rust-dd (differential-dataflow crate) | not written | not built; a reserved arm slot, separate arc |
 | v5 rust (`dl`) | not written — **priced in §6** | skipped with reason |
 
@@ -490,20 +490,19 @@ Recorded here rather than silently skipped.
   `statistics/2` pair around `print_ticklog/3` plus a perf-JSON write, small,
   but it is compiler-side surface and wants its own review.**
 - **dd-diet-rust-sqlite / dd-diet-rust-rust adapters** — the two dd_plan arms
-  run rust on the compiler's dd_plan JSON, which is not what the bench-cli
-  contract hands any engine. Clause 2.1 passes a `.dl6` TEXT program plus an
-  EXTERNAL schedule (`--program <file.dl6> --schedule <schedule.json>`); the
-  dd_plan emitter embeds initial + schedule inside the JSON it writes for a
-  conformance fixture TERM (`compile/6_emit_dd_plan.pl:33`), and the only
-  `.dl6`-text door, `compile.pl:328` (`compile_dl6/3`), emits `emit_ts` only.
-  With no `.dl6`-text-to-dd_plan path, the adapters refuse (exit 2) every
-  bench-cli case with that clause named, rather than fake a timed row. A cell
-  graded as `refused` is honest and not disqualifying; it is simply not timed.
-  **Priced: a text-door dd_plan emitter entry routed through
-  `compile_program_phases/8` (`compile.pl:346`) plus a final-state writer the
-  third check (`§2.7`) reads at `<perf-out>.final.jsonl`; both are
-  compiler-side surface in `compile.pl` / `6_emit_dd_plan.pl` and want their
-  own review.**
+  now compile the `.dl6` TEXT program through the dd emitter option and drive
+  dd-runner, so clause 2.1 (tick log on stdout) is met and neither arm exits 2
+  on account of a missing text-door. The remaining unmet clause is §2.7, the
+  final-state hash: the adapters produce a tick log but dd-runner emits no
+  final-state line, so `<perf-out>.final.jsonl` is not written (a fabricated
+  file is worse than a missing one, so the note names it and no row is timed
+  on it). The dd-runner kernel arm is a partial engine: it is byte-clean on
+  ~104 of the conformance corpus and diverges on aggregates/edges, so its
+  bench rows are graded `wrong` where they differ from the referee, exactly as
+  any real engine's would be. Cost: the `emit_program/5` seam entry in
+  `6_emit_dd_plan.pl`, the `emitter(Module:Pred)` + `schedule(File)` options
+  on `compile_dl6/3`, and the two adapter scripts.
+- **cross_join scale case** — the 2-atom combine cross join. `SCALE.md` records tsv2
 
 ## 7. The referee at scale: the ruling, the promotion rule, the risk
 

@@ -24,6 +24,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `bug` plans/2026-07-11-scip-atlas.md:38 — watchgate allowlist for index.scip; dl index pokes daemon
 - `bug` plans/2026-07-14-bounded-single-sweep-runtime.md:376 — decouple daemon socket readiness from cold replay so a healthy daemon does not trigger concurrent in-process fallback
 - `bug` plans/2026-07-29-higher-order-rel-scan.md:106 — Reconcile scan's required ordered occurrence loop with the thirteen current pre fixtures before claiming same-instant reducer semantics.
+- `bug` plans/2026-08-11-dd-mutual-recursion.md:288 — three of the four fork tables name v6/dd-runner/src/main.rs and kernel.rs as change sites; those files are owned by another lane and are read-only here.
 - `decision` plans/2026-07-10-change-cost-friction-inventory.md:152 — item 5 — a resolution_source column (values scip|syntactic|alias|narrowed) on call_edge/type_link (rev twins included), plus a public eng.ensure_families(&[...])
 - `decision` plans/2026-07-11-codex-feedback-queue.md:122 — CLI flag taxonomy — query/mutate/effects axes
 - `decision` plans/2026-07-11-scip-atlas.md:147 — coordinate policy — no new line-keyed joins; byte spans + edge projection; migrate call_site/df joins when touched
@@ -57,6 +58,9 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-07-29-reference-membership-boundary.md:62 — Select how resolver-created public target membership participates in the relation clock.
 - `decision` plans/2026-07-29-rel-value-unification-lab.md:478 — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
 - `decision` plans/2026-07-29-rel-value-unification-lab.md:481 — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
+- `decision` plans/2026-08-10-docs-from-comments.PLAN.md:283 — docs: marker convention — author docs: markers into golden-flex.dl6 (fixture edit at implement time) vs match existing loose prose signatures in the host. Pending user fork.
+- `decision` plans/2026-08-10-docs-from-comments.PLAN.md:287 — A14 trailing comment_span — NOT forced by this rail (leading doc comments); stays open at hosts-extraction-verdict.md:447. Present as a fork only if a future rail attaches by trailing span.
+- `decision` plans/2026-08-11-dd-mutual-recursion.md:286 — the dd_plan mutual-recursion stop will be re-opened as a scheduling-semantics decision (iterative scope per fork B vs. stratification per fork A vs. re-label per fork D); the user ranks the four forks in plans/2026-08-11-dd-mutual-recursion.md section 5.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -118,6 +122,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-07-20-typed-template-bootstrap-lab.md:709 — Define the exact positional-slot surface spelling after named brace and colon slots pass parser and normalization tests.
 - `feature` plans/2026-07-25-analysis-engine-bakeoff-labs.md:50 — bake-off harness — fact loader (extract JSONL) + Q1–Q10 runners + measure script (wall, peak RSS via memcap, LOC, cold-start)
 - `feature` plans/2026-07-29-higher-order-rel-scan.md:104 — Prototype scan, switchMap, and switchScan as expansion-only algorithms over the existing kernel and record the first case that cannot lower.
+- `feature` plans/2026-08-10-docs-from-comments.PLAN.md:291 — section_covers/3 — the one join whose exact spelling depends on the ATTACHMENT fork (marker vs region). Resolve after the fork.
+- `feature` plans/2026-08-12-uniform-surrogate-id.md:117 — zero-column reference target still refused (reference_target_has_no_columns); the fix needs registration in analyze.pl + lowering + type plane, outside this lane.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -140,6 +146,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `perf` plans/2026-07-18-db-seam-migration.md:461 — after the seam migration, profile a chunk-loop-heavy --check run; if prepare-per-call regressed a hot loop, add a seam-internal statement cache keyed by SQL
 - `perf` plans/2026-07-20-typed-template-bootstrap-lab.md:707 — Record fresh-process allocation and wall-time measurements for every required scale case before selecting interning and matcher-cache policies.
 - `perf` plans/2026-07-25-analysis-engine-bakeoff-labs.md:117 — RAM budget per lab declared BEFORE its first C2 run — exceeding = fail (30GB lesson)
+- `perf` plans/2026-08-12-uniform-surrogate-id.md:116 — public set-rel tables moved off WITHOUT ROWID; fixpoint 10-18% slower (grid/layered/chain), RSS up to ~20% higher. Bench numbers banked in plans/2026-08-12-uniform-surrogate-id.md.
 - `triage` plans/2026-07-11-cross-harness-agent-tooling.md:147 — a CodexSessions AgentHarness arm for agent_* rels — session-store format needs research
 - `triage` plans/2026-07-11-docs-and-dogfood-audit.md:40 — re-enable hooks (timeout+advisory) — relights the dark event arm; Chris flips
 - `triage` plans/2026-07-11-engine-mod-split.md:72 — SG_LANG_TABLE final home (src/sg.rs vs engine/lang_tables.rs) when the lang_tables cluster moves
@@ -287,13 +294,20 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-07-29-reference-membership-boundary.md:62 `decision` — Select how resolver-created public target membership participates in the relation clock.
 - plans/2026-07-29-rel-value-unification-lab.md:478 `decision` — Decide automatic versus explicit relation-reference spelling only after both forms run through the real parser and compiler.
 - plans/2026-07-29-rel-value-unification-lab.md:481 `decision` — Decide rel A-to-B versus ordinary rel plus modes only after deterministic, multi-row, keyed-update, cached, and host-produced real fixtures establish its SQL and Rx meaning.
+- plans/2026-08-10-docs-from-comments.PLAN.md:283 `decision` — docs: marker convention — author docs: markers into golden-flex.dl6 (fixture edit at implement time) vs match existing loose prose signatures in the host. Pending user fork.
+- plans/2026-08-10-docs-from-comments.PLAN.md:287 `decision` — A14 trailing comment_span — NOT forced by this rail (leading doc comments); stays open at hosts-extraction-verdict.md:447. Present as a fork only if a future rail attaches by trailing span.
+- plans/2026-08-10-docs-from-comments.PLAN.md:291 `feature` — section_covers/3 — the one join whose exact spelling depends on the ATTACHMENT fork (marker vs region). Resolve after the fork.
+- plans/2026-08-11-dd-mutual-recursion.md:286 `decision` — the dd_plan mutual-recursion stop will be re-opened as a scheduling-semantics decision (iterative scope per fork B vs. stratification per fork A vs. re-label per fork D); the user ranks the four forks in plans/2026-08-11-dd-mutual-recursion.md section 5.
+- plans/2026-08-11-dd-mutual-recursion.md:288 `bug` — three of the four fork tables name v6/dd-runner/src/main.rs and kernel.rs as change sites; those files are owned by another lane and are read-only here.
+- plans/2026-08-12-uniform-surrogate-id.md:116 `perf` — public set-rel tables moved off WITHOUT ROWID; fixpoint 10-18% slower (grid/layered/chain), RSS up to ~20% higher. Bench numbers banked in plans/2026-08-12-uniform-surrogate-id.md.
+- plans/2026-08-12-uniform-surrogate-id.md:117 `feature` — zero-column reference target still refused (reference_target_has_no_columns); the fix needs registration in analyze.pl + lowering + type plane, outside this lane.
 <!-- END: plans-by-plan -->
 
 ## By code file
 
 <!-- BEGIN: code-by-file -->
-- feature src/cst.rs:230 — add html once tree-sitter-html is a Cargo dep.
-- feature src/engine/lang_tables.rs:47 — add html once tree-sitter-html is a Cargo dep.
+- feature src/cst.rs:248 — add html once tree-sitter-html is a Cargo dep.
+- feature src/engine/lang_tables.rs:49 — add html once tree-sitter-html is a Cargo dep.
 - untriaged debt: 3 bare TODO/FIXME comments in src
 <!-- END: code-by-file -->
 

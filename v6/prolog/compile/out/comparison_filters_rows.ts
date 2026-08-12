@@ -149,13 +149,13 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "callee_set_size" ("left" INTEGER NOT NULL, "left_size" INTEGER NOT NULL, PRIMARY KEY ("left", "left_size")) WITHOUT ROWID`,
+  `CREATE TABLE "callee_set_size" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "left_size" INTEGER NOT NULL, UNIQUE ("left", "left_size"))`,
   `CREATE TEMP VIEW "__txt_callee_set_size" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", t."left_size" AS "left_size" FROM "callee_set_size" t`,
-  `CREATE TABLE "jaccard" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("left", "right", "col3")) WITHOUT ROWID`,
+  `CREATE TABLE "jaccard" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("left", "right", "col3"))`,
   `CREATE TEMP VIEW "__txt_jaccard" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."col3" AS "col3", t."__refcount" AS "__refcount" FROM "jaccard" t`,
-  `CREATE TABLE "shared_count" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "shared" INTEGER NOT NULL, PRIMARY KEY ("left", "right", "shared")) WITHOUT ROWID`,
+  `CREATE TABLE "shared_count" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "shared" INTEGER NOT NULL, UNIQUE ("left", "right", "shared"))`,
   `CREATE TEMP VIEW "__txt_shared_count" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."shared" AS "shared" FROM "shared_count" t`,
-  `CREATE TABLE "union_size" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "union" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("left", "right", "union")) WITHOUT ROWID`,
+  `CREATE TABLE "union_size" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "union" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("left", "right", "union"))`,
   `CREATE TEMP VIEW "__txt_union_size" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."union" AS "union", t."__refcount" AS "__refcount" FROM "union_size" t`,
   `CREATE TEMP TABLE "__delta_callee_set_size" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "left_size" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_callee_set_size_sign" ON "__delta_callee_set_size" ("_sign")`,

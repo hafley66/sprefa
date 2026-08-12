@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "distinct" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("left", "right")) WITHOUT ROWID`,
+  `CREATE TABLE "distinct" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("left", "right"))`,
   `CREATE TEMP VIEW "__txt_distinct" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right", t."__refcount" AS "__refcount" FROM "distinct" t`,
-  `CREATE TABLE "pair" ("left" INTEGER NOT NULL, "right" INTEGER NOT NULL, PRIMARY KEY ("left", "right")) WITHOUT ROWID`,
+  `CREATE TABLE "pair" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, UNIQUE ("left", "right"))`,
   `CREATE TEMP VIEW "__txt_pair" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."left") AS "left", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."right") AS "right" FROM "pair" t`,
   `CREATE TEMP TABLE "__delta_distinct" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_distinct_sign" ON "__delta_distinct" ("_sign")`,

@@ -154,7 +154,7 @@ function trigger_occurrences(
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "head" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, PRIMARY KEY ("repo_id")) WITHOUT ROWID`,
+  `CREATE TABLE "head" ("__id" INTEGER PRIMARY KEY, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, UNIQUE ("repo_id"))`,
   `CREATE TABLE "head_move" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__delta_head" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_head_sign" ON "__delta_head" ("_sign")`,

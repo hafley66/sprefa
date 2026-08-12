@@ -22,8 +22,16 @@
             throw_text_door_error/2,
             program_plan/2,
             program_plan/3,
-            compiler_owned_contract/1
+            compiler_owned_contract/1,
+            dd_compile_context/2
           ]).
+
+% Out-of-band channel for the emitter seam. compile_program_phases/8 carries
+% Initial as an argument and Schedule inside the fixture term, but the seam
+% call emits _5 (Name, Plan, Lowered, BootStatements, Text); an emitter that
+% also needs Initial and Schedule (isolated_compiler_dd:compile_program) reads them from
+% this thread-local, set immediately before the seam call and cleared after.
+:- thread_local dd_compile_context/2.
 
 % Without this, open/3 inherits the ambient locale: under LC_ALL=C the default
 % is `text` (ASCII) and any non-ASCII fixture throws on write.
@@ -42,7 +50,10 @@
 :- use_module(emit_ts).
 :- use_module(library(tableutil), [table_statistics/2]).
 :- use_module('compile/parse_dl', [ parse_dl_line_for_reason/2 ]).
+:- use_module('compile/scripts/0_json_arrival',
+              [ arrival_column_types/4, schedule_value/5 ]).
 :- use_module('use_resolve', [expand_uses/8]).
+:- use_module(library(http/json), [json_read_dict/3]).
 :- use_module('diag', [emit_diag_file/2]).
 :- use_module('0_type_plane',
               [world_row_shape_violation/3, type_definitions/2]).
@@ -342,15 +353,57 @@ compile_dl6(File, OutFile, Options) :-
     file_base_name(File, BaseName),
     file_name_extension(Name, _Extension, BaseName),
     dl6_seeded_form(Prog, Initial, ProgOut),
+    emitter_option(Options, Emitter),
+    schedule_option(Options, Prog, Bindings, Schedule),
     catch(
-        compile_program_phases(Name, fixture(Name, ProgOut, Initial, [], []),
-                               Bindings, Initial, OutFile, emit_ts:emit_program,
+        compile_program_phases(Name, fixture(Name, ProgOut, Initial, Schedule, []),
+                               Bindings, Initial, OutFile, Emitter,
                                Options, PhaseMeasurements),
         Error,
         throw_text_door_error(File, Error)
     ),
     write_compile_trace(
         Name, [phase(parse, ParseMeasurement) | PhaseMeasurements]).
+
+% The .dl6 text door default is emit_ts:emit_program; an emitter(Module:Pred)
+% option swaps it in with no call-site special case, and a caller that passes
+% no emitter keeps byte-identical output.
+emitter_option(Options, Emitter) :-
+    ( memberchk(emitter(Emitter), Options) -> true ; Emitter = emit_ts:emit_program ).
+
+% A .dl6 TEXT program has no spelling for an arrival schedule (Initial comes
+% from dl6 facts); an external schedule is the only form that exists, so the
+% schedule(File) option is the door that fills the fixture term's Schedule
+% slot. Same external JSON shape sweep.pl writes and the http client posts.
+schedule_option(Options, Prog, Bindings, Schedule) :-
+    ( memberchk(schedule(File), Options)
+    -> read_schedule_file(Prog, Bindings, File, Schedule)
+    ;  Schedule = []
+    ).
+
+read_schedule_file(Prog, Bindings, ScheduleFile, Schedule) :-
+    setup_call_cleanup(
+        open(ScheduleFile, read, Stream),
+        json_read_dict(Stream, Batches, [value_string_as(string)]),
+        close(Stream)),
+    maplist(schedule_batch_terms(Prog, Bindings), Batches, Schedule).
+
+schedule_batch_terms(Prog, Bindings, Batch, Terms) :-
+    maplist(arrival_term(Prog, Bindings), Batch, Terms).
+
+% arrival_term/4 mirrors dl6_oracle.pl's read_schedule: rel-name and arity
+% reset an atom's type from the program's column decls, so a json column's
+% arrival is parsed into json terms rather than left as a string.
+arrival_term(Prog, Bindings, Arrival, Term) :-
+    atom_string(Rel, Arrival.rel),
+    length(Arrival.row, Arity),
+    arrival_column_types(Prog, Bindings, Rel/Arity, ColumnTypes),
+    maplist(schedule_value(text_door, Rel), ColumnTypes, Arrival.row, Args),
+    Atom =.. [Rel | Args],
+    ( Arrival.sign == "add" -> Term = +Atom
+    ; Arrival.sign == "del" -> Term = -Atom
+    ; throw(unsupported_construct(bad_arrival_sign(Arrival.sign)))
+    ).
 
 % Shared by the two text-door callers that parse .dl6 themselves.
 % Ground bodiless clauses become seed rows; non-ground ones stay refused.
@@ -435,7 +488,8 @@ compile_program_phases(Name, Term, Bindings, Initial, OutFile, Emitter,
         BootMeasurement),
     run_compile_phase(
         emit,
-        call(Emitter, Name, Plan, Lowered, BootStatements, Text),
+        with_emit_context(Initial, Term,
+            call(Emitter, Name, Plan, Lowered, BootStatements, Text)),
         EmitMeasurement),
     run_compile_phase(
         write,
@@ -454,6 +508,14 @@ write_compiled_output(OutFile, Text) :-
         format(Stream, "~s", [Text]),
         close(Stream)),
     format("wrote ~w~n", [OutFile]).
+
+% The dd emitter reads Initial and Schedule out of band; both are available
+% here (Initial is the argument, Schedule is in the fixture term), so they are
+% asserted around the seam call and retracted once it returns. emit_ts never
+% reads the context, so the statement does not move its output.
+with_emit_context(Initial, fixture(_, _, _, Schedule, _), Goal) :-
+    assertz(dd_compile_context(Initial, Schedule)),
+    setup_call_cleanup(true, Goal, retractall(dd_compile_context(_, _))).
 
 run_compile_phase(_Phase, Goal, Measurement) :-
     measure_phase(Goal, Measurement, Outcome),

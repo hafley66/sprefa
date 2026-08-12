@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "budget" ("team" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("team", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "budget" ("__id" INTEGER PRIMARY KEY, "team" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("team", "col2"))`,
   `CREATE TEMP VIEW "__txt_budget" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "budget" t`,
-  `CREATE TABLE "spend" ("team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL, PRIMARY KEY ("team", "_item", "cost")) WITHOUT ROWID`,
+  `CREATE TABLE "spend" ("__id" INTEGER PRIMARY KEY, "team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL, UNIQUE ("team", "_item", "cost"))`,
   `CREATE TEMP VIEW "__txt_spend" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_item") AS "_item", t."cost" AS "cost" FROM "spend" t`,
   `CREATE TEMP TABLE "__delta_budget" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_budget_sign" ON "__delta_budget" ("_sign")`,

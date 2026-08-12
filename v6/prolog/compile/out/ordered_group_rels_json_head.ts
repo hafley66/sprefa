@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "group_rels_json" ("group_name" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group_name", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "group_rels_json" ("__id" INTEGER PRIMARY KEY, "group_name" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("group_name", "col2"))`,
   `CREATE TEMP VIEW "__txt_group_rels_json" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group_name") AS "group_name", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "group_rels_json" t`,
-  `CREATE TABLE "rel_catalog" ("relation_name" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "_column_text" INTEGER NOT NULL, "_documentation_text" INTEGER NOT NULL, PRIMARY KEY ("relation_name", "group_name", "_column_text", "_documentation_text")) WITHOUT ROWID`,
+  `CREATE TABLE "rel_catalog" ("__id" INTEGER PRIMARY KEY, "relation_name" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "_column_text" INTEGER NOT NULL, "_documentation_text" INTEGER NOT NULL, UNIQUE ("relation_name", "group_name", "_column_text", "_documentation_text"))`,
   `CREATE TEMP VIEW "__txt_rel_catalog" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."relation_name") AS "relation_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group_name") AS "group_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_column_text") AS "_column_text", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_documentation_text") AS "_documentation_text" FROM "rel_catalog" t`,
   `CREATE TEMP TABLE "__delta_group_rels_json" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group_name" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_group_rels_json_sign" ON "__delta_group_rels_json" ("_sign")`,

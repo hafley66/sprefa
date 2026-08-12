@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "star_row" ("repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, PRIMARY KEY ("repo", "stars")) WITHOUT ROWID`,
+  `CREATE TABLE "star_row" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL, UNIQUE ("repo", "stars"))`,
   `CREATE TEMP VIEW "__txt_star_row" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."stars" AS "stars" FROM "star_row" t`,
-  `CREATE TABLE "stat" ("repo" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("repo", "col2", "col3", "col4")) WITHOUT ROWID`,
+  `CREATE TABLE "stat" ("__id" INTEGER PRIMARY KEY, "repo" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL, "col4" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("repo", "col2", "col3", "col4"))`,
   `CREATE TEMP VIEW "__txt_stat" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."repo") AS "repo", t."col2" AS "col2", t."col3" AS "col3", t."col4" AS "col4", t."__refcount" AS "__refcount" FROM "stat" t`,
   `CREATE TEMP TABLE "__delta_star_row" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "repo" INTEGER NOT NULL, "stars" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_star_row_sign" ON "__delta_star_row" ("_sign")`,

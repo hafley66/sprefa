@@ -168,7 +168,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "append_line" ("channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_append_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece" FROM "append_line" t`,
-  `CREATE TABLE "log_text" ("channel" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("channel")) WITHOUT ROWID`,
+  `CREATE TABLE "log_text" ("__id" INTEGER PRIMARY KEY, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("channel"))`,
   `CREATE TEMP VIEW "__txt_log_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."next") AS "next" FROM "log_text" t`,
   `CREATE TEMP TABLE "__delta_append_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_append_line_sign" ON "__delta_append_line" ("_sign")`,

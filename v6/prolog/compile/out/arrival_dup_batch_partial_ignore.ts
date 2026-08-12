@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "derived" ("seen_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("seen_value")) WITHOUT ROWID`,
+  `CREATE TABLE "derived" ("__id" INTEGER PRIMARY KEY, "seen_value" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("seen_value"))`,
   `CREATE TEMP VIEW "__txt_derived" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."seen_value") AS "seen_value", t."__refcount" AS "__refcount" FROM "derived" t`,
-  `CREATE TABLE "seen" ("value" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "seen" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
   `CREATE TEMP VIEW "__txt_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "seen" t`,
   `CREATE TEMP TABLE "__delta_derived" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "seen_value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_derived_sign" ON "__delta_derived" ("_sign")`,

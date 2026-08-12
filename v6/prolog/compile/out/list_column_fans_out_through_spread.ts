@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "repo" ("name" INTEGER NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags") AND json_type("tags") = 'array'), PRIMARY KEY ("name", "tags")) WITHOUT ROWID`,
+  `CREATE TABLE "repo" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags") AND json_type("tags") = 'array'), UNIQUE ("name", "tags"))`,
   `CREATE TEMP VIEW "__txt_repo" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."tags" AS "tags" FROM "repo" t`,
-  `CREATE TABLE "repo_tag" ("name" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "tag")) WITHOUT ROWID`,
+  `CREATE TABLE "repo_tag" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "tag" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name", "tag"))`,
   `CREATE TEMP VIEW "__txt_repo_tag" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."tag") AS "tag", t."__refcount" AS "__refcount" FROM "repo_tag" t`,
   `CREATE TEMP TABLE "__delta_repo" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "tags" TEXT NOT NULL CHECK (json_valid("tags") AND json_type("tags") = 'array'))`,
   `CREATE INDEX "__delta_repo_sign" ON "__delta_repo" ("_sign")`,

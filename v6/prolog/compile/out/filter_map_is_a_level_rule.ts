@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "doubled" ("name" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name", "out")) WITHOUT ROWID`,
+  `CREATE TABLE "doubled" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "out" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name", "out"))`,
   `CREATE TEMP VIEW "__txt_doubled" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."out" AS "out", t."__refcount" AS "__refcount" FROM "doubled" t`,
-  `CREATE TABLE "reading" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "reading" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("name", "value"))`,
   `CREATE TEMP VIEW "__txt_reading" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value" FROM "reading" t`,
   `CREATE TEMP TABLE "__delta_doubled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "out" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_doubled_sign" ON "__delta_doubled" ("_sign")`,

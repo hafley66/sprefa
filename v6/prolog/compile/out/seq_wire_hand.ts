@@ -168,11 +168,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('q')`,
-  `CREATE TABLE "arrival" ("payload" INTEGER NOT NULL, PRIMARY KEY ("payload")) WITHOUT ROWID`,
+  `CREATE TABLE "arrival" ("__id" INTEGER PRIMARY KEY, "payload" INTEGER NOT NULL, UNIQUE ("payload"))`,
   `CREATE TEMP VIEW "__txt_arrival" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "arrival" t`,
   `CREATE TABLE "numbered" ("ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_numbered" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "numbered" t`,
-  `CREATE TABLE "seq_numbered_1" ("partition" INTEGER NOT NULL, "at" INTEGER NOT NULL, PRIMARY KEY ("partition")) WITHOUT ROWID`,
+  `CREATE TABLE "seq_numbered_1" ("__id" INTEGER PRIMARY KEY, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("partition"))`,
   `CREATE TEMP VIEW "__txt_seq_numbered_1" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."partition") AS "partition", t."at" AS "at" FROM "seq_numbered_1" t`,
   `CREATE TEMP TABLE "__delta_arrival" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_arrival_sign" ON "__delta_arrival" ("_sign")`,

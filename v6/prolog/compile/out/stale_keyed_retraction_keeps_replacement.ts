@@ -146,7 +146,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "current_value" ("col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID`,
+  `CREATE TABLE "current_value" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL, UNIQUE ("col1"))`,
   `CREATE TEMP VIEW "__txt_current_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2" FROM "current_value" t`,
   `CREATE TEMP TABLE "__delta_current_value" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_current_value_sign" ON "__delta_current_value" ("_sign")`,

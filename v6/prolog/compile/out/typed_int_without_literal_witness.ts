@@ -135,7 +135,7 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "typed_input" ("value" INTEGER NOT NULL, PRIMARY KEY ("value")) WITHOUT ROWID`,
+  `CREATE TABLE "typed_input" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
   `CREATE TEMP TABLE "__delta_typed_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_typed_input_sign" ON "__delta_typed_input" ("_sign")`,
   `CREATE INDEX "__delta_typed_input_group" ON "__delta_typed_input" ("value")`,

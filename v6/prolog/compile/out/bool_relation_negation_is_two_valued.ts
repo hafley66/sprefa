@@ -148,11 +148,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "active" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "active" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
   `CREATE TEMP VIEW "__txt_active" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__refcount" AS "__refcount" FROM "active" t`,
-  `CREATE TABLE "disabled" ("name" INTEGER NOT NULL, "value" INTEGER NOT NULL CHECK ("value" IN (0,1)), PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "disabled" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "value" INTEGER NOT NULL CHECK ("value" IN (0,1)), UNIQUE ("name", "value"))`,
   `CREATE TEMP VIEW "__txt_disabled" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value" FROM "disabled" t`,
-  `CREATE TABLE "item" ("name" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "item" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, UNIQUE ("name"))`,
   `CREATE TEMP VIEW "__txt_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "item" t`,
   `CREATE TEMP TABLE "__delta_active" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_active_sign" ON "__delta_active" ("_sign")`,

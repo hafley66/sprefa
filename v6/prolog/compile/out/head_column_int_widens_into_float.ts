@@ -135,8 +135,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "scaled" ("value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value")) WITHOUT ROWID`,
-  `CREATE TABLE "source" ("count" INTEGER NOT NULL, PRIMARY KEY ("count")) WITHOUT ROWID`,
+  `CREATE TABLE "scaled" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value"))`,
+  `CREATE TABLE "source" ("__id" INTEGER PRIMARY KEY, "count" INTEGER NOT NULL, UNIQUE ("count"))`,
   `CREATE TEMP TABLE "__delta_scaled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
   `CREATE INDEX "__delta_scaled_sign" ON "__delta_scaled" ("_sign")`,
   `CREATE INDEX "__delta_scaled_group" ON "__delta_scaled" ("value")`,

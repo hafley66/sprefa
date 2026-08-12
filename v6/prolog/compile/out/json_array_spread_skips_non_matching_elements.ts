@@ -135,8 +135,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "numbered" ("number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("number")) WITHOUT ROWID`,
-  `CREATE TABLE "resp" ("body" TEXT NOT NULL CHECK (json_valid("body")), PRIMARY KEY ("body")) WITHOUT ROWID`,
+  `CREATE TABLE "numbered" ("__id" INTEGER PRIMARY KEY, "number" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("number"))`,
+  `CREATE TABLE "resp" ("__id" INTEGER PRIMARY KEY, "body" TEXT NOT NULL CHECK (json_valid("body")), UNIQUE ("body"))`,
   `CREATE TEMP TABLE "__delta_numbered" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "number" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_numbered_sign" ON "__delta_numbered" ("_sign")`,
   `CREATE INDEX "__delta_numbered_group" ON "__delta_numbered" ("number")`,

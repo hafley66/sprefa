@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "integer_sorted" ("group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "integer_sorted" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("group", "col2"))`,
   `CREATE TEMP VIEW "__txt_integer_sorted" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "integer_sorted" t`,
-  `CREATE TABLE "item" ("group" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("group", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "item" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("group", "value"))`,
   `CREATE TEMP VIEW "__txt_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."value" AS "value" FROM "item" t`,
   `CREATE TEMP TABLE "__delta_integer_sorted" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")))`,
   `CREATE INDEX "__delta_integer_sorted_sign" ON "__delta_integer_sorted" ("_sign")`,

@@ -168,7 +168,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "arrive" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_arrive" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "arrive" t`,
-  `CREATE TABLE "thing" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
+  `CREATE TABLE "thing" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, UNIQUE ("id"))`,
   `CREATE TEMP VIEW "__txt_thing" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."born" AS "born", t."tick" AS "tick" FROM "thing" t`,
   `CREATE TEMP TABLE "__delta_arrive" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_arrive_sign" ON "__delta_arrive" ("_sign")`,

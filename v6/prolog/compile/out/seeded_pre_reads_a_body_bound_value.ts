@@ -166,7 +166,7 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "counter" ("name" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "counter" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("name"))`,
   `CREATE TEMP VIEW "__txt_counter" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."next" AS "next" FROM "counter" t`,
   `CREATE TABLE "increment" ("name" INTEGER NOT NULL, "start" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_increment" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."start" AS "start" FROM "increment" t`,

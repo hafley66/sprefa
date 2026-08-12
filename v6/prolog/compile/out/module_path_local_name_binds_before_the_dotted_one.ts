@@ -135,10 +135,10 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "local_pick" ("tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
-  `CREATE TABLE "orchard__tree" ("tree_id" INTEGER NOT NULL, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
-  `CREATE TABLE "path_pick" ("tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
-  `CREATE TABLE "tree" ("tree_id" INTEGER NOT NULL, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
+  `CREATE TABLE "local_pick" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("tree_id"))`,
+  `CREATE TABLE "orchard__tree" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, UNIQUE ("tree_id"))`,
+  `CREATE TABLE "path_pick" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("tree_id"))`,
+  `CREATE TABLE "tree" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, UNIQUE ("tree_id"))`,
   `CREATE TEMP TABLE "__delta_local_pick" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_local_pick_sign" ON "__delta_local_pick" ("_sign")`,
   `CREATE INDEX "__delta_local_pick_group" ON "__delta_local_pick" ("tree_id")`,

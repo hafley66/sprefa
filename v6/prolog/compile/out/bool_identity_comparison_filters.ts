@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "enabled_name" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "enabled_name" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
   `CREATE TEMP VIEW "__txt_enabled_name" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__refcount" AS "__refcount" FROM "enabled_name" t`,
-  `CREATE TABLE "flag" ("name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), PRIMARY KEY ("name", "enabled")) WITHOUT ROWID`,
+  `CREATE TABLE "flag" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), UNIQUE ("name", "enabled"))`,
   `CREATE TEMP VIEW "__txt_flag" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."enabled" AS "enabled" FROM "flag" t`,
   `CREATE TEMP TABLE "__delta_enabled_name" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_enabled_name_sign" ON "__delta_enabled_name" ("_sign")`,

@@ -135,8 +135,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "copied" ("items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("items")) WITHOUT ROWID`,
-  `CREATE TABLE "source" ("items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'), PRIMARY KEY ("items")) WITHOUT ROWID`,
+  `CREATE TABLE "copied" ("__id" INTEGER PRIMARY KEY, "items" TEXT NOT NULL CHECK (json_valid("items")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("items"))`,
+  `CREATE TABLE "source" ("__id" INTEGER PRIMARY KEY, "items" TEXT NOT NULL CHECK (json_valid("items") AND json_type("items") = 'array'), UNIQUE ("items"))`,
   `CREATE TEMP TABLE "__delta_copied" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "items" TEXT NOT NULL CHECK (json_valid("items")))`,
   `CREATE INDEX "__delta_copied_sign" ON "__delta_copied" ("_sign")`,
   `CREATE INDEX "__delta_copied_group" ON "__delta_copied" ("items")`,

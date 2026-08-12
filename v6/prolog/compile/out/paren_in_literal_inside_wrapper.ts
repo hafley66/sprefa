@@ -148,9 +148,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('z)z')`,
-  `CREATE TABLE "link" ("source" INTEGER NOT NULL, "_target" INTEGER NOT NULL, PRIMARY KEY ("source", "_target")) WITHOUT ROWID`,
+  `CREATE TABLE "link" ("__id" INTEGER PRIMARY KEY, "source" INTEGER NOT NULL, "_target" INTEGER NOT NULL, UNIQUE ("source", "_target"))`,
   `CREATE TEMP VIEW "__txt_link" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."source") AS "source", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_target") AS "_target" FROM "link" t`,
-  `CREATE TABLE "orphan" ("source" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("source")) WITHOUT ROWID`,
+  `CREATE TABLE "orphan" ("__id" INTEGER PRIMARY KEY, "source" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("source"))`,
   `CREATE TEMP VIEW "__txt_orphan" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."source") AS "source", t."__refcount" AS "__refcount" FROM "orphan" t`,
   `CREATE TEMP TABLE "__delta_link" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "source" INTEGER NOT NULL, "_target" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_link_sign" ON "__delta_link" ("_sign")`,

@@ -148,11 +148,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "combined" ("value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("value_a", "value_b")) WITHOUT ROWID`,
+  `CREATE TABLE "combined" ("__id" INTEGER PRIMARY KEY, "value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("value_a", "value_b"))`,
   `CREATE TEMP VIEW "__txt_combined" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_a") AS "value_a", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_b") AS "value_b", t."__refcount" AS "__refcount" FROM "combined" t`,
-  `CREATE TABLE "result_a" ("value_a" INTEGER NOT NULL, PRIMARY KEY ("value_a")) WITHOUT ROWID`,
+  `CREATE TABLE "result_a" ("__id" INTEGER PRIMARY KEY, "value_a" INTEGER NOT NULL, UNIQUE ("value_a"))`,
   `CREATE TEMP VIEW "__txt_result_a" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_a") AS "value_a" FROM "result_a" t`,
-  `CREATE TABLE "result_b" ("value_b" INTEGER NOT NULL, PRIMARY KEY ("value_b")) WITHOUT ROWID`,
+  `CREATE TABLE "result_b" ("__id" INTEGER PRIMARY KEY, "value_b" INTEGER NOT NULL, UNIQUE ("value_b"))`,
   `CREATE TEMP VIEW "__txt_result_b" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value_b") AS "value_b" FROM "result_b" t`,
   `CREATE TEMP TABLE "__delta_combined" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value_a" INTEGER NOT NULL, "value_b" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_combined_sign" ON "__delta_combined" ("_sign")`,

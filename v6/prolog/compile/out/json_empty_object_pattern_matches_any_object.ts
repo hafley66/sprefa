@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "entry" ("name" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), PRIMARY KEY ("name", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "entry" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), UNIQUE ("name", "value"))`,
   `CREATE TEMP VIEW "__txt_entry" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."value" AS "value" FROM "entry" t`,
-  `CREATE TABLE "is_object" ("name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("name")) WITHOUT ROWID`,
+  `CREATE TABLE "is_object" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("name"))`,
   `CREATE TEMP VIEW "__txt_is_object" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."__refcount" AS "__refcount" FROM "is_object" t`,
   `CREATE TEMP TABLE "__delta_entry" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
   `CREATE INDEX "__delta_entry_sign" ON "__delta_entry" ("_sign")`,

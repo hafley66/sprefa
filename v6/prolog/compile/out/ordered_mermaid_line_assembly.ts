@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "mermaid_line" ("file_name" INTEGER NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" INTEGER NOT NULL, PRIMARY KEY ("file_name", "line_ordinal", "line_text")) WITHOUT ROWID`,
+  `CREATE TABLE "mermaid_line" ("__id" INTEGER PRIMARY KEY, "file_name" INTEGER NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" INTEGER NOT NULL, UNIQUE ("file_name", "line_ordinal", "line_text"))`,
   `CREATE TEMP VIEW "__txt_mermaid_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."file_name") AS "file_name", t."line_ordinal" AS "line_ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."line_text") AS "line_text" FROM "mermaid_line" t`,
-  `CREATE TABLE "mermaid_text" ("file_name" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("file_name", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "mermaid_text" ("__id" INTEGER PRIMARY KEY, "file_name" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("file_name", "col2"))`,
   `CREATE TEMP VIEW "__txt_mermaid_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."file_name") AS "file_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."__refcount" AS "__refcount" FROM "mermaid_text" t`,
   `CREATE TEMP TABLE "__delta_mermaid_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "file_name" INTEGER NOT NULL, "line_ordinal" INTEGER NOT NULL, "line_text" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_mermaid_line_sign" ON "__delta_mermaid_line" ("_sign")`,

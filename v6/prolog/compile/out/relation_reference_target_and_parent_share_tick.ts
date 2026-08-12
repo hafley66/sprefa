@@ -146,10 +146,10 @@ export const STRUCT_REF_COLUMNS: IStructRefColumns = {
 };
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "finding" ("at" INTEGER NOT NULL, PRIMARY KEY ("at")) WITHOUT ROWID`,
+  `CREATE TABLE "finding" ("__id" INTEGER PRIMARY KEY, "at" INTEGER NOT NULL, UNIQUE ("at"))`,
   `CREATE TABLE "span" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, UNIQUE ("start", "end"))`,
   `CREATE TEMP VIEW "__ref_span" AS SELECT t."__id", "start", "end", json_object('start', t."start", 'end', t."end") AS "__rendered" FROM "span" t`,
-  `CREATE TABLE "span_seen" ("start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("start", "end")) WITHOUT ROWID`,
+  `CREATE TABLE "span_seen" ("__id" INTEGER PRIMARY KEY, "start" INTEGER NOT NULL, "end" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("start", "end"))`,
   `CREATE TEMP TABLE "__delta_finding" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_finding_sign" ON "__delta_finding" ("_sign")`,
   `CREATE INDEX "__delta_finding_group" ON "__delta_finding" ("at")`,

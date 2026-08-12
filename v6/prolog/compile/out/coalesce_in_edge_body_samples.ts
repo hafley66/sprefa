@@ -169,7 +169,7 @@ const ddl: readonly string[] = [
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('unnamed')`,
   `CREATE TABLE "labelled" ("tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_labelled" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label" FROM "labelled" t`,
-  `CREATE TABLE "name" ("tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL, PRIMARY KEY ("tree_id", "label")) WITHOUT ROWID`,
+  `CREATE TABLE "name" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL, UNIQUE ("tree_id", "label"))`,
   `CREATE TEMP VIEW "__txt_name" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."label") AS "label" FROM "name" t`,
   `CREATE TABLE "ping" ("tree_id" INTEGER NOT NULL)`,
   `CREATE TEMP TABLE "__delta_labelled" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "label" INTEGER NOT NULL)`,

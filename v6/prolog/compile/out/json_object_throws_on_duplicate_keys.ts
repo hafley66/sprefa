@@ -146,9 +146,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "item" ("key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), PRIMARY KEY ("key", "value")) WITHOUT ROWID`,
+  `CREATE TABLE "item" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")), UNIQUE ("key", "value"))`,
   `CREATE TEMP VIEW "__txt_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", t."value" AS "value" FROM "item" t`,
-  `CREATE TABLE "metadata" ("col1" TEXT NOT NULL CHECK (json_valid("col1")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("col1")) WITHOUT ROWID`,
+  `CREATE TABLE "metadata" ("__id" INTEGER PRIMARY KEY, "col1" TEXT NOT NULL CHECK (json_valid("col1")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("col1"))`,
   `CREATE TEMP TABLE "__delta_item" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" TEXT NOT NULL CHECK (json_valid("value")))`,
   `CREATE INDEX "__delta_item_sign" ON "__delta_item" ("_sign")`,
   `CREATE INDEX "__delta_item_group" ON "__delta_item" ("key", "value")`,

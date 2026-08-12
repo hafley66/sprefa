@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "mirror" ("item" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TABLE "mirror" ("__id" INTEGER PRIMARY KEY, "item" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("item"))`,
   `CREATE TEMP VIEW "__txt_mirror" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."__refcount" AS "__refcount" FROM "mirror" t`,
-  `CREATE TABLE "source_row" ("item" INTEGER NOT NULL, PRIMARY KEY ("item")) WITHOUT ROWID`,
+  `CREATE TABLE "source_row" ("__id" INTEGER PRIMARY KEY, "item" INTEGER NOT NULL, UNIQUE ("item"))`,
   `CREATE TEMP VIEW "__txt_source_row" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item" FROM "source_row" t`,
   `CREATE TEMP TABLE "__delta_mirror" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "item" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_mirror_sign" ON "__delta_mirror" ("_sign")`,

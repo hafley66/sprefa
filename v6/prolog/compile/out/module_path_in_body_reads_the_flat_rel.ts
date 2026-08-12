@@ -135,8 +135,8 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "orchard__fruit" ("tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL, PRIMARY KEY ("tree_id", "picked")) WITHOUT ROWID`,
-  `CREATE TABLE "ripe" ("tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
+  `CREATE TABLE "orchard__fruit" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL, UNIQUE ("tree_id", "picked"))`,
+  `CREATE TABLE "ripe" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("tree_id"))`,
   `CREATE TEMP TABLE "__delta_orchard__fruit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_orchard__fruit_sign" ON "__delta_orchard__fruit" ("_sign")`,
   `CREATE INDEX "__delta_orchard__fruit_group" ON "__delta_orchard__fruit" ("tree_id", "picked")`,

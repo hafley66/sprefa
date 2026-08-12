@@ -158,13 +158,13 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "audit" ("audit_id" INTEGER NOT NULL, "at_commit" INTEGER NOT NULL, PRIMARY KEY ("audit_id", "at_commit")) WITHOUT ROWID`,
+  `CREATE TABLE "audit" ("__id" INTEGER PRIMARY KEY, "audit_id" INTEGER NOT NULL, "at_commit" INTEGER NOT NULL, UNIQUE ("audit_id", "at_commit"))`,
   `CREATE TABLE "commit" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
   `CREATE TEMP VIEW "__ref_commit" AS SELECT t."__id", "id", json_object('id', t."id") AS "__rendered" FROM "commit" t`,
-  `CREATE TABLE "commit__reviewed_by" ("commit_id" INTEGER NOT NULL, "person_id" INTEGER NOT NULL, PRIMARY KEY ("commit_id")) WITHOUT ROWID`,
-  `CREATE TABLE "person" ("id" INTEGER NOT NULL, "name" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
+  `CREATE TABLE "commit__reviewed_by" ("__id" INTEGER PRIMARY KEY, "commit_id" INTEGER NOT NULL, "person_id" INTEGER NOT NULL, UNIQUE ("commit_id"))`,
+  `CREATE TABLE "person" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "name" INTEGER NOT NULL, UNIQUE ("id"))`,
   `CREATE TEMP VIEW "__txt_person" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "person" t`,
-  `CREATE TABLE "reviewed" ("commit_id" INTEGER NOT NULL, "reviewer_name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("commit_id", "reviewer_name")) WITHOUT ROWID`,
+  `CREATE TABLE "reviewed" ("__id" INTEGER PRIMARY KEY, "commit_id" INTEGER NOT NULL, "reviewer_name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("commit_id", "reviewer_name"))`,
   `CREATE TEMP VIEW "__txt_reviewed" AS SELECT t."commit_id" AS "commit_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."reviewer_name") AS "reviewer_name", t."__refcount" AS "__refcount" FROM "reviewed" t`,
   `CREATE TEMP TABLE "__delta_audit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "audit_id" INTEGER NOT NULL, "at_commit" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_audit_sign" ON "__delta_audit" ("_sign")`,

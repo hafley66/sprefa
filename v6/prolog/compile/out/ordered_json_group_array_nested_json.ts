@@ -147,9 +147,9 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "child" ("group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")), PRIMARY KEY ("group", "payload")) WITHOUT ROWID`,
+  `CREATE TABLE "child" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")), UNIQUE ("group", "payload"))`,
   `CREATE TEMP VIEW "__txt_child" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."payload" AS "payload" FROM "child" t`,
-  `CREATE TABLE "nested" ("group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("group", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "nested" ("__id" INTEGER PRIMARY KEY, "group" INTEGER NOT NULL, "col2" TEXT NOT NULL CHECK (json_valid("col2")), "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("group", "col2"))`,
   `CREATE TEMP VIEW "__txt_nested" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."group") AS "group", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "nested" t`,
   `CREATE TEMP TABLE "__delta_child" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "group" INTEGER NOT NULL, "payload" TEXT NOT NULL CHECK (json_valid("payload")))`,
   `CREATE INDEX "__delta_child_sign" ON "__delta_child" ("_sign")`,

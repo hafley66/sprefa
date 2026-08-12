@@ -153,7 +153,7 @@ const ddl: readonly string[] = [
   `CREATE TEMP VIEW "__txt_stream_end" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2" FROM "stream_end" t`,
   `CREATE TABLE "stream_item" ("args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt_stream_item" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", t."col2" AS "col2", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col3") AS "col3" FROM "stream_item" t`,
-  `CREATE TABLE "stream_status" ("args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("args", "col2")) WITHOUT ROWID`,
+  `CREATE TABLE "stream_status" ("__id" INTEGER PRIMARY KEY, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("args", "col2"))`,
   `CREATE TEMP VIEW "__txt_stream_status" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."args") AS "args", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col2") AS "col2", t."__refcount" AS "__refcount" FROM "stream_status" t`,
   `CREATE TEMP TABLE "__delta_stream_end" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "args" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_stream_end_sign" ON "__delta_stream_end" ("_sign")`,

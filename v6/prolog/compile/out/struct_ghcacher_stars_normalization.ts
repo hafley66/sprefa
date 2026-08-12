@@ -159,12 +159,12 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "current_body" ("ep" INTEGER NOT NULL, "body" INTEGER NOT NULL, PRIMARY KEY ("ep", "body")) WITHOUT ROWID`,
+  `CREATE TABLE "current_body" ("__id" INTEGER PRIMARY KEY, "ep" INTEGER NOT NULL, "body" INTEGER NOT NULL, UNIQUE ("ep", "body"))`,
   `CREATE TEMP VIEW "__txt_current_body" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ep") AS "ep", t."body" AS "body" FROM "current_body" t`,
   `CREATE TABLE "repo_body" ("__id" INTEGER PRIMARY KEY, "full_name" INTEGER NOT NULL, "stargazers_count" INTEGER NOT NULL, UNIQUE ("full_name", "stargazers_count"))`,
   `CREATE TEMP VIEW "__ref_repo_body" AS SELECT t."__id", "full_name", "stargazers_count", json_object('full_name', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."full_name"), 'stargazers_count', t."stargazers_count") AS "__rendered" FROM "repo_body" t`,
   `CREATE TEMP VIEW "__txt_repo_body" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."full_name") AS "full_name", t."stargazers_count" AS "stargazers_count", t."__id" AS "__id" FROM "repo_body" t`,
-  `CREATE TABLE "stars" ("ep" INTEGER NOT NULL, "n" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("ep", "n")) WITHOUT ROWID`,
+  `CREATE TABLE "stars" ("__id" INTEGER PRIMARY KEY, "ep" INTEGER NOT NULL, "n" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("ep", "n"))`,
   `CREATE TEMP VIEW "__txt_stars" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ep") AS "ep", t."n" AS "n", t."__refcount" AS "__refcount" FROM "stars" t`,
   `CREATE TEMP TABLE "__delta_current_body" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ep" INTEGER NOT NULL, "body" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_current_body_sign" ON "__delta_current_body" ("_sign")`,

@@ -147,11 +147,11 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "commit" ("id" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
-  `CREATE TABLE "commit__reviewed_by" ("commit_id" INTEGER NOT NULL, "person_id" INTEGER NOT NULL, PRIMARY KEY ("commit_id")) WITHOUT ROWID`,
-  `CREATE TABLE "person" ("id" INTEGER NOT NULL, "name" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
+  `CREATE TABLE "commit" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "commit__reviewed_by" ("__id" INTEGER PRIMARY KEY, "commit_id" INTEGER NOT NULL, "person_id" INTEGER NOT NULL, UNIQUE ("commit_id"))`,
+  `CREATE TABLE "person" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "name" INTEGER NOT NULL, UNIQUE ("id"))`,
   `CREATE TEMP VIEW "__txt_person" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "person" t`,
-  `CREATE TABLE "reviewed" ("commit_id" INTEGER NOT NULL, "reviewer_name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("commit_id", "reviewer_name")) WITHOUT ROWID`,
+  `CREATE TABLE "reviewed" ("__id" INTEGER PRIMARY KEY, "commit_id" INTEGER NOT NULL, "reviewer_name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("commit_id", "reviewer_name"))`,
   `CREATE TEMP VIEW "__txt_reviewed" AS SELECT t."commit_id" AS "commit_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."reviewer_name") AS "reviewer_name", t."__refcount" AS "__refcount" FROM "reviewed" t`,
   `CREATE TEMP TABLE "__delta_commit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_commit_sign" ON "__delta_commit" ("_sign")`,

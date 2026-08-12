@@ -149,13 +149,13 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "__host_demand_score" ("identity_digest" INTEGER NOT NULL, "witness_digest" INTEGER NOT NULL, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("identity_digest", "witness_digest", "path")) WITHOUT ROWID`,
+  `CREATE TABLE "__host_demand_score" ("__id" INTEGER PRIMARY KEY, "identity_digest" INTEGER NOT NULL, "witness_digest" INTEGER NOT NULL, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("identity_digest", "witness_digest", "path"))`,
   `CREATE TEMP VIEW "__txt___host_demand_score" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."identity_digest") AS "identity_digest", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."witness_digest") AS "witness_digest", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."__refcount" AS "__refcount" FROM "__host_demand_score" t`,
-  `CREATE TABLE "__host_response_score" ("witness_digest" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "path" INTEGER NOT NULL, "score" INTEGER NOT NULL, PRIMARY KEY ("witness_digest", "ordinal")) WITHOUT ROWID`,
+  `CREATE TABLE "__host_response_score" ("__id" INTEGER PRIMARY KEY, "witness_digest" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "path" INTEGER NOT NULL, "score" INTEGER NOT NULL, UNIQUE ("witness_digest", "ordinal"))`,
   `CREATE TEMP VIEW "__txt___host_response_score" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."witness_digest") AS "witness_digest", t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."score" AS "score" FROM "__host_response_score" t`,
-  `CREATE TABLE "accepted" ("path" INTEGER NOT NULL, "score" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, PRIMARY KEY ("path", "score")) WITHOUT ROWID`,
+  `CREATE TABLE "accepted" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "score" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "score"))`,
   `CREATE TEMP VIEW "__txt_accepted" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."score" AS "score", t."__refcount" AS "__refcount" FROM "accepted" t`,
-  `CREATE TABLE "input" ("path" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "input" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, UNIQUE ("path"))`,
   `CREATE TEMP VIEW "__txt_input" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path" FROM "input" t`,
   `CREATE TEMP TABLE "__delta___host_demand_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "identity_digest" INTEGER NOT NULL, "witness_digest" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___host_demand_score_sign" ON "__delta___host_demand_score" ("_sign")`,
