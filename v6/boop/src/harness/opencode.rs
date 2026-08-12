@@ -20,7 +20,10 @@ impl Harness for Opencode {
         &self,
         spec: &crate::channel::ChannelSpec,
     ) -> anyhow::Result<Box<dyn crate::channel::LaneChannel>> {
-        Ok(Box::new(crate::channel::opencode::OpencodeChannel::open(spec)?))
+        let profile = crate::channel::tui::opencode_profile(spec);
+        Ok(Box::new(crate::channel::tui::TuiChannel::open(
+            profile, spec, None,
+        )?))
     }
 
 
