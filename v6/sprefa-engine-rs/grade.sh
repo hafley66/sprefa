@@ -26,19 +26,36 @@ cargo build --quiet --manifest-path "$check_dir/Cargo.toml"
 
 verdicts="$scratch/verdicts.tsv"
 : >"$verdicts"
-while IFS=$'\t' read -r name compile_result; do
+reason_text() {
+  tr '\n\r\t' ' ' \
+    | sed -E 's/_[0-9]+/_/g; s/, line: [0-9]+, column: [0-9]+//g; s/[[:space:]]+/ /g; s/^ //; s/ $//' \
+    | cut -c1-180 \
+    | sed 's/ $//'
+}
+
+while IFS=$'\t' read -r name compile_result compile_reason; do
   oracle="$corpus/$name.oracle.jsonl"
   schedule="$corpus/$name.schedule.json"
   program="$corpus/$name.rs"
   output="$scratch/$name.out"
   if [ "$compile_result" != compiled ] || [ ! -f "$oracle" ]; then
     verdict="$compile_result"
+    reason=$(printf '%s' "$compile_reason" | reason_text)
+    [ "$compile_result" != compiled ] || reason='no oracle tick log'
   elif "$here/target/debug/emit_rust_harness" "$program" "$schedule" >"$output" 2>"$scratch/$name.err"; then
-    if diff -q "$oracle" "$output" >/dev/null 2>&1; then verdict=clean; else verdict=diff; fi
+    if diff -q "$oracle" "$output" >/dev/null 2>&1; then
+      verdict=clean
+      reason='byte-clean'
+    else
+      verdict=diff
+      reason=$({ diff -u "$oracle" "$output" || true; } | awk 'NR > 2 && /^[+-]/ { print; exit }' | reason_text)
+    fi
   else
     verdict=runtime-error
+    reason=$({ grep -A1 -m1 'panicked at' "$scratch/$name.err" || true; } | sed -n '2p' | reason_text)
+    [ -n "$reason" ] || reason=$(head -n1 "$scratch/$name.err" | reason_text)
   fi
-  printf '%s\t%s\n' "$name" "$verdict" >>"$verdicts"
+  printf '%s\t%s\t%s\n' "$name" "$verdict" "$reason" >>"$verdicts"
 done <"$scratch/compile.tsv"
 
 sort "$verdicts" -o "$verdicts"
@@ -57,4 +74,14 @@ else
 fi
 [ -n "${RUST_GRADE_WRITE_GRADED:-}" ] && cp -f "$verdicts" "$ratchet"
 printf 'RUST-GRADE graded=%s byte-clean=%s\n' "$graded_total" "$clean_now"
+for verdict in runtime-error diff unsupported error compiled; do
+  count=$(awk -F'\t' -v verdict="$verdict" '$2 == verdict { count++ } END { print count + 0 }' "$verdicts")
+  [ "$count" = 0 ] && continue
+  printf '  %s %s\n' "$verdict" "$count"
+  awk -F'\t' -v verdict="$verdict" '$2 == verdict { print $3 }' "$verdicts" \
+    | sort | uniq -c | sort -rn \
+    | while read -r cause_count cause; do
+        printf '    %s  %s\n' "$cause_count" "$cause"
+      done
+done
 exit "$status"
