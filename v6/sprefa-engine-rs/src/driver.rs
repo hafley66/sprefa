@@ -43,7 +43,10 @@ pub async fn run_schedule(
             None => break,
         };
         if drains && drains_used >= drain_cap {
-            panic!("drain overflow: {} exceeded {} drain ticks", program.name, drain_cap);
+            panic!(
+                "drain overflow: {} exceeded {} drain ticks",
+                program.name, drain_cap
+            );
         }
         let deltas = drive_tick(program, seam, arrivals).await;
         tick_number += 1;

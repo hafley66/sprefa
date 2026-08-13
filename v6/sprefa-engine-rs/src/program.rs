@@ -26,6 +26,12 @@ pub struct GenProgram {
     pub final_select: HashMap<String, String>,
     pub arrival_templates: HashMap<String, ArrivalTemplate>,
     pub text_intern_plan: Option<crate::types::TextInternPlan>,
+    pub struct_types: Vec<crate::types::StructTypePlan>,
+    pub struct_ref_columns: HashMap<String, Vec<Option<String>>>,
+    pub ordered_program: bool,
+    pub ordered_arms: Vec<crate::types::OrderedEdgeArm>,
+    pub ordered_pre_refs: Vec<String>,
+    pub ordered_recursive_levels: bool,
     pub relations: Vec<IncrementalRelationPlan>,
     pub edges: Vec<IncrementalEdgeStatement>,
     pub levels: Vec<IncrementalLevelStatement>,
@@ -48,6 +54,12 @@ impl GenProgram {
             final_select: pj.final_select,
             arrival_templates: pj.arrival_templates,
             text_intern_plan: pj.text_intern_plan,
+            struct_types: pj.struct_types,
+            struct_ref_columns: pj.struct_ref_columns,
+            ordered_program: pj.ordered_program,
+            ordered_arms: pj.ordered_arms,
+            ordered_pre_refs: pj.ordered_pre_refs,
+            ordered_recursive_levels: pj.ordered_recursive_levels,
             relations: pj.relations,
             edges: pj.edges,
             levels: pj.levels,
@@ -67,6 +79,9 @@ impl GenProgram {
     }
 
     pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> TickDeltas {
+        if self.ordered_program {
+            return crate::ordered::run_tick(self, seam, arrivals);
+        }
         incremental::prepare_tick(seam, &self.relations);
         if self.uses_tick {
             incremental::advance_tick(seam);
@@ -75,7 +90,15 @@ impl GenProgram {
             Some(plan) => crate::text_plane::intern(seam, plan, arrivals),
             None => arrivals.to_vec(),
         };
-        let arrivals = interned.as_slice();
+        let normalized = crate::struct_plane::intern(
+            seam,
+            &self.struct_types,
+            &self.struct_ref_columns,
+            &interned,
+            &self.relations,
+            self.text_intern_plan.as_ref(),
+        );
+        let arrivals = normalized.as_slice();
         incremental::apply_arrivals(seam, arrivals, &self.relations);
         incremental::apply_levels_before_edges(seam, &self.levels, &self.relations);
         if !self.edges.is_empty() {
@@ -98,6 +121,7 @@ impl GenProgram {
             self.reconcile_every_tick,
         );
         let rels = incremental::read_boundary(seam, &self.relations);
+        incremental::stage_departures(seam, &self.relations, &rels);
         let carry_pending = incremental::promote_frontiers(seam, &self.relations);
         TickDeltas {
             rels,

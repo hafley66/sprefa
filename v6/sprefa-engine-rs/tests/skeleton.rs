@@ -80,6 +80,12 @@ fn fixture_program() -> GenProgram {
         final_select: HashMap::new(),
         arrival_templates: HashMap::new(),
         text_intern_plan: None,
+        struct_types: Vec::new(),
+        struct_ref_columns: HashMap::new(),
+        ordered_program: false,
+        ordered_arms: Vec::new(),
+        ordered_pre_refs: Vec::new(),
+        ordered_recursive_levels: false,
         relations,
         edges: vec![],
         levels: vec![IncrementalLevelStatement {
@@ -90,6 +96,8 @@ fn fixture_program() -> GenProgram {
             insert_sql: Some("INSERT OR IGNORE INTO \"seen\" (\"value\") SELECT DISTINCT d0.\"value\" FROM \"__frontier_source\" d0 WHERE d0.\"_phase\" >= 0 RETURNING \"value\"".to_string()),
             intern_sql: None,
             select_sql: "SELECT \"value\" FROM \"seen\"".to_string(),
+            recompute_delete_sql: "DELETE FROM \"seen\"".to_string(),
+            recompute_insert_sqls: vec!["INSERT OR IGNORE INTO \"seen\" (\"value\") SELECT b0.\"value\" FROM \"source\" b0".to_string()],
             recompute_sql: "DELETE FROM \"seen\";\nINSERT OR IGNORE INTO \"seen\" (\"value\") SELECT b0.\"value\" FROM \"source\" b0".to_string(),
             support_sql: Some(vec![
                 "DELETE FROM \"__support_next_seen\"".to_string(),

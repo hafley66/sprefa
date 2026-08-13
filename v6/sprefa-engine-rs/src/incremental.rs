@@ -492,6 +492,120 @@ pub fn read_boundary(
         .collect()
 }
 
+pub fn stage_departures(
+    seam: &SqliteSeam,
+    relations: &[IncrementalRelationPlan],
+    deltas: &[crate::types::RelDelta],
+) {
+    let mut statements = Vec::new();
+    for relation in relations {
+        let Some(table_name) = &relation.departure_frontier_table_name else {
+            continue;
+        };
+        statements.push(SqlStatement {
+            sql: format!("DELETE FROM {}", quote_identifier(table_name)),
+            args: vec![],
+        });
+        let departed = deltas
+            .iter()
+            .find(|delta| delta.rel == relation.rel)
+            .map(|delta| delta.del.as_slice())
+            .unwrap_or_default();
+        if departed.is_empty() {
+            continue;
+        }
+        let mut columns = vec!["_phase".to_string(), "_sequence".to_string()];
+        columns.extend(relation.columns.clone());
+        let quoted_columns: Vec<String> = columns
+            .iter()
+            .map(|column| quote_identifier(column))
+            .collect();
+        let value_expressions: Vec<String> = columns
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("json_extract(value, '$[{}]')", index))
+            .collect();
+        let encoded = departed
+            .iter()
+            .enumerate()
+            .map(|(sequence, row)| {
+                let mut staged = vec![Value::Integer(0), Value::Integer(sequence as i64)];
+                staged.extend(row.clone());
+                json_array_text(&staged)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        statements.push(SqlStatement {
+            sql: format!(
+                "INSERT INTO {} ({}) SELECT {} FROM json_each(?)",
+                quote_identifier(table_name),
+                quoted_columns.join(", "),
+                value_expressions.join(", ")
+            ),
+            args: vec![Value::Text(format!("[{}]", encoded))],
+        });
+    }
+    if !statements.is_empty() {
+        seam.batch(&statements).expect("departure staging failed");
+    }
+}
+
+pub fn stage_ordered_frontiers(
+    seam: &SqliteSeam,
+    relations: &[IncrementalRelationPlan],
+    additions: &[crate::types::RelDelta],
+) -> bool {
+    let mut events_by_rel: HashMap<&str, Vec<DeltaEvent>> = HashMap::new();
+    let mut sequence = 0;
+    for delta in additions {
+        for row in &delta.add {
+            events_by_rel
+                .entry(delta.rel.as_str())
+                .or_default()
+                .push(DeltaEvent {
+                    rel: delta.rel.clone(),
+                    sign: 1,
+                    sequence,
+                    row: row.clone(),
+                });
+            sequence += 1;
+        }
+    }
+    let mut statements = Vec::new();
+    let mut carry_pending = false;
+    for relation in relations {
+        statements.push(SqlStatement {
+            sql: format!(
+                "DELETE FROM {}",
+                quote_identifier(&relation.frontier_table_name)
+            ),
+            args: vec![],
+        });
+        statements.push(SqlStatement {
+            sql: format!(
+                "DELETE FROM {}",
+                quote_identifier(&relation.next_frontier_table_name)
+            ),
+            args: vec![],
+        });
+        let Some(events) = events_by_rel.get(relation.rel.as_str()) else {
+            continue;
+        };
+        carry_pending = true;
+        statements.push(frontier_stage_statement(
+            relation,
+            &relation.frontier_table_name,
+            0,
+            events,
+        ));
+    }
+    if !statements.is_empty() {
+        seam.batch(&statements)
+            .expect("ordered frontier staging failed");
+    }
+    carry_pending
+}
+
 // Port of promote_frontiers: read carry, promote next into current.
 pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) -> bool {
     if relations.is_empty() {
@@ -503,6 +617,12 @@ pub fn promote_frontiers(seam: &SqliteSeam, relations: &[IncrementalRelationPlan
             "EXISTS (SELECT 1 FROM {} LIMIT 1)",
             quote_identifier(&relation.next_frontier_table_name)
         ));
+        if let Some(table_name) = &relation.departure_frontier_table_name {
+            carry_terms.push(format!(
+                "EXISTS (SELECT 1 FROM {} LIMIT 1)",
+                quote_identifier(table_name)
+            ));
+        }
     }
     let mut promote_sql = Vec::new();
     for relation in relations {
@@ -999,12 +1119,12 @@ fn apply_keyed_edge(
     }
     let changed_rows: Vec<Row> = rows
         .into_iter()
-        .filter(|row| {
-            match before_by_key.get(&row_key(row, &statement.key_indices)) {
+        .filter(
+            |row| match before_by_key.get(&row_key(row, &statement.key_indices)) {
                 None => true,
                 Some(before) => !rows_equal(before, row),
-            }
-        })
+            },
+        )
         .collect();
     if changed_rows.is_empty() {
         return;
