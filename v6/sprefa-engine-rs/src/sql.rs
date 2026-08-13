@@ -103,7 +103,14 @@ impl SqlRunner for SqliteSeam {
         let columns: Vec<String> = (0..column_count)
             .map(|index| stmt.column_name(index).unwrap_or_default().to_string())
             .collect();
-        let params: Vec<rusqlite::types::Value> = statement.args.iter().map(to_param).collect();
+        // Projection statements receive the full trigger row even when their
+        // generated SQL binds only a prefix of that row.
+        let params: Vec<rusqlite::types::Value> = statement
+            .args
+            .iter()
+            .take(stmt.parameter_count())
+            .map(to_param)
+            .collect();
         let mut rows = stmt.query(params_from_iter(params.iter()))?;
         let mut out_rows = Vec::new();
         while let Some(row) = rows.next()? {

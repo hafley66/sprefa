@@ -15,8 +15,7 @@
 :- use_module(library(apply)).
 :- use_module(library(crypto)).
 :- use_module(library(filesex)).
-:- use_module('compile/parse_dl', [use_item/3]).
-:- use_module('compile/parse_dl_dcg', []).
+:- use_module('compile/parse_dl_dcg', [use_item/3, parse_dl_dcg_entry/5]).
 :- use_module('0_dot_expand', [declared_path/3]).
 
 :- op(1150, xfx, <-).
@@ -25,14 +24,8 @@
 
 :- dynamic(parse_count_fact/2).
 
-:- ( getenv('DL_PARSER', 'classic') -> set_prolog_flag(dl_parser, classic)
-   ; set_prolog_flag(dl_parser, dcg) ).
-
 parse_source(Source, Codes, Program, Bindings, Findings) :-
-    ( current_prolog_flag(dl_parser, dcg)
-    -> parse_dl_dcg:parse_dl_dcg_entry(Source, Codes, Program, Bindings, Findings)
-    ;  parse_dl:parse_dl_source(Source, Codes, Program, Bindings, Findings)
-    ).
+    parse_dl_dcg_entry(Source, Codes, Program, Bindings, Findings).
 
 %! include_roots(+EntryPath, -Roots) is det.
 %  <crate>/std and <exe>/'..' are install layouts with no SWI equivalent.

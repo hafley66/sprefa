@@ -23,7 +23,7 @@
                 write_compile_trace/2,
                 dl6_seeded_form/3
               ]).
-:- use_module('compile/parse_dl', [parse_dl_file/4]).
+:- use_module('compile/parse_dl_dcg', [parse_dl_file/4]).
 :- use_module(lower, [lower_program/2, boot_statements/7]).
 :- use_module(emit_ts, [emit_program/5]).
 

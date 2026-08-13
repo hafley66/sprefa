@@ -56,7 +56,7 @@
 % Run: swipl -q -l dl6_oracle.pl -g "oracle('p.dl6','s.json')" -g halt
 
 :- ensure_loaded('../../conformance/ticklog').
-:- use_module('../parse_dl', [parse_dl_file/4]).
+:- use_module('../parse_dl_dcg', [parse_dl_file/4]).
 :- use_module('0_json_arrival', [arrival_column_types/4, schedule_value/5]).
 
 oracle(Dl6File, ScheduleFile) :-

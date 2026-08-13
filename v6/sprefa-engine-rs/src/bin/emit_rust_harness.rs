@@ -50,7 +50,7 @@ fn extract_json(module_text: &str) -> String {
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
-        eprintln!("usage: emit_rust_harness <program.rs> <schedule.json>");
+        eprintln!("usage: emit_rust_harness <program.rs> <schedule.json>"); // @eprintln-ok CLI usage
         std::process::exit(2);
     }
     let module_text = std::fs::read_to_string(&args[1]).expect("read program.rs");

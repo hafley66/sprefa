@@ -13,9 +13,12 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(library(json)).
-:- use_module(lower, [ departure_frontier_table_name/2 ]).
+:- use_module(lower, [ departure_frontier_table_name/2,
+                       program_text_intern_plan/3,
+                       struct_type_plans/3 ]).
 :- use_module('0_rel_record').
-:- use_module(analyze, [ body_ref_uses/2, listened_departure_refs/2 ]).
+:- use_module(analyze, [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
+                         listened_departure_refs/2, program_uses_tick/2 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -75,7 +78,14 @@ boundary_type_name(json, json) :- !.
 boundary_type_name(json_list(_), json) :- !.
 boundary_type_name(T, T).
 
-boot_dict(bootstmt(Rel, Sql, Params), _{rel: Rel, sql: Sql, params: Params}).
+boot_dict(bootstmt(Rel, Sql, Params), _{rel: Rel, sql: Sql, params: JsonParams}) :-
+    maplist(boot_param, Params, JsonParams).
+
+% A text param stays a JSON string even when it spells `true`/`false`/`null`,
+% which json_write_dict would otherwise emit as the bare JSON literal.
+boot_param(bool_lit(Boolean), Boolean) :- !.
+boot_param(Param, Param) :- number(Param), !.
+boot_param(Param, Text) :- atom_string(Param, Text).
 
 final_select_entry(deltastmt(Ref, Sql, _, _, _), Name-Sql) :- ref_name(Ref, Name).
 
@@ -130,14 +140,20 @@ relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements, Dict
 
 edge_dict(RelPlans,
           edgestmt(HeadRef, _Trigger, HeadColumns, KeyColumns, _Proj, _Write,
-                   DeltaProjectSql, _Kind, _Interns), Dict) :-
+                   DeltaProjectSql, _Kind, edgeinterns(_, DeltaInternSqls)),
+          Dict) :-
     ref_name(HeadRef, HeadName),
     relplan_shape(RelPlans, HeadRef, HeadKind, _Columns, _Key, _Types),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
+    intern_field(DeltaInternSqls, InternField),
     Dict = _{ head_rel: HeadName, head_columns: HeadColumns,
               head_table_name: HeadName, head_delta_table_name: DeltaTable, head_kind: HeadKind,
-              key_indices: KeyIndices, project_sql: DeltaProjectSql }.
+              key_indices: KeyIndices, project_sql: DeltaProjectSql,
+              intern_sql: InternField }.
+
+intern_field([], null) :- !.
+intern_field(InternSqls, InternSqls).
 head_to_key_indices(HeadColumns, KeyColumns, Indices) :-
     maplist(key_index(HeadColumns), KeyColumns, Indices).
 key_index(Columns, Col, Index) :- nth0(Index, Columns, Col).
@@ -145,8 +161,64 @@ key_index(Columns, Col, Index) :- nth0(Index, Columns, Col).
 edges_list(RelPlans, EdgeStatements, Dicts) :-
     maplist(edge_dict(RelPlans), EdgeStatements, Dicts).
 
+ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_arrival, _)).
+ordered_edge_statement(edgestmt(_, _, _, _, _, _, _, ordered_departure, _)).
+
+ordered_program(EdgeStatements) :-
+    member(Statement, EdgeStatements),
+    ordered_edge_statement(Statement),
+    !.
+
+ordered_trigger_kind(ordered_departure, departure) :- !.
+ordered_trigger_kind(departure, departure) :- !.
+ordered_trigger_kind(_, arrival).
+
+plan_pre_refs(Rules, Refs) :-
+    findall(Ref,
+            ( member((_ <+ Body), Rules),
+              level_body_pre_ref(Body, Ref) ),
+            Refs0),
+    sort(Refs0, Refs).
+
+ordered_arm_dict(RelPlans, PreRefs,
+        edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql,
+                 WriteSql, _, EdgeTriggerKind,
+                 edgeinterns(ProjectInternSqls, _)), Dict) :-
+    ref_name(HeadRef, HeadName),
+    ref_name(TriggerRef, TriggerName),
+    relplan_shape(RelPlans, HeadRef, HeadKind, _, _, _),
+    ordered_trigger_kind(EdgeTriggerKind, TriggerKind),
+    head_to_key_indices(HeadColumns, KeyColumns, KeyIndices),
+    ( memberchk(HeadRef, PreRefs) -> EvolvesPre = true ; EvolvesPre = false ),
+    intern_field(ProjectInternSqls, InternField),
+    Dict = _{ trigger_rel: TriggerName, trigger_kind: TriggerKind,
+              head_rel: HeadName, head_kind: HeadKind,
+              head_columns: HeadColumns, key_indices: KeyIndices,
+              project_sql: ProjectSql, write_sql: WriteSql,
+              evolves_pre: EvolvesPre, intern_sql: InternField }.
+
+ordered_recursive_levels(Rules, Recursive) :-
+    ( member(Rule, Rules), Rule = (_ <- Body),
+      rule_head_ref(Rule, HeadRef),
+      body_ref_uses(Body, Uses),
+      memberchk(use(HeadRef, _, pos, _), Uses)
+    -> Recursive = true
+    ;  Recursive = false
+    ).
+
+ordered_fields(EdgeStatements, RelPlans, Rules, Ordered, Arms, PreNames,
+               RecursiveLevels) :-
+    ( ordered_program(EdgeStatements)
+    -> Ordered = true,
+       plan_pre_refs(Rules, PreRefs),
+       maplist(ordered_arm_dict(RelPlans, PreRefs), EdgeStatements, Arms),
+       maplist(ref_name, PreRefs, PreNames),
+       ordered_recursive_levels(Rules, RecursiveLevels)
+    ;  Ordered = false, Arms = [], PreNames = [], RecursiveLevels = false
+    ).
+
 level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                                RefCountSql, AggregateSql, _DeltaInternSqls),
+                                RefCountSql, AggregateSql, DeltaInternSqls),
            Dict) :-
     ref_name(HeadRef, HeadName),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
@@ -158,12 +230,16 @@ level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
     refcount_fields(RefCountSql, SupportField, ExpandField, DredField,
                     SupportInternField),
     aggregate_field(AggregateSql, AggregateField),
+    intern_field(DeltaInternSqls, InternField),
     Dict = _{ head_rel: HeadName,
+              intern_sql: InternField,
               head_delta_table_name: DeltaTable,
               head_columns: HeadColumns,
               head_column_types: HeadTypes,
               insert_sql: InsertField,
               select_sql: SelectSql,
+              recompute_delete_sql: DeleteSql,
+              recompute_insert_sqls: InsertSqls,
               recompute_sql: RecomputeSql,
               support_sql: SupportField,
               support_intern_sql: SupportInternField,
@@ -246,6 +322,37 @@ aggregate_field(avgsql(_ScopeCols, _ScopeTypes, ScopeClearSql, ScopeSeedSqls,
               insert_scoped_sql: InsertScopedSqls,
               intern_sql: null, delta_maintained: true }.
 
+% The same plan emit_ts.pl renders as TEXT_INTERN_PLAN. `none` at intern(direct)
+% and at any program whose columns are all unencoded.
+text_intern_field(none, null) :- !.
+text_intern_field(textintern(InternSql, LookupSql, RelColumns), Dict) :-
+    pairs_to_dict(RelColumns, ColumnsDict),
+    Dict = _{ intern_sql: InternSql, lookup_sql: LookupSql,
+              rel_columns: ColumnsDict }.
+
+struct_type_dict(structtype(TypeName, Columns, RefTypes, KeyIndices,
+                            ConflictSql, InternSql, LookupSql), Dict) :-
+    maplist(struct_ref_field, RefTypes, Refs),
+    Dict = _{ name: TypeName, columns: Columns, refs: Refs,
+              key_indices: KeyIndices, conflict_sql: ConflictSql,
+              intern_sql: InternSql, lookup_sql: LookupSql }.
+
+struct_ref_field(none, null) :- !.
+struct_ref_field(TypeName, TypeName).
+
+struct_ref_columns_map(RelPlans, Map) :-
+    findall(Name-Refs,
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _, _, _, ColumnTypes),
+              memberchk(ref(_), ColumnTypes),
+              ref_name(Ref, Name),
+              maplist(column_type_ref_field, ColumnTypes, Refs) ),
+            Pairs),
+    pairs_to_dict(Pairs, Map).
+
+column_type_ref_field(ref(TypeName), TypeName) :- !.
+column_type_ref_field(_, null).
+
 % ═══ assemble the Rust source ════════════════════════════════════════════════
 
 emit_program(Name, Plan, Lowered, BootStatements, Text) :-
@@ -254,7 +361,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     plan_intern_mode(Plan, InternMode),
     include(is_level_statement, LevelStatements, RuleLevelStatements),
     include(is_retention_statement, LevelStatements, RetentionStatements),
-    Plan = plan(_, prog(_, PlanRules), _, _, _, _, _, _, _),
+    Plan = plan(_, TickProg, LoweringTypes, _, _, _, _, _, _),
+    TickProg = prog(PlanDecls, PlanRules),
+    program_uses_tick(TickProg, UsesTick),
     listened_departure_refs(PlanRules, DepartureRefs),
     reconcile_every_tick(Plan, ReconcileEveryTick),
 
@@ -275,6 +384,14 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     edges_list(RelPlans, EdgeStatements, Edges),
     levels_list(RuleLevelStatements, HeadTable, Levels),
     retentions_list(RetentionStatements, Retentions),
+    program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
+    text_intern_field(TextInternPlan, TextInternField),
+    struct_type_plans(PlanDecls, LoweringTypes, StructPlans),
+    maplist(struct_type_dict, StructPlans, StructTypes),
+    struct_ref_columns_map(RelPlans, StructRefColumns),
+    ordered_fields(EdgeStatements, RelPlans, PlanRules,
+                   OrderedProgram, OrderedArms, OrderedPreRefs,
+                   OrderedRecursiveLevels),
 
     ProgramDict =
     _{ name: Name,
@@ -286,10 +403,18 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        boot: BootDicts,
        final_select: FinalSelect,
        arrival_templates: ArrivalTemplates,
+       text_intern_plan: TextInternField,
+       struct_types: StructTypes,
+       struct_ref_columns: StructRefColumns,
+       ordered_program: OrderedProgram,
+       ordered_arms: OrderedArms,
+       ordered_pre_refs: OrderedPreRefs,
+       ordered_recursive_levels: OrderedRecursiveLevels,
        relations: Relations,
        edges: Edges,
        levels: Levels,
        retentions: Retentions,
+       uses_tick: UsesTick,
        reconcile_every_tick: ReconcileEveryTick,
        incremental_safe: true },
     json_write_string(ProgramDict, ProgramJson),
