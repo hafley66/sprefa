@@ -123,10 +123,6 @@ typecheck:
 
 # ── TS apps ──
 
-# the v6 dl app suite (expect: 97 tests, 1 soak skip)
-dl-test:
-    cd {{ v6 }}/dl && npm test
-
 # js store port suite
 store-test:
     cd {{ v6 }}/sprefa-store/js && npm test
@@ -139,14 +135,6 @@ store-test:
 # (expect: DD-GRADE arm=--dd-diet-rust-sqlite graded=203 byte-clean=134 ... DD-GRADE HOLDS)
 dd-grade:
     bash {{ v6 }}/dd-runner/grade.sh
-
-# THE END GOAL, executable: kill -9 mid-delay, reboot, value lands exactly once
-endurance:
-    bash {{ v6 }}/dl/scripts/goal-endurance.sh
-
-# long-running server leak gate: one process, repeated swaps/commits/SSE teardown
-leak-soak:
-    bash {{ v6 }}/dl/scripts/leak-soak.sh
 
 # the SERVED TSV2 engine's own end goal: kill -9 mid-nap, restart, answered
 # witnesses never refire (runtime-bridge arc receipt 5)
@@ -464,15 +452,15 @@ perf-all-deep:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex dl-test store-test dd-grade
+green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex store-test dd-grade
 
 # everything, phased: scale-floor alone (its verdict is a wall reading), then
 # the memory leak test alone (its flatness check reddens under a load ramp),
-# then the gen-writers serially, then the rest 6-up. Same 32 legs, same
+# then the gen-writers serially, then the rest 6-up. Same 29 legs, same
 # verdicts, one ordered PASS/FAIL table.
-# (expect: GREEN ALL HOLDS: 32 legs, exit 0; ~177s vs ~254s one at a time)
+# (expect: GREEN ALL HOLDS: 29 legs, exit 0; ~177s vs ~254s one at a time)
 green-all:
     bash {{ v6 }}/tools/green-parallel.sh
 
 # the original one-leg-at-a-time chain, kept for bisecting a parallel-only red
-green-all-serial: green dl6-budget endurance leak-soak serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
+green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
