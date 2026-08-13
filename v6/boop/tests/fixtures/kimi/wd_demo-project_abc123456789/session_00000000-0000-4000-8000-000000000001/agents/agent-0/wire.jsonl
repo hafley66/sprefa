@@ -1,5 +1,0 @@
-{"type":"metadata","protocol_version":"1.4","created_at":1784397260000}
-{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"convert src/cli/daemon.rs only"}]},"time":1784397260100}
-{"type":"context.append_loop_event","event":{"type":"tool.call","uuid":"tool_3","turnId":"0","step":1,"stepUuid":"s1","toolCallId":"tool_3","name":"Edit","args":{"path":"src/cli/daemon.rs"}},"time":1784397260200}
-{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"s1","turnId":"0","step":1,"usage":{"inputOther":900,"output":50,"inputCacheRead":0,"inputCacheCreation":0},"finishReason":"tool_use","messageId":"chatcmpl-demo0002"},"time":1784397260300}
-{"type":"usage.record","model":"kimi-code/kimi-for-coding","usage":{"inputOther":900,"output":50,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1784397260301}
