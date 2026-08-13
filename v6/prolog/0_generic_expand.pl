@@ -179,13 +179,16 @@ flavor_ref(Type, Suffix, Name/Arity) :-
     Suffix \== list,
     canonical_type_name(Type, Base),
     atomic_list_concat([Base, Suffix], '__', Name),
-    flavor_ref_arity(Suffix, Arity).
+    flavor_ref_arity(Type, Suffix, Arity).
 
-flavor_ref_arity(member, 3).
-flavor_ref_arity(owner, 2).
-flavor_ref_arity(refcount, 2).
-flavor_ref_arity(value, 2).
-flavor_ref_arity(link, 2).
+% Arity must equal the column count list_flavor_artifacts/2 declares for the
+% same suffix; the interned-set member row is (content_id, value_id).
+flavor_ref_arity(list_interned_set(_), member, 2) :- !.
+flavor_ref_arity(_, member, 3).
+flavor_ref_arity(_, owner, 2).
+flavor_ref_arity(_, refcount, 2).
+flavor_ref_arity(_, value, 2).
+flavor_ref_arity(_, link, 2).
 
 lower_artifacts([], []).
 lower_artifacts([artifact(decl(Decl)) | Rest], [Decl | Decls]) :-

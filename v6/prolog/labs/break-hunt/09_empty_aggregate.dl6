@@ -1,0 +1,12 @@
+# Lead 10: an aggregate whose group loses its last row, and a count over a
+# rel that never receives one.
+
+rel spend(team: text, item: text, cost: int).
+rel budget(team: text, total: int).
+rel spend_rows(team: text, rows: int).
+rel unused(unused_id: int).
+rel unused_count(total: int).
+
+budget(Team, sum(Cost)) <- spend(Team, _Item, Cost).
+spend_rows(Team, count(Item)) <- spend(Team, Item, _Cost).
+unused_count(count(UnusedId)) <- unused(UnusedId).

@@ -1,0 +1,5 @@
+[
+  [ {"rel":"edge","sign":"add","row":["a","a"]} ],
+  [ {"rel":"edge","sign":"add","row":["a","b"]} ],
+  [ {"rel":"edge","sign":"del","row":["a","a"]} ]
+]

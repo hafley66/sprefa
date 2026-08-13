@@ -1,0 +1,5 @@
+[
+  [ {"rel":"flag","sign":"add","row":[1,true]} ],
+  [ {"rel":"flag","sign":"add","row":[2,false]} ],
+  [ {"rel":"flag","sign":"del","row":[1,true]} ]
+]

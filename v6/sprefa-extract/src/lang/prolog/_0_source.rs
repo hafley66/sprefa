@@ -375,24 +375,112 @@ fn project_directive(
     let Some((name, _)) = callable_name_arity(operand, src) else {
         return;
     };
-    if name != "use_module" && name != "ensure_loaded" && name != "consult" {
-        return;
+    match name.as_str() {
+        "use_module" | "ensure_loaded" | "consult" => {
+            import_directive(operand, src, strings, sink)
+        }
+        "module" => module_declaration(operand, src, strings, sink),
+        _ => (),
     }
+}
+
+// `use_module(Path)` names no predicate, so the path IS the specifier and rides
+// `name` with no second copy; the two-argument form keys on (module, name).
+fn import_directive(
+    operand: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
     let mut cursor = operand.walk();
-    let Some(source) = operand
-        .children_by_field_name("argument", &mut cursor)
-        .next()
-    else {
+    let mut arguments = operand.children_by_field_name("argument", &mut cursor);
+    let Some(source) = arguments.next() else {
         return;
     };
-    sink.aux.specifiers.push(Specifier {
-        span: span(source),
-        name: strings.intern(text(source, src)),
-        kind: SpecifierKind::SideEffect,
-        // A path-only form: prolog's use_module/consult argument IS the module,
-        // and it already sits in `name`. No second copy.
-        module: None,
-    });
+    let module_text = text(source, src).to_string();
+    let Some(list) = arguments.next() else {
+        sink.aux.specifiers.push(Specifier {
+            span: span(source),
+            name: strings.intern(&module_text),
+            kind: SpecifierKind::SideEffect,
+            module: None,
+        });
+        return;
+    };
+    let module = strings.intern(&module_text);
+    for indicator in predicate_indicators(list, src) {
+        sink.aux.specifiers.push(Specifier {
+            span: indicator.span,
+            name: strings.intern(&indicator.key),
+            kind: SpecifierKind::Named,
+            module: Some(module),
+        });
+    }
+}
+
+// A module's export list is its interface. The rows carry the module's OWN name
+// so an import row and the export row it resolves to join on (module, name).
+fn module_declaration(
+    operand: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut cursor = operand.walk();
+    let mut arguments = operand.children_by_field_name("argument", &mut cursor);
+    let Some(name_node) = arguments.next() else {
+        return;
+    };
+    let Some(list) = arguments.next() else {
+        return;
+    };
+    let module = strings.intern(&atom_text(name_node, src));
+    for indicator in predicate_indicators(list, src) {
+        sink.aux.specifiers.push(Specifier {
+            span: indicator.span,
+            name: strings.intern(&indicator.key),
+            kind: SpecifierKind::Reexport,
+            module: Some(module),
+        });
+    }
+}
+
+struct PredicateIndicator {
+    span: Span,
+    key: String,
+}
+
+// `f/1`, `f//2` and `op(P, T, N)` are the three list entries SWI accepts. The
+// operator form declares no predicate, so it yields no row.
+fn predicate_indicators(list: tree_sitter::Node, src: &[u8]) -> Vec<PredicateIndicator> {
+    let mut out = Vec::new();
+    collect_predicate_indicators(list, src, &mut out);
+    out
+}
+
+fn collect_predicate_indicators(
+    node: tree_sitter::Node,
+    src: &[u8],
+    out: &mut Vec<PredicateIndicator>,
+) {
+    if node.kind() == "binary_operation" {
+        let operator_text = operator(node, src);
+        if operator_text == "/" || operator_text == "//" {
+            if let (Some(name_node), Some(arity_node)) = (field(node, "left"), field(node, "right"))
+            {
+                if let Ok(arity) = text(arity_node, src).trim().parse::<usize>() {
+                    out.push(PredicateIndicator {
+                        span: span(node),
+                        key: predicate_key(&atom_text(name_node, src), arity, operator_text == "//"),
+                    });
+                }
+            }
+            return;
+        }
+    }
+    for child in named_children(node) {
+        collect_predicate_indicators(child, src, out);
+    }
 }
 
 fn walk_goals(

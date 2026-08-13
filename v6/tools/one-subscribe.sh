@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Exactly one manual rxjs `.subscribe()` per scanned app. Scanned apps are
-# dl/src and tsv2/serve. Standalone one-shot CLI scripts are excluded.
+# @comment-ok: the BY-NAME exclusion rule below is a probe receipt, not narrative
+# Exactly one manual rxjs `.subscribe()` per scanned app. tsv2/serve is the one
+# scanned app. Standalone one-shot CLI scripts are excluded.
 #
-# The diagnostics_channel handles in dl/src/0_trace.ts and tsv2/serve/0_trace.ts
+# The diagnostics_channel handles in tsv2/serve/0_trace.ts
 # are subscribed by a different API that happens to share the method name, so
 # they are excluded BY NAME -- the literal handle identifiers, never a
 # `*Channel` wildcard. A wildcard let any rxjs `.subscribe()` on a variable whose
@@ -36,7 +37,6 @@ check_app() {
   fi
 }
 
-check_app dl/src 1 dl/src/main.ts
 check_app tsv2/serve 1 tsv2/serve/main.ts
 
 exit "$status"

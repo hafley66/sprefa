@@ -155,7 +155,9 @@ pub fn js_float_text(value: f64) -> String {
         return "0".to_string();
     }
     let negative = value.is_sign_negative();
-    let raw = format!("{}", value.abs());
+    // LowerExp, not Display: Display never reaches exponent form, so 1e-7 would
+    // render 0.0000001 and js_float_digits would never see a position to place.
+    let raw = format!("{:e}", value.abs());
     if let Some((mantissa, exponent)) = split_float_exponent(&raw) {
         let (digits, integer_digits) = mantissa_digits(mantissa);
         let decimal_position = integer_digits + exponent;

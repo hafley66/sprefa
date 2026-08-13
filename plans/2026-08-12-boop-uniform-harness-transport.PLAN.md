@@ -11,7 +11,8 @@
 8. [Migration and backfill](#8-migration-and-backfill)
 9. [Trace and purpose acceptance, commands and output](#9-trace-and-purpose-acceptance-commands-and-output)
 10. [Validation](#10-validation)
-11. [Known gaps and what is not proven](#11-known-gaps-and-what-is-not-proven)
+11. [Worktree warmup: the boop-start recipe](#11-worktree-warmup-the-boop-start-recipe)
+12. [Known gaps and what is not proven](#12-known-gaps-and-what-is-not-proven)
 
 ---
 
@@ -98,7 +99,7 @@ Every cell below came from running the tool's own `--help` on this machine on
 | session resume | `-r/--resume <id>`, `-c/--continue` | `codex exec resume <id>`, `thread/resume` | `-s/--session <id>`, `-c/--continue` | `-S/--session <id>` |
 | fork instead of resume | `--fork-session` | `codex fork` | `--fork` | not offered |
 | local protocol server | (stream-json stdio is the protocol) | `app-server` (JSON-RPC, `--listen stdio://\|unix://\|ws://`), `mcp-server`, `exec-server`, `remote-control` | `serve` (HTTP, OpenAPI at `/doc`) | `acp` (ACP JSON-RPC stdio), `web` (REST + WS) |
-| **mid-turn message, PROVEN** | **yes**, stdin user line | **yes**, `turn/steer` | no | no |
+| **mid-turn message, PROVEN** | **yes**, stdin user line | **yes**, `turn/steer` | **yes**, TUI + Enter | **yes**, TUI + `C-s` |
 | turn-end reporting | `{"type":"result","subtype":...,"is_error":...}` | `turn/completed` notification with `turn.status` | process exit code | process exit code |
 | exit code | process rc | process rc (app-server child is killed, so rc comes from the turn verdict) | process rc | process rc |
 
@@ -159,42 +160,43 @@ PROOF:
 GOT_THE_MIDFLIGHT_MESSAGE
 ```
 
-### 2c. opencode mid-turn: NOT available, four routes measured and closed
+### 2c. opencode mid-turn: YES, through the TUI. Four API routes were the wrong question.
 
-The opencode server has an explicit steer API. From its own OpenAPI at
-`http://127.0.0.1:PORT/doc`:
+The first pass here concluded mid-turn was impossible for opencode. That
+conclusion was wrong because the premise was wrong: `opencode run` is the
+HEADLESS ONE-SHOT, so of course nothing can be typed into it. Bare `opencode`
+is the interactive TUI, and a TUI in a tmux pane takes keystrokes.
 
-```
-POST /api/session/{sessionID}/prompt
-  body: {"id","prompt":PromptInput,"delivery":"steer"|"queue","resume":bool}
-```
-
-So the capability exists in the product. It could not be reached from a lane:
+The four API routes into `opencode run`, measured and all closed:
 
 | route tried | result | evidence |
 |---|---|---|
 | `opencode serve` + `POST /prompt` (server runs the model) | server cannot run the model | `serve.log`: `SessionRunnerModel.UnsupportedApiError: Unsupported API for openrouter/deepseek/deepseek-v4-flash-0731: aisdk:@openrouter/ai-sdk-provider ... at SessionRunner.runTurn` |
-| `opencode run --attach <url> -s <ses>` then `POST /prompt {"delivery":"steer"}` | steer admitted (`{"admittedSeq":24}`, HTTP 200) and never acted on; the run finished all five sleeps and exited | `p1.log` shows sleeps 1-5 complete; `/tmp/opencode-probe-proof.txt` absent |
-| does `--attach` run server-side at all? | no: a fresh attached session produced **0** server-side messages and **0** new server errors while the CLI printed real output | `GET /api/session/<id>/message` -> `n= 0`, `grep -c ERROR serve.log` unchanged at 2 |
-| `opencode run --port 47399` (self-hosted control port) | binds nothing | `lsof -nP -p <pid> -a -iTCP -sTCP:LISTEN` empty for both opencode pids; `curl http://127.0.0.1:47399/api/session` -> `http=000` |
+| `opencode run --attach <url> -s <ses>` then `POST /prompt {"delivery":"steer"}` | steer admitted (`{"admittedSeq":24}`, HTTP 200), never acted on | `p1.log` shows sleeps 1-5 complete; no proof file |
+| does `--attach` run server-side at all? | no: **0** server-side messages, **0** new server errors, while the CLI printed real output | `GET /api/session/<id>/message` -> `n= 0` |
+| `opencode run --port 47399` | binds no listener | `lsof -nP -p <pid> -a -iTCP -sTCP:LISTEN` empty; `curl 127.0.0.1:47399` -> `http=000` |
 
-Conclusion, stated as the upstream limitation with its citation: **`opencode run`
-executes the model inside its own process and exposes no control port**
-(`opencode run --help` lists `--port` as "port for the local server", and the
-process binds no listener), **and `opencode serve`'s own `SessionRunner` rejects
-the `@openrouter/ai-sdk-provider` API package**, which is the provider this
-machine's `flash4` preset uses. Closest achievable behavior: next-turn delivery,
-which boop now performs automatically.
+The TUI route, first try:
 
-The upgrade path if either changes: adopt the `delivery: "steer"` HTTP call the
-server already offers. That is a ~30-line addition to `OpencodeChannel::steer`
-once the server can run the provider.
+```
+$ tmux new-session -d -s octui -x 200 -y 50 -c $S/tui "opencode"
+$ tmux send-keys -t octui -l 'Using the bash tool run `sleep 4` six times, one call at a time, announcing each. Do nothing else.'
+$ tmux send-keys -t octui Enter
+# pane at t=10 shows the spinner: "⬝⬝⬝⬝⬝■■■  esc interrupt"
+$ tmux send-keys -t octui -l 'STOP sleeping. Immediately run: echo GOT_OCTUI > /tmp/octui-proof.txt  then say DONE.'
+$ tmux send-keys -t octui Enter
+$ cat /tmp/octui-proof.txt
+GOT_OCTUI
+```
 
-### 2d. kimi mid-turn: NOT available in the path a lane uses
+Plain Enter steers; opencode needs no extra key. Bare `opencode` also takes
+`-m/--model`, `--auto`, `-s/--session` and `--port`, so a lane keeps the model
+pin and the auto-approve it had headless.
 
-`kimi --help`: `-p, --prompt <prompt>  Run one prompt non-interactively and
-print the response.` The prompt is a flag value; the process reads no further
-stdin. Two flag combinations are refused outright, measured:
+### 2d. kimi mid-turn: YES, through the TUI, and it names its own steer key
+
+`kimi -p` is the headless one-shot: the prompt is a flag value and the process
+reads no further stdin. Two flag combinations are refused outright:
 
 ```
 $ kimi -p "..." --output-format stream-json --auto
@@ -203,22 +205,74 @@ $ kimi -p "..." --output-format stream-json -y
 error: Cannot combine --prompt with --yolo.
 ```
 
-`kimi -p` runs tools without approval anyway, measured:
+The TUI is a different program. Sending text plus Enter mid-turn QUEUES it, and
+the pane says so in its own words:
 
 ```
-$ kimi -p "Run the shell command: echo KIMI_TOOLS_WORK > /tmp/kimi-tool-probe.txt" --output-format stream-json
-{"role":"assistant","tool_calls":[{"type":"function","id":"tool_2bIB...","function":{"name":"Bash","arguments":"{\"command\":\"echo KIMI_TOOLS_WORK > /tmp/kimi-tool-probe.txt && cat ...\"}"}}]}
-{"role":"tool","tool_call_id":"tool_2bIB...","content":"KIMI_TOOLS_WORK\n"}
-{"role":"meta","type":"session.resume_hint","session_id":"session_02ff5485-ab77-4912-b218-0235aad30883","command":"kimi -r session_02ff5485-...","content":"To resume this session: ..."}
+   ❯ STOP sleeping. Immediately run: echo GOT_KIMITUI > /tmp/kimitui-proof.txt then say DONE.
+     ↑ to edit · ctrl-s to steer immediately
 ```
 
-That last line is how boop learns kimi's session id.
+That hint IS the answer. Sending `C-s`:
 
-Upgrade path: `kimi acp` runs the Agent Client Protocol over stdio. ACP's
-`session/prompt` is a request that resolves at turn end; whether a second
-concurrent `session/prompt` steers a live turn is not specified and was not
-measured. `kimi web` also exposes a REST + WebSocket surface on port 58627. Both
-are named as the route to mid-turn kimi; neither was built here.
+```
+$ tmux send-keys -t kimitui C-s
+# pane:
+ ● The user wants me to stop sleeping and run that echo command. This is a simple, harmless write to /tmp. The user explicitly instructed it.
+ ● Ran a command
+   $ echo GOT_KIMITUI > /tmp/kimitui-proof.txt
+   Command executed successfully.
+$ cat /tmp/kimitui-proof.txt
+GOT_KIMITUI
+```
+
+Two other facts a lane must handle, both measured:
+
+| fact | evidence |
+|---|---|
+| kimi shows a per-folder "Trust this folder?" dialog on first launch, and every lane worktree is a new folder | the pane blocks on it until one `Enter` is sent |
+| a 7599-byte brief pastes whole in 0.01 s and does NOT submit early | `tmux send-keys -l` writes LF for an embedded newline; only a named `Enter` sends CR, so the whole brief sat in the input box and one Enter submitted it |
+
+The large-brief question the design had to answer is therefore settled by
+measurement: typing the brief is reliable, and no "read this file" indirection
+is needed.
+
+### 2e. The TUI channel
+
+`src/channel/tui.rs` is one implementation with a per-harness profile:
+
+| field | opencode | kimi |
+|---|---|---|
+| `command` | `opencode --auto [-m M] [-s S]` | `kimi --auto [-m M] [-S S]` |
+| `steer_key` | `None`, Enter is the steer | `Some("C-s")` |
+| `boot_keys` | none | `["Enter"]`, for the trust dialog |
+
+It opens the TUI in a tmux window beside the supervisor (`0: tmux`,
+`1: <harness>-agent`), types the brief, and types every later hail into the
+running turn.
+
+**Turn end for a TUI, the choice and why.** A TUI never exits, so the process rc
+that the headless path used is gone. The signal chosen is pane-body quiescence:
+capture the pane, drop the last 3 footer lines (a rotating tip and a token
+counter, which are not turn state), hash the rest, and call the turn ended once
+one hash holds for 20 s. Measured on both TUIs:
+
+```
+=== IDLE stability ===
+t=3   kimi=eaa61c94149b  opencode=5f717ee72807
+t=18  kimi=eaa61c94149b  opencode=5f717ee72807      <- one hash held 18 s
+=== BUSY ===
+t=3   opencode=298d13811b40
+t=6   opencode=8d309c130c8d
+t=24  opencode=db6d719dd2aa                          <- changed on every 3 s sample
+```
+
+Both TUIs animate a spinner while working, so "the pane stopped repainting" and
+"the agent stopped working" are the same event. The honest cost: a TUI lane's rc
+means "reached idle", not "succeeded", which is strictly weaker than the process
+rc the claude and codex channels still return.
+
+---
 
 ---
 
@@ -343,13 +397,13 @@ completion row back into its context.
 |---|---|---|---|---|
 | claude | one long-lived `claude -p --input-format stream-json --output-format stream-json --session-id <uuid> --dangerously-skip-permissions` child | write another `{"type":"user",...}` line to its stdin | `{"type":"result"}` event | **MidTurn** |
 | codex | `codex app-server` child, `initialize` -> `thread/start` (sandbox `danger-full-access`, approvalPolicy `never`) -> `turn/start` | `turn/steer` with `expectedTurnId` | `turn/completed` notification | **MidTurn** |
-| opencode | one `opencode run --auto -m <model> [-s <ses>] <text>` child per turn | none available (section 2c) | child exit | NextTurn |
-| kimi | one `kimi --output-format stream-json [-m <model>] [-S <ses>] -p <text>` child per turn | none available (section 2d) | child exit | NextTurn |
+| opencode | bare `opencode --auto` TUI in a tmux window | type the text, then Enter | pane quiescence | **MidTurn** |
+| kimi | bare `kimi --auto` TUI in a tmux window | type the text, Enter, then `C-s` | pane quiescence | **MidTurn** |
 
-`Delivery::NextTurn` is not a dropped message. The supervisor holds it and
-starts a resume turn the instant the running one ends, with no human in the
-loop. The behavior the old doctrine described ("let the lane finish and
-re-dispatch with its session id, or kill it") is now done by boop, unprompted.
+All four are `Delivery::MidTurn`. `Delivery::NextTurn` remains in the trait as
+the safe answer for a harness that cannot take text into a running turn: the
+supervisor holds it and opens a resume turn the instant the current one ends.
+No harness in this repo needs that tier today.
 
 ### rc
 
@@ -500,12 +554,60 @@ result chore-proof-full-kimi   -> coordinator : lane chore-proof-full-kimi done 
 
 ### The result table
 
-| harness | spawn | hail delivered | agent acted | tier | completion row |
+| harness | transport | hail delivered | agent acted | tier | completion row |
 |---|---|---|---|---|---|
-| claude | `lane create` worktree + tmux | yes, `to_timestamp` stamped | `GOT_CLAUDE`, `GOT_FULLPATH_*` written | midturn | `rc=0` |
-| codex | `lane create` worktree + tmux | yes | `GOT_FULLPATH_CODEX` written | midturn | `rc=0` |
-| opencode | `lane create` worktree + tmux | yes | `GOT_FULLPATH_OPENCODE` written | nextturn | `rc=0` |
-| kimi | `lane create` worktree + tmux | yes | `GOT_FULLPATH_KIMI` written | nextturn | `rc=0` |
+| claude | `claude -p` stream-json child | yes, `to_timestamp` stamped | `GOT_FULLPATH_CLAUDE` | **midturn** | `rc=0` |
+| codex | `codex app-server` JSON-RPC child | yes | `GOT_FULLPATH_CODEX` | **midturn** | `rc=0` |
+| opencode | bare `opencode` TUI in a tmux window | yes | `GOT_TUI_OPENCODE` | **midturn** | `rc=0` |
+| kimi | bare `kimi` TUI in a tmux window | yes | `GOT_TUI_KIMI` | **midturn** | `rc=0` |
+
+Every lane was spawned by the real `boop beep lane create` with a worktree, a
+tmux session, `--parent coordinator` and `--wait`.
+
+### The two TUI lanes, end to end
+
+```
+$ boop beep lane create --branch chore/tui-oc --brief $S/tui-brief.md --harness opencode \
+    --model openrouter/deepseek/deepseek-v4-flash-0731 --parent coordinator --mail-dir $S/mail2 --wait
+$ tmux list-windows -t chore-tui-oc
+0: tmux* (1 panes) [80x24] ...
+1: opencode-agent (1 panes) [210x63] ...
+$ boop beep hail chore-tui-oc --from coordinator --kind hail --mail-dir $S/mail2 \
+    --body 'STOP the sleeping right now. Immediately run: echo GOT_TUI_OPENCODE > /tmp/boop-tui-opencode.txt   then say DONE and stop.'
+queued m-e916dcf4 -> chore-tui-oc (lane supervisor delivers it)
+$ cat /tmp/boop-tui-opencode.txt
+GOT_TUI_OPENCODE
+```
+
+Mailbox and store for that lane:
+
+```
+hail     coordinator  -> chore-tui-oc  delivered=2026-08-12T17:44:31.572444Z
+result   chore-tui-oc -> coordinator   lane chore-tui-oc done rc=0
+{"lane":"chore-tui-oc","edge":"deliver-midturn"}
+```
+
+kimi, same shape, with its own reasoning as the receipt:
+
+```
+$ tmux list-windows -t chore-tui-kimi
+1: kimi-agent (1 panes) [210x63] ...
+$ boop beep hail chore-tui-kimi ... --body 'STOP the sleeping right now. Immediately run: echo GOT_TUI_KIMI ...'
+queued m-efb893ab -> chore-tui-kimi (lane supervisor delivers it)
+
+# the agent pane, mid-turn:
+ ✨ [boop hail m-efb893ab from coordinator] STOP the sleeping right now. ...
+ ⠼ thinking...
+   The user has interrupted with a new instruction: stop the sleeping, run `echo GOT_TUI_KIMI >
+
+$ cat /tmp/boop-tui-kimi.txt
+GOT_TUI_KIMI
+```
+
+```
+hail  coordinator -> chore-tui-kimi  delivered=2026-08-12T17:51:16.007644Z
+{"lane":"chore-tui-kimi","edge":"deliver-midturn"}
+```
 
 ---
 
@@ -834,12 +936,177 @@ $ boop --help | grep -c "Only interactive TUIs"
 
 ---
 
-## 11. Known gaps and what is not proven
+## 11. Worktree warmup: the boop-start recipe
+
+### The defect, reproduced
+
+Four lanes in one day wrote their whole deliverable, failed to commit, and
+exited rc=0. The cause is the pre-commit hook. `.githooks/pre-commit` execs
+`v6/tsv2/scripts/comment-budget-rail.sh`, which needs three things a fresh
+worktree does not have:
+
+| need | line |
+|---|---|
+| the extractor binary | `comment-budget-rail.sh:19-23`, `if [ ! -x "$DL_EXTRACT_BIN" ] ... exit 1` |
+| `v6/tsv2/node_modules` | it runs `node --experimental-transform-types v6/tsv2/serve/main.ts` |
+| `v6/sprefa-store/js/node_modules` | that server imports `v6/sprefa-store/js/src/engine/lib.ts` |
+
+Reproduced on a fresh worktree, and this is the whole bug in four lines:
+
+```
+$ git worktree add -q --detach $W/w3 HEAD && cd $W/w3
+$ printf 'probe\n' > HOOK_PROBE.md && git add HOOK_PROBE.md
+$ git commit -m "probe: hook in a COLD worktree"
+comment-budget rail: extractor missing at .../w3/v6/sprefa-extract/target/release/extract
+  build: (cd .../w3/v6/sprefa-extract && cargo build --release --features cli --bin extract)
+$ git log --oneline -1
+44de9935 just: boop-start warms a worktree ...     <- the probe commit is NOT there
+```
+
+The commit did not happen and nothing above the hook says so loudly.
+
+### Measurements, this machine, 2026-08-12
+
+| M | what | time |
+|---|---|---|
+| M1 | fresh worktree, extractor build, own `target/` | **24.04 s** |
+| M2 | fresh worktree, shared `CARGO_TARGET_DIR`, cache cold | 22.80 s |
+| M3 | fresh worktree, shared `CARGO_TARGET_DIR`, cache warm | **5.57 s** |
+| M4 | copy the binary from a warm tree | **0.01 s**, and the copy runs |
+| M4b | digest of `v6/sprefa-extract/src` + `Cargo.toml` (the cache key) | 0.05 s |
+| M5 | `pnpm install` in `v6/tsv2`, fresh worktree, warm global store | 0.75 s |
+| M6 | `pnpm install` in `v6/sprefa-store/js` | 0.64 s |
+
+Two readings that decide the design:
+
+- A shared `CARGO_TARGET_DIR` is worth 4.1x (M1 vs M3) and no more, because
+  cargo's fingerprint includes the worktree path, so every new worktree still
+  recompiles the leaf crate and re-links a 46 MB binary.
+- Copying the finished binary is worth **2400x** (M1 vs M4) whenever the sources
+  are unchanged, which for a lane branching off a shared base is the normal case.
+
+So the recipe tries the digest-keyed copy FIRST and falls back to the shared
+target dir. Ordering is the whole win.
+
+pnpm needs no avoidance: 0.75 s and 0.64 s against a global content-addressed
+store at `~/Library/pnpm/store/v11`. It is already linking, not downloading.
+
+### Lock contention, measured rather than guessed
+
+```
+=== two concurrent builds into ONE shared CARGO_TARGET_DIR ===
+p1     Blocking waiting for file lock on package cache
+p2     Blocking waiting for file lock on build directory
+p1 real 26.65
+p2 real 26.73
+=== control: one alone ===
+real 0.18
+```
+
+Concurrent cold builds serialize on cargo's build-directory lock. They do not
+corrupt; they queue. The digest cache makes this rare: only two lanes that are
+BOTH cold for the same digest can collide, and after the first stores the key
+every later lane copies in 0.01 s.
+
+### Build vs buy for the caching half
+
+| candidate | verdict |
+|---|---|
+| `sccache` | **Not adopted, and it would not have helped most.** Not installed here (`which sccache` -> not installed). It caches compilation units, so it would attack the 24 s but never reach the 0.01 s that a finished-binary copy gets. It is complementary, not competing: worth adding if the digest ever misses often, which would mean the extractor sources are changing often. |
+| shared `CARGO_TARGET_DIR` | **Adopted as the fallback path**, worth 4.1x on a cache miss, with the contention above as the known cost. |
+| digest-keyed binary cache at `~/.cache/boop/extract/<digest>` | **Adopted as the primary path.** 16 lines of shell, no dependency, and it is the only option that reaches 0.01 s. |
+| pnpm's global store | **Already bought and already working.** No change. |
+| a bespoke build daemon or artifact server | rejected without measurement being needed: the two lines above already reach 1.5 s for a whole worktree. |
+
+### The recipe, and which justfile
+
+It went in the **root** `justfile`, not `v6/justfile`. Two reasons: a lane's
+worktree root is where `just` resolves a justfile with no `-f`, and the recipe
+spans `v6/sprefa-extract`, `v6/tsv2` and `v6/sprefa-store/js`, which makes it a
+whole-repo concern rather than a v6 one.
+
+### Blocking or warning: the choice
+
+**A failing `boop-start` blocks the spawn.** The argument: the recipe exists
+because a worktree missing the hook's inputs makes every `git commit` abort,
+and the lane reads that abort as success. Warning instead would reproduce
+exactly the loss it is meant to prevent, with the lane still spawning, still
+working, and still unable to commit. Blocking costs one legible error at spawn
+time, in front of a coordinator who is present and can fix it once.
+
+The counter-case is real: a transient pnpm network failure would block every
+spawn. Two mitigations, both in: the error names the worktree and the exact
+command, and `--no-start` opts out.
+
+A repo that declares no `boop-start` is skipped in silence
+(`worktree::has_recipe`), because a repo without one is a repo that does not
+need one.
+
+### Acceptance
+
+**Item 3, a repo with no recipe spawns normally.** The first probe lane branched
+from `origin/main`, which does not yet carry the recipe:
+
+```
+$ boop beep lane create --branch chore/commit-probe-1 ... --wait
+dispatched m-a7b3d7ac -> chore-commit-probe-1
+real 10.98
+$ just -f .boop-worktrees/chore/commit-probe-1/justfile --show boop-start
+error: justfile does not contain recipe `boop-start`
+```
+
+No boop-start output, no error, lane ran normally.
+
+**Item 1, boop-start runs and the lane's FIRST commit succeeds with the hook
+active.** Cold cache, base pinned to the branch that has the recipe:
+
+```
+$ rm -rf ~/.cache/boop
+$ boop beep lane create --branch chore/commit-probe-1 --brief $S/commit-brief.md \
+    --harness claude --model haiku --base-sha 17152acc --parent coordinator --wait
+  boop-start: building extractor, shared target /Users/chrishafley/.cache/boop/cargo-target
+  boop-start: extractor built and cached as 67129c3e8d3cf17c
+  boop-start: v6/tsv2 installed
+  boop-start: v6/sprefa-store/js installed
+  boop-start: ready in 27s
+boop-start: 27.6s
+dispatched m-1d11d7ca -> chore-commit-probe-1 (tmux chore-commit-probe-1)
+real 39.35
+
+$ git -C .boop-worktrees/chore/commit-probe-1 log --oneline -3
+7c8dabf9 probe: lane commits with the hook active      <- the lane's own commit
+17152acc boop: run the repo's boop-start recipe before a lane is spawned
+44de9935 just: boop-start warms a worktree ...
+$ git -C .boop-worktrees/chore/commit-probe-1 status --short
+(clean)
+```
+
+**Item 2, a second fresh worktree is measurably faster.**
+
+```
+$ boop beep lane create --branch chore/commit-probe-2 ... --base-sha 17152acc --wait
+  boop-start: extractor from cache 67129c3e8d3cf17c
+  boop-start: v6/tsv2 installed
+  boop-start: v6/sprefa-store/js installed
+  boop-start: ready in 2s
+boop-start: 1.5s
+real 12.41
+$ git -C .boop-worktrees/chore/commit-probe-2 log --oneline -2
+43b042e2 probe: lane commits with the hook active
+17152acc boop: run the repo's boop-start recipe before a lane is spawned
+```
+
+**27.6 s cold, 1.5 s warm: 18x**, and both lanes committed.
+
+---
+
+## 12. Known gaps and what is not proven
 
 | gap | detail |
 |---|---|
-| opencode mid-turn | not achievable from `opencode run`; four routes measured and closed in section 2c. Upgrade is a `delivery:"steer"` POST once `opencode serve` can run the provider. |
-| kimi mid-turn | not achievable from `kimi -p`; `kimi acp` and `kimi web` are the named routes and neither was built or measured. |
+| a TUI lane's rc | means "reached idle", not "succeeded". A TUI never exits, so the process rc the claude and codex channels return has no TUI equivalent. Section 2e. |
+| pane quiescence tuning | 20 s of a held hash. A harness that pauses longer than that mid-turn without repainting would be called done early. Not observed on either TUI; the spinner repaints continuously. |
+| concurrent cold `boop-start` | two lanes cold for the same digest serialize on cargo's build lock, 26.7 s each. Section 11. |
 | `/clear` inside a claude TUI | the attach mechanism (re-read `conversation_id()` every turn) covers it whenever boop owns the process, which is every lane. A human's own interactive session that boop did not spawn is NOT covered, because boop has no evidence there. |
 | registry race under concurrent `lane create` | observed once: two `lane create` calls launched in the same instant left only one route in `registry.json`, and the second lane's hail reported "no registry route". Both `write_route` and `lane delete --route-only` go through `bus::cas_update_json`, so the CAS itself looks right; the cause was not found. Sequential spawns were clean in every run. Worth its own arc. |
 | the two pre-existing test failures | section 10. |
