@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "interned_parent": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    }
+  },
+  "$id":"list_interned_set_end_to_end#081553cbbb4459d6",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

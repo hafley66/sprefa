@@ -14,11 +14,11 @@
 % CALLOUTS (the things to keep distinguished, hard-won this arc)
 % ═════════════════════════════════════════════════════════════════════════════
 %
-% * TWO DL SURFACES, ONE LANGUAGE. compile/parse_dl.pl is the real text door;
-%   v6/dl/grammar/dl.langium is a narrow MVP slice of it. A construct missing
-%   from the langium grammar is usually PRESENT in the real surface. The verdict
-%   on any construct is compile/out/manifest.json (bucket + unsupported construct reason per
-%   fixture), never a comment header.
+% * ONE DL SURFACE, ONE PARSER. compile/parse_dl_dcg.pl is the text door and
+%   the only parser in the repo. The classic hand-threaded parse_dl.pl and the
+%   langium grammar (with the whole v6/dl app that was its only consumer) are
+%   deleted. The verdict on any construct is compile/out/manifest.json (bucket
+%   + unsupported construct reason per fixture), never a comment header.
 %
 % * JSON IS TWO PLANES, ONLY ONE CLOSED. READING compiles: spread/1 array
 %   explode, `$name` key holes, `**` uncapped descent, typed captures
@@ -200,7 +200,7 @@ algorithm(tsv2_analyze,    ast,         fold,              'compile/analyze.pl (
 algorithm(tsv2_strata,     strata,      monotone_fixpoint, 'compile/strat.pl (mirrors engine relax_strata; Kahn once-per-tick order)').
 algorithm(tsv2_lower,      ast,         rewrite,           'compile/lower.pl (lowered/8 target-neutral plan: SQL text + structure, zero TS idiom)').
 algorithm(tsv2_ts_emit,    ast,         rewrite,           'compile/emit_ts.pl (backend #1 over lowered/8; the rust consumer v6/dd-runner reads the dd_plan JSON twin from compile/6_isolated_compiler_dd.pl)').
-algorithm(tsv2_surface_dcg, ast,        rewrite,           'compile/parse_dl.pl + print_dl.pl (phase D, LANDED: DCG is the CANONICAL parser; langium was stopgap; compile_dl6/2 is the text door)').
+algorithm(tsv2_surface_dcg, ast,        rewrite,           'compile/parse_dl_dcg.pl + print_dl.pl (phase D, LANDED: the DCG is the ONLY parser since the classic parse_dl.pl deletion; compile_dl6/2 is the text door)').
 
 % Added by the world-health audit 2026-07-29: five modules that carry real
 % analyses and had no row, three of them born in the org refactor (rank
@@ -270,7 +270,7 @@ capability(codegen_typegen,    'hafley-tsp + json-rx lineage',                  
 % ── tech roles: who is allowed to do what ───────────────────────────────────
 
 tech(prolog, compiler_tier, [parse_via_ops, desugar, check, weave, emit],
-     'never runs fixpoints at scale; bundled with the eventual rust binary. CANONICAL parser (user 2026-07-28: langium/0_generated in v6/dl was a stopgap; the phase D DCG supersedes it, dl.langium stays a spelling reference only)').
+     'never runs fixpoints at scale; bundled with the eventual rust binary. THE parser (user 2026-07-28: langium/0_generated in v6/dl was a stopgap superseded by the phase D DCG; user 2026-08-12: v6/dl and its langium grammar deleted outright)').
 tech(sqlite, fact_tier, [facts, fixpoints, registers, history, sub_graph, pending_delays],
      'everything diskable; the only tier allowed to hold a full relation').
 tech(rxjs, temporal_tier, [yield_points, alignment_ops, spawn, one_subscribe],
