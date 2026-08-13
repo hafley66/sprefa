@@ -340,8 +340,8 @@ test(switch_as_keyed_replace_edge_sql) :-
     DeltaProjectSql ==
       'SELECT d0."session_id" AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(d0."route_id")) AS "target" FROM "__frontier_route_change" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'.
 
-% An edge-headed keyed rel's table must carry PRIMARY KEY on the KEY
-% COLUMNS ALONE, matching the UPSERT's ON CONFLICT target -- SQLite
+% An edge-headed keyed rel's table carries UNIQUE on the KEY COLUMNS ALONE,
+% matching the UPSERT's ON CONFLICT target -- SQLite
 % requires an EXACT constraint match ("ON CONFLICT clause does not match
 % any PRIMARY KEY or UNIQUE constraint" otherwise), a real error only the
 % real sqlite3 CLI / real seam surfaced, never a Prolog-level check. A
@@ -351,10 +351,12 @@ test(switch_as_keyed_replace_ddl_pk_shape) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, Ddl, _, _, _, _, _, _),
     include(ddl_for_table(open_scope), Ddl, [OpenScopeDdl]),
-    once(sub_atom(OpenScopeDdl, _, _, _, 'PRIMARY KEY ("session_id")')),
-    \+ sub_atom(OpenScopeDdl, _, _, _, 'PRIMARY KEY ("session_id", "target")'),
+    once(sub_atom(OpenScopeDdl, _, _, _, '"__id" INTEGER PRIMARY KEY')),
+    once(sub_atom(OpenScopeDdl, _, _, _, 'UNIQUE ("session_id")')),
+    \+ sub_atom(OpenScopeDdl, _, _, _, 'UNIQUE ("session_id", "target")'),
     include(ddl_for_table(route_row), Ddl, [RouteRowDdl]),
-    once(sub_atom(RouteRowDdl, _, _, _, 'PRIMARY KEY ("route_id", "body")')).
+    once(sub_atom(RouteRowDdl, _, _, _, '"__id" INTEGER PRIMARY KEY')),
+    once(sub_atom(RouteRowDdl, _, _, _, 'UNIQUE ("route_id", "body")')).
 
 % FAIL-FIRST RECEIPT: world-fed keyed arrival replacement.
 %
@@ -382,8 +384,9 @@ test(world_fed_keyed_arrival_uses_key_constraint_and_replace) :-
     lowered_for('engine_core.pl', world_fed_keyed_arrival_replaces, Lowered),
     Lowered = lowered(_, Ddl, ArrivalStatements, _, _, _, _, _),
     include(ddl_for_table(world_mode), Ddl, [WorldModeDdl]),
-    once(sub_atom(WorldModeDdl, _, _, _, 'PRIMARY KEY ("col1")')),
-    \+ sub_atom(WorldModeDdl, _, _, _, 'PRIMARY KEY ("col1", "col2")'),
+    once(sub_atom(WorldModeDdl, _, _, _, '"__id" INTEGER PRIMARY KEY')),
+    once(sub_atom(WorldModeDdl, _, _, _, 'UNIQUE ("col1")')),
+    \+ sub_atom(WorldModeDdl, _, _, _, 'UNIQUE ("col1", "col2")'),
     memberchk(
         arrivalstmt(
             world_mode/2,
@@ -920,7 +923,7 @@ test(catalog_table_shape) :-
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, PRIMARY KEY ("rel_id")) WITHOUT ROWID',
+    OneCreate == 'CREATE TABLE "__rel" ("__id" INTEGER PRIMARY KEY, "rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, UNIQUE ("rel_id"))',
     memberchk('CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")', Ddl).
 
 % FAIL-FIRST RECEIPT: the seed door bypassed the dictionary at dict, declaring
@@ -932,12 +935,11 @@ test(catalog_table_shape_at_dict) :-
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" INTEGER NOT NULL, "h_schema" INTEGER NOT NULL, "h_rule" INTEGER NOT NULL, PRIMARY KEY ("rel_id")) WITHOUT ROWID',
+    OneCreate == 'CREATE TABLE "__rel" ("__id" INTEGER PRIMARY KEY, "rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" INTEGER NOT NULL, "h_schema" INTEGER NOT NULL, "h_rule" INTEGER NOT NULL, UNIQUE ("rel_id"))',
     catalog_first_seed_row(Ddl,
       '(1,0,0,(SELECT s."__id" FROM "__str" s WHERE s."content" = \'text\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'primitive\'),0,0,0,(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'))').
 
-% The dense rel_id is declared the single surrogate key in both storage
-% modes, replacing the old all-column composite PK.
+% The dense rel_id is the single natural key constraint in both storage modes.
 test(catalog_rel_id_is_the_key_in_both_modes) :-
     forall(member(Mode, [direct, dict]),
            ( catalog_lowered(Mode, catalog_shape, Ddl),
@@ -945,7 +947,8 @@ test(catalog_rel_id_is_the_key_in_both_modes) :-
                      ( member(Create, Ddl),
                        sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
                      [OneCreate]),
-             sub_atom(OneCreate, _, _, _, 'PRIMARY KEY ("rel_id")') )).
+             sub_atom(OneCreate, _, _, _, '"__id" INTEGER PRIMARY KEY'),
+             sub_atom(OneCreate, _, _, _, 'UNIQUE ("rel_id")') )).
 
 % Those lookups are total only if the seed's own strings reach "__str" first:
 % dictionary DDL, then the string seed, then the catalog seed.
@@ -2014,7 +2017,7 @@ test(accepts_edge_head_column_typed_from_its_body) :-
     program_plan(fixture(edge_head_typing, Prog, [pin_extracted(20, doc_link)],
                          [], [])-[], [intern(direct)], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TABLE "xref" ("col1" INTEGER NOT NULL, "col2" TEXT NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
+    memberchk('CREATE TABLE "xref" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, "col2" TEXT NOT NULL, UNIQUE ("col1"))', Ddl).
 
 % A ref that ONLY an Initial row mentions still gets a table: engine.pl's
 % seed_store/3 stores it, so it is part of the oracle's final state.
@@ -2022,7 +2025,7 @@ test(initial_only_ref_still_gets_a_table) :-
     Prog = prog([kind(ping/1, log), keep(ping/1, all)], []),
     program_plan(fixture(seeded, Prog, [known_repo(2)], [], [])-[], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TABLE "known_repo" ("col1" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
+    memberchk('CREATE TABLE "known_repo" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, UNIQUE ("col1"))', Ddl).
 
 % The class the TICK PHASE ALIGNMENT arc opened: an edge arm joining a level
 % rel an ARRIVAL can retract. It used to throw
@@ -4692,7 +4695,7 @@ test(bool_and_float_storage_constraints_are_exact) :-
                          BoolLowered),
     BoolLowered = lowered(_, BoolDdl, _, _, _, _, _, _),
     memberchk(
-      'CREATE TABLE "flag" ("name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), PRIMARY KEY ("name", "enabled")) WITHOUT ROWID',
+      'CREATE TABLE "flag" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), UNIQUE ("name", "enabled"))',
       BoolDdl),
     interning_lowered_in('5_value_plane.pl', direct, float_arithmetic_is_binary64,
                          FloatLowered),
