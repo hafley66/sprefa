@@ -1378,11 +1378,12 @@ catalog_rows(ModuleName, Rules, RelPlans, AllRows) :-
 %   the id one past the last decl row).
 catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     short_hash(ModuleName, ModuleHash),
+    catalog_rel_plans(Decls, RelPlans, CatalogRelPlans, CatalogRelModules),
     rule_bodies_map(Rules, BodiesMap),
     catalog_primitive_rows(1, PrimitiveRows),
     length(PrimitiveRows, PrimitiveCount),
     ListStartId is PrimitiveCount + 1,
-    catalog_list_types(RelPlans, ListTypes),
+    catalog_list_types(CatalogRelPlans, ListTypes),
     catalog_list_rows(ListTypes, [], ListStartId, ListRowRows, ListIdMap),
     length(ListRowRows, ListCount),
     ModuleId is ListStartId + ListCount,
@@ -1392,19 +1393,85 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
                                 SplicedRows, SplicedModules, FirstRelId),
     Modules0 = [mod(ModuleName, ModuleHash, ModuleId) | SplicedModules],
     module_id_by_hash(Modules0, HashIdMap),
+    catalog_rel_module_ids(CatalogRelModules, HashIdMap, CatalogRelModulesWithIds),
     rel_module_map(Decls, HashIdMap, RelModuleMap),
     Modules = modules(ModuleHash, ModuleId, RelModuleMap),
-    catalog_rel_id_map(RelPlans, FirstRelId, [], RelIdMap),
-    catalog_rel_block_end(RelPlans, FirstRelId, RelBlockEnd),
+    catalog_rel_id_map(CatalogRelPlans, FirstRelId, [], RelIdMap),
+    catalog_rel_block_end(CatalogRelPlans, FirstRelId, RelBlockEnd),
     catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, RelBlockEnd,
                       NestMap, RoomRows, IdAfterRooms),
     catalog_module_edge_rows(Decls, HashIdMap, IdAfterRooms, EdgeRows, FinalId),
-    catalog_rel_rows(RelPlans, BodiesMap, Modules, RelIdMap,
+    catalog_rel_rows(CatalogRelPlans, CatalogRelModulesWithIds, BodiesMap, Modules, RelIdMap,
                      ListIdMap, NestMap, FirstRelId, _, RelRows),
     append([PrimitiveRows, ListRowRows, [ModuleRow], SplicedRows, RelRows,
             RoomRows, EdgeRows],
            AllRows),
     Context = ctx(Modules, RelIdMap, ListIdMap, FinalId).
+
+catalog_rel_plans(Decls, RelPlans, CatalogRelPlans, CatalogRelModules) :-
+    module_rel_columns(Decls, ModuleRelColumns),
+    maplist(catalog_rel_plan(ModuleRelColumns), RelPlans,
+            CatalogPlanLists, CatalogModuleLists),
+    append(CatalogPlanLists, CatalogRelPlans),
+    append(CatalogModuleLists, CatalogRelModules).
+
+module_rel_columns(Decls, ModuleRelColumns) :-
+    module_rel_columns(Decls, [], ModuleRelColumns).
+
+module_rel_columns([], _ModuleDecls, []).
+module_rel_columns([module_decl(_, _) | Rest], ModuleDecls, ModuleRelColumns) :-
+    !,
+    take_module_rel_decls(Rest, ModuleDecls, ThisModuleRows, More),
+    module_rel_columns(More, [], MoreModuleRows),
+    append(ThisModuleRows, MoreModuleRows, ModuleRelColumns).
+module_rel_columns([Decl | Rest], ModuleDecls0, ModuleRelColumns) :-
+    module_rel_columns(Rest, [Decl | ModuleDecls0], ModuleRelColumns).
+
+take_module_rel_decls([rel_module_decl(Name, Hash) | Rest], ModuleDecls,
+                     [module_rel(Name, Hash, ModuleDecls) | MoreRows], More) :-
+    !,
+    take_module_rel_decls(Rest, ModuleDecls, MoreRows, More).
+take_module_rel_decls(Rest, _ModuleDecls, [], Rest).
+
+catalog_rel_plan(ModuleRelColumns, RelPlan, CatalogPlans, CatalogModules) :-
+    relplan_parts(RelPlan, Name/Arity, Kind, _Columns, KeyOrNone, _ColumnTypes),
+    findall(Hash-Columns,
+            ( member(module_rel(Name, Hash, ModuleDecls), ModuleRelColumns),
+              module_rel_declared_columns(ModuleDecls, Name/Arity, Columns) ),
+            ModuleColumns),
+    ( ModuleColumns = [_, _ | _]
+    -> maplist(catalog_module_rel_plan(Name/Arity, Kind, KeyOrNone),
+               ModuleColumns, CatalogPlans, CatalogModules)
+    ; CatalogPlans = [RelPlan], CatalogModules = [none]
+    ).
+
+module_rel_declared_columns(ModuleDecls, Ref, Columns) :-
+    reverse(ModuleDecls, OrderedModuleDecls),
+    findall(Column-Type,
+            member(col_type(Ref, Column, Type), OrderedModuleDecls),
+            Columns),
+    Columns \== [].
+
+catalog_module_rel_plan(Ref, Kind, KeyOrNone, Hash-ColumnTypes,
+                        rel(Ref, Kind, Columns, KeyOrNone), module(Hash)) :-
+    maplist(catalog_declared_column, ColumnTypes, Columns).
+
+catalog_declared_column(Name-int, col(Name, declared(int), int)).
+catalog_declared_column(Name-float, col(Name, declared(float), float)).
+catalog_declared_column(Name-text, col(Name, declared(text), text)).
+catalog_declared_column(Name-bool, col(Name, declared(bool), bool)).
+catalog_declared_column(Name-json, col(Name, declared(json), json)).
+catalog_declared_column(Name-json_list(Element),
+                        col(Name, declared(json_list(Element)), json_list(Element))).
+catalog_declared_column(Name-Type, col(Name, declared(Type), ref(Type))).
+
+catalog_rel_module_ids([], _HashIdMap, []).
+catalog_rel_module_ids([none | Rest], HashIdMap, [none | More]) :-
+    catalog_rel_module_ids(Rest, HashIdMap, More).
+catalog_rel_module_ids([module(Hash) | Rest], HashIdMap,
+                       [module(Hash, Id) | More]) :-
+    memberchk(Hash-Id, HashIdMap),
+    catalog_rel_module_ids(Rest, HashIdMap, More).
 
 % One module row per FILE. The entry's row is minted above, so a single-file
 % program mints nothing here and its byte layout does not move.
@@ -1542,7 +1609,8 @@ catalog_rel_id_map([], _Id, Acc, Acc).
 catalog_rel_id_map([RelPlan | Rest], Id0, Acc0, Acc) :-
     relplan_parts(RelPlan, Name/RelArity, _, _, _, _),
     IdAfterRel is Id0 + 1 + RelArity,
-    catalog_rel_id_map(Rest, IdAfterRel, [Name-Id0 | Acc0], Acc).
+    ( memberchk(Name-_, Acc0) -> Acc1 = Acc0 ; Acc1 = [Name-Id0 | Acc0] ),
+    catalog_rel_id_map(Rest, IdAfterRel, Acc1, Acc).
 
 % Every caller binds Name and takes the first solution; member/2 left the
 % catalog build carrying a choicepoint per ref column.
@@ -1556,12 +1624,12 @@ catalog_rel_block_end([RelPlan | Rest], Id0, Id) :-
     Id1 is Id0 + 1 + RelArity,
     catalog_rel_block_end(Rest, Id1, Id).
 
-catalog_rel_rows([], _BodiesMap, _Modules, _RelIdMap, _ListIdMap,
+catalog_rel_rows([], [], _BodiesMap, _Modules, _RelIdMap, _ListIdMap,
                  _NestMap, Id, Id, []).
-catalog_rel_rows([RelPlan | Rest], BodiesMap, Modules, RelIdMap,
+catalog_rel_rows([RelPlan | Rest], [RelModule | ModuleRest], BodiesMap, Modules, RelIdMap,
                  ListIdMap, NestMap, Id0, FinalId, Rows) :-
     relplan_parts(RelPlan, Name/RelArity, _Kind, Columns, KeyOrNone, ColumnTypes),
-    rel_module(Modules, Name, RelHash, RelModuleId),
+    catalog_rel_module(Modules, RelModule, Name, RelHash, RelModuleId),
     rel_h_id(RelHash, Name, RelArity, RelHId),
     schema_hash(Columns, ColumnTypes, KeyOrNone, HSchema),
     rule_hash(BodiesMap, Name/RelArity, HRule),
@@ -1572,9 +1640,13 @@ catalog_rel_rows([RelPlan | Rest], BodiesMap, Modules, RelIdMap,
     catalog_column_rows(Columns, ColumnTypes,
                         RelIdMap, ListIdMap, RelModuleId, RelHId, Id0, 1,
                         IdAfterRel, IdAfterColumns, ColumnRows),
-    catalog_rel_rows(Rest, BodiesMap, Modules, RelIdMap, ListIdMap,
+    catalog_rel_rows(Rest, ModuleRest, BodiesMap, Modules, RelIdMap, ListIdMap,
                      NestMap, IdAfterColumns, FinalId, RestRows),
     append([RelRow | ColumnRows], RestRows, Rows).
+
+catalog_rel_module(_Modules, module(Hash, ModuleId), _Name, Hash, ModuleId) :- !.
+catalog_rel_module(Modules, none, Name, RelHash, RelModuleId) :-
+    rel_module(Modules, Name, RelHash, RelModuleId).
 
 % A nested rel's local_name is its own SEGMENT, which is what makes the
 % (__rel_parent) index on (parent_id, local_name) a per-parent child lookup.

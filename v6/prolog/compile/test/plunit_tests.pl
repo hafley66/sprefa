@@ -55,7 +55,7 @@
 % checks the line table against a prefix walk at every index of a text; going
 % through parse_dl/4 alone only reaches the positions a unsupported construct happens to land
 % on.
-:- use_module('../../compile/parse_dl', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
+:- use_module('../../compile/parse_dl_dcg', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
 :- use_module('../../use_resolve',
               [ expand_uses/6, expand_uses/8, include_roots/2, resolve_use_path/3,
                 reset_parse_counts/0, parse_count/2 ]).
@@ -113,7 +113,6 @@
 :- ensure_loaded('2_subscribe.plt').
 :- ensure_loaded('6_isolated_compiler_dd.test.pl').
 :- ensure_loaded('emit_type_renderers.test.pl').
-:- ensure_loaded('parse_parity.test.pl').
 :- ensure_loaded('../../conformance/fixtures/0_generic_expand.pl').
 
 % Resolved relative to this file's own load-time directory (mirrors
@@ -341,8 +340,8 @@ test(switch_as_keyed_replace_edge_sql) :-
     DeltaProjectSql ==
       'SELECT d0."session_id" AS "session_id", json_object(\'fn\', \'route_data\', \'args\', json_array(d0."route_id")) AS "target" FROM "__frontier_route_change" d0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"'.
 
-% An edge-headed keyed rel's table must carry PRIMARY KEY on the KEY
-% COLUMNS ALONE, matching the UPSERT's ON CONFLICT target -- SQLite
+% An edge-headed keyed rel's table carries UNIQUE on the KEY COLUMNS ALONE,
+% matching the UPSERT's ON CONFLICT target -- SQLite
 % requires an EXACT constraint match ("ON CONFLICT clause does not match
 % any PRIMARY KEY or UNIQUE constraint" otherwise), a real error only the
 % real sqlite3 CLI / real seam surfaced, never a Prolog-level check. A
@@ -352,10 +351,12 @@ test(switch_as_keyed_replace_ddl_pk_shape) :-
     lowered_for(switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, Ddl, _, _, _, _, _, _),
     include(ddl_for_table(open_scope), Ddl, [OpenScopeDdl]),
-    once(sub_atom(OpenScopeDdl, _, _, _, 'PRIMARY KEY ("session_id")')),
-    \+ sub_atom(OpenScopeDdl, _, _, _, 'PRIMARY KEY ("session_id", "target")'),
+    once(sub_atom(OpenScopeDdl, _, _, _, '"__id" INTEGER PRIMARY KEY')),
+    once(sub_atom(OpenScopeDdl, _, _, _, 'UNIQUE ("session_id")')),
+    \+ sub_atom(OpenScopeDdl, _, _, _, 'UNIQUE ("session_id", "target")'),
     include(ddl_for_table(route_row), Ddl, [RouteRowDdl]),
-    once(sub_atom(RouteRowDdl, _, _, _, 'PRIMARY KEY ("route_id", "body")')).
+    once(sub_atom(RouteRowDdl, _, _, _, '"__id" INTEGER PRIMARY KEY')),
+    once(sub_atom(RouteRowDdl, _, _, _, 'UNIQUE ("route_id", "body")')).
 
 % FAIL-FIRST RECEIPT: world-fed keyed arrival replacement.
 %
@@ -383,8 +384,9 @@ test(world_fed_keyed_arrival_uses_key_constraint_and_replace) :-
     lowered_for('engine_core.pl', world_fed_keyed_arrival_replaces, Lowered),
     Lowered = lowered(_, Ddl, ArrivalStatements, _, _, _, _, _),
     include(ddl_for_table(world_mode), Ddl, [WorldModeDdl]),
-    once(sub_atom(WorldModeDdl, _, _, _, 'PRIMARY KEY ("col1")')),
-    \+ sub_atom(WorldModeDdl, _, _, _, 'PRIMARY KEY ("col1", "col2")'),
+    once(sub_atom(WorldModeDdl, _, _, _, '"__id" INTEGER PRIMARY KEY')),
+    once(sub_atom(WorldModeDdl, _, _, _, 'UNIQUE ("col1")')),
+    \+ sub_atom(WorldModeDdl, _, _, _, 'UNIQUE ("col1", "col2")'),
     memberchk(
         arrivalstmt(
             world_mode/2,
@@ -921,7 +923,7 @@ test(catalog_table_shape) :-
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, PRIMARY KEY ("rel_id")) WITHOUT ROWID',
+    OneCreate == 'CREATE TABLE "__rel" ("__id" INTEGER PRIMARY KEY, "rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" TEXT NOT NULL, "kind" TEXT NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" TEXT NOT NULL, "h_schema" TEXT NOT NULL, "h_rule" TEXT NOT NULL, UNIQUE ("rel_id"))',
     memberchk('CREATE INDEX IF NOT EXISTS "__rel_parent" ON "__rel" ("parent_id", "local_name")', Ddl).
 
 % FAIL-FIRST RECEIPT: the seed door bypassed the dictionary at dict, declaring
@@ -933,12 +935,11 @@ test(catalog_table_shape_at_dict) :-
             ( member(Create, Ddl),
               sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
             [OneCreate]),
-    OneCreate == 'CREATE TABLE "__rel" ("rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" INTEGER NOT NULL, "h_schema" INTEGER NOT NULL, "h_rule" INTEGER NOT NULL, PRIMARY KEY ("rel_id")) WITHOUT ROWID',
+    OneCreate == 'CREATE TABLE "__rel" ("__id" INTEGER PRIMARY KEY, "rel_id" INTEGER NOT NULL, "parent_id" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "local_name" INTEGER NOT NULL, "kind" INTEGER NOT NULL, "type_id" INTEGER NOT NULL, "arity" INTEGER NOT NULL, "module_id" INTEGER NOT NULL, "h_id" INTEGER NOT NULL, "h_schema" INTEGER NOT NULL, "h_rule" INTEGER NOT NULL, UNIQUE ("rel_id"))',
     catalog_first_seed_row(Ddl,
       '(1,0,0,(SELECT s."__id" FROM "__str" s WHERE s."content" = \'text\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'primitive\'),0,0,0,(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'),(SELECT s."__id" FROM "__str" s WHERE s."content" = \'\'))').
 
-% The dense rel_id is declared the single surrogate key in both storage
-% modes, replacing the old all-column composite PK.
+% The dense rel_id is the single natural key constraint in both storage modes.
 test(catalog_rel_id_is_the_key_in_both_modes) :-
     forall(member(Mode, [direct, dict]),
            ( catalog_lowered(Mode, catalog_shape, Ddl),
@@ -946,7 +947,8 @@ test(catalog_rel_id_is_the_key_in_both_modes) :-
                      ( member(Create, Ddl),
                        sub_atom(Create, 0, _, _, 'CREATE TABLE "__rel"') ),
                      [OneCreate]),
-             sub_atom(OneCreate, _, _, _, 'PRIMARY KEY ("rel_id")') )).
+             sub_atom(OneCreate, _, _, _, '"__id" INTEGER PRIMARY KEY'),
+             sub_atom(OneCreate, _, _, _, 'UNIQUE ("rel_id")') )).
 
 % Those lookups are total only if the seed's own strings reach "__str" first:
 % dictionary DDL, then the string seed, then the catalog seed.
@@ -2015,7 +2017,7 @@ test(accepts_edge_head_column_typed_from_its_body) :-
     program_plan(fixture(edge_head_typing, Prog, [pin_extracted(20, doc_link)],
                          [], [])-[], [intern(direct)], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TABLE "xref" ("col1" INTEGER NOT NULL, "col2" TEXT NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
+    memberchk('CREATE TABLE "xref" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, "col2" TEXT NOT NULL, UNIQUE ("col1"))', Ddl).
 
 % A ref that ONLY an Initial row mentions still gets a table: engine.pl's
 % seed_store/3 stores it, so it is part of the oracle's final state.
@@ -2023,7 +2025,7 @@ test(initial_only_ref_still_gets_a_table) :-
     Prog = prog([kind(ping/1, log), keep(ping/1, all)], []),
     program_plan(fixture(seeded, Prog, [known_repo(2)], [], [])-[], Plan),
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
-    memberchk('CREATE TABLE "known_repo" ("col1" INTEGER NOT NULL, PRIMARY KEY ("col1")) WITHOUT ROWID', Ddl).
+    memberchk('CREATE TABLE "known_repo" ("__id" INTEGER PRIMARY KEY, "col1" INTEGER NOT NULL, UNIQUE ("col1"))', Ddl).
 
 % The class the TICK PHASE ALIGNMENT arc opened: an edge arm joining a level
 % rel an ARRIVAL can retract. It used to throw
@@ -4693,7 +4695,7 @@ test(bool_and_float_storage_constraints_are_exact) :-
                          BoolLowered),
     BoolLowered = lowered(_, BoolDdl, _, _, _, _, _, _),
     memberchk(
-      'CREATE TABLE "flag" ("name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), PRIMARY KEY ("name", "enabled")) WITHOUT ROWID',
+      'CREATE TABLE "flag" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), UNIQUE ("name", "enabled"))',
       BoolDdl),
     interning_lowered_in('5_value_plane.pl', direct, float_arithmetic_is_binary64,
                          FloatLowered),
@@ -5819,6 +5821,162 @@ test(a_root_rel_zero_still_has_no_storage) :-
     \+ lower_program(Plan, _).
 
 :- end_tests(rel_zero_arity).
+
+% Two rel-declaration spellings whose AST nodes no later phase reads:
+% `rel pair(T)(first: T, second: T).` (curried type parameters) and
+% `rel file(path: text) is addressable.` (interface conformance). The gate
+% these tests hold is that BOTH doors build the node and that a program
+% carrying either emits the same module text as the same program without it.
+:- begin_tests(rel_template_and_is_clause).
+
+surface_decls(Source, Decls) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(Decls, _), _, [])).
+
+surface_findings(Source, Findings) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(_, _), _, Findings)).
+
+surface_round_trip(Source, Program, RoundTripped, Text) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    once(print_dl_program(Program, Bindings, Text)),
+    atom_codes(Text, PrintedCodes),
+    once(parse_dl(PrintedCodes, RoundTripped, _, [])).
+
+% compile_dl6/2 names the emitted module after the source BASENAME, so two
+% texts only compare byte-for-byte from equally named files in separate
+% directories.
+door_emitted_text(Slot, Source, Emitted) :-
+    tmp_file(door_probe, Root),
+    atomic_list_concat([Root, '_', Slot], Dir),
+    make_directory(Dir),
+    atomic_list_concat([Dir, '/probe.dl6'], SourceFile),
+    atomic_list_concat([Dir, '/probe.ts'], OutFile),
+    setup_call_cleanup(
+        open(SourceFile, write, Stream),
+        format(Stream, "~w", [Source]),
+        close(Stream)),
+    setup_call_cleanup(
+        with_output_to(string(_), compile_dl6(SourceFile, OutFile)),
+        read_file_to_string(OutFile, Emitted, []),
+        ( catch(delete_file(SourceFile), _, true),
+          catch(delete_file(OutFile), _, true),
+          catch(delete_directory(Dir), _, true) )).
+
+test(a_template_declaration_parses_to_one_record_and_no_rel_entry) :-
+    surface_decls('rel pair(T)(first: T, second: T).', Decls),
+    Decls == [rel_template([pair], ['T'],
+                           [column(first, 'T'), column(second, 'T')])].
+
+test(a_template_declaration_round_trips_through_the_printer) :-
+    surface_round_trip('rel pair(T)(first: T, second: T).',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel pair(T)(first: T, second: T).')),
+    Program =@= RoundTripped.
+
+test(a_two_parameter_template_at_a_module_path_round_trips) :-
+    surface_round_trip('rel shapes.pair(Left, Right)(head: Left, tail: Right).',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _,
+                  'rel shapes.pair(Left, Right)(head: Left, tail: Right).')),
+    Program =@= RoundTripped.
+
+test(an_is_clause_rides_beside_the_ordinary_column_entries) :-
+    surface_decls('rel file(path: text, digest: text) is addressable.', Decls),
+    Decls == [ col_type(file/2, path, text),
+               col_type(file/2, digest, text),
+               rel_is_implementation(file/2, [addressable]) ].
+
+test(an_is_clause_round_trips_after_every_modifier) :-
+    surface_round_trip(
+        'rel file(path: text) key(1) is addressable, container(text).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _,
+                  'rel file(path: text) key(1) is addressable, container(text).')),
+    Program =@= RoundTripped.
+
+test(an_is_clause_on_a_column_less_rel_round_trips) :-
+    surface_round_trip('rel unit() is addressable.',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel unit() is addressable.')),
+    Program =@= RoundTripped.
+
+% A rel named in column-type position prints from its type_decl entry, which
+% is a different decl_line/5 clause; the `is` clause has to survive that one too.
+test(an_is_clause_survives_the_type_decl_print_path) :-
+    surface_round_trip('rel point(x: int) is addressable.\nrel line(a: point).',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel point(x: int) is addressable.')),
+    Program =@= RoundTripped.
+
+test(the_zero_parameter_declaration_keeps_its_shape) :-
+    surface_decls('rel point(x: int, y: int).', Decls),
+    Decls == [col_type(point/2, x, int), col_type(point/2, y, int)],
+    surface_round_trip('rel point(x: int, y: int).',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel point(x: int, y: int).')),
+    Program =@= RoundTripped.
+
+test(both_doors_build_the_same_nodes) :-
+    forall(member(Source, ['rel pair(T)(first: T, second: T).',
+                           'rel shapes.pair(Left, Right)(head: Left).',
+                           'rel file(path: text, digest: text) is addressable.',
+                           'rel file(path: text) key(1) is addressable, container(text).',
+                           'rel unit() is addressable.',
+                           'rel point(x: int, y: int).']),
+           ( atom_codes(Source, Codes),
+             once(parse_dl(Codes, Classic, _, _)),
+             once(parse_dl_dcg:parse_dl(Codes, Dcg, _, _)),
+             ( Classic =@= Dcg
+             -> true
+             ;  throw(door_disagreement(Source, Classic, Dcg)) ) )).
+
+% HARD at parse: decidable inside the one production with no other
+% declaration in hand.
+test(a_duplicate_type_parameter_is_a_named_surface_finding) :-
+    surface_findings('rel pair(T, T)(first: T, second: T).', Findings),
+    Findings == [unsupported_surface(duplicate_generic_parameter('T'))].
+
+% DEFERRED: the single-pass parser holds no interface declaration when the
+% clause runs, so an argument count is checked by a later phase, not here.
+test(a_type_application_argument_count_is_not_checked_at_parse) :-
+    surface_decls('rel file(path: text) is container(text, int).', Decls),
+    memberchk(rel_is_implementation(file/1, [container(text, int)]), Decls),
+    surface_findings('rel file(path: text) is container(text, int).', Findings),
+    Findings == [].
+
+% DEFERRED: a bare identifier in type position is a relation reference, and
+% nothing at parse time separates one from a stray parameter name. The
+% existing column_type_unknown throw is still what names it.
+test(a_free_parameter_outside_a_template_still_reaches_column_type_unknown) :-
+    surface_findings('rel thing(value: T).', Findings),
+    Findings == [],
+    tmp_file(free_parameter, OutFile),
+    dl6_compile_text("rel thing(value: T).\n", OutFile, Result),
+    Result = refused(Error),
+    once(( sub_term(column_type_unknown, Error)
+         ; sub_term(column_type_unknown(_), Error) )).
+
+test(a_template_declaration_emits_the_module_the_program_without_it_emits) :-
+    door_emitted_text(with,
+        'rel pair(T)(first: T, second: T).\nrel point(x: int, y: int).\nrel line(a: point, b: point).\n',
+        WithTemplate),
+    door_emitted_text(without,
+        'rel point(x: int, y: int).\nrel line(a: point, b: point).\n',
+        WithoutTemplate),
+    WithTemplate == WithoutTemplate.
+
+test(an_is_clause_emits_the_module_the_bare_declaration_emits) :-
+    door_emitted_text(with,
+        'rel file(path: text, digest: text) is addressable.\nrel seen(n: int).\n',
+        WithClause),
+    door_emitted_text(without,
+        'rel file(path: text, digest: text).\nrel seen(n: int).\n',
+        WithoutClause),
+    WithClause == WithoutClause.
+
+:- end_tests(rel_template_and_is_clause).
 
 fact_probe_text("rel max_run(limit_lines: int).
 rel doubled_limit(limit_doubled: int).

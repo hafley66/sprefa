@@ -1,0 +1,9 @@
+# Lead 3: text has no concat scalar. `+` is the only infix bind operator that
+# takes two operands, so this is the spelling an author reaches for first.
+
+rel person(person_id: int, first_name: text, last_name: text).
+rel full_name(person_id: int, name: text).
+
+full_name(PersonId, Name) <-
+  person(PersonId, FirstName, LastName),
+  Name := FirstName + LastName.

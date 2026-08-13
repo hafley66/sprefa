@@ -41,7 +41,7 @@ GRADER="$(mktemp /tmp/roundtrip-grader-XXXXXX.pl)"
 trap 'rm -f "$GRADER"' EXIT
 
 cat > "$GRADER" <<PLEOF
-:- use_module('$COMPILE_DIR/parse_dl').
+:- use_module('$COMPILE_DIR/parse_dl_dcg').
 :- use_module('$PROLOG_DIR/print_dl').
 :- use_module('$PROLOG_DIR/compile', [program_plan/2]).
 :- use_module(library(lists)).

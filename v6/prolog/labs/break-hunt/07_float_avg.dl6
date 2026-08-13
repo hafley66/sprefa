@@ -1,0 +1,8 @@
+# Lead 7: float / REAL and avg, including the group whose last row leaves.
+
+rel score(group_name: text, value: float).
+rel mean_score(group_name: text, value: float).
+rel score_count(group_name: text, total: int).
+
+mean_score(GroupName, avg(Value)) <- score(GroupName, Value).
+score_count(GroupName, count(Value)) <- score(GroupName, Value).
