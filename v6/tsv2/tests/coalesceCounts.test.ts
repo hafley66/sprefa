@@ -161,9 +161,12 @@ test("the coalesce default arm SEARCHes the source rel, never SCANs it", async (
 
   // `n0` is compile_negative_uses/4's alias for the negated rel and `d0` the
   // delta side; sqlite prints the ALIAS, never the table name.
+  // Set-rel DDL is `__id INTEGER PRIMARY KEY` + UNIQUE(cols), so a keyed
+  // lookup rides the UNIQUE autoindex; the old WITHOUT ROWID shape printed
+  // PRIMARY KEY for the same access path.
   assert.ok(
-    lines.some((line) => /SEARCH n0 USING PRIMARY KEY/.test(line)),
-    `the coalesce default arm must SEARCH the source rel, got: ${lines.join(" | ")}`,
+    lines.some((line) => /SEARCH n0 USING (PRIMARY KEY|COVERING INDEX sqlite_autoindex_)/.test(line)),
+    `the coalesce default arm must SEARCH the source rel by key, got: ${lines.join(" | ")}`,
   );
   assert.ok(
     !lines.some((line) => /\b_scan n0\b/.test(line)),
