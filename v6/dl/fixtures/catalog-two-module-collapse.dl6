@@ -1,0 +1,4 @@
+use "catalog-two-module-collapse-a.dl6".
+use "catalog-two-module-collapse-b.dl6".
+
+rel catalog_rows(row: text).
