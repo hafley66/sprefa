@@ -141,6 +141,10 @@ store-test:
 dd-grade:
     bash {{ v6 }}/dd-runner/grade.sh
 
+# (expect: RUST-GRADE graded=392 byte-clean=230)
+rust-grade:
+    bash {{ v6 }}/sprefa-engine-rs/grade.sh
+
 # the SERVED TSV2 engine's own end goal: kill -9 mid-nap, restart, answered
 # witnesses never refire (runtime-bridge arc receipt 5)
 serve-endurance:
@@ -457,7 +461,7 @@ perf-all-deep:
 # ── batteries ──
 
 # the review-gate battery minus the slow sweep; what a merge must pass
-green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex store-test dd-grade
+green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test import-gate one-subscribe golden-flex store-test dd-grade rust-grade
 
 # everything, phased: scale-floor alone (its verdict is a wall reading), then
 # the memory leak test alone (its flatness check reddens under a load ramp),
