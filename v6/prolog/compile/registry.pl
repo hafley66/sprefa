@@ -260,7 +260,18 @@ expression(norm/1,    text_scalar,         3, ascii_alnum_lower,     text_only).
 % with no registered UDF, so the rendering is the bare SQLite call. This is
 % the shape that lets a program derive a directory prefix with
 % rtrim(path, replace(path, '/', '')).
+
+% The str-stratum minimum plus the pure-text string scalars: every row is
+% all-text-operand, so the Rendering equals the SQLite scalar name.
+expression(upper/1,   text_scalar,         3, upper,                text_only).
+expression(lower/1,   text_scalar,         3, lower,                text_only).
+expression(trim/1,    text_scalar,         3, trim,                 text_only).
+expression(trim/2,    text_scalar,         3, trim,                 text_only).
+expression(ltrim/1,   text_scalar,         3, ltrim,                text_only).
+expression(ltrim/2,   text_scalar,         3, ltrim,                text_only).
+expression(rtrim/1,   text_scalar,         3, rtrim,                text_only).
 expression(rtrim/2,   text_scalar,         3, rtrim,                text_only).
+expression(reverse/1, text_scalar,         3, reverse,              text_only).
 expression(replace/3, text_scalar,         3, replace,              text_only).
 % RFC 7396 merge patch, the streaming scan operator over two json documents.
 % Its own family because text_only would reject a json operand.

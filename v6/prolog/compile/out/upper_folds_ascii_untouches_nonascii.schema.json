@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "shouted": {
+      "additionalProperties":false,
+      "properties": {"out": {"type":"string"},"text": {"type":"string"}},
+      "required": ["text", "out" ],
+      "type":"object"
+    },
+    "text": {
+      "additionalProperties":false,
+      "properties": {"text": {"type":"string"}},
+      "required": ["text" ],
+      "type":"object"
+    }
+  },
+  "$id":"upper_folds_ascii_untouches_nonascii#c15cd2be862af562",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

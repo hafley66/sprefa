@@ -90,15 +90,41 @@ text_scalar_value(ascii_alnum_lower, [Value], Out) :-
     maplist(ascii_lower_code, Kept, Lowered),
     atom_codes(Out, Lowered).
 
-% SQLite rtrim(X, Y): strip trailing characters that are members of the set Y.
+% SQLite rtrim(X): strip trailing spaces (the default charset). rtrim(X, Y):
+% strip trailing members of the set Y. Same set for trim/ltrim, which also have
+% the leading or both-ends variant that defaults to space when Y is omitted.
+text_scalar_value(rtrim, [Text], Out) :-
+    rtrim_codes(Text, space_only, Out).
 text_scalar_value(rtrim, [Text, Chars], Out) :-
+    rtrim_codes(Text, Chars, Out).
+text_scalar_value(trim, [Text], Out) :-
+    trim_codes(Text, space_only, Out).
+text_scalar_value(trim, [Text, Chars], Out) :-
+    trim_codes(Text, Chars, Out).
+text_scalar_value(ltrim, [Text], Out) :-
+    ltrim_codes(Text, space_only, Out).
+text_scalar_value(ltrim, [Text, Chars], Out) :-
+    ltrim_codes(Text, Chars, Out).
+
+% SQLite upper(X) / lower(X) fold ASCII letters only (probed: non-ASCII is
+% left untouched, unlike other databases).
+text_scalar_value(upper, [Text], Out) :-
     ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
-    atom_codes(Text, TextCodes),
-    atom_codes(Chars, CharsCodes),
-    reverse(TextCodes, Rev),
-    drop_leading_in_set(Rev, CharsCodes, RevTrimmed),
-    reverse(RevTrimmed, Trimmed),
-    atom_codes(Out, Trimmed).
+    atom_codes(Text, Codes),
+    maplist(ascii_upper_code, Codes, OutCodes),
+    atom_codes(Out, OutCodes).
+text_scalar_value(lower, [Text], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_codes(Text, Codes),
+    maplist(ascii_lower_code, Codes, OutCodes),
+    atom_codes(Out, OutCodes).
+
+% SQLite reverse(X): the text with its characters in reverse order.
+text_scalar_value(reverse, [Text], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_codes(Text, Codes),
+    reverse(Codes, RevCodes),
+    atom_codes(Out, RevCodes).
 
 % SQLite replace(X, Y, Z): replace every occurrence of Y in X with Z.
 text_scalar_value(replace, [Text, From, To], Out) :-
@@ -108,6 +134,43 @@ text_scalar_value(replace, [Text, From, To], Out) :-
     atom_codes(To, ToCodes),
     replace_codes(TextCodes, FromCodes, ToCodes, OutCodes),
     atom_codes(Out, OutCodes).
+
+rtrim_codes(Text, Chars, Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_codes(Text, TextCodes),
+    charset_codes(Chars, CharsCodes),
+    reverse(TextCodes, Rev),
+    drop_leading_in_set(Rev, CharsCodes, RevTrimmed),
+    reverse(RevTrimmed, Trimmed),
+    atom_codes(Out, Trimmed).
+
+trim_codes(Text, Chars, Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_codes(Text, TextCodes),
+    charset_codes(Chars, CharsCodes),
+    drop_leading_in_set(TextCodes, CharsCodes, NoLead),
+    reverse(NoLead, Rev),
+    drop_leading_in_set(Rev, CharsCodes, NoTrailRev),
+    reverse(NoTrailRev, Trimmed),
+    atom_codes(Out, Trimmed).
+
+ltrim_codes(Text, Chars, Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_codes(Text, TextCodes),
+    charset_codes(Chars, CharsCodes),
+    drop_leading_in_set(TextCodes, CharsCodes, Trimmed),
+    atom_codes(Out, Trimmed).
+
+% SQLite trim(X) without an explicit charset strips ONLY the space character
+% (probed 2026-08-12: tab/LF/CR/VT/FF all survive, they are not whitespace to
+% SQLite). The cut keeps this clause from also falling into the literal-atom
+% clause below and turning the oracle nondeterministic.
+charset_codes(space_only, [32]) :- !.
+charset_codes(Chars, Codes) :- atomic(Chars), atom_codes(Chars, Codes).
+
+ascii_upper_code(Code, Upper) :-
+    ( between(0'a, 0'z, Code) -> Upper is Code - 32 ; Upper = Code ).
+
 
 drop_leading_in_set([], _, []).
 drop_leading_in_set([Code | Rest], Chars, Out) :-
