@@ -15,3 +15,12 @@ async-stream = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sprefa-extract = { path = "../sprefa-extract" }
+
+[features]
+default = ["harness"]
+harness = []
+
+[[bin]]
+name = "emit_rust_harness"
+path = "src/bin/emit_rust_harness.rs"
+required-features = ["harness"]

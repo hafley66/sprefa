@@ -5,6 +5,9 @@
   "type": "module",
   "description": "tsv2 compile-target arc, phase A (plans/2026-07-27-tsv2-compile-target-header.md): the hand-carved static runtime + two by-hand generated program files a future prolog emitter must reproduce byte-for-byte. Grading loop: v6/prolog/conformance/ticklog.pl prints the oracle tick log; scripts/run-fixture.ts prints the tsv2 tick log; DONE = diff is empty.",
   "packageManager": "pnpm@11.10.0",
+  "exports": {
+    "./runtime": "./runtime/index.ts"
+  },
   "bin": {
     "bop": "./cli/bop.ts"
   },
