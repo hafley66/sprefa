@@ -102,8 +102,10 @@ boop beep lane wait <lane-name> &      # ARM THIS. Nothing else notifies you.
 
 Presets live in `~/Library/Application Support/boop/config.json`. The
 `model@effort` suffix sets codex reasoning effort, `low|medium|high` only
-(`v6/boop/src/harness/codex.rs:169-181`). `--dry-run` prints the exact spawn
-line; use it before a shape you have not used before.
+(`~/projects/hafley-rs/crates/boop/src/harness/codex.rs:178`; boop's source
+moved to `hafley66/hafley-rs`, nothing under `v6/boop` exists anymore).
+`--dry-run` prints the exact spawn line; use it before a shape you have not
+used before.
 
 **A lane's `rc=0` means nothing.** `opencode run` exits 0 on a provider error
 with zero tokens emitted, and a lane can write its whole deliverable and exit 0
