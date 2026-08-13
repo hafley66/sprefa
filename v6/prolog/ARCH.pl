@@ -14,11 +14,12 @@
 % CALLOUTS (the things to keep distinguished, hard-won this arc)
 % ═════════════════════════════════════════════════════════════════════════════
 %
-% * TWO DL SURFACES, ONE LANGUAGE. compile/parse_dl.pl is the real text door;
-%   v6/dl/grammar/dl.langium is a narrow MVP slice of it. A construct missing
-%   from the langium grammar is usually PRESENT in the real surface. The verdict
-%   on any construct is compile/out/manifest.json (bucket + unsupported construct reason per
-%   fixture), never a comment header.
+% * ONE DL SURFACE. compile/parse_dl_dcg.pl is the text door and the only
+%   parser; v6/dl/grammar/dl.langium is a narrow MVP slice serving the v6/dl
+%   app's own bridge, never the compiler. A construct missing from the langium
+%   grammar is usually PRESENT in the real surface. The verdict on any
+%   construct is compile/out/manifest.json (bucket + unsupported construct
+%   reason per fixture), never a comment header.
 %
 % * JSON IS TWO PLANES, ONLY ONE CLOSED. READING compiles: spread/1 array
 %   explode, `$name` key holes, `**` uncapped descent, typed captures
@@ -200,7 +201,7 @@ algorithm(tsv2_analyze,    ast,         fold,              'compile/analyze.pl (
 algorithm(tsv2_strata,     strata,      monotone_fixpoint, 'compile/strat.pl (mirrors engine relax_strata; Kahn once-per-tick order)').
 algorithm(tsv2_lower,      ast,         rewrite,           'compile/lower.pl (lowered/8 target-neutral plan: SQL text + structure, zero TS idiom)').
 algorithm(tsv2_ts_emit,    ast,         rewrite,           'compile/emit_ts.pl (backend #1 over lowered/8; the rust consumer v6/dd-runner reads the dd_plan JSON twin from compile/6_isolated_compiler_dd.pl)').
-algorithm(tsv2_surface_dcg, ast,        rewrite,           'compile/parse_dl.pl + print_dl.pl (phase D, LANDED: DCG is the CANONICAL parser; langium was stopgap; compile_dl6/2 is the text door)').
+algorithm(tsv2_surface_dcg, ast,        rewrite,           'compile/parse_dl_dcg.pl + print_dl.pl (phase D, LANDED: the DCG is the ONLY parser since the classic parse_dl.pl deletion; compile_dl6/2 is the text door)').
 
 % Added by the world-health audit 2026-07-29: five modules that carry real
 % analyses and had no row, three of them born in the org refactor (rank

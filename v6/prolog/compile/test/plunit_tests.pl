@@ -55,7 +55,7 @@
 % checks the line table against a prefix walk at every index of a text; going
 % through parse_dl/4 alone only reaches the positions a unsupported construct happens to land
 % on.
-:- use_module('../../compile/parse_dl', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
+:- use_module('../../compile/parse_dl_dcg', [ parse_dl/4, remaining_line_column/3, use_item/3 ]).
 :- use_module('../../use_resolve',
               [ expand_uses/6, expand_uses/8, include_roots/2, resolve_use_path/3,
                 reset_parse_counts/0, parse_count/2 ]).
@@ -113,7 +113,6 @@
 :- ensure_loaded('2_subscribe.plt').
 :- ensure_loaded('6_isolated_compiler_dd.test.pl').
 :- ensure_loaded('emit_type_renderers.test.pl').
-:- ensure_loaded('parse_parity.test.pl').
 :- ensure_loaded('../../conformance/fixtures/0_generic_expand.pl').
 
 % Resolved relative to this file's own load-time directory (mirrors

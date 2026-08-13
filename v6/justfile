@@ -4,7 +4,7 @@
 #
 # Layout the recipes map onto:
 #   prolog/conformance/  the 221-fixture baseline (oracle engine + fixtures)
-#   prolog/compile/      the tsv2 compiler: parse_dl/print_dl/analyze/lower/
+#   prolog/compile/      the tsv2 compiler: parse_dl_dcg/print_dl/analyze/lower/
 #                        registry.pl, plunit tests, roundtrip.sh, sweep.pl
 #   prolog/ARCH.pl       machine-checked architecture claims (go)
 #   tsv2/                A runtime + generated programs, sweep driver, import gate
@@ -42,9 +42,6 @@ conformance:
 # parse -> print -> reparse identity over all fixtures + real .dl files
 roundtrip:
     cd {{ v6 }}/prolog/compile && bash scripts/roundtrip.sh
-
-parse-parity:
-    cd {{ v6 }}/prolog/compile && bash scripts/parse_parity.sh
 
 # term door vs .dl6 text door, byte-identical emitted modules (expect: 196/196/0)
 text-door:
