@@ -103,8 +103,8 @@ async fn live_extract_runs_in_process_with_no_binary_configured() {
         .expect("live run");
     let rows = table_rows(&program, &seam, "call_site");
     assert!(
-        rows.iter().any(|row| row
-            == &vec![text(&target), text("digest-1"), text("helper")]),
+        rows.iter()
+            .any(|row| row == &vec![text(&target), text("digest-1"), text("helper")]),
         "extracted call facts must include main's call to helper, got {rows:?}"
     );
 }
@@ -129,7 +129,10 @@ async fn scripted_replay_still_runs_without_executing_hosts() {
     let schedule = vec![vec![add("source_file", vec![text("nope.rs")])]];
     let fold = run_schedule(&program, &seam, &schedule, 100).await;
     assert_eq!(fold.lines.len(), 1);
-    assert_eq!(table_rows(&program, &seam, "spanned"), Vec::<Vec<Value>>::new());
+    assert_eq!(
+        table_rows(&program, &seam, "spanned"),
+        Vec::<Vec<Value>>::new()
+    );
 }
 
 #[test]
@@ -157,8 +160,5 @@ fn template_fill_escapes_for_the_landing_quote_context() {
     inputs.insert("path".to_string(), text("a'b c.rs"));
     let filled =
         sprefa_engine_rs::hosts::fill_template("head -1 {path} '{path}' \"{path}\"", &inputs);
-    assert_eq!(
-        filled,
-        "head -1 'a'\\''b c.rs' 'a'\\''b c.rs' \"a'b c.rs\""
-    );
+    assert_eq!(filled, "head -1 'a'\\''b c.rs' 'a'\\''b c.rs' \"a'b c.rs\"");
 }
