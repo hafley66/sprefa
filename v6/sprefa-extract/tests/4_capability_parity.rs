@@ -62,6 +62,7 @@ const ROSTER_FIXTURES: &[(&str, &str)] = &[
     ("go", "tests/fixtures/go/sample.go"),
     ("kotlin", "tests/fixtures/kotlin/sample.kt"),
     ("prolog", "tests/fixtures/prolog/0_sample.pl"),
+    ("dl6", "tests/fixtures/dl6/0_sample.dl6"),
     ("astgrep", "tests/fixtures/astgrep/sample.py"),
 ];
 

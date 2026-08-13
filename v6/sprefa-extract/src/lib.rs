@@ -42,8 +42,8 @@ pub use family::{
     TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
-    query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, GoSource,
-    KotlinSource, PrologSource, RustSource, TsSource,
+    query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DlSource,
+    GoSource, KotlinSource, PrologSource, RustSource, TsSource,
 };
 pub use project::{
     diet_scip, diet_scip_jsonl, resolve_project, resolve_project_jsonl, scip_facts,

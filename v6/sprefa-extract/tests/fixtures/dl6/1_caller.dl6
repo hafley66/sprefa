@@ -1,0 +1,6 @@
+use "dep".
+
+rel base(x: text).
+rel derived(x: text, y: text).
+
+derived(X, Y) <- base(X), dep.helper(X, Y).

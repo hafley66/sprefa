@@ -1,0 +1,16 @@
+[package]
+name = "tree-sitter-dl6"
+version = "0.1.0"
+edition = "2021"
+description = "tree-sitter grammar for dl6"
+license = "MIT OR Apache-2.0"
+build = "build.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[dev-dependencies]
+tree-sitter = "0.25"
+
+[build-dependencies]
+cc = "1.0"

@@ -2,6 +2,10 @@
 # workspace so `cargo test` here is fully isolated (the whole point: prove the
 # v6 extraction leaf with no v5 tree in the build graph).
 [workspace]
+members = [
+    ".",
+    "tree-sitter-dl6",
+]
 
 [package]
 name = "sprefa-extract"
@@ -62,6 +66,7 @@ tree-sitter-kotlin-sg = "0.4"
 # MIT superset grammar for ISO Prolog plus the SWI/DCG/ProbLog syntax used by
 # v6/prolog. ABI 14 and LanguageFn match the tree-sitter 0.25 runtime above.
 tree-sitter-prolog = "0.1"
+tree-sitter-dl6 = { path = "tree-sitter-dl6" }
 # tree-sitter-md is the markdown front-end v5 carries (root Cargo.toml:116,
 # src/cst.rs + src/ingest/mod.rs). LANGUAGE = block, INLINE_LANGUAGE = inline.
 
