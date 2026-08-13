@@ -39,6 +39,7 @@ pub struct GenProgram {
     pub uses_tick: bool,
     pub reconcile_every_tick: bool,
     pub incremental_safe: bool,
+    pub host_plans: Vec<crate::types::HostPlanData>,
 }
 
 impl GenProgram {
@@ -67,6 +68,7 @@ impl GenProgram {
             uses_tick: pj.uses_tick,
             reconcile_every_tick: pj.reconcile_every_tick,
             incremental_safe: pj.incremental_safe,
+            host_plans: pj.host_plans,
         }
     }
 

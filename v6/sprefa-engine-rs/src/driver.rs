@@ -59,6 +59,56 @@ pub async fn run_schedule(
     TickFold { lines }
 }
 
+// Live-host variant: each tick's demand +deltas execute and the projected
+// response rows become the NEXT tick's batch, where a fixture scripts them.
+pub async fn run_schedule_live(
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    schedule: &[Vec<Arrival>],
+    drain_cap: usize,
+) -> Result<TickFold, crate::hosts::HostError> {
+    seam.run_ddl(&program.ddl).expect("DDL execution failed");
+    run_boot(seam, &program.boot);
+    let mut runner = crate::hosts::HostLiveRunner::new(&program.host_plans, &program.rel_columns)?;
+    let mut pending: std::collections::VecDeque<Vec<Arrival>> = std::collections::VecDeque::new();
+    let mut lines = Vec::new();
+    let mut tick_number = 0usize;
+    let mut schedule_index = 0usize;
+    let mut carry_pending = false;
+    let mut off_schedule_ticks = 0usize;
+    loop {
+        let (arrivals, scheduled) = match pending.pop_front() {
+            Some(batch) => (batch, false),
+            None => match schedule.get(schedule_index) {
+                Some(batch) => {
+                    schedule_index += 1;
+                    (batch.clone(), true)
+                }
+                None if carry_pending => (Vec::new(), false),
+                None => break,
+            },
+        };
+        if !scheduled {
+            off_schedule_ticks += 1;
+            if off_schedule_ticks > drain_cap {
+                panic!(
+                    "drain overflow: {} exceeded {} host/drain ticks",
+                    program.name, drain_cap
+                );
+            }
+        }
+        let deltas = drive_tick(program, seam, arrivals).await;
+        tick_number += 1;
+        carry_pending = deltas.carry_pending;
+        lines.push(format_deltas(program, tick_number, &deltas));
+        let responses = runner.collect(&deltas)?;
+        if !responses.is_empty() {
+            pending.push_back(responses);
+        }
+    }
+    Ok(TickFold { lines })
+}
+
 // Drive the tick's Stream to its single item. A stream constructed and never
 // driven silently produces nothing; this is the drain every tick must get.
 pub async fn drive_tick(

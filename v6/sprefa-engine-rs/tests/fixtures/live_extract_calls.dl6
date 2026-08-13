@@ -1,0 +1,8 @@
+rel file(path: text, digest: text).
+
+sh extract(path: text, digest: text) -> (callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+rel call_site(path: text, digest: text, callee: text).
+call_site(path, digest, callee) <-
+  file(path, digest), extract(path, digest, callee).

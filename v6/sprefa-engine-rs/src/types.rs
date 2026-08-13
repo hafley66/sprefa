@@ -278,6 +278,28 @@ pub struct ArrivalTemplate {
     pub del_sql: Option<String>,
 }
 
+// One host column as the emitter spells it; `type` is the declared column
+// type name (text/int/float/bool/json or a declared struct name).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostColumnPlan {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub column_type: String,
+}
+
+// Mirrors emit_ts.pl's IHostPlanData row; the two runtimes read one
+// executor contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostPlanData {
+    pub name: String,
+    pub inputs: Vec<HostColumnPlan>,
+    pub outputs: Vec<HostColumnPlan>,
+    pub template: String,
+    pub demand_rel: String,
+    pub response_rel: String,
+    pub execution: String,
+}
+
 // The serde mirror of the emitted program: one JSON object per fixture.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgramJson {
@@ -312,4 +334,6 @@ pub struct ProgramJson {
     pub uses_tick: bool,
     pub reconcile_every_tick: bool,
     pub incremental_safe: bool,
+    #[serde(default)]
+    pub host_plans: Vec<HostPlanData>,
 }

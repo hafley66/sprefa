@@ -1,0 +1,4 @@
+[
+  [{ "rel": "source_file", "sign": "add", "row": ["a.rs"] }],
+  [{ "rel": "__host_response_look", "sign": "add", "row": ["w", 0, "a.rs", 3, 9] }]
+]
