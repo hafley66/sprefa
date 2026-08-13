@@ -30,7 +30,7 @@
 %      exit 0 = covered, exit 1 = a named construct is missing.
 
 :- use_module('../registry', [surface/5, expression/5]).
-:- use_module('../parse_dl', [parse_dl_file/4]).
+:- use_module('../parse_dl_dcg', [parse_dl_file/4]).
 
 % Resolved at LOAD time (prolog_load_context/2 is a read-time-only predicate),
 % so the gate runs from any cwd -- the same fix `just arch` needed.
