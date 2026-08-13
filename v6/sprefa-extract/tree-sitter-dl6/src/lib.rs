@@ -50,14 +50,14 @@ path(X, Y) <- edge(X, Y).
 
     #[test]
     fn parses_golden_flex_fixture() {
-        let src = include_str!("../../../labs/tree-sitter-door/fixtures/golden-flex-175-236.dl6");
+        let src = include_str!("../fixtures/golden-flex-175-236.dl6");
         let result = parse_check(src);
         assert!(result.is_ok(), "golden fixture error: {:?}", result.err());
     }
 
     #[test]
     fn parses_format_input_fixture() {
-        let src = include_str!("../../../labs/tree-sitter-door/fixtures/format-input.dl6");
+        let src = include_str!("../fixtures/format-input.dl6");
         let result = parse_check(src);
         assert!(result.is_ok(), "format-input fixture error: {:?}", result.err());
     }

@@ -95,6 +95,7 @@ fn roster_routes_by_extension() {
     assert_eq!(source_for("x.rs").expect(".rs").name(), "rust");
     assert_eq!(source_for("x.go").expect(".go").name(), "go");
     assert_eq!(source_for("x.dl6").expect(".dl6").name(), "dl6");
-    assert_eq!(source_for("x.dl").expect(".dl").name(), "dl6");
+    // v5 `.dl` is a different syntax; the dl6 grammar must not claim it.
+    assert!(source_for("x.dl").is_none());
     assert!(source_for("x.unknownext").is_none());
 }

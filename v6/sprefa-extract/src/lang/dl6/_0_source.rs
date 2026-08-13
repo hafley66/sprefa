@@ -119,6 +119,31 @@ fn project_types(
     }
 }
 
+fn push_column_sig(
+    column: tree_sitter::Node,
+    owner_span: Span,
+    param_pos: u32,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let Some(type_node) = field(column, "type") else {
+        return;
+    };
+    let type_name_id = strings.intern(text(type_node, src));
+    sink.aux.sigs.push(TypeSig {
+        owner: owner_span,
+        slot: SigSlot::Param,
+        pos: param_pos,
+        ty: type_name_id,
+    });
+    sink.aux.candidates.push(TypeEdgeCandidate {
+        owner: owner_span,
+        to: type_name_id,
+        kind: TypeEdgeKind::Field,
+    });
+}
+
 fn walk_relation_columns(
     node: tree_sitter::Node,
     owner_span: Span,
@@ -130,41 +155,8 @@ fn walk_relation_columns(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         match child.kind() {
-            "declaration_parameter" => {
-                if let Some(type_node) = field(child, "type") {
-                    let type_text = text(type_node, src);
-                    let type_name_id = strings.intern(type_text);
-                    sink.aux.sigs.push(TypeSig {
-                        owner: owner_span,
-                        slot: SigSlot::Param,
-                        pos: param_pos,
-                        ty: type_name_id,
-                    });
-                    sink.aux.candidates.push(TypeEdgeCandidate {
-                        owner: owner_span,
-                        to: type_name_id,
-                        kind: TypeEdgeKind::Field,
-                    });
-                }
-                param_pos += 1;
-            }
-            "column" => {
-                let type_node = field(child, "type");
-                if let Some(type_node) = type_node {
-                    let type_text = text(type_node, src);
-                    let type_name_id = strings.intern(type_text);
-                    sink.aux.sigs.push(TypeSig {
-                        owner: owner_span,
-                        slot: SigSlot::Param,
-                        pos: param_pos,
-                        ty: type_name_id,
-                    });
-                    sink.aux.candidates.push(TypeEdgeCandidate {
-                        owner: owner_span,
-                        to: type_name_id,
-                        kind: TypeEdgeKind::Field,
-                    });
-                }
+            "declaration_parameter" | "column" => {
+                push_column_sig(child, owner_span, param_pos, src, strings, sink);
                 param_pos += 1;
             }
             "enum_variants" => {
@@ -177,21 +169,7 @@ fn walk_relation_columns(
             "enum_variant" => {
                 for col in named_children(child) {
                     if col.kind() == "column" {
-                        if let Some(type_node) = field(col, "type") {
-                            let type_text = text(type_node, src);
-                            let type_name_id = strings.intern(type_text);
-                            sink.aux.sigs.push(TypeSig {
-                                owner: owner_span,
-                                slot: SigSlot::Param,
-                                pos: param_pos,
-                                ty: type_name_id,
-                            });
-                            sink.aux.candidates.push(TypeEdgeCandidate {
-                                owner: owner_span,
-                                to: type_name_id,
-                                kind: TypeEdgeKind::Field,
-                            });
-                        }
+                        push_column_sig(col, owner_span, param_pos, src, strings, sink);
                         param_pos += 1;
                     }
                 }
@@ -228,7 +206,6 @@ fn project_calls(
                 }
             }
             "fact" => {
-                // A fact defines/asserts a relation tuple.
                 if let Some(atom) = inner.named_child(0) {
                     if atom.kind() == "atom" {
                         if let Some(name_node) = field(atom, "name") {
@@ -241,7 +218,6 @@ fn project_calls(
                 }
             }
             "query" => {
-                // Query has scrutinee / target atom as a call site
                 for child in named_children(inner) {
                     if child.kind() == "atom" {
                         push_atom_site(child, src, strings, sink);
@@ -415,7 +391,7 @@ impl Source for DlSource {
     }
 
     fn matches(&self, path: &str) -> bool {
-        path.ends_with(".dl6") || path.ends_with(".dl")
+        path.ends_with(".dl6")
     }
 
     fn extract(&self, _path: &str, content: &[u8], mask: FamilyMask) -> ExtractOutput {
