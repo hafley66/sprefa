@@ -8,6 +8,7 @@
 //! `AstgrepSource` (cst-only).
 
 pub mod astgrep;
+pub mod dl6;
 pub mod go;
 pub mod kotlin;
 pub mod prolog;
@@ -18,6 +19,7 @@ pub use astgrep::{
     query_patterns, AstCaptureFact, AstGrepParser, AstPatternQuery, AstgrepSource, CstProjector,
     SgRoot,
 };
+pub use dl6::DlSource;
 pub use go::GoSource;
 pub use kotlin::KotlinSource;
 pub use prolog::PrologSource;
@@ -39,6 +41,7 @@ pub fn sources() -> &'static [&'static dyn Source] {
         &GoSource,
         &KotlinSource,
         &PrologSource,
+        &DlSource,
         &TsSource,
         &AstgrepSource,
     ]

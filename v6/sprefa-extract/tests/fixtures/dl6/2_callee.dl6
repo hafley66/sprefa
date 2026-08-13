@@ -1,0 +1,3 @@
+rel helper(x: text, y: text).
+
+helper("k", "v").

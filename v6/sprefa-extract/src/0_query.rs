@@ -81,6 +81,7 @@ fn query_language(name: &str) -> Result<tree_sitter::Language, String> {
         "md" => return Ok(tree_sitter::Language::new(tree_sitter_md::LANGUAGE)),
         "md_inline" => return Ok(tree_sitter::Language::new(tree_sitter_md::INLINE_LANGUAGE)),
         "html" => return Ok(tree_sitter::Language::new(tree_sitter_html::LANGUAGE)),
+        "dl6" => return Ok(tree_sitter::Language::new(tree_sitter_dl6::LANGUAGE)),
         "rust" => SupportLang::from_str("rust"),
         "ts" => SupportLang::from_str("ts"),
         "tsx" => SupportLang::from_str("tsx"),

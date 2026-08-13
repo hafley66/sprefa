@@ -1,0 +1,13 @@
+use "catalog".
+use "graph" as g.
+
+rel edge(src: text, dst: text).
+rel path(src: text, dst: text).
+
+edge("a", "b").
+edge("b", "c").
+
+path(X, Y) <- edge(X, Y).
+path(X, Z) <- edge(X, Y), path(Y, Z).
+
+? path(X, Y).
