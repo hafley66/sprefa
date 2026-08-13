@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "led": {
+      "additionalProperties":false,
+      "properties": {"out": {"type":"string"},"text": {"type":"string"}},
+      "required": ["text", "out" ],
+      "type":"object"
+    },
+    "text": {
+      "additionalProperties":false,
+      "properties": {"text": {"type":"string"}},
+      "required": ["text" ],
+      "type":"object"
+    }
+  },
+  "$id":"ltrim_strips_leading_default_and_charset#1c47ba48dada7e11",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
