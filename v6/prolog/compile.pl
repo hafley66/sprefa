@@ -49,7 +49,7 @@
 :- use_module(lower).
 :- use_module(emit_ts).
 :- use_module(library(tableutil), [table_statistics/2]).
-:- use_module('compile/parse_dl', [ parse_dl_line_for_reason/2 ]).
+:- use_module('compile/parse_dl_dcg', [ parse_dl_line_for_reason/2 ]).
 :- use_module('compile/scripts/0_json_arrival',
               [ arrival_column_types/4, schedule_value/5 ]).
 :- use_module('use_resolve', [expand_uses/8]).
