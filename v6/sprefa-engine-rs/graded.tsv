@@ -10,10 +10,10 @@ async_state_machine_with_pattern_scan	unsupported	trigger_arg_not_var(fresh(_,_)
 backslash_in_string_literal_survives_both_doors	clean	byte-clean
 batched_increments_both_count	clean	byte-clean
 bind_computes_derived_value_then_comparison_filters	clean	byte-clean
-bool_identity_comparison_filters	error	error(type_error(json_term,bool_lit(true)),_)
-bool_literals_round_trip	error	error(type_error(json_term,bool_lit(true)),_)
+bool_identity_comparison_filters	clean	byte-clean
+bool_literals_round_trip	clean	byte-clean
 bool_rejects_text_ingress	unsupported	type_arrival_shape_mismatch(flag/1,value,bool,field_not_bool(true))
-bool_relation_negation_is_two_valued	error	error(type_error(json_term,bool_lit(true)),_)
+bool_relation_negation_is_two_valued	clean	byte-clean
 braces_in_head_position	clean	byte-clean
 braces_literal_canonicalizes	clean	byte-clean
 callgraph_derivation_over_extraction	clean	byte-clean
@@ -180,8 +180,8 @@ list_column_fans_out_through_spread	clean	byte-clean
 list_dense_sequence_text_door	clean	byte-clean
 list_entity_dense_sequence_end_to_end	clean	byte-clean
 list_entity_linked_sequence_end_to_end	clean	byte-clean
-list_interned_set_dictionary_content_deduplicates	unsupported	emitter returned false
-list_interned_set_end_to_end	unsupported	emitter returned false
+list_interned_set_dictionary_content_deduplicates	clean	byte-clean
+list_interned_set_end_to_end	clean	byte-clean
 list_interned_set_relation_element_refused	unsupported	list_interned_set_relation_element(fighter_summary)
 list_interned_set_text_door	clean	byte-clean
 list_linked_sequence_text_door	clean	byte-clean
