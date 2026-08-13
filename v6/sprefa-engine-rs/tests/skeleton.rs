@@ -121,6 +121,7 @@ fn fixture_program() -> GenProgram {
         uses_tick: false,
         reconcile_every_tick: false,
         incremental_safe: true,
+        host_plans: vec![],
     }
 }
 

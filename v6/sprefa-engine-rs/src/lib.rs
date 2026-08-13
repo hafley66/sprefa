@@ -5,6 +5,7 @@
 // free functions, satisfying the v6 interface-declaration law by construction.
 
 pub mod driver;
+pub mod hosts;
 pub mod incremental;
 pub mod ordered;
 pub mod program;

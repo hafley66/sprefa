@@ -5,11 +5,12 @@
 // stdout carries the tick log and nothing else: that is what gets byte-diffed
 // against the oracle jsonl.
 //
-// Usage: emit_rust_harness <program.rs> <schedule.json>
+// Usage: emit_rust_harness <program.rs> <schedule.json> [--live-hosts]
+// --live-hosts runs `sh` decls live; a scripted __host_response_* row is then a defect.
 
 use std::env;
 
-use sprefa_engine_rs::driver::run_schedule;
+use sprefa_engine_rs::driver::{run_schedule, run_schedule_live};
 use sprefa_engine_rs::program::GenProgram;
 use sprefa_engine_rs::sql::SqliteSeam;
 use sprefa_engine_rs::types::{Arrival, ArrivalSign, ProgramJson, Value};
@@ -48,9 +49,11 @@ fn extract_json(module_text: &str) -> String {
 }
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+    let live_hosts = args.iter().any(|arg| arg == "--live-hosts");
+    args.retain(|arg| arg != "--live-hosts");
     if args.len() != 3 {
-        eprintln!("usage: emit_rust_harness <program.rs> <schedule.json>"); // @eprintln-ok CLI usage
+        eprintln!("usage: emit_rust_harness <program.rs> <schedule.json> [--live-hosts]"); // @eprintln-ok CLI usage
         std::process::exit(2);
     }
     let module_text = std::fs::read_to_string(&args[1]).expect("read program.rs");
@@ -79,12 +82,31 @@ fn main() {
         })
         .collect();
 
+    if live_hosts {
+        if let Some(scripted) = schedule
+            .iter()
+            .flatten()
+            .find(|arrival| arrival.rel.starts_with("__host_response_"))
+        {
+            eprintln!(
+                "--live-hosts forbids the scripted response row {} in the schedule; the runtime produces it",
+                scripted.rel
+            ); // @eprintln-ok CLI contract violation before any tick runs
+            std::process::exit(2);
+        }
+    }
+
     let seam = SqliteSeam::in_memory().expect("open seam");
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("runtime");
-    let fold = rt.block_on(run_schedule(&gen_program, &seam, &schedule, 100));
+    let fold = if live_hosts {
+        rt.block_on(run_schedule_live(&gen_program, &seam, &schedule, 100))
+            .unwrap_or_else(|failure| panic!("{failure}"))
+    } else {
+        rt.block_on(run_schedule(&gen_program, &seam, &schedule, 100))
+    };
     for line in fold.lines {
         println!("{}", line);
     }

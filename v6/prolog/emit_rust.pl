@@ -20,6 +20,8 @@
 :- use_module('0_rel_record').
 :- use_module(analyze, [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
                          listened_departure_refs/2, program_uses_tick/2 ]).
+:- use_module('1_host_expand', [compile_host_decl/2]).
+:- use_module('compile/registry', [host_execution/3]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -353,6 +355,20 @@ struct_type_dict(structtype(TypeName, Columns, RefTypes, KeyIndices,
 struct_ref_field(none, null) :- !.
 struct_ref_field(TypeName, TypeName).
 
+% The same rows emit_ts.pl renders as host_plans, so the two runtimes read one
+% executor contract: name, columns, template, demand/response rels, execution.
+host_plan_dict(host_plan(Name, Inputs, Outputs, template(Template),
+                         demand_ref(DemandName), response_ref(ResponseName), _),
+               Dict) :-
+    maplist(host_column_dict, Inputs, InputDicts),
+    maplist(host_column_dict, Outputs, OutputDicts),
+    host_execution(Name, Template, Executor),
+    Dict = _{ name: Name, inputs: InputDicts, outputs: OutputDicts,
+              template: Template, demand_rel: DemandName,
+              response_rel: ResponseName, execution: Executor }.
+
+host_column_dict(col(Name, Type), _{ name: Name, type: Type }).
+
 struct_ref_columns_map(RelPlans, Map) :-
     findall(Name-Refs,
             ( member(RelPlan, RelPlans),
@@ -405,6 +421,12 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ordered_fields(EdgeStatements, RelPlans, PlanRules,
                    OrderedProgram, OrderedArms, OrderedPreRefs,
                    OrderedRecursiveLevels),
+    findall(HostDict,
+            ( member(Decl, PlanDecls),
+              Decl = sh_decl(_, _, _, _),
+              compile_host_decl(Decl, HostPlan),
+              host_plan_dict(HostPlan, HostDict) ),
+            HostPlanDicts),
 
     ProgramDict =
     _{ name: Name,
@@ -429,7 +451,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        retentions: Retentions,
        uses_tick: UsesTick,
        reconcile_every_tick: ReconcileEveryTick,
-       incremental_safe: true },
+       incremental_safe: true,
+       host_plans: HostPlanDicts },
     json_write_string(ProgramDict, ProgramJson),
     raw_string_hashes(ProgramJson, RawStringHashes),
     format(atom(HeadLine), '// Program: ~w', [Name]),
