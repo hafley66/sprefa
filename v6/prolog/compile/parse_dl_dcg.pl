@@ -469,6 +469,10 @@ rel_stmt(Decls) -->
     ( ident(Name), #`(`, enum_variants(Variants), #`)`, #`.`,
       { Decls = [enum_decl(Name, Variants)],
         record_enum_column_orders(Name, Variants) }
+    % A template mints no col_type/kind entry: this ONE term is the record.
+    ; dotted_path(Segs), generic_parameters(Parameters),
+      #`(`, args(decl_a_column, Specs), #`)`, #`.`,
+      { Decls = [rel_template(Segs, Parameters, Specs)] }
     ; dotted_path(Segs), #`(`,
       args(decl_a_column, Specs), #`)`,
       { length(Specs, Arity),
@@ -478,11 +482,44 @@ rel_stmt(Decls) -->
       ws,
       { typed_decl_entries(Ref, Specs, Typed) },
       rel_modifiers(Ref, Mods),
+      is_clause(Ref, Conformance),
       { module_path_decls(Segs, Ref, PathDecls),
         column_less_decls(Ref, Specs, Mods, UnitDecls),
-        append([Typed, Mods, PathDecls, UnitDecls], Decls) },
+        append([Typed, Mods, PathDecls, UnitDecls, Conformance], Decls) },
       #`.`
     ; decl_b_tail(Decls)
+    ).
+
+% Parameters only when a SECOND group follows; the peek below decides it
+% standing at the first group's closing paren.
+generic_parameters(Parameters) -->
+    #`(`, args(ident, Parameters), { Parameters \== [] }, #`)`, ws,
+    peek(0'(),
+    { check_distinct_parameters(Parameters) }.
+
+% Decidable inside the one production, with no other declaration in hand.
+check_distinct_parameters(Parameters) :-
+    ( append(_, [Parameter | Tail], Parameters),
+      memberchk(Parameter, Tail)
+    -> unsupported(duplicate_generic_parameter(Parameter))
+    ;  true
+    ).
+
+% Arity and interface existence are NOT checked here: the single-pass parser
+% holds no other declaration when this clause runs.
+is_clause(Ref, Decls) -->
+    ( ~`is`
+    -> ws, sep(type_application, Applications),
+       { Decls = [rel_is_implementation(Ref, Applications)] }
+    ;  { Decls = [] }
+    ).
+
+type_application(Application) -->
+    ident(Name), ws,
+    ( @`(`
+    -> ws, sep(type_expr, Arguments), #`)`,
+       { Application =.. [Name | Arguments] }
+    ;  { Application = Name }
     ).
 
 column_less_decls(Ref, Specs, Mods, Decls) :-

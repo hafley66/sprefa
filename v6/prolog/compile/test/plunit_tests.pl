@@ -5822,6 +5822,162 @@ test(a_root_rel_zero_still_has_no_storage) :-
 
 :- end_tests(rel_zero_arity).
 
+% Two rel-declaration spellings whose AST nodes no later phase reads:
+% `rel pair(T)(first: T, second: T).` (curried type parameters) and
+% `rel file(path: text) is addressable.` (interface conformance). The gate
+% these tests hold is that BOTH doors build the node and that a program
+% carrying either emits the same module text as the same program without it.
+:- begin_tests(rel_template_and_is_clause).
+
+surface_decls(Source, Decls) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(Decls, _), _, [])).
+
+surface_findings(Source, Findings) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, prog(_, _), _, Findings)).
+
+surface_round_trip(Source, Program, RoundTripped, Text) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    once(print_dl_program(Program, Bindings, Text)),
+    atom_codes(Text, PrintedCodes),
+    once(parse_dl(PrintedCodes, RoundTripped, _, [])).
+
+% compile_dl6/2 names the emitted module after the source BASENAME, so two
+% texts only compare byte-for-byte from equally named files in separate
+% directories.
+door_emitted_text(Slot, Source, Emitted) :-
+    tmp_file(door_probe, Root),
+    atomic_list_concat([Root, '_', Slot], Dir),
+    make_directory(Dir),
+    atomic_list_concat([Dir, '/probe.dl6'], SourceFile),
+    atomic_list_concat([Dir, '/probe.ts'], OutFile),
+    setup_call_cleanup(
+        open(SourceFile, write, Stream),
+        format(Stream, "~w", [Source]),
+        close(Stream)),
+    setup_call_cleanup(
+        with_output_to(string(_), compile_dl6(SourceFile, OutFile)),
+        read_file_to_string(OutFile, Emitted, []),
+        ( catch(delete_file(SourceFile), _, true),
+          catch(delete_file(OutFile), _, true),
+          catch(delete_directory(Dir), _, true) )).
+
+test(a_template_declaration_parses_to_one_record_and_no_rel_entry) :-
+    surface_decls('rel pair(T)(first: T, second: T).', Decls),
+    Decls == [rel_template([pair], ['T'],
+                           [column(first, 'T'), column(second, 'T')])].
+
+test(a_template_declaration_round_trips_through_the_printer) :-
+    surface_round_trip('rel pair(T)(first: T, second: T).',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel pair(T)(first: T, second: T).')),
+    Program =@= RoundTripped.
+
+test(a_two_parameter_template_at_a_module_path_round_trips) :-
+    surface_round_trip('rel shapes.pair(Left, Right)(head: Left, tail: Right).',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _,
+                  'rel shapes.pair(Left, Right)(head: Left, tail: Right).')),
+    Program =@= RoundTripped.
+
+test(an_is_clause_rides_beside_the_ordinary_column_entries) :-
+    surface_decls('rel file(path: text, digest: text) is addressable.', Decls),
+    Decls == [ col_type(file/2, path, text),
+               col_type(file/2, digest, text),
+               rel_is_implementation(file/2, [addressable]) ].
+
+test(an_is_clause_round_trips_after_every_modifier) :-
+    surface_round_trip(
+        'rel file(path: text) key(1) is addressable, container(text).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _,
+                  'rel file(path: text) key(1) is addressable, container(text).')),
+    Program =@= RoundTripped.
+
+test(an_is_clause_on_a_column_less_rel_round_trips) :-
+    surface_round_trip('rel unit() is addressable.',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel unit() is addressable.')),
+    Program =@= RoundTripped.
+
+% A rel named in column-type position prints from its type_decl entry, which
+% is a different decl_line/5 clause; the `is` clause has to survive that one too.
+test(an_is_clause_survives_the_type_decl_print_path) :-
+    surface_round_trip('rel point(x: int) is addressable.\nrel line(a: point).',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel point(x: int) is addressable.')),
+    Program =@= RoundTripped.
+
+test(the_zero_parameter_declaration_keeps_its_shape) :-
+    surface_decls('rel point(x: int, y: int).', Decls),
+    Decls == [col_type(point/2, x, int), col_type(point/2, y, int)],
+    surface_round_trip('rel point(x: int, y: int).',
+                       Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'rel point(x: int, y: int).')),
+    Program =@= RoundTripped.
+
+test(both_doors_build_the_same_nodes) :-
+    forall(member(Source, ['rel pair(T)(first: T, second: T).',
+                           'rel shapes.pair(Left, Right)(head: Left).',
+                           'rel file(path: text, digest: text) is addressable.',
+                           'rel file(path: text) key(1) is addressable, container(text).',
+                           'rel unit() is addressable.',
+                           'rel point(x: int, y: int).']),
+           ( atom_codes(Source, Codes),
+             once(parse_dl(Codes, Classic, _, _)),
+             once(parse_dl_dcg:parse_dl(Codes, Dcg, _, _)),
+             ( Classic =@= Dcg
+             -> true
+             ;  throw(door_disagreement(Source, Classic, Dcg)) ) )).
+
+% HARD at parse: decidable inside the one production with no other
+% declaration in hand.
+test(a_duplicate_type_parameter_is_a_named_surface_finding) :-
+    surface_findings('rel pair(T, T)(first: T, second: T).', Findings),
+    Findings == [unsupported_surface(duplicate_generic_parameter('T'))].
+
+% DEFERRED: the single-pass parser holds no interface declaration when the
+% clause runs, so an argument count is checked by a later phase, not here.
+test(a_type_application_argument_count_is_not_checked_at_parse) :-
+    surface_decls('rel file(path: text) is container(text, int).', Decls),
+    memberchk(rel_is_implementation(file/1, [container(text, int)]), Decls),
+    surface_findings('rel file(path: text) is container(text, int).', Findings),
+    Findings == [].
+
+% DEFERRED: a bare identifier in type position is a relation reference, and
+% nothing at parse time separates one from a stray parameter name. The
+% existing column_type_unknown throw is still what names it.
+test(a_free_parameter_outside_a_template_still_reaches_column_type_unknown) :-
+    surface_findings('rel thing(value: T).', Findings),
+    Findings == [],
+    tmp_file(free_parameter, OutFile),
+    dl6_compile_text("rel thing(value: T).\n", OutFile, Result),
+    Result = refused(Error),
+    once(( sub_term(column_type_unknown, Error)
+         ; sub_term(column_type_unknown(_), Error) )).
+
+test(a_template_declaration_emits_the_module_the_program_without_it_emits) :-
+    door_emitted_text(with,
+        'rel pair(T)(first: T, second: T).\nrel point(x: int, y: int).\nrel line(a: point, b: point).\n',
+        WithTemplate),
+    door_emitted_text(without,
+        'rel point(x: int, y: int).\nrel line(a: point, b: point).\n',
+        WithoutTemplate),
+    WithTemplate == WithoutTemplate.
+
+test(an_is_clause_emits_the_module_the_bare_declaration_emits) :-
+    door_emitted_text(with,
+        'rel file(path: text, digest: text) is addressable.\nrel seen(n: int).\n',
+        WithClause),
+    door_emitted_text(without,
+        'rel file(path: text, digest: text).\nrel seen(n: int).\n',
+        WithoutClause),
+    WithClause == WithoutClause.
+
+:- end_tests(rel_template_and_is_clause).
+
 fact_probe_text("rel max_run(limit_lines: int).
 rel doubled_limit(limit_doubled: int).
 
