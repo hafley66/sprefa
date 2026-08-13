@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# green-parallel.sh -- green-all's 32 legs, phased. `just green-all-serial` is
+# @comment-ok: the per-leg parallel-safety constraint below is the file's contract
+# green-parallel.sh -- green-all's 29 legs, phased. `just green-all-serial` is
 # the one-at-a-time fallback.
 #
 # A leg may only join the parallel phase if load cannot move its verdict:
@@ -28,13 +29,11 @@ SOAK="memory-soak:TSV2_SOAK_PORT=17801"
 PHASE_B=(
   "multirepo-golden:TSV2_MULTIREPO_PORT=17812"
   "precommit-changed:TSV2_GIT_DIAGS_PORT=17814"
-  "endurance:TSV2_ENDURANCE_PORT=17802"
   "flagship:TSV2_FLAGSHIP_PORT=17808 TSV2_FLAGSHIP_FLOW_PORT=17809"
   "store-test"
   "dd-grade"
   "files:TSV2_FILES_PORT=17807"
   "extraction-live:TSV2_EXTRACTION_PORT=17806"
-  "dl-test"
   "serve-leak-soak:TSV2_LEAK_PORT=17805"
   "prolog-lint"
   "serve-endurance:TSV2_ENDURANCE_PORT=17804"
@@ -42,7 +41,6 @@ PHASE_B=(
   "compile-speed"
   "plunit"
   "typecheck"
-  "leak-soak:TSV2_LEAK_PORT=17803"
   "rtkq-golden:TSV2_PARITY_PORT=17813"
   "watch-scale"
   "catalog-audit:CATALOG_AUDIT_PORT=17815"

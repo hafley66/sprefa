@@ -116,7 +116,7 @@ const CORPUS_FLOOR: usize = 60;
 /// every file must still yield a tree.
 const PARSES_CLEAN: &[&str] = &[
     "0_body_walk.pl",
-    "0_refusal_messages.pl",
+    "0_unsupported_messages.pl",
     "1_expansion.pl",
     "ARCH.pl",
     "compile/1_emit_registry_docs.pl",
@@ -236,4 +236,34 @@ fn collect_prolog_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBu
             files.push(path);
         }
     }
+}
+
+/// SABOTAGE RECEIPT: dropping the `[reachable/2, walk//1]` list from the
+/// fixture's second `use_module` leaves one side_effect row and no named rows,
+/// and this test fails on the missing `graph:reachable/2` pair.
+#[test]
+fn prolog_module_declaration_and_import_lists() {
+    let output = PrologSource.extract(PATH, SOURCE, FamilyMask::ALL);
+    let facts = flatten(&output);
+
+    let specifiers: Vec<(&str, Option<&str>, &str)> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            sprefa_extract::FlatFact::Specifier {
+                kind, module, name, ..
+            } => Some((kind.as_str(), module.as_deref(), name.as_str())),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        specifiers,
+        [
+            ("reexport", Some("sample"), "path/2"),
+            ("reexport", Some("sample"), "greeting//0"),
+            ("side_effect", None, "library(lists)"),
+            ("named", Some("'../shared/graph'"), "reachable/2"),
+            ("named", Some("'../shared/graph'"), "walk//1"),
+        ]
+    );
 }

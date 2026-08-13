@@ -1,0 +1,5 @@
+use "leaf.dl6".
+rel expensive(sku: text).
+rel flagged(sku: text).
+expensive(sku) <- item(sku, price), price > 100.
+flagged(sku) <- expensive(sku).
