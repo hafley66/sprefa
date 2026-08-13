@@ -1,0 +1,19 @@
+{
+  "grammars": [
+    {
+      "name": "dl6",
+      "camelcase": "Dl6",
+      "scope": "source.dl6",
+      "path": ".",
+      "file-types": ["dl6"]
+    }
+  ],
+  "metadata": {
+    "version": "0.0.0",
+    "license": "UNLICENSED",
+    "description": "Minimal dl6 grammar feasibility lab"
+  },
+  "bindings": {
+    "c": true
+  }
+}
