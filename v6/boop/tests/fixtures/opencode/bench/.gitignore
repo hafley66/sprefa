@@ -1,0 +1,3 @@
+# The root gitignore excludes *.db (local ~/.agent/boop.db state); this one
+# is a committed bench corpus, not runtime state.
+!opencode.db

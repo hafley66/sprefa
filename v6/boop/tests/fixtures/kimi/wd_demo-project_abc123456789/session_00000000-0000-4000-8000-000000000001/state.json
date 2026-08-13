@@ -1,0 +1,22 @@
+{
+  "createdAt": "2026-07-18T17:54:09.432Z",
+  "updatedAt": "2026-07-18T17:54:09.487Z",
+  "title": "convert eprintln sites to tracing",
+  "isCustomTitle": false,
+  "agents": {
+    "main": {
+      "homedir": "/Users/demo/.kimi-code/sessions/wd_demo-project_abc123456789/session_00000000-0000-4000-8000-000000000001/agents/main",
+      "type": "main",
+      "parentAgentId": null
+    },
+    "agent-0": {
+      "homedir": "/Users/demo/.kimi-code/sessions/wd_demo-project_abc123456789/session_00000000-0000-4000-8000-000000000001/agents/agent-0",
+      "type": "sub",
+      "parentAgentId": "main",
+      "swarmItem": "cli:src/cli/daemon.rs"
+    }
+  },
+  "custom": {},
+  "workDir": "/Users/demo/projects/example",
+  "lastPrompt": "convert eprintln sites to tracing"
+}
