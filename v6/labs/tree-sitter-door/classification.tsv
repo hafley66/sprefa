@@ -42,3 +42,4 @@ boolean	EMITTED-IDENTICAL	the {member(B, [true, false])} guard beside kw//1 give
 variable	EMITTED-IDENTICAL	generated from alpha and alnum with the DCG capitalization branches.
 identifier	EMITTED-IDENTICAL	generated from alpha and alnum with the underscore branches.
 comment	EMITTED-IDENTICAL	cst_extra(comment); ws//0 eats it, the fact records that it exists.
+use_declaration	EMITTED-NEEDS-OVERLAY	use_item//1 is never reached from statements//3: use_resolve.pl:strip_entry peels `use "path".` off the source before the remainder parses as a Core program, so the statement DCG the emitter walks has no use branch to read. Hand-written until the peel becomes a grammar rule.

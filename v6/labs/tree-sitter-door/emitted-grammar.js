@@ -32,6 +32,7 @@ module.exports = grammar({
   rules: {
     source_file: $ => repeat($.statement),
     statement: $ => choice($.bind_declaration, $.relation_declaration, $.shell_declaration, seq("import", $.string, "."), $.query, $.match_statement, $.rule, $.fact),
+    use_declaration: $ => seq(field("visibility", optional("pub")), "use", field("path", $.string), optional(seq("as", field("alias", $.identifier))), "."),
     relation_declaration: $ => seq("rel", field("name", $.path), "(", field("columns", optional(choice($.enum_variants, seq($.declaration_parameter, repeat(seq(",", $.declaration_parameter)))))), ")", field("modifiers", repeat($.relation_modifier)), "."),
     shell_declaration: $ => seq("sh", field("name", $.path), "(", field("inputs", optional(seq($.column, repeat(seq(",", $.column))))), ")", "->", "(", field("outputs", optional(seq($.column, repeat(seq(",", $.column))))), ")", "=", field("template", $.template), "."),
     bind_declaration: $ => seq("bind", field("name", $.identifier), "(", optional(seq($.column, repeat(seq(",", $.column)))), ")", "."),
