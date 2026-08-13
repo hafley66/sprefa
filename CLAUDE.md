@@ -234,10 +234,10 @@ only working notification path.
   (arg to param, ret to call_res, higher-order) is commented out and marked
   PENDING. `ModuleF` is collapsed at `types.rs:632-645` and flagged for human
   review.
-- **`sprefa-extract` has no markdown or `.dl6` extractor.**
-  `v6/sprefa-extract/src/lang/mod.rs:36-45` `sources()` lists Rust, Go, Kotlin,
-  Prolog, TypeScript, and an ast-grep fallback. `source_for` returns `None` for
-  anything else, so a `.dl6` rail cannot read a `.md` file today.
+- **`sprefa-extract` has no markdown extractor.** `.dl6` landed (PR #241:
+  `tree-sitter-dl6` crate + `src/lang/dl6/`), but `source_for` still returns
+  `None` for `.md`, so a `.dl6` rail cannot read a `.md` file today.
+  Roster: `v6/sprefa-extract/src/lang/mod.rs` `sources()`.
 - **Awaiting user word:** prolog folder names/numbering; flash-prolog worktree
   fate; bop-run idle-exit vs rail receipts; push + tag (gated on
   `release_gate_v620`, `rulings.pl:532`); extraction ambiguity A14 comment_span;
