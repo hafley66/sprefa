@@ -59,6 +59,13 @@ eval_expr(Term, Out) :-
     Term =.. [_ | Args],
     maplist(eval_expr, Args, Values),
     text_scalar_value(Rendering, Values, Out).
+eval_expr(Term, Out) :-
+    nonvar(Term),
+    expression_for_term(Term, typed_scalar, _, Rendering, _),
+    !,
+    Term =.. [_ | Args],
+    maplist(eval_expr, Args, Values),
+    typed_scalar_value(Rendering, Values, Out).
 % Same registry dispatch, json operands: the arguments canonicalize first, so
 % a braces literal reaches the patch algebra as obj(SortedPairs).
 eval_expr(Term, Out) :-
@@ -134,6 +141,47 @@ text_scalar_value(replace, [Text, From, To], Out) :-
     atom_codes(To, ToCodes),
     replace_codes(TextCodes, FromCodes, ToCodes, OutCodes),
     atom_codes(Out, OutCodes).
+
+% SQLite substr: 1-based; a negative start counts from the end
+% (first char = length+start+1); a negative length takes the |Z| characters
+% PRECEDING the start position; position 0 sits before the first character.
+% Probed: substr('hello',0,3)='he', substr('hello',2,-2)='h'.
+typed_scalar_value(substr, [Text, Start], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_length(Text, TextLen),
+    substr_first(Start, TextLen, First),
+    substr_clip(Text, TextLen, First, TextLen, Out).
+typed_scalar_value(substr, [Text, Start, Span], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_length(Text, TextLen),
+    substr_first(Start, TextLen, First),
+    (   Span >= 0
+    ->  Lo = First, Hi is First + Span - 1
+    ;   Lo is First + Span, Hi is First - 1
+    ),
+    substr_clip(Text, TextLen, Lo, Hi, Out).
+typed_scalar_value(instr, [Text, Needle], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    (   sub_atom(Text, Before, _, _, Needle)
+    ->  Out is Before + 1
+    ;   Out = 0
+    ).
+typed_scalar_value(length, [Text], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_length(Text, Out).
+
+substr_first(Start, TextLen, First) :-
+    ( Start < 0 -> First is TextLen + Start + 1 ; First = Start ).
+
+substr_clip(Text, TextLen, Lo, Hi, Out) :-
+    ClippedLo is max(Lo, 1),
+    ClippedHi is min(Hi, TextLen),
+    (   ClippedHi < ClippedLo
+    ->  Out = ''
+    ;   Before is ClippedLo - 1,
+        Span is ClippedHi - ClippedLo + 1,
+        sub_atom(Text, Before, Span, _, Out)
+    ).
 
 rtrim_codes(Text, Chars, Out) :-
     ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),

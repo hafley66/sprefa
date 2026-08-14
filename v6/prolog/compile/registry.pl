@@ -273,6 +273,16 @@ expression(rtrim/1,   text_scalar,         3, rtrim,                text_only).
 expression(rtrim/2,   text_scalar,         3, rtrim,                text_only).
 expression(reverse/1, text_scalar,         3, reverse,              text_only).
 expression(replace/3, text_scalar,         3, replace,              text_only).
+
+% The typed string scalars: substr/instr/length mix text and int operands and
+% return mixed results, so text_only (all-text operands) and the hardwired text
+% result cannot carry them. The TypeRule is typed(OperandTypes, ResultType),
+% one entry per operand in argument order; the compile sites lower each operand
+% by its declared type and set the result type from the row.
+expression(substr/2,  typed_scalar, 3, substr, typed([text, int],      text)).
+expression(substr/3,  typed_scalar, 3, substr, typed([text, int, int], text)).
+expression(instr/2,   typed_scalar, 3, instr,  typed([text, text],     int)).
+expression(length/1,  typed_scalar, 3, length, typed([text],           int)).
 % RFC 7396 merge patch, the streaming scan operator over two json documents.
 % Its own family because text_only would reject a json operand.
 expression(json_patch/2, json_scalar,      3, json_patch,           json_only).

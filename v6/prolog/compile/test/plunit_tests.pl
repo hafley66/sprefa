@@ -4552,13 +4552,25 @@ expected_row('<'/2,    ordered_comparison,  0, infix('<'),            both_numbe
 expected_row('=<'/2,   ordered_comparison,  0, infix('<='),           both_number).
 expected_row('>'/2,    ordered_comparison,  0, infix('>'),            both_number).
 expected_row('>='/2,   ordered_comparison,  0, infix('>='),           both_number).
-expected_row('=='/2,   identity_comparison, 0, infix('='),            same_type).
-expected_row('\\=='/2, identity_comparison, 0, infix('<>'),           same_type).
+expected_row('=='/2,   identity_comparison, 0, infix('IS'),           same_type).
+expected_row('\\=='/2, identity_comparison, 0, infix('IS NOT'),       same_type).
 expected_row('=:='/2,   ordered_comparison, 0, infix('='),            both_number).
 expected_row('=\\='/2,   ordered_comparison, 0, infix('<>'),           both_number).
 expected_row(norm/1,    text_scalar,         3, ascii_alnum_lower,    text_only).
+expected_row(upper/1,   text_scalar,         3, upper,                text_only).
+expected_row(lower/1,   text_scalar,         3, lower,                text_only).
+expected_row(trim/1,    text_scalar,         3, trim,                 text_only).
+expected_row(trim/2,    text_scalar,         3, trim,                 text_only).
+expected_row(ltrim/1,   text_scalar,         3, ltrim,                text_only).
+expected_row(ltrim/2,   text_scalar,         3, ltrim,                text_only).
+expected_row(rtrim/1,   text_scalar,         3, rtrim,                text_only).
 expected_row(rtrim/2,   text_scalar,         3, rtrim,                text_only).
+expected_row(reverse/1, text_scalar,         3, reverse,              text_only).
 expected_row(replace/3, text_scalar,         3, replace,              text_only).
+expected_row(substr/2,  typed_scalar,        3, substr, typed([text, int],      text)).
+expected_row(substr/3,  typed_scalar,        3, substr, typed([text, int, int], text)).
+expected_row(instr/2,   typed_scalar,        3, instr,  typed([text, text],     int)).
+expected_row(length/1,  typed_scalar,        3, length, typed([text],           int)).
 expected_row(json_patch/2, json_scalar,      3, json_patch,           json_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
