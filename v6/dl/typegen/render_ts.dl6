@@ -1,0 +1,94 @@
+# @comment-ok: the dl6 door contract, the single doc site for the IR shape.
+# render_ts.dl6 -- the dl6 door for the TS interface plane (Phase F).
+# Reads the type plane as arrivals on EDB rel type_row/7 (one JSONL line per
+# semantic type row, written by v6/prolog/compile/typegen_export.pl) and
+# renders each renderable relation as a TS interface. The 3-rule IR shape is
+# the proven probe (chat_log/20260813.2):
+#   field_line(TypeName, Ordinal, LineText)   <- concat per column
+#   body_text(TypeName, group_concat(LineText, '\n', Ordinal))
+#   rendered_type(TypeName, FileText)         <- concat wrap
+# Scope (Phase F): interfaces + option columns + list columns, single module,
+# no type-name collisions. Module-prefix and generic-rel emission are future
+# arcs, named in the report, not implemented here.
+# type_row columns (from row/11): id, parent, ordinal, name, kind, type_id,
+# module_id.
+
+rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
+             type_id: int, module_id: int).
+
+# PascalCase = replace(initcap(Name), '_', ''), matching the prolog emitter.
+# Inline, because an assignment-only rule has no positive body to group on.
+
+# A leaf type is a primitive or a reference to another relation. Rel references
+# render as the referenced rel's own PascalCase name.
+rel leaf_type(id: int, text: text).
+leaf_type(Id, 'string') <- type_row(Id, _, _, 'text', 'primitive', _, _).
+leaf_type(Id, 'number') <- type_row(Id, _, _, 'int', 'primitive', _, _).
+leaf_type(Id, 'boolean') <- type_row(Id, _, _, 'bool', 'primitive', _, _).
+leaf_type(Id, 'unknown') <- type_row(Id, _, _, 'json', 'primitive', _, _).
+leaf_type(Id, TypeName) <-
+  type_row(Id, _, _, RelName, 'rel', _, _),
+  not(minted_rel(RelName)),
+  TypeName := replace(initcap(RelName), '_', '').
+
+# @comment-ok: the __ namespace filter; no contains/2 builtin, so instr marks it.
+# The `__` namespace marks compiler-minted rels (list companions, option enums,
+# split refs); only author rels render. There is no contains/2 builtin, so a
+# name carries the marker when instr finds the double underscore at a position
+# past the first character.
+rel minted_rel(name: text).
+minted_rel(Name) <-
+  type_row(_, _, _, Name, 'rel', _, _),
+  Position := instr(Name, '__'),
+  Position > 0.
+
+# @comment-ok: unrolled because dl6 refuses positive recursion in a stratum.
+# A json_list element type, unrolled to two nesting levels; the arms are
+# mutually exclusive per id (depth-1 element is a leaf, depth-2 is a list).
+rel list_type(id: int, text: text).
+list_type(Id, Text) <-
+  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  leaf_type(ElemId, Element),
+  Text := concat(['Array<', Element, '>']).
+list_type(Id, Text) <-
+  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  type_row(ElemId, _, _, _, 'json_list', ElemElemId, _),
+  leaf_type(ElemElemId, Element),
+  Text := concat(['Array<Array<', Element, '>>']).
+
+# An option column renders its element type suffixed with ' | null'.
+rel option_type(id: int, text: text).
+option_type(Id, Text) <-
+  type_row(Id, _, _, _, 'option', ElemId, _),
+  leaf_type(ElemId, Element),
+  Text := concat([Element, ' | null']).
+
+# type_of is the union of the three kind arms; each type id is one kind.
+rel type_of(id: int, text: text).
+type_of(Id, Text) <- leaf_type(Id, Text).
+type_of(Id, Text) <- list_type(Id, Text).
+type_of(Id, Text) <- option_type(Id, Text).
+
+# @comment-ok: the renderable-rel filter; TypeName = PascalCase of the owner rel.
+# One field line per renderable column: "  Name: Type;". Compiler-minted `__`
+# rels are filtered; TypeName is the PascalCase of the owning rel's name.
+rel field_line(type_name: text, ordinal: int, line_text: text).
+field_line(TypeName, Ordinal, LineText) <-
+  type_row(_ColumnId, RelId, Ordinal, ColumnName, 'column', TypeId, _),
+  type_row(RelId, _, _, RelName, 'rel', _, _),
+  not(minted_rel(RelName)),
+  TypeName := replace(initcap(RelName), '_', ''),
+  type_of(TypeId, Type),
+  LineText := concat(['  ', ColumnName, ': ', Type, ';']).
+
+# The interface body: field lines joined in ordinal order by newline.
+rel body_text(type_name: text, body: text).
+body_text(TypeName, group_concat(LineText, '\n', Ordinal)) <-
+  field_line(TypeName, Ordinal, LineText).
+
+# The wrapped interface text; Body carries no trailing newline, so the closing
+# brace lands on its own line, byte-matching the prolog emitter.
+rel rendered_type(type_name: text, file_text: text).
+rendered_type(TypeName, FileText) <-
+  body_text(TypeName, Body),
+  FileText := concat(['export interface ', TypeName, ' {\n', Body, '\n}\n']).
