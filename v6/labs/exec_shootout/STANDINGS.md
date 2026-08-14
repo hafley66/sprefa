@@ -68,3 +68,40 @@ THE number is derived rows/sec in the fixpoint phase, best of 3.
 
 
 Correctness: every engine agrees on (derived, checksum); the internal reference anchors truth at the 10k cases. No standings are written from a run with a mismatch.
+
+## mercury-semi-naive additive results
+
+| metadata | value |
+|---|---|
+| machine | Apple M2 Pro, arm64, macOS 14.6.1 (23G93) |
+| date | 2026-08-14 |
+| measured runs | 3 per case, best fixpoint time selected |
+| compiler | Mercury 22.01.8, `mmc -O5 --make` |
+
+Run command: `./target/release/harness --engines ../mercury-semi-naive/mercury-semi-naive --scales 10000,100000,1000000 --work /tmp/mercury-final.MuvZQx --standings /tmp/mercury-final.MuvZQx/standings.md`
+
+The `--engines` path list is the harness registration point. The harness has
+no static engine registry.
+
+| family | scale | tuned params | edges | engine | derived | fp rows/sec | load ms | fp ms | peak rss kb | runs |
+|---|---|---|---|---|---|---|---|---|---|---|
+| chain | 10000 | segment_len=2582 | 7743 | mercury-semi-naive | 9996213 | 24203906 | 1 | 413 | 19712 | 3 |
+| chain | 100000 | segment_len=200 | 99898 | mercury-semi-naive | 9989800 | 19664961 | 14 | 508 | 54944 | 3 |
+| chain | 1000000 | segment_len=20 | 999989 | mercury-semi-naive | 9999890 | 13908053 | 234 | 719 | 252080 | 3 |
+| grid | 10000 | rows=45 cols=45 | 3960 | mercury-semi-naive | 1069200 | 16200000 | 1 | 66 | 15248 | 3 |
+| grid | 100000 | rows=65 cols=65 | 8320 | mercury-semi-naive | 4596800 | 13972036 | 1 | 329 | 24416 | 3 |
+| grid | 1000000 | rows=94 cols=94 | 17484 | mercury-semi-naive | 19927389 | 12700694 | 5 | 1569 | 48432 | 3 |
+| layered | 10000 | layers=193 width=26 fanout=2 | 9984 | mercury-semi-naive | 9951396 | 15333430 | 2 | 649 | 24768 | 3 |
+| layered | 100000 | layers=6 width=1250 fanout=16 | 100000 | mercury-semi-naive | 10403068 | 3248928 | 18 | 3202 | 406192 | 3 |
+| layered | 1000000 | layers=4 width=15000 fanout=8 | 360000 | mercury-semi-naive | 9815343 | 8609950 | 254 | 1140 | 925872 | 3 |
+
+| engine build metadata | bytes | cold build seconds | machine | date | runs |
+|---|---|---|---|---|---|
+| mercury-semi-naive | 76448 | 0.49 | Apple M2 Pro | 2026-08-14 | 1 |
+
+Checksum validation before timing:
+
+| case | derived | checksum | compared engines | machine | date | runs |
+|---|---|---|---|---|---|---|
+| chain 10000 | 9996213 | `df09b2f409f8b9a8` | mono, mercury-semi-naive | Apple M2 Pro | 2026-08-14 | 1 each |
+| grid 10000 | 1069200 | `9d7239568960d6a8` | mono, mercury-semi-naive | Apple M2 Pro | 2026-08-14 | 1 each |
