@@ -583,12 +583,18 @@ type_base(T) -->
     #`(`, ws, type_expr(E), #`)`,
     { T =.. [W, E] }.
 type_base(Type) -->
-    ident(Name), ws,
+    dotted_path(Segs), ws,
     ( @`(`
-    -> ws, sep(type_expr, Arguments), #`)`,
+    -> { Segs = [Name] },
+       ws, sep(type_expr, Arguments), #`)`,
        { Type =.. [Name | Arguments] }
-    ;  { Type = Name }
+    ;  { type_path_name(Segs, Type) }
     ).
+
+% Keep a mounted relation type's path until 0_dot_expand has mount scope and
+% can use the same declared_path/3 lookup as a relation call.
+type_path_name([Name], Name).
+type_path_name(Segs, type_path(Segs)).
 
 enum_variants((First ; Rest)) -->
     enum_variant(First), #`;`, ws, enum_variants(Rest).

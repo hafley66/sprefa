@@ -1,0 +1,16 @@
+# Offline source/extraction golden.  The source module owns source identity;
+# this consumer owns its extraction projection and dependency vocabulary.
+
+use "source.dl6" as source.
+
+rel source_specifier(owner: source.span, module: text, name: text, kind: text).
+rel dependency(owner: source.span, target: text, binding: text, kind: text).
+rel span_path(owner: source.span, path: text).
+
+dependency(Owner, Target, Binding, Kind) <-
+  source_specifier(Owner, Target, Binding, Kind).
+
+span_path(span(file(rev(repo(_Root), _Oid), Path, blob(_Blob)), _Start, _End), Path) <-
+  source.span(file(rev(repo(_Root), _Oid), Path, blob(_Blob)), _Start, _End).
+
+? dependency(owner: Owner, target: Target, binding: Binding, kind: Kind).
