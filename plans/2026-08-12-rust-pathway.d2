@@ -1,0 +1,121 @@
+vars: {
+  d2-config: {
+    layout-engine: dagre
+    theme-id: 0
+    pad: 20
+  }
+}
+direction: right
+
+classes: {
+  code: {
+    style.fill: "#f6f8fa"
+    style.stroke: "#d0d7de"
+    style.font-color: "#1f2328"
+  }
+  art: {
+    style.fill: "#fff8e6"
+    style.stroke: "#d4a72c"
+    style.font-color: "#1f2328"
+  }
+  gate: {
+    style.fill: "#eaf5ea"
+    style.stroke: "#4a9a4a"
+    style.font-color: "#1f2328"
+  }
+  gap: {
+    style.fill: "#ffe9e9"
+    style.stroke: "#d1494c"
+    style.font-color: "#1f2328"
+  }
+}
+
+# board 0: the whole pathway, six stages
+
+src:      "1. fixtures/*.dl6" { class: art }
+compiler: "2. swipl, 9640 ln\nlower.pl plus two emitters"
+artifact: "3. one .rs file\nthe program as JSON data" { class: art }
+runtime:  "4. sprefa-engine-rs\n3601 ln, tick over SQLite"
+out:      "5. tick log JSONL\none object per tick" { class: art }
+grade:    "6. grade.sh\n280 of 392 byte-clean" { class: gate }
+oracle:   "oracle: emit_ts.pl\nticklog.pl reference" { class: gate }
+
+src -> compiler -> artifact -> runtime -> out -> grade
+compiler -> oracle: emit_ts
+oracle -> grade: expected
+
+layers: {
+
+  compile: {
+    direction: right
+    dl6: "fixtures/*.dl6" { class: art }
+
+    front: "parse_dl_dcg.pl\nthe live door, use_resolve.pl:28 picks dcg"
+    plan:  "program_plan/3\nplan(prog(Decls,Rules), Types, RelPlans, Mode)"
+    lower: "lower.pl, 5872 ln\nDDL, catalog rows, __str dict, boundary SQL"
+
+    ts:  "emit_ts.pl, 2814 ln\nthe oracle backend, 392/392" { class: gate }
+    rs:  "emit_rust.pl, 315 ln\nemit_program/5, drop-in for emit_ts"
+
+    rsfile: |`rust
+      const PROGRAM_JSON: &str = r#"{ "ddl": [...],
+        "boot": [...], "relations": [...],
+        "levels": [...], "edges": [...] }"#;
+      pub fn program() -> ProgramJson { ... }
+    `| { class: code }
+
+    delim: "TODO rustc REJECTS the large file\nraw-string delimiter collides at a hex colour" { class: gap }
+
+    dl6 -> front -> plan -> lower
+    lower -> ts
+    lower -> rs
+    rs -> rsfile: writes
+    rsfile -> delim: "compile check covers 1 of 392"
+  }
+
+  run: {
+    direction: right
+    rsfile: "the emitted .rs" { class: art }
+
+    gen:    "bin/emit_rust_harness.rs reads it as TEXT\nprogram.rs:45 GenProgram::from_json"
+    driver: "driver.rs:26 run_schedule\nthe one root subscribe, one batch per tick"
+    tick:   "program.rs:81 run_tick\nordered_program forks to ordered.rs"
+    db:     "sql.rs:21 trait SqlRunner over SQLite\nSqliteSeam holds a bare Connection, not Sync" { shape: cylinder }
+
+    log: "stdout: tick log JSONL" { class: art }
+
+    verdict: |||md
+      ## grade.sh, diff -q oracle out
+      | verdict | n |
+      | --- | --: |
+      | clean | 280 |
+      | unsupported | 106 |
+      | error | 3 |
+      | compiled | 3 |
+    |||
+    verdict.shape: rectangle
+    verdict.class: gate
+
+    rsfile -> gen -> driver -> tick -> db -> log -> verdict
+  }
+
+  phases: {
+    direction: right
+    was: "run_tick ran 6 of the 15 phases\nemit_ts.pl:2518-2571 emits" { class: gap }
+
+    fixed: |`rust
+      text_plane::intern;    // 60eb43cc  109 -> 169
+      apply_edges;           // 7225a6e5  169 -> 213
+      apply_retention;       // b4d57723  214 -> 225
+      advance_tick;          // a4b05fbb  225 -> 230
+      struct_plane::intern;  // ab17568f  230 -> 248
+      stage_departures;      // ea4c6312  248 -> 253
+      ordered::run_tick;     // dcc9bb1b  253 -> 280
+    `| { class: code }
+
+    remaining: "106 unsupported, untriaged\nprolog cannot emit Rust for them at all" { class: gap }
+
+    was -> fixed: "PR 224 and PR 226"
+    fixed -> remaining: "what remains"
+  }
+}

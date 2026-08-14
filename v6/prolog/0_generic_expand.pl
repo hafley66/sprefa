@@ -17,8 +17,11 @@
 :- use_module(library(apply)).
 :- use_module(library(crypto)).
 :- use_module(library(lists)).
-:- use_module('0_option_expand', [expand_option_decls/2]).
+:- use_module('0_option_expand', [expand_option_decls/2, scalar_element/1]).
 :- use_module('0_type_plane', [unwrapped_column_type/2]).
+:- use_module('0_type_ids',
+              [ decl_id/3, param_id/4, member_id/4, constraint_id/3,
+                impl_id/3, app_id/3, arg_id/3, id_kind_name/3 ]).
 
 expand_generic_in_context(_Context, Program, Expanded) :-
     expand_generic_program(Program, Expanded).
@@ -43,27 +46,25 @@ expand_generic_program_raw(prog(Decls0, Rules), prog(Decls, Rules)) :-
     expand_option_decls(CanonicalDecls, OptionDecls),
     retarget_type_decl_mirrors(OptionDecls, Decls).
 
-% Surface rel templates are compile-time declarations. Each ground application
-% mints one ordinary relation schema, after which the existing storage and
-% relation-reference machinery sees no generic construct.
+% Each ground application of a compile-time rel template mints one ordinary
+% relation schema; downstream storage machinery sees no generic construct.
 expand_user_templates(Decls0, Rules, Instances, Decls) :-
     generic_type_ir(Decls0, TypeIr),
     validate_type_rows(TypeIr),
+    validate_interface_applications(Decls0),
     type_row_templates(Decls0, TypeIr, Templates),
     check_template_application_arities(Decls0, Templates),
     user_template_fixpoint(Decls0, Templates, [], WithInstances, Instances),
     validate_user_template_collisions(Decls0, Rules, Instances),
     maplist(rewrite_user_template_decl(Instances), WithInstances, Rewritten),
     exclude(is_rel_template, Rewritten, RuntimeDecls),
-    generic_provenance_decls(TypeIr, Instances, Provenance),
-    append(RuntimeDecls, Provenance, Decls).
+    generic_catalog_decls(TypeIr, Instances, CatalogDecls),
+    append(RuntimeDecls, CatalogDecls, Decls).
 
 is_rel_template(rel_template(_, _, _)).
 
-% The semantic type graph has one vocabulary.  Source terms remain accepted at
-% this boundary, but generic_rel/interface/implementation terms are never
-% constructed.  IDs are derived from qualified labels and ordinals, so source
-% declaration order does not affect identity.
+% Source terms are accepted here but generic_rel/interface/implementation terms
+% are never constructed; ids derive from labels and ordinals, not source order.
 generic_type_ir(Decls, Rows) :-
     normalized_type_rows(Decls, Rows).
 
@@ -81,78 +82,78 @@ normalized_type_rows(Decls, Rows) :-
 
 normalized_declaration_row(Decls, declaration(Id, root, Name, relation, materialized)) :-
     member(type_decl(Name, _), Decls),
-    declaration_id(relation, Name, Id).
+    decl_id(relation, Name, Id).
 normalized_declaration_row(Decls, declaration(Id, root, Name, relation, compile_time)) :-
     member(rel_template(Segments, _, _), Decls),
     atomic_list_concat(Segments, '__', Name),
-    declaration_id(relation, Name, Id).
+    decl_id(relation, Name, Id).
 normalized_declaration_row(Decls, declaration(Id, root, Name, interface, compile_time)) :-
     member(interface_decl(Name, _), Decls),
-    declaration_id(interface, Name, Id).
+    decl_id(interface, Name, Id).
 normalized_declaration_row(Decls, declaration(Id, root, ConcreteName, relation, materialized)) :-
     source_generic_application(Decls, Application),
     canonical_type_name(Application, ConcreteName),
-    declaration_id(relation, ConcreteName, Id).
+    decl_id(relation, ConcreteName, Id).
 
 normalized_parameter_row(Decls, parameter(Id, Owner, Ordinal, Name)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),
-    declaration_id(relation, OwnerName, Owner),
+    decl_id(relation, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, _),
-    parameter_id(Owner, Ordinal, Name, Id).
+    param_id(Owner, Ordinal, Name, Id).
 normalized_parameter_row(Decls, parameter(Id, Owner, Ordinal, Name)) :-
     member(interface_decl(OwnerName, Parameters), Decls),
-    declaration_id(interface, OwnerName, Owner),
+    decl_id(interface, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, _),
-    parameter_id(Owner, Ordinal, Name, Id).
+    param_id(Owner, Ordinal, Name, Id).
 
 normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
     member(rel_template(Segments, Parameters, Specs), Decls),
     atomic_list_concat(Segments, '__', OwnerName),
-    declaration_id(relation, OwnerName, Owner),
+    decl_id(relation, OwnerName, Owner),
     nth1(Ordinal, Specs, column(Name, Type0)),
     normalized_type(Decls, Owner, Parameters, Type0, Type),
     member_id(Owner, Ordinal, Name, Id),
     !.
 normalized_member_row(Decls, member(Id, Owner, Ordinal, Name, Type)) :-
     member(type_decl(OwnerName, Specs), Decls),
-    declaration_id(relation, OwnerName, Owner),
+    decl_id(relation, OwnerName, Owner),
     nth1(Ordinal, Specs, col(Name, Type0)),
     normalized_type(Decls, Owner, [], Type0, Type),
     member_id(Owner, Ordinal, Name, Id).
 
 normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId)) :-
     generic_owner_parameters(Decls, OwnerName, Parameters),
-    declaration_id(relation, OwnerName, Owner),
+    decl_id(relation, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, Constraints),
-    parameter_id(Owner, Ordinal, Name, ParameterId),
+    param_id(Owner, Ordinal, Name, ParameterId),
     member(Constraint, Constraints),
     interface_application_name(Constraint, InterfaceName),
-    declaration_id(interface, InterfaceName, InterfaceId),
+    decl_id(interface, InterfaceName, InterfaceId),
     constraint_id(ParameterId, InterfaceId, Id).
 
 normalized_constraint_row(Decls, constraint(Id, ParameterId, InterfaceId)) :-
     member(interface_decl(OwnerName, Parameters), Decls),
-    declaration_id(interface, OwnerName, Owner),
+    decl_id(interface, OwnerName, Owner),
     nth1(Ordinal, Parameters, Parameter0),
     parameter_parts(Parameter0, Name, Constraints),
-    parameter_id(Owner, Ordinal, Name, ParameterId),
+    param_id(Owner, Ordinal, Name, ParameterId),
     member(Constraint, Constraints),
     interface_application_name(Constraint, InterfaceName),
-    declaration_id(interface, InterfaceName, InterfaceId),
+    decl_id(interface, InterfaceName, InterfaceId),
     constraint_id(ParameterId, InterfaceId, Id).
 
 normalized_implementation_row(Decls,
                               implementation(Id, Subject, interface_application(InterfaceId))) :-
     member(rel_is_implementation(Ref, Applications), Decls),
     ref_name(Ref, SubjectName),
-    declaration_id(relation, SubjectName, Subject),
+    decl_id(relation, SubjectName, Subject),
     member(Application, Applications),
     interface_application_name(Application, InterfaceName),
-    declaration_id(interface, InterfaceName, InterfaceId),
-    implementation_id(Subject, InterfaceId, Id).
+    decl_id(interface, InterfaceName, InterfaceId),
+    impl_id(Subject, InterfaceId, Id).
 
 normalized_application_rows(Decls, Rows) :-
     findall(Application, source_generic_application(Decls, Application), Found),
@@ -180,13 +181,13 @@ generic_application_name(Decls, Application) :-
 
 normalized_application_row(Application, Rows) :-
     Application =.. [Name | Arguments],
-    declaration_id(relation, Name, Constructor),
-    application_id(Constructor, Arguments, Id),
+    decl_id(relation, Name, Constructor),
+    app_id(Constructor, Arguments, Id),
     ApplicationRow = application(Id, Constructor),
     findall(Row,
             ( nth1(Ordinal, Arguments, Type0),
               normalized_argument_type(Type0, Type),
-              argument_id(Id, Ordinal, ArgumentId),
+              arg_id(Id, Ordinal, ArgumentId),
               Row = argument(ArgumentId, Id, Ordinal, Type) ),
             ArgumentRows),
     Rows = [ApplicationRow | ArgumentRows].
@@ -195,18 +196,18 @@ normalized_argument_type(Type, type_atom(Type)) :- atom(Type), !.
 normalized_argument_type(Type, type_application(Id)) :-
     compound(Type),
     Type =.. [Constructor | Arguments],
-    declaration_id(relation, Constructor, ConstructorId),
-    application_id(ConstructorId, Arguments, Id).
+    decl_id(relation, Constructor, ConstructorId),
+    app_id(ConstructorId, Arguments, Id).
 
 normalized_derivation_rows(Decls, ApplicationRows, Rows) :-
     findall(derived_from(ConcreteId, ApplicationId),
             ( member(application(ApplicationId, ConstructorId), ApplicationRows),
-              declaration_name(ConstructorId, ConstructorName),
+              id_kind_name(ConstructorId, relation, ConstructorName),
               source_application_by_constructor(Decls, ConstructorName, Application),
               Application =.. [_ | Arguments],
-              application_id(ConstructorId, Arguments, ApplicationId),
+              app_id(ConstructorId, Arguments, ApplicationId),
               canonical_type_name(Application, ConcreteName),
-              declaration_id(relation, ConcreteName, ConcreteId) ),
+              decl_id(relation, ConcreteName, ConcreteId) ),
             Found),
     sort(Found, Rows).
 
@@ -228,14 +229,14 @@ normalized_type(_, Owner, Parameters, Type0, type_ref(Type)) :-
     parameter_id_for(Owner, Parameters, Type0, ParameterId),
     Type = parameter(ParameterId).
 normalized_type(_, _, _, Type, type_ref(primitive(Type))) :-
-    atom(Type), memberchk(Type, [int, float, text, bool, json]), !.
+    atom(Type), scalar_element(Type), !.
 normalized_type(Decls, _, _, Type, type_ref(declaration(Id))) :-
-    atom(Type), declaration_id(relation, Type, Id),
+    atom(Type), decl_id(relation, Type, Id),
     member(type_decl(Type, _), Decls), !.
 normalized_type(_, _, _, Type, type_ref(application(Id))) :-
     compound(Type), Type =.. [Name | Args],
-    declaration_id(relation, Name, Constructor),
-    application_id(Constructor, Args, Id), !.
+    decl_id(relation, Name, Constructor),
+    app_id(Constructor, Args, Id), !.
 normalized_type(_, _, _, Type, type_ref(named(Type))).
 
 type_row_templates(Decls, Rows, Templates) :-
@@ -246,12 +247,12 @@ type_row_templates(Decls, Rows, Templates) :-
             Templates).
 
 generic_template_parameters(Rows, Name, Parameters) :-
-    declaration_id(relation, Name, Owner),
+    decl_id(relation, Name, Owner),
     findall(Ordinal-Parameter,
             ( member(parameter(ParameterId, Owner, Ordinal, ParameterName), Rows),
               findall(ConstraintName,
                       ( member(constraint(_, ParameterId, ConstraintId), Rows),
-                        atom_concat('decl:interface:', ConstraintName, ConstraintId) ),
+                        id_kind_name(ConstraintId, interface, ConstraintName) ),
                       Constraints),
               Parameter = type_parameter(ParameterName, Constraints) ),
             Ordered),
@@ -261,16 +262,16 @@ generic_template_parameters(Rows, Name, Parameters) :-
 validate_type_rows(Rows) :-
     findall(Name-Arity,
             ( member(declaration(Id, _, Name, interface, _), Rows),
-              findall(_, member(parameter(_, Id, _, _, _), Rows), Parameters),
+              findall(_, member(parameter(_, Id, _, _), Rows), Parameters),
               length(Parameters, Arity) ), Interfaces),
     validate_unique_interface_names(Interfaces),
     forall(member(constraint(_, _, InterfaceId), Rows),
            ( memberchk(declaration(InterfaceId, _, _, interface, _), Rows) -> true
-           ; atom_concat('decl:interface:', InterfaceName, InterfaceId),
+           ; id_kind_name(InterfaceId, interface, InterfaceName),
              throw(unsupported_construct(interface_unknown(InterfaceName))) )),
     forall(member(implementation(_, _, interface_application(InterfaceId)), Rows),
            ( memberchk(declaration(InterfaceId, _, _, interface, _), Rows) -> true
-           ; atom_concat('decl:interface:', InterfaceName, InterfaceId),
+           ; id_kind_name(InterfaceId, interface, InterfaceName),
              throw(unsupported_construct(interface_unknown(InterfaceName))) )),
     validate_unique_implementations(Rows).
 
@@ -286,6 +287,17 @@ validate_unique_implementations(TypeIr) :-
     ( select(Item, Implementations, Rest), memberchk(Item, Rest)
     -> throw(unsupported_construct(interface_implementation_duplicate(Item)))
     ; true ).
+
+% Checked at the source terms: the normalized implementation row drops the
+% application's explicit arguments, so arity is invisible in the row graph.
+validate_interface_applications(Decls) :-
+    findall(Name-Arity,
+            ( member(interface_decl(Name, Parameters), Decls),
+              length(Parameters, Arity) ),
+            Interfaces),
+    forall(( member(rel_is_implementation(_, Applications), Decls),
+             member(Application, Applications) ),
+           validate_interface_application(Application, Interfaces)).
 
 validate_interface_application(Application, Interfaces) :-
     ( compound(Application)
@@ -304,7 +316,7 @@ parameter_parts(Name, Name, []).
 parameter_id_for(Owner, Parameters, Name, Id) :-
     nth1(Ordinal, Parameters, Parameter),
     parameter_parts(Parameter, Name, _),
-    parameter_id(Owner, Ordinal, Name, Id), !.
+    param_id(Owner, Ordinal, Name, Id), !.
 
 generic_owner_parameters(Decls, Name, Parameters) :-
     member(rel_template(Segments, Parameters, _), Decls),
@@ -317,59 +329,31 @@ interface_application_name(Application, Name) :-
 ref_name(Name/_, Name) :- !.
 ref_name(Name, Name).
 
-declaration_id(Kind, Name, Id) :- atomic_list_concat([decl, Kind, Name], ':', Id).
-parameter_id(Owner, Ordinal, Name, Id) :- atomic_list_concat([Owner, param, Ordinal, Name], ':' , Id).
-member_id(Owner, Ordinal, Name, Id) :- atomic_list_concat([Owner, member, Ordinal, Name], ':', Id).
-constraint_id(Subject, Interface, Id) :- atomic_list_concat([Subject, constraint, Interface], ':', Id).
-implementation_id(Subject, Interface, Id) :- atomic_list_concat([Subject, impl, Interface], ':', Id).
-application_id(Constructor, Arguments, Id) :-
-    term_to_atom(Arguments, Encoded),
-    atomic_list_concat([Constructor, app, Encoded], ':', Id).
-argument_id(Application, Ordinal, Id) :- atomic_list_concat([Application, arg, Ordinal], ':', Id).
-declaration_name(Id, Name) :- atom_concat('decl:relation:', Name, Id).
+% Instances minted after the source scan carry their own rows: the graph is the
+% only generic freight leaving expansion.
+generic_catalog_decls(TypeIr, Instances, Decls) :-
+    instance_type_rows(Instances, InstanceRows),
+    append(TypeIr, InstanceRows, Unsorted),
+    sort(Unsorted, Rows),
+    ( Rows == [] -> Decls = [] ; Decls = [semantic_type_rows(Rows)] ).
 
-generic_provenance_decls(TypeIr, Instances, Decls) :-
-    % The legacy declaration terms are a storage/catalog transport only.  The
-    % semantic graph above is the sole source of generic identity.
-    findall(generic_decl(Name, Parameters, Specs),
-            normalized_generic_provenance(TypeIr, Name, Parameters, Specs),
-            GenericDecls),
-    findall(generic_instance(ConcreteName, Name, Arguments),
-            ( member(Application, Instances),
-              Application =.. [Name | Arguments],
-              canonical_type_name(Application, ConcreteName) ),
-            InstanceDecls),
-    ( TypeIr == [], Instances == []
-    -> append(GenericDecls, InstanceDecls, Decls)
-    ;  append([GenericDecls, InstanceDecls, [semantic_type_rows(TypeIr)]], Decls)
-    ).
+instance_type_rows(Instances, Rows) :-
+    findall(Row,
+            ( member(Application, Instances), instance_type_row(Application, Row) ),
+            Rows).
 
-normalized_generic_provenance(Rows, Name, Parameters, Specs) :-
-    member(declaration(Owner, _, Name, relation, compile_time), Rows),
-    findall(Ordinal-Parameter,
-            ( member(parameter(ParameterId, Owner, Ordinal, ParameterName), Rows),
-              findall(ConstraintName,
-                      ( member(constraint(_, ParameterId, InterfaceId), Rows),
-                        atom_concat('decl:interface:', ConstraintName, InterfaceId) ),
-                      Constraints),
-              Parameter = type_parameter(ParameterName, Constraints) ),
-            ParameterPairs),
-    keysort(ParameterPairs, OrderedParameters),
-    pairs_values(OrderedParameters, Parameters),
-    findall(Ordinal-column(ColumnName, Type),
-            ( member(member(_, Owner, Ordinal, ColumnName, TypeRef), Rows),
-              provenance_type(Rows, TypeRef, Type) ),
-            SpecPairs),
-    keysort(SpecPairs, OrderedSpecs),
-    pairs_values(OrderedSpecs, Specs).
-
-provenance_type(Rows, type_ref(parameter(ParameterId)), Name) :-
-    member(parameter(ParameterId, _, _, Name), Rows), !.
-provenance_type(_, type_ref(primitive(Type)), Type) :- !.
-provenance_type(_, type_ref(named(Type)), Type) :- !.
-provenance_type(_, type_ref(declaration(DeclId)), Name) :-
-    atom_concat('decl:relation:', Name, DeclId), !.
-provenance_type(_, Type, Type).
+instance_type_row(Application, Row) :-
+    normalized_application_row(Application, ApplicationRows),
+    member(Row, ApplicationRows).
+instance_type_row(Application, declaration(Id, root, Name, relation, materialized)) :-
+    canonical_type_name(Application, Name),
+    decl_id(relation, Name, Id).
+instance_type_row(Application, derived_from(ConcreteId, ApplicationId)) :-
+    Application =.. [ConstructorName | Arguments],
+    decl_id(relation, ConstructorName, Constructor),
+    app_id(Constructor, Arguments, ApplicationId),
+    canonical_type_name(Application, ConcreteName),
+    decl_id(relation, ConcreteName, ConcreteId).
 
 user_template_fixpoint(Decls, Templates, Seen, AllDecls, Instances) :-
     user_template_instances(Decls, Templates, Found),
@@ -467,7 +451,7 @@ check_type_constraint(Decls, Type, Interface) :-
                 generic_bound_unsatisfied(Type, Interface))) ).
 
 json_encodable_type(_, Type, _) :-
-    memberchk(Type, [int, float, text, bool, json]), !.
+    atom(Type), scalar_element(Type), !.
 json_encodable_type(Decls, option(Type), Seen) :- !,
     json_encodable_type(Decls, Type, Seen).
 json_encodable_type(Decls, json_list(Type), Seen) :- !,
@@ -528,6 +512,9 @@ rewrite_user_template_type(Instances, Type0, Type) :-
 
 validate_user_template_collisions(Decls, Rules, Instances) :-
     maplist(canonical_type_name, Instances, Names),
+    throw_on_author_collision(Names, Decls, Rules).
+
+throw_on_author_collision(Names, Decls, Rules) :-
     findall(Name, author_decl_or_rule_name(Decls, Rules, Name), AuthorNames),
     ( member(Name, Names), memberchk(Name, AuthorNames)
     -> throw(unsupported_construct(generic_generated_name_collision(Name)))
@@ -704,11 +691,7 @@ validate_generated_name_collisions(Decls, Rules, Instances) :-
     sort(GeneratedNames, UniqueNames),
     length(GeneratedNames, GeneratedCount),
     length(UniqueNames, GeneratedCount),
-    findall(Name, author_decl_or_rule_name(Decls, Rules, Name), AuthorNames),
-    ( member(Name, GeneratedNames), memberchk(Name, AuthorNames)
-    -> throw(unsupported_construct(generic_generated_name_collision(Name)))
-    ; true
-    ).
+    throw_on_author_collision(GeneratedNames, Decls, Rules).
 
 template_generated_name(Type, Name) :-
     list_flavor_suffix(Type, Suffix),

@@ -35,6 +35,20 @@
     "final_detail": ""
   },
   {
+    "name": "enum_variant_derived_by_level_rule",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "enum_variants_run_unchanged_under_the_origin_row_pass",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "generic_expansion_end_to_end",
     "bucket": "identical",
     "detail": "",
@@ -267,6 +281,69 @@
   },
   {
     "name": "enum_variant_field_typed_as_rel_is_a_ref",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "substr_positive_start_is_one_based",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "substr_negative_start_counts_from_the_end",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "substr_with_span_takes_span_characters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "instr_answers_first_position_or_zero",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "length_counts_characters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "length_result_joins_a_comparison",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "instr_result_feeds_a_substr_operand",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "initcap_capitalizes_each_word_and_lowers_the_rest",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "initcap_replace_projects_snake_to_pascal",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",

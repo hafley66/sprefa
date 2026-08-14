@@ -1,0 +1,8 @@
+# seed: a text LITERAL sitting at a column the decl types int, which is
+# the decl_type_conflicts_witness contradiction (decl is authority over
+# C2a inference).
+
+rel probe_in(value: int).
+rel probe_out(value: int).
+
+probe_out(value) <- probe_in(value), probe_in('north').

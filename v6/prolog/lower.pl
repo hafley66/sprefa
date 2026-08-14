@@ -158,6 +158,7 @@
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
 :- use_module('0_generic_expand', [canonical_type_name/2]).
+:- use_module('0_type_ids', [id_kind_name/3]).
 :- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
               [ type_definition/4, column_storage/3,
@@ -1463,8 +1464,9 @@ catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap, Id0, Rows,
             member(interface_decl(Name, Parameters), Decls), Interfaces),
     metadata_named_rows(Interfaces, interface, ModuleId, Id0,
                         InterfaceRows, InterfaceMap, Id1),
+    semantic_rows_from_decls(Decls, SemanticRows),
     findall(generic(Name, Parameters, Specs),
-            member(generic_decl(Name, Parameters, Specs), Decls),
+            semantic_generic(SemanticRows, Name, Parameters, Specs),
             GenericDefinitions),
     findall(Name-Parameters,
             member(generic(Name, Parameters, _), GenericDefinitions), Generics),
@@ -1478,7 +1480,7 @@ catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap, Id0, Rows,
                                  GenericParameterRows, Id4,
                                  GenericColumnRows, Id4a),
     findall(instance(Concrete, Generic, Arguments),
-            member(generic_instance(Concrete, Generic, Arguments), Decls),
+            semantic_generic_instance(SemanticRows, Concrete, Generic, Arguments),
             Instances),
     metadata_instance_rows(Instances, GenericMap, RelIdMap, ListIdMap, Id4a,
                            InstanceRows, Id5),
@@ -1490,11 +1492,62 @@ catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap, Id0, Rows,
     append([InterfaceRows, GenericRows, InterfaceParameterRows,
             GenericParameterRows, GenericColumnRows, InstanceRows,
             ImplementationRows], RawRows),
-    semantic_rows_from_decls(Decls, SemanticRows),
     annotate_catalog_semantic_ids(RawRows, RawRows, SemanticRows, Rows).
 
 semantic_rows_from_decls(Decls, Rows) :-
     ( member(semantic_type_rows(Rows0), Decls) -> Rows = Rows0 ; Rows = [] ).
+
+%! semantic_generic(+Rows, -Name, -Parameters, -Specs) is nondet.
+%   The surface view of one compile-time relation, read back off the graph.
+semantic_generic(Rows, Name, Parameters, Specs) :-
+    member(declaration(Owner, _, Name, relation, compile_time), Rows),
+    findall(Ordinal-Parameter,
+            ( member(parameter(ParameterId, Owner, Ordinal, ParameterName), Rows),
+              findall(ConstraintName,
+                      ( member(constraint(_, ParameterId, InterfaceId), Rows),
+                        id_kind_name(InterfaceId, interface, ConstraintName) ),
+                      Constraints),
+              Parameter = type_parameter(ParameterName, Constraints) ),
+            ParameterPairs),
+    keysort(ParameterPairs, OrderedParameters),
+    pairs_values(OrderedParameters, Parameters),
+    findall(Ordinal-column(ColumnName, Type),
+            ( member(member(_, Owner, Ordinal, ColumnName, TypeRef), Rows),
+              semantic_surface_type(Rows, TypeRef, Type) ),
+            SpecPairs),
+    keysort(SpecPairs, OrderedSpecs),
+    pairs_values(OrderedSpecs, Specs).
+
+semantic_surface_type(Rows, type_ref(parameter(ParameterId)), Name) :-
+    member(parameter(ParameterId, _, _, Name), Rows), !.
+semantic_surface_type(_, type_ref(primitive(Type)), Type) :- !.
+semantic_surface_type(_, type_ref(named(Type)), Type) :- !.
+semantic_surface_type(_, type_ref(declaration(DeclId)), Name) :-
+    id_kind_name(DeclId, relation, Name), !.
+semantic_surface_type(_, Type, Type).
+
+%! semantic_generic_instance(+Rows, -Concrete, -Generic, -Arguments) is nondet.
+semantic_generic_instance(Rows, Concrete, Generic, Arguments) :-
+    member(derived_from(ConcreteId, ApplicationId), Rows),
+    member(application(ApplicationId, ConstructorId), Rows),
+    member(declaration(ConcreteId, _, Concrete, relation, materialized), Rows),
+    member(declaration(ConstructorId, _, Generic, relation, compile_time), Rows),
+    semantic_application_arguments(Rows, ApplicationId, Arguments).
+
+semantic_application_arguments(Rows, ApplicationId, Arguments) :-
+    findall(Ordinal-Argument,
+            ( member(argument(_, ApplicationId, Ordinal, TypeRef), Rows),
+              semantic_argument_type(Rows, TypeRef, Argument) ),
+            Pairs),
+    keysort(Pairs, Ordered),
+    pairs_values(Ordered, Arguments).
+
+semantic_argument_type(_, type_atom(Type), Type).
+semantic_argument_type(Rows, type_application(ApplicationId), Application) :-
+    member(application(ApplicationId, ConstructorId), Rows),
+    member(declaration(ConstructorId, _, Name, relation, _), Rows),
+    semantic_application_arguments(Rows, ApplicationId, Arguments),
+    Application =.. [Name | Arguments].
 
 annotate_catalog_semantic_ids([], _, _, []).
 annotate_catalog_semantic_ids([Row | Rest], AllRows, SemanticRows,
@@ -1523,12 +1576,12 @@ catalog_semantic_id(row(_, OwnerId, Ordinal, Name, generic_column, _, _, _, _, _
 catalog_semantic_id(row(_, ParameterId, _, Name, constraint, _, _, _, _, _, _),
                     AllRows, Rows, Id) :-
     semantic_parameter_id(ParameterId, AllRows, Rows, Parameter),
-    atom_concat('decl:interface:', Name, Interface),
+    id_kind_name(Interface, interface, Name),
     member(constraint(Id, Parameter, Interface), Rows), !.
 catalog_semantic_id(row(_, SubjectId, _, Interface, implementation, _, _, _, _, _, _),
                     AllRows, Rows, Id) :-
     semantic_relation_id(SubjectId, AllRows, Rows, Subject),
-    atom_concat('decl:interface:', InterfaceId, Interface),
+    id_kind_name(InterfaceId, interface, Interface),
     member(implementation(Id, Subject, interface_application(InterfaceId)), Rows), !.
 catalog_semantic_id(row(_, _, _, Name, concrete_type, _, _, _, _, _, _), _, Rows, Id) :-
     member(declaration(Id, _, Name, relation, materialized), Rows), !.

@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "shape_circle": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"radius": {"type":"integer"}},
+      "required": ["id", "radius" ],
+      "type":"object"
+    },
+    "shape_square": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"side": {"type":"integer"}},
+      "required": ["id", "side" ],
+      "type":"object"
+    },
+    "shape_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"enum_variants_run_unchanged_under_the_origin_row_pass#5b18cc4a0f33a805",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

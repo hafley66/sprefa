@@ -45,6 +45,7 @@
               [ expand_generic_program/2, expand_generic_program_raw/2,
                 canonical_type_name/2, generic_type_ir/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
+:- use_module('../../0_type_ids', [ decl_id/3, id_kind_name/3 ]).
 :- use_module('../../0_ast_expand',
               [ expand_ast_program/2,
                 expand_ast_program_with_bindings/3 ]).
@@ -1606,11 +1607,12 @@ test(catalog_preserves_generic_interface_and_instance_graph) :-
         [ rel_spec(BoxName/1, set, [value], none, [text]),
           rel_spec(holder/1, set, [value], none, [ref(BoxName)]) ],
         RelPlans),
-    Decls = [ interface_decl(json_encodable, []),
-              generic_decl(box,
-                           [type_parameter('T', [json_encodable])],
-                           [column(value, 'T')]),
-              generic_instance(BoxName, box, [text]) ],
+    Source = prog(
+        [ interface_decl(json_encodable, []),
+          rel_template([box], [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(text)) ], []),
+    expand_generic_program(Source, prog(Decls, [])),
     lower:catalog_decl_rows(generic_catalog, [], RelPlans, Decls, Rows, _),
     memberchk(row(InterfaceId, _, 0, json_encodable, interface,
                   0, 0, _, _, _, _), Rows),
@@ -1633,7 +1635,8 @@ test(catalog_generic_rows_carry_normalized_semantic_ids) :-
         [ rel_template([pair], ['T'], [column(value, 'T')]),
           col_type(edge/1, value, pair(int)) ], []),
     expand_generic_program(Program, prog(Expanded, [])),
-    member(generic_instance(PairName, pair, [int]), Expanded),
+    memberchk(semantic_type_rows(SemanticRows), Expanded),
+    lower:semantic_generic_instance(SemanticRows, PairName, pair, [int]),
     inferred_relplans(
         [ rel_spec(edge/1, set, [value], none, [ref(PairName)]),
           rel_spec(PairName/1, set, [value], none, [int]) ], RelPlans),
@@ -1647,6 +1650,43 @@ test(catalog_generic_rows_carry_normalized_semantic_ids) :-
     true.
 
 :- end_tests(catalog_type_ids).
+
+:- begin_tests(type_id_rail).
+
+% Row ids are built and read in 0_type_ids.pl only; id_kind_name/3 is the
+% single inverse, so a decl-id prefix strip anywhere else is a defect.
+test(no_decl_id_reverse_parse_outside_the_id_module) :-
+    findall(Path-Count,
+            ( type_id_rail_source(Path),
+              \+ sub_atom(Path, _, _, 0, '0_type_ids.pl'),
+              read_file_to_string(Path, Text, []),
+              type_id_rail_occurrences(Text, Count),
+              Count > 0 ),
+            Offenders),
+    Offenders == [].
+
+test(the_id_module_still_owns_one_reverse_parse) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../0_type_ids.pl'], Path),
+    read_file_to_string(Path, Text, []),
+    type_id_rail_occurrences(Text, Count),
+    Count =:= 1.
+
+type_id_rail_source(Path) :-
+    test_dir_fact(Here),
+    member(Relative, ['/../..', '/../../compile', '/../../conformance', '/..']),
+    atomic_list_concat([Here, Relative], Dir),
+    directory_files(Dir, Entries),
+    msort(Entries, Ordered),
+    member(Entry, Ordered),
+    sub_atom(Entry, _, 3, 0, '.pl'),
+    atomic_list_concat([Dir, '/', Entry], Path).
+
+type_id_rail_occurrences(Text, Count) :-
+    findall(mark, sub_string(Text, _, _, _, "atom_concat('decl:"), Marks),
+    length(Marks, Count).
+
+:- end_tests(type_id_rail).
 
 :- begin_tests(catalog_nested_rows).
 
@@ -4369,6 +4409,33 @@ test(existing_target_membership_is_not_duplicated) :-
         (post(user(Id, Name)) <-
             (source(Id, Name), user(Id, Name))).
 
+% FAIL-PRE-FIX: enum expansion rewrote decl lists only, so a variant rel had no
+% edge back to the enum it came from and the graph could not name its origin.
+test(enum_variant_rels_carry_origin_rows) :-
+    Program = prog([enum_decl(body, (page(view:int) ; redirect(to:text)))], []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(enum, body, EnumId),
+    decl_id(relation, body_page, PageId),
+    decl_id(relation, body_redirect, RedirectId),
+    memberchk(declaration(EnumId, root, body, enum, compile_time), Rows),
+    memberchk(declaration(PageId, root, body_page, relation, materialized), Rows),
+    memberchk(declaration(RedirectId, root, body_redirect, relation, materialized),
+              Rows),
+    memberchk(derived_from(PageId, EnumId), Rows),
+    memberchk(derived_from(RedirectId, EnumId), Rows),
+    memberchk(member(_, EnumId, 1, page, type_ref(declaration(PageId))), Rows),
+    memberchk(member(_, EnumId, 2, redirect, type_ref(declaration(RedirectId))),
+              Rows).
+
+test(both_doors_mint_the_same_enum_origin_rows) :-
+    Program = prog([enum_decl(body, (page(view:int) ; redirect(to:text)))], []),
+    expand_program(Program, prog(DriverDecls, _), _),
+    expand_match_program(Program, prog(MatchDecls, _)),
+    memberchk(semantic_type_rows(DriverRows), DriverDecls),
+    memberchk(semantic_type_rows(MatchRows), MatchDecls),
+    DriverRows == MatchRows.
+
 % Enum-first through the driver produces exactly what match-first produced.
 test(enum_first_preserves_expanded_terms) :-
     exhaustive_match(Program),
@@ -4427,9 +4494,12 @@ test(user_generic_template_mints_one_ground_relation) :-
     memberchk(col_type(PairName/2, first, int), Decls),
     memberchk(col_type(PairName/2, second, int), Decls),
     memberchk(col_type(edge/1, endpoints, PairName), Decls),
-    memberchk(generic_decl(pair, [type_parameter('T', [])], _), Decls),
-    memberchk(generic_instance(PairName, pair, [int]), Decls),
-    \+ member(rel_template(_, _, _), Decls).
+    memberchk(semantic_type_rows(SemanticRows), Decls),
+    lower:semantic_generic(SemanticRows, pair, [type_parameter('T', [])], _),
+    lower:semantic_generic_instance(SemanticRows, PairName, pair, [int]),
+    \+ member(rel_template(_, _, _), Decls),
+    \+ member(generic_decl(_, _, _), Decls),
+    \+ member(generic_instance(_, _, _), Decls).
 
 test(generic_type_ir_separates_declarations_and_implementations) :-
     Decls = [ rel_template([pair],
@@ -4535,6 +4605,24 @@ test(an_unknown_interface_is_named_before_expansion) :-
           col_type(holder/1, value, box(text)) ], []),
     catch(expand_generic_program(Program, _), Thrown, true),
     Thrown == unsupported_construct(interface_unknown(missing_capability)).
+
+test(an_explicit_interface_application_arity_mismatch_is_named) :-
+    Program = prog(
+        [ interface_decl(addressable, ['T']),
+          type_decl(file, [col(path, text)]),
+          col_type(file/1, path, text),
+          rel_is_implementation(file/1, [addressable(int, int)]) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(interface_arity(addressable, 1, 2)).
+
+test(an_explicit_interface_application_matching_arity_passes) :-
+    Program = prog(
+        [ interface_decl(addressable, ['T']),
+          type_decl(file, [col(path, text)]),
+          col_type(file/1, path, text),
+          rel_is_implementation(file/1, [addressable(int)]) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    memberchk(rel_is_implementation(file/1, [addressable(int)]), Decls).
 
 test(a_declared_marker_interface_satisfies_a_generic_bound) :-
     Program = prog(

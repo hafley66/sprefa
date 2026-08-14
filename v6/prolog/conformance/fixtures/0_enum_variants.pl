@@ -103,3 +103,49 @@ fixture(enum_name_is_a_column_type,
         ]),
         ticks(3)
     ]).
+
+% FAIL-PRE-FIX: expansion stamped keyed on every variant rel, so deriving a
+% variant from a level rule threw keyed_level_head(review_done/2). Sabotage:
+% restore the unconditional keyed mint in 0_enum_expand.pl expand_variant/5
+% and this fixture refuses to compile again.
+fixture(enum_variant_derived_by_level_rule,
+    prog(
+        [ enum_decl(review, (pending ; done(verdict:text))),
+          col_type(submission/2, id, int),
+          col_type(submission/2, verdict, text),
+          keyed(submission/2, [1]) ],
+        [ (review_done(SubmissionId, Verdict) <-
+               submission(SubmissionId, Verdict)) ]),
+    [],
+    [
+        [+submission(1, "ship")],
+        [+submission(2, "hold")]
+    ],
+    [
+        final(review_done/2, [review_done(1, "ship"), review_done(2, "hold")]),
+        final(review_tag/2, [review_tag(1, done), review_tag(2, done)]),
+        ticks(2)
+    ]).
+
+% The enum origin-row pass runs late on the completed program in BOTH doors.
+% Sabotage: wire merge_enum_type_rows/3 into one door only and the twin plunit
+% test both_doors_mint_the_same_enum_origin_rows goes red while this stays green.
+fixture(enum_variants_run_unchanged_under_the_origin_row_pass,
+    prog(
+        [enum_decl(shape, (circle(radius:int) ; square(side:int)))],
+        []),
+    [],
+    [
+        [+shape_circle(11, 3)],
+        [+shape_square(12, 4)]
+    ],
+    [
+        final(shape_circle/2, [shape_circle(11, 3)]),
+        final(shape_square/2, [shape_square(12, 4)]),
+        final(shape_tag/2, [shape_tag(11, circle), shape_tag(12, square)]),
+        deltas(shape_tag/2, [
+            [+shape_tag(11, circle)],
+            [+shape_tag(12, square)]
+        ]),
+        ticks(2)
+    ]).

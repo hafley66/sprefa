@@ -18,7 +18,7 @@
         "id": {"type":"integer"},
         "value": {"anyOf": [ {"type":"integer"},  {"type":null} ]}
       },
-      "required": ["id" ],
+      "required": ["id", "value" ],
       "type":"object"
     },
     "metric_copy": {
@@ -27,7 +27,7 @@
         "id": {"type":"integer"},
         "value": {"anyOf": [ {"type":"integer"},  {"type":null} ]}
       },
-      "required": ["id" ],
+      "required": ["id", "value" ],
       "type":"object"
     },
     "person": {
@@ -84,7 +84,7 @@
         "id": {"type":"integer"},
         "title": {"anyOf": [ {"type":"string"},  {"type":null} ]}
       },
-      "required": ["id" ],
+      "required": ["id", "title" ],
       "type":"object"
     },
     "ticket_copy": {
@@ -93,7 +93,7 @@
         "id": {"type":"integer"},
         "title": {"anyOf": [ {"type":"string"},  {"type":null} ]}
       },
-      "required": ["id" ],
+      "required": ["id", "title" ],
       "type":"object"
     }
   },

@@ -1,0 +1,151 @@
+# Shared type model for the tsv2, rust-ir, and rust-dyn emitters.
+#
+# Collections stay relational because the current DL6 type plane accepts
+# json_list only for scalar elements. Fields whose values come from a closed
+# vocabulary remain text until enum declarations reach the type renderers.
+
+rel emitter_target(name: text,
+                   language: text,
+                   artifact_kind: text,
+                   execution_kind: text,
+                   assembly_kind: text).
+
+rel tsv2_target(target: emitter_target,
+                typescript_runtime: text,
+                sqlite_backend: text,
+                module_format: text).
+
+rel rust_ir_target(target: emitter_target,
+                   rust_runtime: text,
+                   sqlite_backend: text,
+                   ir_format: text,
+                   request_boundary: text).
+
+rel rust_dyn_target(target: emitter_target,
+                    rust_runtime: text,
+                    sqlite_backend: text,
+                    generated_module_kind: text,
+                    linkage: text,
+                    dynamic_loader: option(text)).
+
+rel lowering_intent(name: text,
+                    target: emitter_target,
+                    kind: text,
+                    input_kind: text,
+                    output_kind: text).
+
+rel target_intent(target_name: text,
+                  ordinal: int,
+                  intent: lowering_intent).
+
+rel module_plan(name: text,
+                role: text,
+                artifact_path: text,
+                load_phase: text,
+                entry: bool).
+
+rel event_plan(name: text,
+               source: module_plan,
+               target: module_plan,
+               delivery: text,
+               cardinality: text,
+               lifetime: text).
+
+rel storage_plan(backend: text,
+                 database_scope: text,
+                 transaction_owner: text,
+                 state_kind: text).
+
+rel server_plan(harness: text,
+                transport: text,
+                program_cardinality: text,
+                process_lifetime: text).
+
+rel runtime_bed(name: text,
+                target: emitter_target,
+                storage: storage_plan,
+                server: server_plan).
+
+rel runtime_module(runtime_name: text,
+                   ordinal: int,
+                   module: module_plan).
+
+rel runtime_event(runtime_name: text,
+                  ordinal: int,
+                  event: event_plan).
+
+rel relation_plan(name: text,
+                  arity: int,
+                  storage_kind: text,
+                  arrival_target: bool,
+                  subscribed: bool).
+
+rel statement_plan(name: text,
+                   phase: text,
+                   relation: relation_plan,
+                   sql: text,
+                   params_shape: json).
+
+rel subscription_plan(root_relation: relation_plan,
+                      activation: text,
+                      release: text,
+                      cone_kind: text).
+
+rel host_plan(name: text,
+              demand_relation: relation_plan,
+              response_relation: relation_plan,
+              execution: text).
+
+rel bind_plan(name: text,
+              source_kind: text,
+              target_relation: relation_plan,
+              execution: text).
+
+rel query_plan(name: text,
+               relation: relation_plan,
+               snapshot: text,
+               transport_path: text).
+
+rel program_plan(name: text,
+                 target: emitter_target,
+                 entry_module: module_plan,
+                 subscription: subscription_plan,
+                 intern_mode: text).
+
+rel program_relation(program_name: text,
+                     ordinal: int,
+                     relation: relation_plan).
+
+rel program_statement(program_name: text,
+                      ordinal: int,
+                      statement: statement_plan).
+
+rel program_host(program_name: text,
+                 ordinal: int,
+                 host: host_plan).
+
+rel program_bind(program_name: text,
+                 ordinal: int,
+                 bind: bind_plan).
+
+rel program_query(program_name: text,
+                  ordinal: int,
+                  query: query_plan).
+
+rel artifact_plan(name: text,
+                  target: emitter_target,
+                  program: program_plan,
+                  format: text,
+                  path: text,
+                  linkage: text,
+                  load_phase: text).
+
+rel deployment_plan(name: text,
+                    runtime: runtime_bed,
+                    assembly_kind: text,
+                    binary_count: int,
+                    dynamic_loader: option(text)).
+
+rel deployment_artifact(deployment_name: text,
+                        ordinal: int,
+                        artifact: artifact_plan).

@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"probe_left":{"add":[[true,"left"]],"del":[]},"probe_out":{"add":[[true]],"del":[]},"probe_right":{"add":[[true,"right"]],"del":[]}}}
+{"final":{"probe_left":[[true,"left"]],"probe_out":[[true]],"probe_right":[[true,"right"]]}}

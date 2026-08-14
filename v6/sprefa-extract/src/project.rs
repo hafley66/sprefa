@@ -564,6 +564,55 @@ pub struct FsBlobSource {
     root: PathBuf,
 }
 
+/// Revision-pinned source backed by `soopy`: enumeration happens once at
+/// construction, and later reads retain that pass's exact source identity.
+pub struct SourceTreeBlobSource {
+    tree: std::sync::Mutex<soopy::SourceTree>,
+    entries: std::collections::BTreeMap<String, soopy::SourceEntry>,
+}
+
+impl SourceTreeBlobSource {
+    pub fn open(
+        root: impl AsRef<Path>,
+        revision: soopy::Revision,
+        patterns: &[soopy::Pattern],
+    ) -> Result<Self, String> {
+        let repository = soopy::discover(root).map_err(|error| error.to_string())?;
+        let mut tree = soopy::SourceTree::open(repository);
+        let entries = tree
+            .snapshot(&soopy::SourceQuery {
+                revision,
+                patterns: patterns.to_vec(),
+            })
+            .map_err(|error| error.to_string())?
+            .files
+            .into_iter()
+            .map(|entry| (entry.source.path.0.to_string(), entry))
+            .collect();
+        Ok(Self {
+            tree: std::sync::Mutex::new(tree),
+            entries,
+        })
+    }
+
+    pub fn entries(&self) -> impl Iterator<Item = &soopy::SourceEntry> {
+        self.entries.values()
+    }
+}
+
+impl BlobSource for SourceTreeBlobSource {
+    fn blob(&self, path: &str) -> Option<Vec<u8>> {
+        let entry = self.entries.get(path)?;
+        let request = soopy::ReadRequest {
+            source: entry.source.clone(),
+            expected: Some(entry.content.clone()),
+        };
+        let mut tree = self.tree.lock().ok()?;
+        let mut answers = tree.read_many(&[request]).ok()?;
+        Some(answers.pop()?.bytes.to_vec())
+    }
+}
+
 impl FsBlobSource {
     pub fn new(root: impl Into<PathBuf>) -> Self {
         Self { root: root.into() }

@@ -1,0 +1,8 @@
+# seed: the two sides of one join declared DIFFERENT types (the
+# join_column_type_mismatch refusal the expression-lift arc added).
+
+rel probe_left(value: int, tag: text).
+rel probe_right(value: text, note: text).
+rel probe_out(value: int).
+
+probe_out(value) <- probe_left(value, _tag), probe_right(value, _note).

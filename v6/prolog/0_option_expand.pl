@@ -4,7 +4,9 @@
           [ expand_option_in_context/3,
             expand_option_program/2,
             expand_option_decls/2,
-            option_enum_name/2 ]).
+            option_enum_name/2,
+            companion_rel_name/3,
+            scalar_element/1 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).

@@ -113,6 +113,7 @@ LANGUAGE COVERAGE (first-match, by extension)
   go                               full     kinds: cst, type, call, df (no const facet)
   kt/kts                           full     kinds: cst, type, call, df (no const facet)
   pl/pro/prolog/datalog/horn       full     kinds: cst, type, call, df
+  md/markdown                      cst only (tree-sitter-md block + inline grammars)
   html/yaml/json/css               cst only (ast-grep grammar, no native front-end)
   python/java/c/cpp/cs/rb/php/sh/lua/scala/swift/ex/hs   cst only, same route
   any other extension              no output, exit 0 (not an error)

@@ -1,0 +1,332 @@
+{
+  "$defs": {
+    "artifact_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "format": {"type":"string"},
+        "linkage": {"type":"string"},
+        "load_phase": {"type":"string"},
+        "name": {"type":"string"},
+        "path": {"type":"string"},
+        "program": {"$ref":"#/$defs/program_plan"},
+        "target": {"$ref":"#/$defs/emitter_target"}
+      },
+      "required": ["name", "target", "program", "format", "path", "linkage", "load_phase" ],
+      "type":"object"
+    },
+    "bind_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "execution": {"type":"string"},
+        "name": {"type":"string"},
+        "source_kind": {"type":"string"},
+        "target_relation": {"$ref":"#/$defs/relation_plan"}
+      },
+      "required": ["name", "source_kind", "target_relation", "execution" ],
+      "type":"object"
+    },
+    "deployment_artifact": {
+      "additionalProperties":false,
+      "properties": {
+        "artifact": {"$ref":"#/$defs/artifact_plan"},
+        "deployment_name": {"type":"string"},
+        "ordinal": {"type":"integer"}
+      },
+      "required": ["deployment_name", "ordinal", "artifact" ],
+      "type":"object"
+    },
+    "deployment_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "assembly_kind": {"type":"string"},
+        "binary_count": {"type":"integer"},
+        "dynamic_loader": {"anyOf": [ {"type":"string"},  {"type":null} ]},
+        "name": {"type":"string"},
+        "runtime": {"$ref":"#/$defs/runtime_bed"}
+      },
+      "required": ["name", "runtime", "assembly_kind", "binary_count" ],
+      "type":"object"
+    },
+    "emitter_target": {
+      "additionalProperties":false,
+      "properties": {
+        "artifact_kind": {"type":"string"},
+        "assembly_kind": {"type":"string"},
+        "execution_kind": {"type":"string"},
+        "language": {"type":"string"},
+        "name": {"type":"string"}
+      },
+      "required": ["name", "language", "artifact_kind", "execution_kind", "assembly_kind" ],
+      "type":"object"
+    },
+    "event_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "cardinality": {"type":"string"},
+        "delivery": {"type":"string"},
+        "lifetime": {"type":"string"},
+        "name": {"type":"string"},
+        "source": {"$ref":"#/$defs/module_plan"},
+        "target": {"$ref":"#/$defs/module_plan"}
+      },
+      "required": ["name", "source", "target", "delivery", "cardinality", "lifetime" ],
+      "type":"object"
+    },
+    "host_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "demand_relation": {"$ref":"#/$defs/relation_plan"},
+        "execution": {"type":"string"},
+        "name": {"type":"string"},
+        "response_relation": {"$ref":"#/$defs/relation_plan"}
+      },
+      "required": ["name", "demand_relation", "response_relation", "execution" ],
+      "type":"object"
+    },
+    "lowering_intent": {
+      "additionalProperties":false,
+      "properties": {
+        "input_kind": {"type":"string"},
+        "kind": {"type":"string"},
+        "name": {"type":"string"},
+        "output_kind": {"type":"string"},
+        "target": {"$ref":"#/$defs/emitter_target"}
+      },
+      "required": ["name", "target", "kind", "input_kind", "output_kind" ],
+      "type":"object"
+    },
+    "module_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "artifact_path": {"type":"string"},
+        "entry": {"type":"boolean"},
+        "load_phase": {"type":"string"},
+        "name": {"type":"string"},
+        "role": {"type":"string"}
+      },
+      "required": ["name", "role", "artifact_path", "load_phase", "entry" ],
+      "type":"object"
+    },
+    "program_bind": {
+      "additionalProperties":false,
+      "properties": {
+        "bind": {"$ref":"#/$defs/bind_plan"},
+        "ordinal": {"type":"integer"},
+        "program_name": {"type":"string"}
+      },
+      "required": ["program_name", "ordinal", "bind" ],
+      "type":"object"
+    },
+    "program_host": {
+      "additionalProperties":false,
+      "properties": {
+        "host": {"$ref":"#/$defs/host_plan"},
+        "ordinal": {"type":"integer"},
+        "program_name": {"type":"string"}
+      },
+      "required": ["program_name", "ordinal", "host" ],
+      "type":"object"
+    },
+    "program_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "entry_module": {"$ref":"#/$defs/module_plan"},
+        "intern_mode": {"type":"string"},
+        "name": {"type":"string"},
+        "subscription": {"$ref":"#/$defs/subscription_plan"},
+        "target": {"$ref":"#/$defs/emitter_target"}
+      },
+      "required": ["name", "target", "entry_module", "subscription", "intern_mode" ],
+      "type":"object"
+    },
+    "program_query": {
+      "additionalProperties":false,
+      "properties": {
+        "ordinal": {"type":"integer"},
+        "program_name": {"type":"string"},
+        "query": {"$ref":"#/$defs/query_plan"}
+      },
+      "required": ["program_name", "ordinal", "query" ],
+      "type":"object"
+    },
+    "program_relation": {
+      "additionalProperties":false,
+      "properties": {
+        "ordinal": {"type":"integer"},
+        "program_name": {"type":"string"},
+        "relation": {"$ref":"#/$defs/relation_plan"}
+      },
+      "required": ["program_name", "ordinal", "relation" ],
+      "type":"object"
+    },
+    "program_statement": {
+      "additionalProperties":false,
+      "properties": {
+        "ordinal": {"type":"integer"},
+        "program_name": {"type":"string"},
+        "statement": {"$ref":"#/$defs/statement_plan"}
+      },
+      "required": ["program_name", "ordinal", "statement" ],
+      "type":"object"
+    },
+    "query_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "name": {"type":"string"},
+        "relation": {"$ref":"#/$defs/relation_plan"},
+        "snapshot": {"type":"string"},
+        "transport_path": {"type":"string"}
+      },
+      "required": ["name", "relation", "snapshot", "transport_path" ],
+      "type":"object"
+    },
+    "relation_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "arity": {"type":"integer"},
+        "arrival_target": {"type":"boolean"},
+        "name": {"type":"string"},
+        "storage_kind": {"type":"string"},
+        "subscribed": {"type":"boolean"}
+      },
+      "required": ["name", "arity", "storage_kind", "arrival_target", "subscribed" ],
+      "type":"object"
+    },
+    "runtime_bed": {
+      "additionalProperties":false,
+      "properties": {
+        "name": {"type":"string"},
+        "server": {"$ref":"#/$defs/server_plan"},
+        "storage": {"$ref":"#/$defs/storage_plan"},
+        "target": {"$ref":"#/$defs/emitter_target"}
+      },
+      "required": ["name", "target", "storage", "server" ],
+      "type":"object"
+    },
+    "runtime_event": {
+      "additionalProperties":false,
+      "properties": {
+        "event": {"$ref":"#/$defs/event_plan"},
+        "ordinal": {"type":"integer"},
+        "runtime_name": {"type":"string"}
+      },
+      "required": ["runtime_name", "ordinal", "event" ],
+      "type":"object"
+    },
+    "runtime_module": {
+      "additionalProperties":false,
+      "properties": {
+        "module": {"$ref":"#/$defs/module_plan"},
+        "ordinal": {"type":"integer"},
+        "runtime_name": {"type":"string"}
+      },
+      "required": ["runtime_name", "ordinal", "module" ],
+      "type":"object"
+    },
+    "rust_dyn_target": {
+      "additionalProperties":false,
+      "properties": {
+        "dynamic_loader": {"anyOf": [ {"type":"string"},  {"type":null} ]},
+        "generated_module_kind": {"type":"string"},
+        "linkage": {"type":"string"},
+        "rust_runtime": {"type":"string"},
+        "sqlite_backend": {"type":"string"},
+        "target": {"$ref":"#/$defs/emitter_target"}
+      },
+      "required": [
+        "target",
+        "rust_runtime",
+        "sqlite_backend",
+        "generated_module_kind",
+        "linkage"
+      ],
+      "type":"object"
+    },
+    "rust_ir_target": {
+      "additionalProperties":false,
+      "properties": {
+        "ir_format": {"type":"string"},
+        "request_boundary": {"type":"string"},
+        "rust_runtime": {"type":"string"},
+        "sqlite_backend": {"type":"string"},
+        "target": {"$ref":"#/$defs/emitter_target"}
+      },
+      "required": [
+        "target",
+        "rust_runtime",
+        "sqlite_backend",
+        "ir_format",
+        "request_boundary"
+      ],
+      "type":"object"
+    },
+    "server_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "harness": {"type":"string"},
+        "process_lifetime": {"type":"string"},
+        "program_cardinality": {"type":"string"},
+        "transport": {"type":"string"}
+      },
+      "required": ["harness", "transport", "program_cardinality", "process_lifetime" ],
+      "type":"object"
+    },
+    "statement_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "name": {"type":"string"},
+        "params_shape": {},
+        "phase": {"type":"string"},
+        "relation": {"$ref":"#/$defs/relation_plan"},
+        "sql": {"type":"string"}
+      },
+      "required": ["name", "phase", "relation", "sql", "params_shape" ],
+      "type":"object"
+    },
+    "storage_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "backend": {"type":"string"},
+        "database_scope": {"type":"string"},
+        "state_kind": {"type":"string"},
+        "transaction_owner": {"type":"string"}
+      },
+      "required": ["backend", "database_scope", "transaction_owner", "state_kind" ],
+      "type":"object"
+    },
+    "subscription_plan": {
+      "additionalProperties":false,
+      "properties": {
+        "activation": {"type":"string"},
+        "cone_kind": {"type":"string"},
+        "release": {"type":"string"},
+        "root_relation": {"$ref":"#/$defs/relation_plan"}
+      },
+      "required": ["root_relation", "activation", "release", "cone_kind" ],
+      "type":"object"
+    },
+    "target_intent": {
+      "additionalProperties":false,
+      "properties": {
+        "intent": {"$ref":"#/$defs/lowering_intent"},
+        "ordinal": {"type":"integer"},
+        "target_name": {"type":"string"}
+      },
+      "required": ["target_name", "ordinal", "intent" ],
+      "type":"object"
+    },
+    "tsv2_target": {
+      "additionalProperties":false,
+      "properties": {
+        "module_format": {"type":"string"},
+        "sqlite_backend": {"type":"string"},
+        "target": {"$ref":"#/$defs/emitter_target"},
+        "typescript_runtime": {"type":"string"}
+      },
+      "required": ["target", "typescript_runtime", "sqlite_backend", "module_format" ],
+      "type":"object"
+    }
+  },
+  "$id":"_0_emitter_types#a58706a0951d03b9",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
