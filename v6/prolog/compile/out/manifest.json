@@ -80,7 +80,7 @@
   {"name":"starts_with_takes_the_prefix_from_a_column","file":"16_string_affix_tests.pl","bucket":"compiled","reason":""},
   {"name":"recursive_enum_acyclic_tree_round_trips","file":"17_recursive_enum.pl","bucket":"compiled","reason":""},
   {"name":"recursive_enum_cyclic_values_store_and_render","file":"17_recursive_enum.pl","bucket":"compiled","reason":""},
-  {"name":"recursive_list_arg_parent_holds_child_node_values","file":"18_recursive_list_arg.pl","bucket":"unsupported","reason":"type_arrival_shape_mismatch('__gen__list_node_4205b0871c875897'/1,content,text,field_not_text(100))"},
+  {"name":"recursive_list_arg_parent_holds_child_node_values","file":"18_recursive_list_arg.pl","bucket":"compiled","reason":""},
   {"name":"split_value_is_the_interned_list_id","file":"19_list_value_position.pl","bucket":"compiled","reason":""},
   {"name":"two_producers_share_one_interned_list_id","file":"19_list_value_position.pl","bucket":"compiled","reason":""},
   {"name":"list_element_type_flows_through_spread","file":"19_list_value_position.pl","bucket":"compiled","reason":""},

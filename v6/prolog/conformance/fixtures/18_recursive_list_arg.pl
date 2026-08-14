@@ -15,13 +15,13 @@ fixture(recursive_list_arg_parent_holds_child_node_values,
     [],
     [
         [+node("root", 100),
-         +'__gen__list_node_4205b0871c875897'(100),
+         +'__gen__list_node_4205b0871c875897'('[{"children":200,"name":"leaf"}]'),
          +'__gen__list_node_4205b0871c875897__member'(100, 0, obj([name-leaf, children-200]))]
     ],
     [
         final(node/2, [node("root", 100), node(leaf, 200)]),
         final('__gen__list_node_4205b0871c875897'/1,
-              ['__gen__list_node_4205b0871c875897'(100)]),
+              ['__gen__list_node_4205b0871c875897'('[{"children":200,"name":"leaf"}]')]),
         final('__gen__list_node_4205b0871c875897__member'/3,
               ['__gen__list_node_4205b0871c875897__member'(100, 0,
                   obj([children-200, name-leaf]))]),
