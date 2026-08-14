@@ -1,0 +1,34 @@
+{
+  "$defs": {
+    "tree_branch": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "left": {"type":"integer"},
+        "right": {"type":"integer"}
+      },
+      "required": ["id", "left", "right" ],
+      "type":"object"
+    },
+    "tree_kind": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"kind": {"type":"string"}},
+      "required": ["id", "kind" ],
+      "type":"object"
+    },
+    "tree_leaf": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"value": {"type":"integer"}},
+      "required": ["id", "value" ],
+      "type":"object"
+    },
+    "tree_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    }
+  },
+  "$id":"recursive_enum_acyclic_tree_round_trips#b3d3bc7757a9bda4",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
