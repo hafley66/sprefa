@@ -4556,6 +4556,53 @@ test(all_four_list_families_carry_origin_rows) :-
     memberchk(declaration(RefcountId, root, RefcountName, relation,
                           materialized), Rows).
 
+% FAIL-PRE-FIX: bounds were checked at mint time against the application
+% SPELLING, so a nested bounded application threw
+% generic_bound_unsatisfied(pair(document), json_encodable) even though the
+% minted inner instance satisfies the bound.
+test(nested_bounded_generic_application_compiles) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          rel_template([pair],
+                       [type_parameter('T', [json_encodable])],
+                       [column(first, 'T'), column(second, 'T')]),
+          type_decl(document, [col(body, json)]),
+          col_type(document/1, body, json),
+          rel_is_implementation(document/1, [json_encodable]),
+          col_type(index/1, nested, pair(pair(document))) ],
+        []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(pair(document), InnerName),
+    canonical_type_name(pair(pair(document)), OuterName),
+    memberchk(type_decl(InnerName, _), Decls),
+    memberchk(type_decl(OuterName, _), Decls),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(relation, pair, Constructor),
+    app_id(Constructor, [document], InnerAppId),
+    app_id(Constructor, [pair(document)], OuterAppId),
+    memberchk(well_formed(InnerAppId), Rows),
+    memberchk(well_formed(OuterAppId), Rows),
+    memberchk(substitution(OuterAppId, _, pair(document)), Rows),
+    memberchk(obligation(_, OuterAppId, _, pair(document)), Rows),
+    memberchk(resolved_by(_, structural(pair(document))), Rows),
+    memberchk(resolved_by(_, impl(_)), Rows).
+
+% FAIL-PRE-FIX: the old payload was the bare leaf and interface; the path
+% (template -> application -> argument) was thrown away.
+test(unsatisfied_bound_error_carries_the_path) :-
+    Program = prog(
+        [ interface_decl(addressable, []),
+          col_type(file/1, path, text),
+          rel_template([box],
+                       [type_parameter('T', [addressable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(file)) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(
+                  generic_bound_unsatisfied(file, addressable,
+                      path([template(box), application(box(file)),
+                            argument(1, file)]))).
+
 % Enum-first through the driver produces exactly what match-first produced.
 test(enum_first_preserves_expanded_terms) :-
     exhaustive_match(Program),
@@ -4688,7 +4735,9 @@ test(json_encodable_bound_refuses_a_relational_list) :-
           col_type(holder/1, value, box(list(text))) ], []),
     catch(expand_generic_program(Program, _), Thrown, true),
     Thrown == unsupported_construct(
-                  generic_bound_unsatisfied(list(text), json_encodable)).
+                  generic_bound_unsatisfied(list(text), json_encodable,
+                      path([template(box), application(box(list(text))),
+                            argument(1, list(text))]))).
 
 test(json_encodable_bound_closes_over_named_record_columns) :-
     Program = prog(
@@ -4769,7 +4818,9 @@ test(an_unimplemented_marker_interface_refuses_a_generic_bound) :-
           col_type(holder/1, value, box(file)) ], []),
     catch(expand_generic_program(Program, _), Thrown, true),
     Thrown == unsupported_construct(
-                  generic_bound_unsatisfied(file, addressable)).
+                  generic_bound_unsatisfied(file, addressable,
+                      path([template(box), application(box(file)),
+                            argument(1, file)]))).
 
 test(user_generic_template_reuses_an_equal_ground_application) :-
     Program = prog(
@@ -7731,6 +7782,13 @@ test(use_item_parses_an_alias) :-
     string_codes("use \"lib.dl6\" as orchard.", Codes),
     use_item(use("lib.dl6", orchard), Codes, []).
 
+% A qualified relation type reaches this phase as a path, because the parser
+% has not loaded the module that its alias names yet.
+test(qualified_relation_type_path_parses_before_mount_resolution) :-
+    atom_codes('rel dependency(owner: source.span).', Codes),
+    once(parse_dl(Codes, prog(Decls, _), _, [])),
+    Decls == [col_type(dependency/1, owner, type_path([source, span]))].
+
 test(use_item_without_an_alias_still_parses) :-
     string_codes("use \"lib.dl6\".", Codes),
     use_item(use("lib.dl6"), Codes, []).
@@ -7855,6 +7913,24 @@ test(compile_dl6_compiles_a_mounted_path) :-
     compile_dl6(Entry, OutFile),
     read_file_to_string(OutFile, Text, []),
     sub_string(Text, _, _, _, "tree").
+
+% The checked-in offline golden covers the authored source model and its
+% extractor projection.  `source.span` must lower through the mount to the
+% ordinary span struct type before the relation-reference type plane runs.
+test(offline_source_golden_compiles_qualified_span_owner) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../../dl/fixtures/source-offline-golden.dl6'], Source),
+    tmp_file(source_offline_golden, OutFile),
+    setup_call_cleanup(
+        true,
+        ( compile_dl6(Source, OutFile),
+          read_file_to_string(OutFile, Text, []),
+          sub_string(Text, _, _, _, '"source_specifier": ["span", null, null]'),
+          sub_string(Text, _, _, _, '"dependency": ["span", null, null]'),
+          \+ sub_string(Text, _, _, _, 'rev_file_id'),
+          \+ sub_string(Text, _, _, _, 'blob_id'),
+          \+ sub_string(Text, _, _, _, 'file_span_id') ),
+        catch(delete_file(OutFile), _, true)).
 
 % ── the mount reaches the catalog as data ───────────────────────────────────
 

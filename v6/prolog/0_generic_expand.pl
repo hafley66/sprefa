@@ -58,9 +58,10 @@ expand_user_templates(Decls0, Rules, Instances, Decls) :-
     check_template_application_arities(Decls0, Templates),
     user_template_fixpoint(Decls0, Templates, [], WithInstances, Instances),
     validate_user_template_collisions(Decls0, Rules, Instances),
+    judge_template_bounds(WithInstances, Templates, Instances, JudgmentRows),
     maplist(rewrite_user_template_decl(Instances), WithInstances, Rewritten),
     exclude(is_rel_template, Rewritten, RuntimeDecls),
-    generic_catalog_decls(TypeIr, Instances, CatalogDecls),
+    generic_catalog_decls(TypeIr, Instances, JudgmentRows, CatalogDecls),
     append(RuntimeDecls, CatalogDecls, Decls).
 
 is_rel_template(rel_template(_, _, _)).
@@ -333,9 +334,9 @@ ref_name(Name, Name).
 
 % Instances minted after the source scan carry their own rows: the graph is the
 % only generic freight leaving expansion.
-generic_catalog_decls(TypeIr, Instances, Decls) :-
+generic_catalog_decls(TypeIr, Instances, JudgmentRows, Decls) :-
     instance_type_rows(Instances, InstanceRows),
-    append(TypeIr, InstanceRows, Unsorted),
+    append([TypeIr, InstanceRows, JudgmentRows], Unsorted),
     sort(Unsorted, Rows),
     ( Rows == [] -> Decls = [] ; Decls = [semantic_type_rows(Rows)] ).
 
@@ -432,12 +433,11 @@ check_template_application_arities(Decls, Templates) :-
     ; true
     ).
 
-instantiate_user_template(Templates, SourceDecls, Application, Decls) :-
+instantiate_user_template(Templates, _SourceDecls, Application, Decls) :-
     Application =.. [Name | Arguments],
     memberchk(template(Name, Parameters, Specs), Templates),
     maplist(template_parameter_name, Parameters, ParameterNames),
     pairs_keys_values(Bindings, ParameterNames, Arguments),
-    check_template_bounds(SourceDecls, Parameters, Arguments),
     canonical_type_name(Application, ConcreteName),
     maplist(substitute_template_column(Bindings), Specs, Columns),
     maplist(column_mirror, Columns, Mirror),
@@ -464,30 +464,77 @@ column_decl(Ref, column(Name, Type), col_type(Ref, Name, Type)).
 template_parameter_name(type_parameter(Name, _), Name) :- !.
 template_parameter_name(Name, Name).
 
-check_template_bounds(_, [], []).
-check_template_bounds(Decls, [Parameter | RestParameters],
-                      [Argument | RestArguments]) :-
-    parameter_constraints(Parameter, Constraints),
-    maplist(check_type_constraint(Decls, Argument), Constraints),
-    check_template_bounds(Decls, RestParameters, RestArguments).
-
 parameter_constraints(type_parameter(_, Constraints), Constraints) :- !.
 parameter_constraints(_, []).
 
-check_type_constraint(Decls, Type, json_encodable) :-
-    !,
-    ( json_encodable_type(Decls, Type, [])
-    -> true
-    ; throw(unsupported_construct(
-                generic_bound_unsatisfied(Type, json_encodable)))
+% Bounds are judged AFTER the fixpoint on the completed declarations, so a
+% minted inner instance can discharge an outer application's bound.
+judge_template_bounds(Decls, Templates, Instances, Rows) :-
+    foldl(judge_application_bounds(Decls, Templates), Instances, [], Rows0),
+    sort(Rows0, Rows).
+
+judge_application_bounds(Decls, Templates, Application, Rows0, Rows) :-
+    Application =.. [Name | Arguments],
+    memberchk(template(Name, Parameters, _), Templates),
+    decl_id(relation, Name, Constructor),
+    app_id(Constructor, Arguments, AppId),
+    findall(Judgment,
+            obligation_judgment(Decls, Constructor, AppId, Parameters,
+                                Arguments, Judgment),
+            Judged),
+    (   member(unresolved(Ordinal, ArgType, Interface), Judged)
+    ->  throw(unsupported_construct(
+                  generic_bound_unsatisfied(ArgType, Interface,
+                      path([template(Name), application(Application),
+                            argument(Ordinal, ArgType)]))))
+    ;   true
+    ),
+    findall(Row, substitution_row(Constructor, AppId, Parameters, Arguments,
+                                  Row), SubstitutionRows),
+    findall(Row,
+            ( member(judged(_, Obligation, Resolution), Judged),
+              ( Row = Obligation ; Row = Resolution ) ),
+            ObligationRows),
+    append([[well_formed(AppId)], SubstitutionRows, ObligationRows, Rows0],
+           Rows).
+
+substitution_row(Constructor, AppId, Parameters, Arguments,
+                 substitution(AppId, ParameterId, ArgType)) :-
+    nth1(Ordinal, Parameters, Parameter),
+    parameter_parts(Parameter, ParameterName, _),
+    param_id(Constructor, Ordinal, ParameterName, ParameterId),
+    nth1(Ordinal, Arguments, ArgType).
+
+obligation_judgment(Decls, _Constructor, AppId, Parameters, Arguments,
+                    Judgment) :-
+    nth1(Ordinal, Parameters, Parameter),
+    parameter_constraints(Parameter, Constraints),
+    nth1(Ordinal, Arguments, ArgType),
+    member(Constraint, Constraints),
+    interface_application_name(Constraint, Interface),
+    decl_id(interface, Interface, InterfaceId),
+    arg_id(AppId, Ordinal, ArgId),
+    constraint_id(ArgId, InterfaceId, ObligationId),
+    (   bound_evidence(Decls, ArgType, Interface, Evidence)
+    ->  Judgment = judged(Ordinal,
+                          obligation(ObligationId, AppId, InterfaceId,
+                                     ArgType),
+                          resolved_by(ObligationId, Evidence))
+    ;   Judgment = unresolved(Ordinal, ArgType, Interface)
     ).
-check_type_constraint(Decls, Type, Interface) :-
-    ( atom(Type),
-      member(rel_is_implementation(Type/_, Applications), Decls),
-      memberchk(Interface, Applications)
-    -> true
-    ; throw(unsupported_construct(
-                generic_bound_unsatisfied(Type, Interface))) ).
+
+bound_evidence(Decls, ArgType, Interface, impl(ImplId)) :-
+    atom(ArgType),
+    member(rel_is_implementation(Ref, Applications), Decls),
+    ref_name(Ref, ArgType),
+    member(Application, Applications),
+    interface_application_name(Application, Interface),
+    !,
+    decl_id(relation, ArgType, Subject),
+    decl_id(interface, Interface, InterfaceId),
+    impl_id(Subject, InterfaceId, ImplId).
+bound_evidence(Decls, ArgType, json_encodable, structural(ArgType)) :-
+    json_encodable_type(Decls, ArgType, []).
 
 json_encodable_type(_, Type, _) :-
     atom(Type), scalar_element(Type), !.
@@ -511,6 +558,14 @@ json_encodable_type(Decls, Name, Seen) :-
     member(enum_decl(Name, Variants), Decls),
     enum_payload_types(Variants, PayloadTypes),
     maplist(json_encodable_type_with_seen(Decls, [Name | Seen]), PayloadTypes).
+% A user-template application closes over its MINTED instance's columns; the
+% guard keeps builtin list flavors refused as before.
+json_encodable_type(Decls, Type, Seen) :-
+    compound(Type),
+    generic_application_name(Decls, Type),
+    \+ memberchk(Type, Seen),
+    canonical_type_name(Type, Name),
+    json_encodable_type(Decls, Name, [Type | Seen]).
 
 json_encodable_type_with_seen(Decls, Seen, Type) :-
     json_encodable_type(Decls, Type, Seen).
