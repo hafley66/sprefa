@@ -187,14 +187,22 @@ fn git_fixture_repo() -> std::path::PathBuf {
             .env("GIT_COMMITTER_EMAIL", "sprefa-engine-rs@example.invalid")
             .output()
             .expect("run git");
-        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     };
     git(&["init", "-q"]);
     std::fs::write(root.join("src/file.rs"), "pub const VERSION: u8 = 1;\n").expect("tracked file");
     git(&["add", "."]);
     git(&["commit", "-qm", "initial"]);
     std::fs::write(root.join("src/file.rs"), "pub const VERSION: u8 = 2;\n").expect("dirty file");
-    std::fs::write(root.join("src/untracked.rs"), "pub const UNTRACKED: u8 = 9;\n").expect("untracked file");
+    std::fs::write(
+        root.join("src/untracked.rs"),
+        "pub const UNTRACKED: u8 = 9;\n",
+    )
+    .expect("untracked file");
     root
 }
 
@@ -244,7 +252,10 @@ fn linked_soopy_file_hosts_match_the_existing_shell_contracts() {
 #[test]
 fn linked_soopy_unscoped_hosts_match_the_existing_shell_contracts() {
     let mut work = BTreeMap::new();
-    work.insert("glob".to_string(), "../dl/fixtures/files-hosts.dl6".to_string());
+    work.insert(
+        "glob".to_string(),
+        "../dl/fixtures/files-hosts.dl6".to_string(),
+    );
     let mut at = work.clone();
     at.insert("rev".to_string(), "HEAD".to_string());
     let cases = [
@@ -274,10 +285,19 @@ fn linked_soopy_unscoped_hosts_match_the_existing_shell_contracts() {
 fn live_runner_selects_soopy_for_the_unchanged_shell_host_plan() {
     let plan = HostPlanData {
         name: "files".to_string(),
-        inputs: vec![HostColumnPlan { name: "glob".to_string(), column_type: "text".to_string() }],
+        inputs: vec![HostColumnPlan {
+            name: "glob".to_string(),
+            column_type: "text".to_string(),
+        }],
         outputs: vec![
-            HostColumnPlan { name: "path".to_string(), column_type: "text".to_string() },
-            HostColumnPlan { name: "digest".to_string(), column_type: "text".to_string() },
+            HostColumnPlan {
+                name: "path".to_string(),
+                column_type: "text".to_string(),
+            },
+            HostColumnPlan {
+                name: "digest".to_string(),
+                column_type: "text".to_string(),
+            },
         ],
         template: "this must never execute {glob}".to_string(),
         demand_rel: "__host_demand_files".to_string(),

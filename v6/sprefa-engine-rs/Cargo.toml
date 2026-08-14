@@ -7,6 +7,7 @@ edition = "2021"
 description = "Rust runtime the emit_rust emitter lowers against: the IGenProgram equivalent, the SQL seam over rusqlite, and the tick engine ported from v6/tsv2/runtime/1_incremental.ts."
 
 [dependencies]
+anyhow = "1"
 rusqlite = { version = "0.40", features = ["bundled", "functions"] }
 regex = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
@@ -15,6 +16,7 @@ async-stream = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sprefa-extract = { path = "../sprefa-extract" }
+sprefa-rust-runtime-host = { path = "../../../sprefa-v6/0_runtime/1_rust_runtime_host" }
 # Git pathspec file feeds and blob identities are owned by the standalone
 # source mechanics crate. HostPlanData remains the emitted shell-shaped ABI.
 soopy = { path = "../../../hafley-rs/crates/soopy" }
@@ -22,6 +24,9 @@ soopy = { path = "../../../hafley-rs/crates/soopy" }
 [features]
 default = ["harness"]
 harness = []
+
+[dev-dependencies]
+tempfile = "3"
 
 [[bin]]
 name = "emit_rust_harness"

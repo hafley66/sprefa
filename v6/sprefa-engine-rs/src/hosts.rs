@@ -109,8 +109,8 @@ impl IHostExecutor for SoopyFilesExecutor {
             .get("glob")
             .cloned()
             .ok_or_else(|| named("missing required host input `glob`".to_string()))?;
-        let cwd = std::env::current_dir()
-            .map_err(|error| named(format!("read process cwd: {error}")))?;
+        let cwd =
+            std::env::current_dir().map_err(|error| named(format!("read process cwd: {error}")))?;
         let root = match host {
             "files" | "files_at" => cwd.clone(),
             "repo_files" | "repo_files_at" => env
@@ -128,20 +128,25 @@ impl IHostExecutor for SoopyFilesExecutor {
             )),
             _ => unreachable!(),
         };
-        let repository = soopy::discover(root)
-            .map_err(|error| named(format!("open repository: {error}")))?;
+        let repository =
+            soopy::discover(root).map_err(|error| named(format!("open repository: {error}")))?;
         let mut tree = soopy::SourceTree::open(repository);
         let entries = tree
-            .git_files_from(&soopy::GitFilesQuery {
-                revision,
-                pathspecs: vec![glob],
-            }, &cwd)
+            .git_files_from(
+                &soopy::GitFilesQuery {
+                    revision,
+                    pathspecs: vec![glob],
+                },
+                &cwd,
+            )
             .map_err(|error| named(format!("enumerate tracked files: {error}")))?;
         let repo_root = tree.repository().root.clone();
         let mut lines = Vec::with_capacity(entries.len());
         for entry in entries {
             let soopy::ContentId::GitBlob(oid) = entry.content else {
-                return Err(named("Git file feed returned a non-Git content id".to_string()));
+                return Err(named(
+                    "Git file feed returned a non-Git content id".to_string(),
+                ));
             };
             let path = if matches!(host, "files" | "files_at") {
                 path_from_cwd(&cwd, &repo_root, entry.source.path.0.as_ref())
@@ -155,7 +160,11 @@ impl IHostExecutor for SoopyFilesExecutor {
     }
 }
 
-fn path_from_cwd(cwd: &Path, repository_root: &Path, repository_path: &str) -> std::io::Result<String> {
+fn path_from_cwd(
+    cwd: &Path,
+    repository_root: &Path,
+    repository_path: &str,
+) -> std::io::Result<String> {
     let cwd = cwd.canonicalize()?;
     let target = repository_root.join(repository_path);
     let from: Vec<_> = cwd.components().collect();
@@ -407,7 +416,11 @@ fn env_for_inputs(inputs: &BTreeMap<String, Value>) -> BTreeMap<String, String> 
 
 // ═══ output decode (three shapes, same precedence as serve/1_hosts.ts) ══════
 
-fn coerce(host: &str, column: &HostColumnPlan, raw: &serde_json::Value) -> Result<Value, HostError> {
+fn coerce(
+    host: &str,
+    column: &HostColumnPlan,
+    raw: &serde_json::Value,
+) -> Result<Value, HostError> {
     let named = |message: String| HostError {
         host: host.to_string(),
         message,
@@ -487,7 +500,10 @@ fn parse_json_items(text: &str) -> Option<Vec<serde_json::Value>> {
     Some(items)
 }
 
-fn carries_every_column(item: &serde_json::Map<String, serde_json::Value>, outputs: &[HostColumnPlan]) -> bool {
+fn carries_every_column(
+    item: &serde_json::Map<String, serde_json::Value>,
+    outputs: &[HostColumnPlan],
+) -> bool {
     outputs
         .iter()
         .all(|column| matches!(item.get(&column.name), Some(value) if !value.is_null()))
@@ -510,9 +526,10 @@ fn decode_object_items(
                     .enumerate()
                     .map(|(index, column)| {
                         let raw = match item {
-                            serde_json::Value::Array(fields) => {
-                                fields.get(index).cloned().unwrap_or(serde_json::Value::Null)
-                            }
+                            serde_json::Value::Array(fields) => fields
+                                .get(index)
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null),
                             other => other.clone(),
                         };
                         coerce(host, column, &raw)
@@ -574,7 +591,9 @@ fn parse_whitespace(
             outputs
                 .iter()
                 .enumerate()
-                .map(|(index, column)| coerce(host, column, &text_value(fields.get(index).copied())))
+                .map(|(index, column)| {
+                    coerce(host, column, &text_value(fields.get(index).copied()))
+                })
                 .collect()
         })
         .collect()
@@ -667,7 +686,11 @@ impl<'p> HostLiveRunner<'p> {
         self.claimed.insert(format!("{plan_name}|{witness_digest}"))
     }
 
-    fn project(demand: &HostDemand<'p>, stdout: &str, rel_columns: &HashMap<String, Vec<String>>) -> Result<Vec<Arrival>, HostError> {
+    fn project(
+        demand: &HostDemand<'p>,
+        stdout: &str,
+        rel_columns: &HashMap<String, Vec<String>>,
+    ) -> Result<Vec<Arrival>, HostError> {
         let output_rows = decode_output(&demand.plan.name, stdout, &demand.plan.outputs)?;
         let response_columns = rel_columns
             .get(&demand.plan.response_rel)

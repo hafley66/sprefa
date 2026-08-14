@@ -9,6 +9,7 @@ pub mod hosts;
 pub mod incremental;
 pub mod ordered;
 pub mod program;
+pub mod source_bind;
 pub mod sql;
 pub mod struct_plane;
 pub mod text_plane;
