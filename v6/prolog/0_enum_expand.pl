@@ -20,10 +20,18 @@
           [ expand_enum_program/2,
             expand_enum_in_context/3,
             enum_context/2,
-            tag_rel_name/2 ]).
+            tag_rel_name/2,
+            enum_type_rows/2,
+            merge_enum_type_rows/3,
+            merge_option_type_rows/2,
+            drop_minted_keyed_on_derived/3 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
+:- use_module('0_program_check', [level_headed/2]).
+:- use_module('0_option_expand', [companion_rel_name/3, option_enum_decl/2,
+                                  scalar_element/1]).
+:- use_module('0_type_ids', [decl_id/3, member_id/4]).
 
 :- op(1150, xfx, <-).
 
@@ -59,6 +67,118 @@ expand_enum_program(prog(SugaredDecls, OriginalRules),
     enum_tag_names(SugaredDecls, EnumToTag),
     retarget_enum_column_types(EnumToTag, ExpandedDecls0, ExpandedDecls),
     append(OriginalRules, TagRules, ExpandedRules).
+
+% Runs after every rule-producing phase in either door: a minted keyed on a
+% derived rel is dropped; author keyed stays under the keyed_level_head guard.
+drop_minted_keyed_on_derived(EnumContext, prog(Decls, Rules),
+                             prog(Kept, Rules)) :-
+    findall(Ref,
+            ( member(_-VariantPairs, EnumContext),
+              member(Ref-_, VariantPairs) ),
+            VariantRefs),
+    findall(CompanionName/2,
+            ( member(option_column(ParentName/_, Column, _), Decls),
+              companion_rel_name(ParentName, Column, CompanionName) ),
+            CompanionRefs),
+    append(VariantRefs, CompanionRefs, MintedRefs),
+    exclude(minted_keyed_on_derived(MintedRefs, Rules), Decls, Kept).
+
+minted_keyed_on_derived(MintedRefs, Rules, keyed(Ref, _)) :-
+    memberchk(Ref, MintedRefs),
+    level_headed(Rules, Ref).
+
+% Runs on the completed program in either door, from the SURFACE declarations
+% expansion erased. The rows are additive; nothing above reads them back.
+merge_enum_type_rows(SurfaceDecls, prog(Decls0, Rules), prog(Decls, Rules)) :-
+    enum_type_rows(SurfaceDecls, EnumRows),
+    (   EnumRows == []
+    ->  Decls = Decls0
+    ;   memberchk(semantic_type_rows(_), Decls0)
+    ->  maplist(merge_one_enum_type_rows(EnumRows), Decls0, Decls)
+    ;   append(Decls0, [semantic_type_rows(EnumRows)], Decls)
+    ).
+
+merge_one_enum_type_rows(EnumRows, semantic_type_rows(Rows0),
+                         semantic_type_rows(Rows)) :-
+    !,
+    append(Rows0, EnumRows, Unsorted),
+    sort(Unsorted, Rows).
+merge_one_enum_type_rows(_, Decl, Decl).
+
+% Runs after merge_enum_type_rows in either door, from the option_column/3
+% markers desugar leaves in the COMPLETED declarations. Rows are additive.
+merge_option_type_rows(prog(Decls0, Rules), prog(Decls, Rules)) :-
+    option_type_rows(Decls0, OptionRows),
+    (   OptionRows == []
+    ->  Decls = Decls0
+    ;   memberchk(semantic_type_rows(_), Decls0)
+    ->  maplist(merge_one_enum_type_rows(OptionRows), Decls0, Decls)
+    ;   append(Decls0, [semantic_type_rows(OptionRows)], Decls)
+    ).
+
+%! option_type_rows(+Decls, -Rows) is det.
+option_type_rows(Decls, Rows) :-
+    findall(Row, option_type_row(Decls, Row), Unsorted),
+    sort(Unsorted, Rows).
+
+option_type_row(Decls, Row) :-
+    member(option_column(_/_, _, Element), Decls),
+    scalar_element(Element),
+    option_enum_decl(Element, EnumDecl),
+    enum_type_rows([EnumDecl], EnumRows),
+    member(Row, EnumRows).
+option_type_row(Decls,
+                origin(EnumId, option_column(ParentName, Column, Element))) :-
+    member(option_column(ParentName/_, Column, Element), Decls),
+    scalar_element(Element),
+    option_enum_decl(Element, enum_decl(EnumName, _)),
+    decl_id(enum, EnumName, EnumId).
+option_type_row(Decls, Row) :-
+    member(option_column(ParentName/_, Column, Element), Decls),
+    \+ scalar_element(Element),
+    companion_rel_name(ParentName, Column, CompanionName),
+    decl_id(relation, ParentName, ParentId),
+    decl_id(relation, CompanionName, CompanionId),
+    member(Row,
+           [ declaration(ParentId, root, ParentName, relation, materialized),
+             declaration(CompanionId, root, CompanionName, relation,
+                         materialized),
+             derived_from(CompanionId, ParentId),
+             origin(CompanionId, option_column(ParentName, Column, Element))
+           ]).
+
+% An enum's members are its variants; each variant rel edges back to the enum.
+%! enum_type_rows(+SurfaceDecls, -Rows) is det.
+enum_type_rows(SurfaceDecls, Rows) :-
+    findall(Row, enum_type_row(SurfaceDecls, Row), Unsorted),
+    sort(Unsorted, Rows).
+
+enum_type_row(SurfaceDecls, declaration(EnumId, root, EnumName, enum, compile_time)) :-
+    member(enum_decl(EnumName, _), SurfaceDecls),
+    decl_id(enum, EnumName, EnumId).
+enum_type_row(SurfaceDecls,
+              declaration(VariantRelId, root, VariantRelName, relation, materialized)) :-
+    enum_variant_position(SurfaceDecls, _, _, _, VariantRelName, VariantRelId).
+enum_type_row(SurfaceDecls, derived_from(VariantRelId, EnumId)) :-
+    enum_variant_position(SurfaceDecls, EnumId, _, _, _, VariantRelId).
+enum_type_row(SurfaceDecls,
+              member(MemberId, EnumId, Ordinal, VariantName,
+                     type_ref(declaration(VariantRelId)))) :-
+    enum_variant_position(SurfaceDecls, EnumId, Ordinal, VariantName, _,
+                          VariantRelId),
+    member_id(EnumId, Ordinal, VariantName, MemberId).
+
+enum_variant_position(SurfaceDecls, EnumId, Ordinal, VariantName, VariantRelName,
+                      VariantRelId) :-
+    member(enum_decl(EnumName, VariantTerms), SurfaceDecls),
+    decl_id(enum, EnumName, EnumId),
+    findall(Name,
+            ( enum_variant(VariantTerms, VariantTerm),
+              variant_spec(VariantTerm, Name, _) ),
+            VariantNames),
+    nth1(Ordinal, VariantNames, VariantName),
+    variant_rel_name(EnumName, VariantName, VariantRelName),
+    decl_id(relation, VariantRelName, VariantRelId).
 
 enum_tag_names(SugaredDecls, EnumToTag) :-
     findall(EnumName-TagName,
@@ -124,7 +244,8 @@ expand_enum_decls([enum_decl(RelName, VariantTerms) | Rest],
                   ExpandedDecls, TagRules) :-
     !,
     findall(VariantTerm, enum_variant(VariantTerms, VariantTerm), Variants),
-    maplist(expand_variant(RelName), Variants, VariantDeclLists, VariantRules),
+    maplist(expand_variant(RelName), Variants, VariantDeclLists,
+            VariantRules),
     append(VariantDeclLists, VariantDecls),
     tag_rel_name(RelName, TagName),
     TagRef = TagName/2,

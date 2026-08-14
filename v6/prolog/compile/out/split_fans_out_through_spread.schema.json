@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "field": {
+      "additionalProperties":false,
+      "properties": {"field": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "field" ],
+      "type":"object"
+    },
+    "line": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    },
+    "line_parts": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "required": ["name", "parts" ],
+      "type":"object"
+    }
+  },
+  "$id":"split_fans_out_through_spread#bb74a5636946c8f8",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

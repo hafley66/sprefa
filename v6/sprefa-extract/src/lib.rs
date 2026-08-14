@@ -43,13 +43,17 @@ pub use family::{
 };
 pub use lang::{
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DlSource,
-    GoSource, KotlinSource, PrologSource, RustSource, TsSource,
+    GoSource, KotlinSource, MarkdownSource, PrologSource, RustSource, TsSource,
 };
 pub use project::{
     diet_scip, diet_scip_jsonl, resolve_project, resolve_project_jsonl, scip_facts,
     scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
     FsBlobSource, ProjectError, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode,
+    SourceTreeBlobSource,
 };
+pub use soopy::{ContentId as SourceContentId, Pattern as SourcePattern,
+    ReadRequest as SourceReadRequest, RepositoryId as SourceRepositoryId,
+    Revision as SourceRevision, RevisionId as SourceRevisionId, SourceEntry, SourceRef};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, definition_of, join_documents, site_occurrence, ScipGo, ScipRust, ScipTypescript,

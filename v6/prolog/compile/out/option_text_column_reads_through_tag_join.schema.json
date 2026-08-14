@@ -12,7 +12,7 @@
         "email": {"anyOf": [ {"type":"string"},  {"type":null} ]},
         "user_id": {"type":"integer"}
       },
-      "required": ["user_id" ],
+      "required": ["user_id", "email" ],
       "type":"object"
     }
   },

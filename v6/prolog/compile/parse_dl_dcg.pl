@@ -47,6 +47,7 @@ cst_shape(dotted_path/1,    path-[]).
 cst_shape(statement/2,      statement-[]).
 cst_shape(statements/3,     source_file-[]).
 cst_shape(rel_stmt/1,       relation_declaration-[]).
+cst_shape(interface_stmt/1, interface_declaration-[]).
 cst_shape(sh_decl_stmt/1,   shell_declaration-[]).
 cst_shape(typed_col/2,      ref(column)-[]).
 cst_shape(type_expr/1,      type-[]).
@@ -447,6 +448,7 @@ import_stmt(import_decl(File, Line, Col, EndLine, EndCol)) -->
 statement(Kind, Item) -->
     ws,
     ( bind_decl_stmt(D) -> { Kind = decl_list, Item = [D] }
+    ; interface_stmt(D) -> { Kind = decl_list, Item = [D] }
     ; rel_stmt(Ds) -> { Kind = decl_list, Item = Ds }
     ; sh_decl_stmt(D) -> { Kind = decl_list, Item = [D] }
     ; import_stmt(D) -> { Kind = decl_list, Item = [D] }
@@ -493,17 +495,39 @@ rel_stmt(Decls) -->
 % Parameters only when a SECOND group follows; the peek below decides it
 % standing at the first group's closing paren.
 generic_parameters(Parameters) -->
-    #`(`, args(ident, Parameters), { Parameters \== [] }, #`)`, ws,
+    #`(`, args(generic_parameter, Parameters), { Parameters \== [] }, #`)`, ws,
     peek(0'(),
     { check_distinct_parameters(Parameters) }.
 
+generic_parameter(type_parameter(Name, Constraints)) -->
+    ident(Name), ws,
+    ( @`:`
+    -> ws, sep_plus(ident, Constraints)
+    ;  { Constraints = [] }
+    ).
+
+sep_plus(P, [X | Xs]) -->
+    call(P, X), ws,
+    ( @`+` -> ws, sep_plus(P, Xs) ; { Xs = [] } ).
+
 % Decidable inside the one production, with no other declaration in hand.
 check_distinct_parameters(Parameters) :-
-    ( append(_, [Parameter | Tail], Parameters),
+    maplist(parameter_name, Parameters, Names),
+    ( append(_, [Parameter | Tail], Names),
       memberchk(Parameter, Tail)
     -> unsupported(duplicate_generic_parameter(Parameter))
     ;  true
     ).
+
+parameter_name(type_parameter(Name, _), Name).
+
+interface_stmt(interface_decl(Name, Parameters)) -->
+    ~`interface`, ws, ident(Name), ws,
+    ( @`(`
+    -> ws, args(ident, Parameters), #`)`
+    ;  { Parameters = [] }
+    ),
+    #`.`.
 
 % Arity and interface existence are NOT checked here: the single-pass parser
 % holds no other declaration when this clause runs.
@@ -558,7 +582,19 @@ type_base(T) -->
     kw(W), !,
     #`(`, ws, type_expr(E), #`)`,
     { T =.. [W, E] }.
-type_base(Name) --> ident(Name).
+type_base(Type) -->
+    dotted_path(Segs), ws,
+    ( @`(`
+    -> { Segs = [Name] },
+       ws, sep(type_expr, Arguments), #`)`,
+       { Type =.. [Name | Arguments] }
+    ;  { type_path_name(Segs, Type) }
+    ).
+
+% Keep a mounted relation type's path until 0_dot_expand has mount scope and
+% can use the same declared_path/3 lookup as a relation call.
+type_path_name([Name], Name).
+type_path_name(Segs, type_path(Segs)).
 
 enum_variants((First ; Rest)) -->
     enum_variant(First), #`;`, ws, enum_variants(Rest).

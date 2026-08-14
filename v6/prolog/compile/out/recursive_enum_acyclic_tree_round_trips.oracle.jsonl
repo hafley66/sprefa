@@ -1,0 +1,3 @@
+{"tick":1,"deltas":{"tree_kind":{"add":[[1,"leaf"],[3,"leaf"]],"del":[]},"tree_leaf":{"add":[[1,5],[3,7]],"del":[]},"tree_tag":{"add":[[1,"leaf"],[3,"leaf"]],"del":[]}}}
+{"tick":2,"deltas":{"tree_branch":{"add":[[2,1,3]],"del":[]},"tree_kind":{"add":[[2,"branch"]],"del":[]},"tree_tag":{"add":[[2,"branch"]],"del":[]}}}
+{"tick":3,"deltas":{"tree_kind":{"add":[],"del":[[1,"leaf"]]},"tree_leaf":{"add":[],"del":[[1,5]]},"tree_tag":{"add":[],"del":[[1,"leaf"]]}}}

@@ -1,1 +1,1 @@
-20260813.1.classic-parser-langium-deleted-prolog-dl6-module-analysis.md
+20260814.1.ascii-renderer-cleanup-arcs-merged-main-split-pending.md

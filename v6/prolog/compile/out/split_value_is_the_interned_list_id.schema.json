@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "row_parts": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "required": ["name", "parts" ],
+      "type":"object"
+    },
+    "row_text": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    }
+  },
+  "$id":"split_value_is_the_interned_list_id#af72c3e8675b8fad",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

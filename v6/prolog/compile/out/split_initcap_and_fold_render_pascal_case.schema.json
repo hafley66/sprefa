@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "pascal": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"rendered": {"type":"string"}},
+      "required": ["name", "rendered" ],
+      "type":"object"
+    },
+    "sym": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "sym_parts": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "required": ["name", "parts" ],
+      "type":"object"
+    },
+    "sym_word": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"word": {"type":"string"}},
+      "required": ["name", "word" ],
+      "type":"object"
+    }
+  },
+  "$id":"split_initcap_and_fold_render_pascal_case#120563d84fa30e50",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

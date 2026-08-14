@@ -35,6 +35,20 @@
     "final_detail": ""
   },
   {
+    "name": "enum_variant_derived_by_level_rule",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "enum_variants_run_unchanged_under_the_origin_row_pass",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "generic_expansion_end_to_end",
     "bucket": "identical",
     "detail": "",
@@ -273,6 +287,69 @@
     "final_detail": ""
   },
   {
+    "name": "substr_positive_start_is_one_based",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "substr_negative_start_counts_from_the_end",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "substr_with_span_takes_span_characters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "instr_answers_first_position_or_zero",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "length_counts_characters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "length_result_joins_a_comparison",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "instr_result_feeds_a_substr_operand",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "initcap_capitalizes_each_word_and_lowers_the_rest",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "initcap_replace_projects_snake_to_pascal",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "option_list_column_roundtrips_null_and_present",
     "bucket": "identical",
     "detail": "",
@@ -302,6 +379,132 @@
   },
   {
     "name": "option_list_of_scalar_and_of_rel_in_one_rel",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "split_parts_carry_as_a_json_array",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "split_fans_out_through_spread",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "split_keeps_empty_parts",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "split_takes_a_multi_character_separator",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "split_parts_keep_non_ascii_characters",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "split_on_an_empty_separator_answers_the_whole_text",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "split_initcap_and_fold_render_pascal_case",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "contains_is_instr_greater_than_zero",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "starts_with_is_a_leading_substr_compare",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "ends_with_is_a_negative_substr_compare",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "starts_with_takes_the_prefix_from_a_column",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "recursive_enum_acyclic_tree_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "recursive_enum_cyclic_values_store_and_render",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "recursive_list_arg_parent_holds_child_node_values",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "split_value_is_the_interned_list_id",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "two_producers_share_one_interned_list_id",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "list_element_type_flows_through_spread",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "empty_separator_interns_a_one_element_list",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",

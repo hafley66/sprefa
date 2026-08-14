@@ -157,6 +157,8 @@
 :- use_module(analyze).
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
+:- use_module('0_generic_expand', [canonical_type_name/2]).
+:- use_module('0_type_ids', [id_kind_name/3]).
 :- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
               [ type_definition/4, column_storage/3,
@@ -551,8 +553,8 @@ compile_expr(Mode, Demand, Expr, Bound, Sql, Type, Encoding) :-
        Type = text, Encoding = direct
     ; typed_scalar_expr(Expr, Function, Arguments, OperandTypes, ResultType)
     -> compile_typed_operands(Mode, OperandTypes, Arguments, Bound, Expr, ArgumentSqls),
-       typed_scalar_sql(Function, ArgumentSqls, Sql),
-       Type = ResultType, Encoding = direct
+       typed_scalar_sql(Function, ArgumentSqls, ResultType, Sql, Encoding),
+       Type = ResultType
     ; json_scalar_expr(Expr, Function, Arguments)
     -> compile_json_operands(Mode, Arguments, Bound, Expr, ArgumentSqls),
        json_scalar_sql(Function, ArgumentSqls, Sql),
@@ -660,9 +662,41 @@ compile_typed_operands(Mode, [int | Types], [Operand | Rest], Bound, Whole, [Sql
     ),
     compile_typed_operands(Mode, Types, Rest, Bound, Whole, Sqls).
 
-typed_scalar_sql(Function, ArgumentSqls, Sql) :-
+typed_scalar_sql(Function, ArgumentSqls, ResultType, Sql, Encoding) :-
     length(ArgumentSqls, Arity),
     expression(Function/Arity, typed_scalar, _, Rendering, _),
+    (   ResultType = list(ElementType)
+    ->  list_intern_sql(Function, Rendering, ArgumentSqls, ElementType, Sql,
+                         Encoding)
+    ;   typed_scalar_rendering(Function, Rendering, ArgumentSqls, Sql),
+        Encoding = direct
+    ).
+
+% The expression answers the interned list id; Encoding carries the intern
+% request the caller owes, and Encoding == direct means a plain scalar.
+list_intern_sql(split, split_list_intern, [TextSql, SeparatorSql], ElementType,
+                Sql, Encoding) :-
+    typed_scalar_rendering(split, split_json_array, [TextSql, SeparatorSql],
+                           ArraySql),
+    list_entity_id_lookup(ElementType, ArraySql, Sql),
+    Encoding = list_intern(ElementType, ArraySql).
+
+list_entity_id_lookup(ElementType, ArraySql, Sql) :-
+    canonical_type_name(list(ElementType), EntityName),
+    quote_ident(EntityName, QuotedEntity),
+    interned_id_sql(ArraySql, ContentIdSql),
+    format(atom(Sql),
+           '(SELECT e."__id" FROM ~w e WHERE e."content" = ~w)',
+           [QuotedEntity, ContentIdSql]).
+
+% The trailing-separator seed makes the last part ordinary; its NULL row
+% filters out. An empty separator never advances instr, so it cannot walk.
+typed_scalar_rendering(_, split_json_array, [TextSql, SeparatorSql], Sql) :-
+    format(atom(Sql),
+           '(CASE WHEN ~w = \'\' THEN json_array(~w) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT ~w || ~w, NULL UNION ALL SELECT substr("rest", instr("rest", ~w) + length(~w)), substr("rest", 1, instr("rest", ~w) - 1) FROM "__split_parts" WHERE "rest" <> \'\') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)',
+           [SeparatorSql, TextSql, TextSql, SeparatorSql,
+            SeparatorSql, SeparatorSql, SeparatorSql]).
+typed_scalar_rendering(Function, Rendering, ArgumentSqls, Sql) :-
     Rendering == Function,
     atomic_list_concat(ArgumentSqls, ', ', ArgsJoined),
     format(atom(Sql), '~w(~w)', [Function, ArgsJoined]).
@@ -1445,13 +1479,288 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     catalog_rel_block_end(CatalogRelPlans, FirstRelId, RelBlockEnd),
     catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, RelBlockEnd,
                       NestMap, RoomRows, IdAfterRooms),
-    catalog_module_edge_rows(Decls, HashIdMap, IdAfterRooms, EdgeRows, FinalId),
+    catalog_module_edge_rows(Decls, HashIdMap, IdAfterRooms, EdgeRows,
+                             IdAfterEdges),
+    catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap,
+                               IdAfterEdges, TypeRows, FinalId),
     catalog_rel_rows(CatalogRelPlans, CatalogRelModulesWithIds, BodiesMap, Modules, RelIdMap,
                      ListIdMap, NestMap, FirstRelId, _, RelRows),
     append([PrimitiveRows, ListRowRows, [ModuleRow], SplicedRows, RelRows,
-            RoomRows, EdgeRows],
+            RoomRows, EdgeRows, TypeRows],
            AllRows),
     Context = ctx(Modules, RelIdMap, ListIdMap, FinalId).
+
+catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap, Id0, Rows,
+                           IdFinal) :-
+    findall(Name-Parameters,
+            member(interface_decl(Name, Parameters), Decls), Interfaces),
+    metadata_named_rows(Interfaces, interface, ModuleId, Id0,
+                        InterfaceRows, InterfaceMap, Id1),
+    semantic_rows_from_decls(Decls, SemanticRows),
+    findall(generic(Name, Parameters, Specs),
+            semantic_generic(SemanticRows, Name, Parameters, Specs),
+            GenericDefinitions),
+    findall(Name-Parameters,
+            member(generic(Name, Parameters, _), GenericDefinitions), Generics),
+    metadata_named_rows(Generics, generic_rel, ModuleId, Id1,
+                        GenericRows, GenericMap, Id2),
+    metadata_parameter_rows(Interfaces, InterfaceMap, InterfaceMap, Id2,
+                            InterfaceParameterRows, Id3),
+    metadata_parameter_rows(Generics, GenericMap, InterfaceMap, Id3,
+                            GenericParameterRows, Id4),
+    metadata_generic_column_rows(GenericDefinitions, GenericMap, RelIdMap, ListIdMap,
+                                 GenericParameterRows, Id4,
+                                 GenericColumnRows, Id4a),
+    findall(instance(Concrete, Generic, Arguments),
+            semantic_generic_instance(SemanticRows, Concrete, Generic, Arguments),
+            Instances),
+    metadata_instance_rows(Instances, GenericMap, RelIdMap, ListIdMap, Id4a,
+                           InstanceRows, Id5),
+    findall(implementation(Ref, Application),
+            ( member(rel_is_implementation(Ref, Applications), Decls),
+              member(Application, Applications) ), Implementations),
+    metadata_implementation_rows(Implementations, InterfaceMap, RelIdMap, Id5,
+                                 ImplementationRows, IdFinal),
+    append([InterfaceRows, GenericRows, InterfaceParameterRows,
+            GenericParameterRows, GenericColumnRows, InstanceRows,
+            ImplementationRows], RawRows),
+    annotate_catalog_semantic_ids(RawRows, RawRows, SemanticRows, Rows).
+
+semantic_rows_from_decls(Decls, Rows) :-
+    ( member(semantic_type_rows(Rows0), Decls) -> Rows = Rows0 ; Rows = [] ).
+
+%! semantic_generic(+Rows, -Name, -Parameters, -Specs) is nondet.
+%   The surface view of one compile-time relation, read back off the graph.
+semantic_generic(Rows, Name, Parameters, Specs) :-
+    member(declaration(Owner, _, Name, relation, compile_time), Rows),
+    findall(Ordinal-Parameter,
+            ( member(parameter(ParameterId, Owner, Ordinal, ParameterName), Rows),
+              findall(ConstraintName,
+                      ( member(constraint(_, ParameterId, InterfaceId), Rows),
+                        id_kind_name(InterfaceId, interface, ConstraintName) ),
+                      Constraints),
+              Parameter = type_parameter(ParameterName, Constraints) ),
+            ParameterPairs),
+    keysort(ParameterPairs, OrderedParameters),
+    pairs_values(OrderedParameters, Parameters),
+    findall(Ordinal-column(ColumnName, Type),
+            ( member(member(_, Owner, Ordinal, ColumnName, TypeRef), Rows),
+              semantic_surface_type(Rows, TypeRef, Type) ),
+            SpecPairs),
+    keysort(SpecPairs, OrderedSpecs),
+    pairs_values(OrderedSpecs, Specs).
+
+semantic_surface_type(Rows, type_ref(parameter(ParameterId)), Name) :-
+    member(parameter(ParameterId, _, _, Name), Rows), !.
+semantic_surface_type(_, type_ref(primitive(Type)), Type) :- !.
+semantic_surface_type(_, type_ref(named(Type)), Type) :- !.
+semantic_surface_type(_, type_ref(declaration(DeclId)), Name) :-
+    id_kind_name(DeclId, relation, Name), !.
+semantic_surface_type(_, Type, Type).
+
+%! semantic_generic_instance(+Rows, -Concrete, -Generic, -Arguments) is nondet.
+semantic_generic_instance(Rows, Concrete, Generic, Arguments) :-
+    member(derived_from(ConcreteId, ApplicationId), Rows),
+    member(application(ApplicationId, ConstructorId), Rows),
+    member(declaration(ConcreteId, _, Concrete, relation, materialized), Rows),
+    member(declaration(ConstructorId, _, Generic, relation, compile_time), Rows),
+    semantic_application_arguments(Rows, ApplicationId, Arguments).
+
+semantic_application_arguments(Rows, ApplicationId, Arguments) :-
+    findall(Ordinal-Argument,
+            ( member(argument(_, ApplicationId, Ordinal, TypeRef), Rows),
+              semantic_argument_type(Rows, TypeRef, Argument) ),
+            Pairs),
+    keysort(Pairs, Ordered),
+    pairs_values(Ordered, Arguments).
+
+semantic_argument_type(_, type_atom(Type), Type).
+semantic_argument_type(Rows, type_application(ApplicationId), Application) :-
+    member(application(ApplicationId, ConstructorId), Rows),
+    member(declaration(ConstructorId, _, Name, relation, _), Rows),
+    semantic_application_arguments(Rows, ApplicationId, Arguments),
+    Application =.. [Name | Arguments].
+
+annotate_catalog_semantic_ids([], _, _, []).
+annotate_catalog_semantic_ids([Row | Rest], AllRows, SemanticRows,
+                              [Annotated | AnnotatedRest]) :-
+    catalog_semantic_id(Row, AllRows, SemanticRows, SemanticId),
+    annotate_catalog_row(Row, SemanticId, Annotated),
+    annotate_catalog_semantic_ids(Rest, AllRows, SemanticRows, AnnotatedRest).
+
+annotate_catalog_row(row(Id, Parent, Ordinal, Name, Kind, TypeId, Arity,
+                         ModuleId, Hash, _Extra, Extra2), SemanticId,
+                     row(Id, Parent, Ordinal, Name, Kind, TypeId, Arity,
+                         ModuleId, Hash, SemanticId, Extra2)).
+
+catalog_semantic_id(row(_, _, _, Name, interface, _, _, _, _, _, _), _, Rows, Id) :-
+    member(declaration(Id, _, Name, interface, _), Rows), !.
+catalog_semantic_id(row(_, _, _, Name, generic_rel, _, _, _, _, _, _), _, Rows, Id) :-
+    member(declaration(Id, _, Name, relation, compile_time), Rows), !.
+catalog_semantic_id(row(_, OwnerId, Ordinal, Name, type_parameter, _, _, _, _, _, _),
+                    AllRows, Rows, Id) :-
+    semantic_owner_id(OwnerId, AllRows, Rows, Owner),
+    member(parameter(Id, Owner, Ordinal, Name), Rows), !.
+catalog_semantic_id(row(_, OwnerId, Ordinal, Name, generic_column, _, _, _, _, _, _),
+                    AllRows, Rows, Id) :-
+    semantic_owner_id(OwnerId, AllRows, Rows, Owner),
+    member(member(Id, Owner, Ordinal, Name, _), Rows), !.
+catalog_semantic_id(row(_, ParameterId, _, Name, constraint, _, _, _, _, _, _),
+                    AllRows, Rows, Id) :-
+    semantic_parameter_id(ParameterId, AllRows, Rows, Parameter),
+    id_kind_name(Interface, interface, Name),
+    member(constraint(Id, Parameter, Interface), Rows), !.
+catalog_semantic_id(row(_, SubjectId, _, Interface, implementation, _, _, _, _, _, _),
+                    AllRows, Rows, Id) :-
+    semantic_relation_id(SubjectId, AllRows, Rows, Subject),
+    id_kind_name(InterfaceId, interface, Interface),
+    member(implementation(Id, Subject, interface_application(InterfaceId)), Rows), !.
+catalog_semantic_id(row(_, _, _, Name, concrete_type, _, _, _, _, _, _), _, Rows, Id) :-
+    member(declaration(Id, _, Name, relation, materialized), Rows), !.
+catalog_semantic_id(_, _, _, '').
+
+semantic_owner_id(CatalogId, AllRows, Rows, SemanticId) :-
+    member(row(CatalogId, _, _, Name, generic_rel, _, _, _, _, _, _), AllRows),
+    member(declaration(SemanticId, _, Name, relation, compile_time), Rows), !.
+semantic_owner_id(CatalogId, AllRows, Rows, SemanticId) :-
+    member(row(CatalogId, _, _, Name, interface, _, _, _, _, _, _), AllRows),
+    member(declaration(SemanticId, _, Name, interface, _), Rows), !.
+
+semantic_parameter_id(CatalogId, AllRows, Rows, SemanticId) :-
+    member(row(CatalogId, OwnerId, Ordinal, Name, type_parameter, _, _, _, _, _, _), AllRows),
+    semantic_owner_id(OwnerId, AllRows, Rows, Owner),
+    member(parameter(SemanticId, Owner, Ordinal, Name), Rows), !.
+
+semantic_relation_id(CatalogId, AllRows, Rows, SemanticId) :-
+    member(row(CatalogId, _, _, Name, rel, _, _, _, _, _, _), AllRows),
+    member(declaration(SemanticId, _, Name, relation, _), Rows), !.
+
+metadata_named_rows([], _, _, Id, [], [], Id).
+metadata_named_rows([Name-_ | Rest], Kind, ModuleId, Id0,
+                    [row(Id0, ModuleId, 0, Name, Kind, 0, 0, ModuleId,
+                         '', '', '') | Rows],
+                    [Name-Id0 | Map], IdFinal) :-
+    Id1 is Id0 + 1,
+    metadata_named_rows(Rest, Kind, ModuleId, Id1, Rows, Map, IdFinal).
+
+metadata_parameter_rows([], _, _, Id, [], Id).
+metadata_parameter_rows([Name-Parameters | Rest], OwnerMap, InterfaceMap, Id0,
+                        Rows, IdFinal) :-
+    memberchk(Name-OwnerId, OwnerMap),
+    metadata_one_parameter_set(Parameters, OwnerId, InterfaceMap, 1, Id0,
+                               ParameterRows, Id1),
+    metadata_parameter_rows(Rest, OwnerMap, InterfaceMap, Id1, RestRows,
+                            IdFinal),
+    append(ParameterRows, RestRows, Rows).
+
+metadata_one_parameter_set([], _, _, _, Id, [], Id).
+metadata_one_parameter_set([Parameter | Rest], OwnerId, InterfaceMap, Ordinal,
+                           Id0, Rows, IdFinal) :-
+    metadata_parameter_parts(Parameter, ParameterName, Constraints),
+    ParameterRow = row(Id0, OwnerId, Ordinal, ParameterName, type_parameter,
+                       0, 0, 0, '', '', ''),
+    Id1 is Id0 + 1,
+    metadata_constraint_rows(Constraints, Id0, InterfaceMap, 1, Id1,
+                             ConstraintRows, Id2),
+    NextOrdinal is Ordinal + 1,
+    metadata_one_parameter_set(Rest, OwnerId, InterfaceMap, NextOrdinal, Id2,
+                               RestRows, IdFinal),
+    append([[ParameterRow], ConstraintRows, RestRows], Rows).
+
+metadata_parameter_parts(type_parameter(Name, Constraints), Name, Constraints) :- !.
+metadata_parameter_parts(Name, Name, []).
+
+metadata_constraint_rows([], _, _, _, Id, [], Id).
+metadata_constraint_rows([Interface | Rest], ParameterId, InterfaceMap,
+                         Ordinal, Id0,
+                         [row(Id0, ParameterId, Ordinal, Interface, constraint,
+                              InterfaceId, 0, 0, '', '', '') | Rows], IdFinal) :-
+    ( memberchk(Interface-InterfaceId, InterfaceMap) -> true ; InterfaceId = 0 ),
+    Id1 is Id0 + 1,
+    NextOrdinal is Ordinal + 1,
+    metadata_constraint_rows(Rest, ParameterId, InterfaceMap, NextOrdinal,
+                             Id1, Rows, IdFinal).
+
+metadata_generic_column_rows([], _, _, _, _, Id, [], Id).
+metadata_generic_column_rows([generic(Name, _Parameters, Specs) | Rest], GenericMap, RelIdMap,
+                             ListIdMap, ParameterRows, Id0, Rows, IdFinal) :-
+    memberchk(Name-GenericId, GenericMap),
+    metadata_one_generic_columns(Specs, GenericId, ParameterRows, RelIdMap,
+                                 ListIdMap, 1, Id0, ColumnRows, Id1),
+    metadata_generic_column_rows(Rest, GenericMap, RelIdMap, ListIdMap,
+                                 ParameterRows, Id1, RestRows, IdFinal),
+    append(ColumnRows, RestRows, Rows).
+
+metadata_one_generic_columns([], _, _, _, _, _, Id, [], Id).
+metadata_one_generic_columns([column(Name, Type) | Rest], GenericId,
+                             ParameterRows, RelIdMap, ListIdMap, Ordinal, Id0,
+                             [row(Id0, GenericId, Ordinal, Name, generic_column,
+                                  TypeId, 0, 0, '', '', '') | Rows], IdFinal) :-
+    metadata_generic_type_id(Type, GenericId, ParameterRows, RelIdMap,
+                             ListIdMap, TypeId),
+    Id1 is Id0 + 1,
+    NextOrdinal is Ordinal + 1,
+    metadata_one_generic_columns(Rest, GenericId, ParameterRows, RelIdMap,
+                                 ListIdMap, NextOrdinal, Id1, Rows, IdFinal).
+
+metadata_generic_type_id(Type, GenericId, ParameterRows, _, _, TypeId) :-
+    atom(Type),
+    memberchk(row(TypeId, GenericId, _, Type, type_parameter,
+                  _, _, _, _, _, _), ParameterRows),
+    !.
+metadata_generic_type_id(Type, _, _, RelIdMap, ListIdMap, TypeId) :-
+    catalog_source_type_id(Type, RelIdMap, ListIdMap, TypeId).
+
+metadata_instance_rows([], _, _, _, Id, [], Id).
+metadata_instance_rows([instance(Concrete, Generic, Arguments) | Rest],
+                       GenericMap, RelIdMap, ListIdMap, Id0, Rows, IdFinal) :-
+    memberchk(Generic-GenericId, GenericMap),
+    memberchk(Concrete-ConcreteRelId, RelIdMap),
+    InstanceRow = row(Id0, ConcreteRelId, 0, Concrete, concrete_type,
+                      GenericId, 0, 0, '', '', ''),
+    Id1 is Id0 + 1,
+    metadata_argument_rows(Arguments, Id0, RelIdMap, ListIdMap, 1, Id1,
+                           ArgumentRows, Id2),
+    metadata_instance_rows(Rest, GenericMap, RelIdMap, ListIdMap, Id2,
+                           RestRows, IdFinal),
+    append([[InstanceRow], ArgumentRows, RestRows], Rows).
+
+metadata_argument_rows([], _, _, _, _, Id, [], Id).
+metadata_argument_rows([Argument | Rest], InstanceId, RelIdMap, ListIdMap,
+                       Ordinal, Id0,
+                       [row(Id0, InstanceId, Ordinal, argument, type_argument,
+                            TypeId, 0, 0, '', '', '') | Rows], IdFinal) :-
+    catalog_source_type_id(Argument, RelIdMap, ListIdMap, TypeId),
+    Id1 is Id0 + 1,
+    NextOrdinal is Ordinal + 1,
+    metadata_argument_rows(Rest, InstanceId, RelIdMap, ListIdMap, NextOrdinal,
+                           Id1, Rows, IdFinal).
+
+catalog_source_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
+    ( list_row_id(ListIdMap, json_list(Element), TypeId) -> true ; TypeId = 0 ).
+catalog_source_type_id(Type, RelIdMap, _ListIdMap, TypeId) :-
+    atom(Type),
+    ( catalog_type_id(Type, PrimitiveId), PrimitiveId =\= 0
+    -> TypeId = PrimitiveId
+    ; ( rel_row_id(RelIdMap, Type, TypeId) -> true ; TypeId = 0 ) ), !.
+catalog_source_type_id(Application, RelIdMap, _ListIdMap, TypeId) :-
+    canonical_type_name(Application, Concrete),
+    ( rel_row_id(RelIdMap, Concrete, TypeId) -> true ; TypeId = 0 ).
+
+metadata_implementation_rows([], _, _, Id, [], Id).
+metadata_implementation_rows([implementation(Name/_, Application) | Rest],
+                             InterfaceMap, RelIdMap, Id0,
+                             [row(Id0, SubjectId, 0, Interface, implementation,
+                                  InterfaceId, 0, 0, '', '', '') | Rows],
+                             IdFinal) :-
+    ( compound(Application)
+    -> functor(Application, Interface, _)
+    ; Interface = Application ),
+    ( memberchk(Interface-InterfaceId, InterfaceMap) -> true ; InterfaceId = 0 ),
+    ( rel_row_id(RelIdMap, Name, SubjectId) -> true ; SubjectId = 0 ),
+    Id1 is Id0 + 1,
+    metadata_implementation_rows(Rest, InterfaceMap, RelIdMap, Id1, Rows,
+                                 IdFinal).
 
 catalog_rel_plans(Decls, RelPlans, CatalogRelPlans, CatalogRelModules) :-
     module_rel_columns(Decls, ModuleRelColumns),
@@ -1945,23 +2254,35 @@ check_comparison_types(same_type, Goal, LeftType, RightType) :-
 
 % BuiltValues is the content SQL of every head position that had to be interned
 % on write (contract §5.7): the caller owes each one an intern statement.
+% ListInterns is the list(T)-typed head positions whose value is an interned
+% list id: the caller owes each one the content + member intern statements.
 head_select_list(Mode, ColumnTypes, Head, Bound, ColumnAliases, SelectExprs,
-                 BuiltValues) :-
+                 BuiltValues, ListInterns) :-
     Head =.. [_ | Args],
     maplist(head_column_expr(Mode, Bound), Args, ColumnTypes, SelectExprs0,
-            BuiltGroups),
-    append(BuiltGroups, BuiltValues),
+            InternGroups),
+    append(InternGroups, Interns),
+    partition_head_interns(Interns, BuiltValues, ListInterns),
     ( is_list(ColumnAliases)
     -> maplist(alias_select_expr, SelectExprs0, ColumnAliases, SelectExprs)
     ; SelectExprs = SelectExprs0
     ).
 
-head_column_expr(Mode, Bound, Arg, ColumnType, SelectExpr, Built) :-
+head_column_expr(Mode, Bound, Arg, ColumnType, SelectExpr, Interns) :-
     compile_expr(Mode, identity, Arg, Bound, Sql, _Type, Encoding),
-    (   column_encoding(Mode, ColumnType, dict), Encoding == direct
-    ->  interned_id_sql(Sql, SelectExpr), Built = [Sql]
-    ;   SelectExpr = Sql, Built = []
+    (   Encoding = list_intern(ElementType, ArraySql)
+    ->  SelectExpr = Sql, Interns = [list_intern(ElementType, ArraySql)]
+    ;   column_encoding(Mode, ColumnType, dict), Encoding == direct
+    ->  interned_id_sql(Sql, SelectExpr), Interns = [built_text(Sql)]
+    ;   SelectExpr = Sql, Interns = []
     ).
+
+partition_head_interns([], [], []).
+partition_head_interns([built_text(Sql) | Rest], [Sql | Built], ListInterns) :-
+    !, partition_head_interns(Rest, Built, ListInterns).
+partition_head_interns([list_intern(ElementType, ArraySql) | Rest], Built,
+                       [list_intern(ElementType, ArraySql) | ListInterns]) :-
+    partition_head_interns(Rest, Built, ListInterns).
 
 intern_write_statements([], _, _, []) :- !.
 intern_write_statements(BuiltValues, FromSql, WhereSql, [InternSql]) :-
@@ -1988,6 +2309,47 @@ intern_write_arm(FromSql, WhereSql, ValueSql, Arm) :-
            [ValueSql, FromSql, WhereSql]).
 
 alias_select_expr(Expr, Alias, AliasedExpr) :- format(atom(AliasedExpr), '~w AS "~w"', [Expr, Alias]).
+
+% Statement order is forced: the content text and each member value reach
+% "__str" before the entity and member rows that read their ids back out.
+list_intern_statements([], _, _, []) :- !.
+list_intern_statements(ListInterns, FromSql, WhereSql, Statements) :-
+    maplist(list_intern_statement(FromSql, WhereSql), ListInterns, StatementLists),
+    append(StatementLists, Statements).
+
+list_intern_statement(FromSql, WhereSql, list_intern(ElementType, ArraySql),
+                      Statements) :-
+    canonical_type_name(list(ElementType), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName),
+    quote_ident(EntityName, QuotedEntity),
+    quote_ident(MemberName, QuotedMember),
+    interned_id_sql(ArraySql, ContentIdSql),
+    list_intern_from(FromSql, From),
+    list_intern_where(WhereSql, Where),
+    member_intern_from(FromSql, ArraySql, MemberFrom),
+    intern_write_sql([ArraySql], FromSql, WhereSql, ContentInternSql),
+    format(atom(EntityInternSql),
+           'INSERT OR IGNORE INTO ~w ("content") SELECT DISTINCT ~w~w~w',
+           [QuotedEntity, ContentIdSql, From, Where]),
+    format(atom(MemberValueInternSql),
+           'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT i.value FROM ~w~w',
+           [MemberFrom, Where]),
+    format(atom(MemberInsertSql),
+           'INSERT OR IGNORE INTO ~w ("list_id", "idx", "value") SELECT e."__id", i.key, s."__id" FROM ~w JOIN ~w e ON e."content" = ~w JOIN "__str" s ON s."content" = i.value~w ON CONFLICT ("list_id", "idx") DO NOTHING',
+           [QuotedMember, MemberFrom, QuotedEntity, ContentIdSql, Where]),
+    Statements = [ContentInternSql, EntityInternSql, MemberValueInternSql,
+                  MemberInsertSql].
+
+list_intern_from(none, '') :- !.
+list_intern_from(FromSql, From) :- format(atom(From), ' FROM ~w', [FromSql]).
+
+list_intern_where(none, '') :- !.
+list_intern_where(WhereSql, Where) :- format(atom(Where), ' WHERE ~w', [WhereSql]).
+
+member_intern_from(none, ArraySql, From) :- !,
+    format(atom(From), 'json_each(~w) i', [ArraySql]).
+member_intern_from(FromSql, ArraySql, From) :-
+    format(atom(From), '~w, json_each(~w) i', [FromSql, ArraySql]).
 
 % ═══ interning (plans/2026-08-08-interning-contract.md rev 3) ══════════════
 % Threaded, never a flag: a runtime toggle cannot undo a declared column type.
@@ -3157,9 +3519,11 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     % aliases by string surgery on an alias-free SELECT would be unsafe --
     % a json_object(...) expression's OWN internal commas would look
     % identical to expression-list separators to any naive re-splitter.
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    intern_write_statements(BuiltValues, FromSql, WhereSql, ProjectInternSqls),
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, ProjectInternSqls),
     % A FROM-less SELECT with a WHERE is the guard-only arm (every body goal
     % past the trigger is a comparison, a bind or a NOT EXISTS): SQLite
     % evaluates it over the one implicit row and returns zero rows when the
@@ -3258,7 +3622,7 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     compile_guard_goals(Mode, GuardGoals, PositiveBound, Bound, GuardWhereTexts),
     maplist(negated_atom_use, NegAtoms, NegUses),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w ~w', [QuotedFrontierTable, DeltaAlias]),
     append([DeltaFrom], OtherFromParts, FromParts),
@@ -3269,7 +3633,9 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     format(atom(DeltaProjectSql),
            'SELECT ~w FROM ~w WHERE ~w ORDER BY d0."_phase", d0."_sequence"',
            [SelectSql, FromSql, WhereSql]),
-    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, InternSqls).
 
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
 
@@ -4706,16 +5072,21 @@ level_recursive_arm_parts(Mode, RelPlans, Rule, PosUses, PosFromParts, JsonFromP
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues, ListInterns),
     recursive_arm_builds_no_string(HeadRef, BuiltValues),
+    recursive_arm_builds_no_list(HeadRef, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, RawExprs, _).
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, RawExprs, _, _).
 
 % A recursive arm lives inside one WITH RECURSIVE statement, so there is no
 % place to put the intern write (§5.7.3, the per-round case).
 recursive_arm_builds_no_string(_, []) :- !.
 recursive_arm_builds_no_string(HeadRef, _) :-
     throw(unsupported_construct(built_text_in_recursive_head(HeadRef))).
+
+recursive_arm_builds_no_list(_, []) :- !.
+recursive_arm_builds_no_list(HeadRef, _) :-
+    throw(unsupported_construct(built_list_in_recursive_head(HeadRef))).
 
 level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
     Rule = (Head <- Body),
@@ -4731,7 +5102,7 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
     atomic_list_concat(AllFromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, BuiltValues, ListInterns),
     ref_count_group_exprs(Mode, Head, Bound, GroupExprs),
     atomic_list_concat(AliasedSelectExprs, ', ', SelectSql),
     atomic_list_concat(GroupExprs, ', ', GroupSql),
@@ -4745,7 +5116,9 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
               'SELECT ~w, count(*) AS "__refcount" FROM ~w WHERE ~w GROUP BY ~w',
               [SelectSql, FromSql, WhereSql, GroupSql])
     ),
-    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, InternSqls).
 
 % SQLite treats a bare integer in GROUP BY as a one-based SELECT-list
 % position, including when the integer is parenthesized. Adding zero makes it
@@ -4805,7 +5178,7 @@ level_insert_sql(Mode, RelPlans, HeadRef, (Head <- Body), InsertSql, InternSqls)
     ( aggregate_head_template(Head, Template)
     -> aggregate_select_statement(Mode, HeadColumnTypes, Head, Template, Bound, FromSql,
                                   AllWhereTexts, SelectStatement, InternSqls)
-    ;  head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues),
+    ;  head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues, ListInterns),
        atomic_list_concat(SelectExprs, ', ', SelectSql),
        ( AllWhereTexts == []
        -> WhereSql = none,
@@ -4813,7 +5186,9 @@ level_insert_sql(Mode, RelPlans, HeadRef, (Head <- Body), InsertSql, InternSqls)
        ; atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
          format(atom(SelectStatement), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
        ),
-       intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls)
+       intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+       list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+       append(TextInternSqls, ListInternSqls, InternSqls)
     ),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
@@ -5413,7 +5788,7 @@ level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos,
                           OtherFromParts, OtherWhereTexts),
     compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w d0', [QuotedFrontierTable]),
     append([[DeltaFrom], IdentityFromParts, OtherFromParts, JsonFromParts],
@@ -5425,7 +5800,9 @@ level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos,
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
            [SelectSql, FromSql, WhereSql]),
-    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, InternSqls).
 
 delta_reference_identity(RelPlans, Name/Arity, Args, Columns,
                          Bound0, Bound, [From], Equalities) :-
@@ -5969,8 +6346,8 @@ tag_boot_statements(Name, [bootstmt(Sql, Params) | Rest],
                     [bootstmt(Name, Sql, Params) | Tagged]) :-
     tag_boot_statements(Name, Rest, Tagged).
 
-% engine.pl:run_program computes level_closure(PlainLevel, AggRules, BaseRows,
-% 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's
+% engine.pl:run_program computes level_closure(Decls, PlainLevel, AggRules,
+% BaseRows, 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's
 % state(...) exists -- the SAME DELETE/INSERT-SELECT SQL recomputeLevels runs
 % inside a tick (lower.pl:level_statement_group/3), run once more here with
 % no bind params (a literal statement, not a template) so a level view over

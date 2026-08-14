@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "clipped": {
+      "additionalProperties":false,
+      "properties": {"out": {"type":"string"},"text": {"type":"string"}},
+      "required": ["text", "out" ],
+      "type":"object"
+    },
+    "text": {
+      "additionalProperties":false,
+      "properties": {"text": {"type":"string"}},
+      "required": ["text" ],
+      "type":"object"
+    }
+  },
+  "$id":"substr_positive_start_is_one_based#be3eefee89651256",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

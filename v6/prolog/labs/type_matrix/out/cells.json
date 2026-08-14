@@ -1,0 +1,3800 @@
+[
+ {
+  "id": "cell_arrival__int__int",
+  "position": "arrival",
+  "declared": "int",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__float",
+  "position": "arrival",
+  "declared": "int",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__numeric_text",
+  "position": "arrival",
+  "declared": "int",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__plain_text",
+  "position": "arrival",
+  "declared": "int",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__json_object",
+  "position": "arrival",
+  "declared": "int",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__json_array",
+  "position": "arrival",
+  "declared": "int",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__bool",
+  "position": "arrival",
+  "declared": "int",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__wide_int",
+  "position": "arrival",
+  "declared": "int",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__float_integral",
+  "position": "arrival",
+  "declared": "int",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__int__neg_zero",
+  "position": "arrival",
+  "declared": "int",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__int",
+  "position": "arrival",
+  "declared": "float",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__float",
+  "position": "arrival",
+  "declared": "float",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__numeric_text",
+  "position": "arrival",
+  "declared": "float",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__plain_text",
+  "position": "arrival",
+  "declared": "float",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__json_object",
+  "position": "arrival",
+  "declared": "float",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__json_array",
+  "position": "arrival",
+  "declared": "float",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__bool",
+  "position": "arrival",
+  "declared": "float",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__wide_int",
+  "position": "arrival",
+  "declared": "float",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__float_integral",
+  "position": "arrival",
+  "declared": "float",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__float__neg_zero",
+  "position": "arrival",
+  "declared": "float",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__int",
+  "position": "arrival",
+  "declared": "text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__float",
+  "position": "arrival",
+  "declared": "text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__numeric_text",
+  "position": "arrival",
+  "declared": "text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__plain_text",
+  "position": "arrival",
+  "declared": "text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__json_object",
+  "position": "arrival",
+  "declared": "text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__json_array",
+  "position": "arrival",
+  "declared": "text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__bool",
+  "position": "arrival",
+  "declared": "text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__wide_int",
+  "position": "arrival",
+  "declared": "text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__float_integral",
+  "position": "arrival",
+  "declared": "text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__text__neg_zero",
+  "position": "arrival",
+  "declared": "text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__int",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__float",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__numeric_text",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__plain_text",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__json_object",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__json_array",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__bool",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__wide_int",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__float_integral",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__bool__neg_zero",
+  "position": "arrival",
+  "declared": "bool",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__int",
+  "position": "arrival",
+  "declared": "json",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__float",
+  "position": "arrival",
+  "declared": "json",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__numeric_text",
+  "position": "arrival",
+  "declared": "json",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__plain_text",
+  "position": "arrival",
+  "declared": "json",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__json_object",
+  "position": "arrival",
+  "declared": "json",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__json_array",
+  "position": "arrival",
+  "declared": "json",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__bool",
+  "position": "arrival",
+  "declared": "json",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__wide_int",
+  "position": "arrival",
+  "declared": "json",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__float_integral",
+  "position": "arrival",
+  "declared": "json",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__json__neg_zero",
+  "position": "arrival",
+  "declared": "json",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__int",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__float",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__numeric_text",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__plain_text",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__json_object",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__json_array",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__bool",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__wide_int",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__float_integral",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__list_text__neg_zero",
+  "position": "arrival",
+  "declared": "list_text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__int",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__float",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__numeric_text",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__plain_text",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__json_object",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__json_array",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__bool",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__wide_int",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__float_integral",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_arrival__undeclared__neg_zero",
+  "position": "arrival",
+  "declared": "undeclared",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__int",
+  "position": "level_head",
+  "declared": "int",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__float",
+  "position": "level_head",
+  "declared": "int",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__numeric_text",
+  "position": "level_head",
+  "declared": "int",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__plain_text",
+  "position": "level_head",
+  "declared": "int",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__json_object",
+  "position": "level_head",
+  "declared": "int",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__json_array",
+  "position": "level_head",
+  "declared": "int",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__bool",
+  "position": "level_head",
+  "declared": "int",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__wide_int",
+  "position": "level_head",
+  "declared": "int",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__float_integral",
+  "position": "level_head",
+  "declared": "int",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__int__neg_zero",
+  "position": "level_head",
+  "declared": "int",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__int",
+  "position": "level_head",
+  "declared": "float",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__float",
+  "position": "level_head",
+  "declared": "float",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__numeric_text",
+  "position": "level_head",
+  "declared": "float",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__plain_text",
+  "position": "level_head",
+  "declared": "float",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__json_object",
+  "position": "level_head",
+  "declared": "float",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__json_array",
+  "position": "level_head",
+  "declared": "float",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__bool",
+  "position": "level_head",
+  "declared": "float",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__wide_int",
+  "position": "level_head",
+  "declared": "float",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__float_integral",
+  "position": "level_head",
+  "declared": "float",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__float__neg_zero",
+  "position": "level_head",
+  "declared": "float",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__int",
+  "position": "level_head",
+  "declared": "text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__float",
+  "position": "level_head",
+  "declared": "text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__numeric_text",
+  "position": "level_head",
+  "declared": "text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__plain_text",
+  "position": "level_head",
+  "declared": "text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__json_object",
+  "position": "level_head",
+  "declared": "text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__json_array",
+  "position": "level_head",
+  "declared": "text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__bool",
+  "position": "level_head",
+  "declared": "text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__wide_int",
+  "position": "level_head",
+  "declared": "text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__float_integral",
+  "position": "level_head",
+  "declared": "text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__text__neg_zero",
+  "position": "level_head",
+  "declared": "text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__int",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__float",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__numeric_text",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__plain_text",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__json_object",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__json_array",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__bool",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__wide_int",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__float_integral",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__bool__neg_zero",
+  "position": "level_head",
+  "declared": "bool",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__int",
+  "position": "level_head",
+  "declared": "json",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__float",
+  "position": "level_head",
+  "declared": "json",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__numeric_text",
+  "position": "level_head",
+  "declared": "json",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__plain_text",
+  "position": "level_head",
+  "declared": "json",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__json_object",
+  "position": "level_head",
+  "declared": "json",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__json_array",
+  "position": "level_head",
+  "declared": "json",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__bool",
+  "position": "level_head",
+  "declared": "json",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__wide_int",
+  "position": "level_head",
+  "declared": "json",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__float_integral",
+  "position": "level_head",
+  "declared": "json",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__json__neg_zero",
+  "position": "level_head",
+  "declared": "json",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__int",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__float",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__numeric_text",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__plain_text",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__json_object",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__json_array",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__bool",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__wide_int",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__float_integral",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__list_text__neg_zero",
+  "position": "level_head",
+  "declared": "list_text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__int",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__float",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__numeric_text",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__plain_text",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__json_object",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__json_array",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__bool",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__wide_int",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__float_integral",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_level_head__undeclared__neg_zero",
+  "position": "level_head",
+  "declared": "undeclared",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__int",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__float",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__numeric_text",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__plain_text",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__json_object",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__json_array",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__bool",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__wide_int",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__float_integral",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__int__neg_zero",
+  "position": "edge_head",
+  "declared": "int",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__int",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__float",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__numeric_text",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__plain_text",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__json_object",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__json_array",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__bool",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__wide_int",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__float_integral",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__float__neg_zero",
+  "position": "edge_head",
+  "declared": "float",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__int",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__float",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__numeric_text",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__plain_text",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__json_object",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__json_array",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__bool",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__wide_int",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__float_integral",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__text__neg_zero",
+  "position": "edge_head",
+  "declared": "text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__int",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__float",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__numeric_text",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__plain_text",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__json_object",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__json_array",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__bool",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__wide_int",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__float_integral",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__bool__neg_zero",
+  "position": "edge_head",
+  "declared": "bool",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__int",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__float",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__numeric_text",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__plain_text",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__json_object",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__json_array",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__bool",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__wide_int",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__float_integral",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__json__neg_zero",
+  "position": "edge_head",
+  "declared": "json",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__int",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__float",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__numeric_text",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__plain_text",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__json_object",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__json_array",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__bool",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__wide_int",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__float_integral",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__list_text__neg_zero",
+  "position": "edge_head",
+  "declared": "list_text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__int",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__float",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__numeric_text",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__plain_text",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__json_object",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__json_array",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__bool",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__wide_int",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__float_integral",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_edge_head__undeclared__neg_zero",
+  "position": "edge_head",
+  "declared": "undeclared",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__int",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__float",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__numeric_text",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__plain_text",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__json_object",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__json_array",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__bool",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__wide_int",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__float_integral",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__int__neg_zero",
+  "position": "json_capture",
+  "declared": "int",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__int",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__float",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__numeric_text",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__plain_text",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__json_object",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__json_array",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__bool",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__wide_int",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__float_integral",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__float__neg_zero",
+  "position": "json_capture",
+  "declared": "float",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__int",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__float",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__numeric_text",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__plain_text",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__json_object",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__json_array",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__bool",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__wide_int",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__float_integral",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__text__neg_zero",
+  "position": "json_capture",
+  "declared": "text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__int",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__float",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__numeric_text",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__plain_text",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__json_object",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__json_array",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__bool",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__wide_int",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__float_integral",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__bool__neg_zero",
+  "position": "json_capture",
+  "declared": "bool",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__int",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__float",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__numeric_text",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__plain_text",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__json_object",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__json_array",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__bool",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__wide_int",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__float_integral",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__json__neg_zero",
+  "position": "json_capture",
+  "declared": "json",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__int",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__float",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__numeric_text",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__plain_text",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__json_object",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__json_array",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__bool",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__wide_int",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__float_integral",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__list_text__neg_zero",
+  "position": "json_capture",
+  "declared": "list_text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__int",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__float",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__numeric_text",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__plain_text",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__json_object",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__json_array",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__bool",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__wide_int",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__float_integral",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_json_capture__undeclared__neg_zero",
+  "position": "json_capture",
+  "declared": "undeclared",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__int",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__float",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__numeric_text",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__plain_text",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__json_object",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__json_array",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__bool",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__wide_int",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__float_integral",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__int__neg_zero",
+  "position": "aggregate_head",
+  "declared": "int",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__int",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__float",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__numeric_text",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__plain_text",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__json_object",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__json_array",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__bool",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__wide_int",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__float_integral",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__float__neg_zero",
+  "position": "aggregate_head",
+  "declared": "float",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__int",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__float",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__numeric_text",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__plain_text",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__json_object",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__json_array",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__bool",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__wide_int",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__float_integral",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__text__neg_zero",
+  "position": "aggregate_head",
+  "declared": "text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__int",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__float",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__numeric_text",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__plain_text",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__json_object",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__json_array",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__bool",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__wide_int",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__float_integral",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__bool__neg_zero",
+  "position": "aggregate_head",
+  "declared": "bool",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__int",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__float",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__numeric_text",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__plain_text",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__json_object",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__json_array",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__bool",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__wide_int",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__float_integral",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__json__neg_zero",
+  "position": "aggregate_head",
+  "declared": "json",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__int",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__float",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__numeric_text",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__plain_text",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__json_object",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__json_array",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__bool",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__wide_int",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__float_integral",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__list_text__neg_zero",
+  "position": "aggregate_head",
+  "declared": "list_text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__int",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__float",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__numeric_text",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__plain_text",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__json_object",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__json_array",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__bool",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__wide_int",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__float_integral",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_aggregate_head__undeclared__neg_zero",
+  "position": "aggregate_head",
+  "declared": "undeclared",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 1,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__int",
+  "position": "join_column",
+  "declared": "int",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__float",
+  "position": "join_column",
+  "declared": "int",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__numeric_text",
+  "position": "join_column",
+  "declared": "int",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__plain_text",
+  "position": "join_column",
+  "declared": "int",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__json_object",
+  "position": "join_column",
+  "declared": "int",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__json_array",
+  "position": "join_column",
+  "declared": "int",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__bool",
+  "position": "join_column",
+  "declared": "int",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__wide_int",
+  "position": "join_column",
+  "declared": "int",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__float_integral",
+  "position": "join_column",
+  "declared": "int",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__int__neg_zero",
+  "position": "join_column",
+  "declared": "int",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__int",
+  "position": "join_column",
+  "declared": "float",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__float",
+  "position": "join_column",
+  "declared": "float",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__numeric_text",
+  "position": "join_column",
+  "declared": "float",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__plain_text",
+  "position": "join_column",
+  "declared": "float",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__json_object",
+  "position": "join_column",
+  "declared": "float",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__json_array",
+  "position": "join_column",
+  "declared": "float",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__bool",
+  "position": "join_column",
+  "declared": "float",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__wide_int",
+  "position": "join_column",
+  "declared": "float",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__float_integral",
+  "position": "join_column",
+  "declared": "float",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__float__neg_zero",
+  "position": "join_column",
+  "declared": "float",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__int",
+  "position": "join_column",
+  "declared": "text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__float",
+  "position": "join_column",
+  "declared": "text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__numeric_text",
+  "position": "join_column",
+  "declared": "text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__plain_text",
+  "position": "join_column",
+  "declared": "text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__json_object",
+  "position": "join_column",
+  "declared": "text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__json_array",
+  "position": "join_column",
+  "declared": "text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__bool",
+  "position": "join_column",
+  "declared": "text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__wide_int",
+  "position": "join_column",
+  "declared": "text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__float_integral",
+  "position": "join_column",
+  "declared": "text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__text__neg_zero",
+  "position": "join_column",
+  "declared": "text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__int",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__float",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__numeric_text",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__plain_text",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__json_object",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__json_array",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__bool",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__wide_int",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__float_integral",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__bool__neg_zero",
+  "position": "join_column",
+  "declared": "bool",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__int",
+  "position": "join_column",
+  "declared": "json",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__float",
+  "position": "join_column",
+  "declared": "json",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__numeric_text",
+  "position": "join_column",
+  "declared": "json",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__plain_text",
+  "position": "join_column",
+  "declared": "json",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__json_object",
+  "position": "join_column",
+  "declared": "json",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__json_array",
+  "position": "join_column",
+  "declared": "json",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__bool",
+  "position": "join_column",
+  "declared": "json",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__wide_int",
+  "position": "join_column",
+  "declared": "json",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__float_integral",
+  "position": "join_column",
+  "declared": "json",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__json__neg_zero",
+  "position": "join_column",
+  "declared": "json",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__int",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__float",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__numeric_text",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__plain_text",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__json_object",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__json_array",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__bool",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__wide_int",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__float_integral",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__list_text__neg_zero",
+  "position": "join_column",
+  "declared": "list_text",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__int",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__float",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "float",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__numeric_text",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "numeric_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__plain_text",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__json_object",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "json_object",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__json_array",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "json_array",
+  "natural": "json",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__bool",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "bool",
+  "natural": "bool",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__wide_int",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "wide_int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__float_integral",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "float_integral",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_join_column__undeclared__neg_zero",
+  "position": "join_column",
+  "declared": "undeclared",
+  "value": "neg_zero",
+  "natural": "float",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_seed__join_cross_type__int",
+  "position": "seed",
+  "declared": "int_vs_text",
+  "value": "int",
+  "natural": "int",
+  "columnIndex": 0,
+  "na": null
+ },
+ {
+  "id": "cell_seed__decl_vs_witness__plain_text",
+  "position": "seed",
+  "declared": "int",
+  "value": "plain_text",
+  "natural": "text",
+  "columnIndex": 0,
+  "na": null
+ }
+]

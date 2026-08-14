@@ -64,15 +64,72 @@
 :- op(700,  xfx, :=).
 
 expand_dot_in_context(EnumContext, prog(Decls0, Rules0), prog(Decls, Rules)) :-
+    resolve_qualified_type_paths(Decls0, Decls1),
     maplist(resolve_enum_arm_term(EnumContext), Rules0, Rules1),
     (   member(Carrier, Rules1),
         contains_rel_path(Carrier)
-    ->  decl_scope_tree(Decls0, Root),
+    ->  decl_scope_tree(Decls1, Root),
         maplist(resolve_rel_path_rule([Root]), Rules1, Rules2)
     ;   Rules2 = Rules1
     ),
-    expand_nested_parent_refs(Decls0, Rules2, Decls, Rules3),
+    expand_nested_parent_refs(Decls1, Rules2, Decls, Rules3),
     maplist(expand_dot_rule, Rules3, Rules).
+
+% Qualified types retain their path until mount_decl/4 supplies scope here.
+% Resolution produces the same flat relation identity as a qualified call.
+resolve_qualified_type_paths(Decls0, Decls) :-
+    decl_scope_tree(Decls0, Root),
+    qualified_type_names([Root], Decls0, Names),
+    maplist(resolve_qualified_type_decl([Root]), Decls0, Decls1),
+    foldl(ensure_type_decl, Names, Decls1, Decls).
+
+resolve_qualified_type_decl(Scopes, col_type(Ref, Column, Type0),
+                            col_type(Ref, Column, Type)) :-
+    !,
+    resolve_qualified_type(Scopes, Type0, Type).
+resolve_qualified_type_decl(_, Decl, Decl).
+
+resolve_qualified_type(Scopes, type_path(Segments), Name) :-
+    !,
+    (   resolve_path(Scopes, Segments, Name)
+    ->  true
+    ;   throw(unsupported_construct(unresolvable_type_path(Segments)))
+    ).
+resolve_qualified_type(Scopes, Type0, Type) :-
+    compound(Type0),
+    !,
+    Type0 =.. [Functor | Args0],
+    maplist(resolve_qualified_type(Scopes), Args0, Args),
+    Type =.. [Functor | Args].
+resolve_qualified_type(_, Type, Type).
+
+qualified_type_names(Scopes, Decls, Names) :-
+    findall(Name,
+            ( member(col_type(_, _, Type), Decls),
+              qualified_type_path(Type, Segments),
+              resolve_path(Scopes, Segments, Name) ),
+            Names0),
+    sort(Names0, Names).
+
+qualified_type_path(type_path(Segments), Segments) :- !.
+qualified_type_path(Type, Segments) :-
+    compound(Type),
+    Type =.. [_ | Args],
+    member(Arg, Args),
+    qualified_type_path(Arg, Segments).
+
+ensure_type_decl(Name, Decls0, Decls) :-
+    (   memberchk(type_decl(Name, _), Decls0)
+    ->  Decls = Decls0
+    ;   relation_type_decl(Name, Decls0, TypeDecl)
+    ->  Decls = [TypeDecl | Decls0]
+    ;   Decls = Decls0
+    ).
+
+relation_type_decl(Name, Decls, type_decl(Name, Specs)) :-
+    once(member(col_type(Name/Arity, _, _), Decls)),
+    findall(col(Column, Type), member(col_type(Name/Arity, Column, Type), Decls), Specs),
+    length(Specs, Arity).
 
 % `Enum.variant(...)` is the arm's own spelling. The generated ref comes from
 % enum_context, so this cannot drift from what expansion actually minted.

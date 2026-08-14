@@ -151,25 +151,28 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
   internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
   lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
   relColumns: {
+    "__gen__list_fighter_summary_b424a4b49951eef7": [true],
     "fighter_summary": [true, true],
   },
 };
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "__gen__list_fighter_summary_b424a4b49951eef7" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TABLE "__gen__list_fighter_summary_b424a4b49951eef7" ("__id" INTEGER PRIMARY KEY, "content" INTEGER NOT NULL, UNIQUE ("content"))`,
+  `CREATE TEMP VIEW "__txt___gen__list_fighter_summary_b424a4b49951eef7" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."content") AS "content" FROM "__gen__list_fighter_summary_b424a4b49951eef7" t`,
   `CREATE TABLE "__gen__list_fighter_summary_b424a4b49951eef7__member" ("__id" INTEGER PRIMARY KEY, "list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("list_id", "idx"))`,
   `CREATE TABLE "fighter_summary" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "url" INTEGER NOT NULL, UNIQUE ("name", "url"))`,
   `CREATE TEMP VIEW "__ref_fighter_summary" AS SELECT t."__id", "name", "url", json_object('name', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name"), 'url', (SELECT s."content" FROM "__str" s WHERE s."__id" = t."url")) AS "__rendered" FROM "fighter_summary" t`,
   `CREATE TEMP VIEW "__txt_fighter_summary" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."url") AS "url", t."__id" AS "__id" FROM "fighter_summary" t`,
   `CREATE TABLE "squad" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, UNIQUE ("id"))`,
   `CREATE TABLE "squad__members" ("__id" INTEGER PRIMARY KEY, "squad_id" INTEGER NOT NULL, "__gen__list_fighter_summary_b424a4b49951eef7_id" INTEGER NOT NULL, UNIQUE ("squad_id"))`,
-  `CREATE TEMP TABLE "__delta___gen__list_fighter_summary_b424a4b49951eef7" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta___gen__list_fighter_summary_b424a4b49951eef7" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "content" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___gen__list_fighter_summary_b424a4b49951eef7_sign" ON "__delta___gen__list_fighter_summary_b424a4b49951eef7" ("_sign")`,
-  `CREATE INDEX "__delta___gen__list_fighter_summary_b424a4b49951eef7_group" ON "__delta___gen__list_fighter_summary_b424a4b49951eef7" ("id")`,
-  `CREATE TEMP TABLE "__frontier___gen__list_fighter_summary_b424a4b49951eef7" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta___gen__list_fighter_summary_b424a4b49951eef7_group" ON "__delta___gen__list_fighter_summary_b424a4b49951eef7" ("content")`,
+  `CREATE TEMP TABLE "__frontier___gen__list_fighter_summary_b424a4b49951eef7" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "content" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier___gen__list_fighter_summary_b424a4b49951eef7_phase" ON "__frontier___gen__list_fighter_summary_b424a4b49951eef7" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "content" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta___gen__list_fighter_summary_b424a4b49951eef7" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."content") AS "content", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta___gen__list_fighter_summary_b424a4b49951eef7" t`,
   `CREATE TEMP TABLE "__delta___gen__list_fighter_summary_b424a4b49951eef7__member" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "list_id" INTEGER NOT NULL, "idx" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta___gen__list_fighter_summary_b424a4b49951eef7__member_sign" ON "__delta___gen__list_fighter_summary_b424a4b49951eef7__member" ("_sign")`,
   `CREATE INDEX "__delta___gen__list_fighter_summary_b424a4b49951eef7__member_group" ON "__delta___gen__list_fighter_summary_b424a4b49951eef7__member" ("list_id", "idx", "value")`,
@@ -198,7 +201,7 @@ const ddl: readonly string[] = [
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
-  __gen__list_fighter_summary_b424a4b49951eef7: ["id"],
+  __gen__list_fighter_summary_b424a4b49951eef7: ["content"],
   __gen__list_fighter_summary_b424a4b49951eef7__member: ["list_id", "idx", "value"],
   fighter_summary: ["name", "url"],
   squad: ["id"],
@@ -206,7 +209,7 @@ const rel_columns: Record<string, readonly string[]> = {
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
-  __gen__list_fighter_summary_b424a4b49951eef7: ["int"],
+  __gen__list_fighter_summary_b424a4b49951eef7: ["text"],
   __gen__list_fighter_summary_b424a4b49951eef7__member: ["int", "int", "ref"],
   fighter_summary: ["text", "text"],
   squad: ["int"],
@@ -220,8 +223,8 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "option_list_of_rel_round_trips_absent_and_present", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "4894f3f5e18179b3", h_schema: "", h_rule: "" },
-  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "__gen__list_fighter_summary_b424a4b49951eef7", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "db1f6a3b1a3aae37", h_schema: "a910993d429fe6c3", h_rule: "" },
-  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "175aa9387d0879e9", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "__gen__list_fighter_summary_b424a4b49951eef7", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "db1f6a3b1a3aae37", h_schema: "81c1647cd32d17ae", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "content", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "bcb2714212b062d4", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 6, ordinal: 0, local_name: "__gen__list_fighter_summary_b424a4b49951eef7__member", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "4d1ba07fe40deb61", h_schema: "623606f2ec0476d3", h_rule: "" },
   { rel_id: 10, parent_id: 9, ordinal: 1, local_name: "list_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "4f1b8e7e8c70b834", h_schema: "", h_rule: "" },
   { rel_id: 11, parent_id: 9, ordinal: 2, local_name: "idx", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "e47ad097ae50203c", h_schema: "", h_rule: "" },
@@ -234,38 +237,40 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 18, parent_id: 6, ordinal: 0, local_name: "squad__members", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "6f44491c00109ea0", h_schema: "fe43912585e781e2", h_rule: "" },
   { rel_id: 19, parent_id: 18, ordinal: 1, local_name: "squad_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "d949388b63540a2f", h_schema: "", h_rule: "" },
   { rel_id: 20, parent_id: 18, ordinal: 2, local_name: "__gen__list_fighter_summary_b424a4b49951eef7_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "6022f93a934a6e1f", h_schema: "", h_rule: "" },
-  { rel_id: 21, parent_id: 7, ordinal: 0, local_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "f907e175d8f23ce6", h_schema: "d63e416beccf4892", h_rule: "" },
-  { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "286399da1121e457", h_schema: "a186680c4c0c99e7", h_rule: "" },
-  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "ff2502fd05f77a01", h_schema: "a186680c4c0c99e7", h_rule: "" },
-  { rel_id: 24, parent_id: 9, ordinal: 0, local_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "5c4daf1a441c25ac", h_schema: "b2a7f40bf7763e58", h_rule: "" },
-  { rel_id: 25, parent_id: 9, ordinal: 0, local_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "0ee53354ba7756e1", h_schema: "493f64c8369b6945", h_rule: "" },
-  { rel_id: 26, parent_id: 9, ordinal: 0, local_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "e4a4385dc097d7ca", h_schema: "493f64c8369b6945", h_rule: "" },
-  { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__delta_fighter_summary", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "6490322dbf341e04", h_schema: "237bb8ba4ec279bb", h_rule: "" },
-  { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__frontier_fighter_summary", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "5243d22de501348b", h_schema: "9fe6e05191af163e", h_rule: "" },
-  { rel_id: 29, parent_id: 13, ordinal: 0, local_name: "__next_frontier_fighter_summary", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "f0d69b570a3fd92e", h_schema: "9fe6e05191af163e", h_rule: "" },
-  { rel_id: 30, parent_id: 13, ordinal: 0, local_name: "__txt_fighter_summary", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "1517b38af66c5749", h_schema: "39127c1a394f7ecd", h_rule: "" },
-  { rel_id: 31, parent_id: 27, ordinal: 0, local_name: "__txt___delta_fighter_summary", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "e5b47192905d1e2f", h_schema: "39127c1a394f7ecd", h_rule: "" },
-  { rel_id: 32, parent_id: 16, ordinal: 0, local_name: "__delta_squad", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "59eb0961da57e40d", h_schema: "d63e416beccf4892", h_rule: "" },
-  { rel_id: 33, parent_id: 16, ordinal: 0, local_name: "__frontier_squad", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "e40a145997cc827f", h_schema: "a186680c4c0c99e7", h_rule: "" },
-  { rel_id: 34, parent_id: 16, ordinal: 0, local_name: "__next_frontier_squad", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "30ad0a9a4f6de995", h_schema: "a186680c4c0c99e7", h_rule: "" },
-  { rel_id: 35, parent_id: 18, ordinal: 0, local_name: "__delta_squad__members", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "0791c319c36cb826", h_schema: "34a98920ab247bff", h_rule: "" },
-  { rel_id: 36, parent_id: 18, ordinal: 0, local_name: "__frontier_squad__members", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "3a16200116cf2986", h_schema: "68245381787988c4", h_rule: "" },
-  { rel_id: 37, parent_id: 18, ordinal: 0, local_name: "__next_frontier_squad__members", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "59964a344c943173", h_schema: "68245381787988c4", h_rule: "" },
-  { rel_id: 38, parent_id: 6, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 6, h_id: "01b45099e2988278", h_schema: "", h_rule: "" },
-  { rel_id: 39, parent_id: 6, ordinal: 0, local_name: "__ref_fighter_summary", kind: "dictionary", type_id: 13, arity: 4, module_id: 6, h_id: "5e1f71cece52d383", h_schema: "39127c1a394f7ecd", h_rule: "" },
-  { rel_id: 40, parent_id: 8, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "c51d81336805b763", h_schema: "", h_rule: "" },
-  { rel_id: 41, parent_id: 10, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "5a5d7fceb898e0df", h_schema: "", h_rule: "" },
-  { rel_id: 42, parent_id: 11, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "d6af7f7b59252d0c", h_schema: "", h_rule: "" },
-  { rel_id: 43, parent_id: 12, ordinal: 3, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "cbf4b86723bdaf8b", h_schema: "", h_rule: "" },
-  { rel_id: 44, parent_id: 14, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "4505cd94dadac8b3", h_schema: "", h_rule: "" },
-  { rel_id: 45, parent_id: 15, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "b100ca62f4992fec", h_schema: "", h_rule: "" },
-  { rel_id: 46, parent_id: 17, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "e979760d0927895f", h_schema: "", h_rule: "" },
-  { rel_id: 47, parent_id: 19, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "8df6b65f16d5b172", h_schema: "", h_rule: "" },
-  { rel_id: 48, parent_id: 20, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "1008111db591b78b", h_schema: "", h_rule: "" },
+  { rel_id: 21, parent_id: 7, ordinal: 0, local_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "f907e175d8f23ce6", h_schema: "9e01bcca4b88a13b", h_rule: "" },
+  { rel_id: 22, parent_id: 7, ordinal: 0, local_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "286399da1121e457", h_schema: "dc680ebcab7482bc", h_rule: "" },
+  { rel_id: 23, parent_id: 7, ordinal: 0, local_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "ff2502fd05f77a01", h_schema: "dc680ebcab7482bc", h_rule: "" },
+  { rel_id: 24, parent_id: 7, ordinal: 0, local_name: "__txt___gen__list_fighter_summary_b424a4b49951eef7", kind: "view", type_id: 0, arity: 1, module_id: 6, h_id: "e3d252266cbcf516", h_schema: "cdeff6a16f5bcfee", h_rule: "" },
+  { rel_id: 25, parent_id: 21, ordinal: 0, local_name: "__txt___delta___gen__list_fighter_summary_b424a4b49951eef7", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "2063f5d3d2c91479", h_schema: "cdeff6a16f5bcfee", h_rule: "" },
+  { rel_id: 26, parent_id: 9, ordinal: 0, local_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "5c4daf1a441c25ac", h_schema: "b2a7f40bf7763e58", h_rule: "" },
+  { rel_id: 27, parent_id: 9, ordinal: 0, local_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "0ee53354ba7756e1", h_schema: "493f64c8369b6945", h_rule: "" },
+  { rel_id: 28, parent_id: 9, ordinal: 0, local_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7__member", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "e4a4385dc097d7ca", h_schema: "493f64c8369b6945", h_rule: "" },
+  { rel_id: 29, parent_id: 13, ordinal: 0, local_name: "__delta_fighter_summary", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "6490322dbf341e04", h_schema: "237bb8ba4ec279bb", h_rule: "" },
+  { rel_id: 30, parent_id: 13, ordinal: 0, local_name: "__frontier_fighter_summary", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "5243d22de501348b", h_schema: "9fe6e05191af163e", h_rule: "" },
+  { rel_id: 31, parent_id: 13, ordinal: 0, local_name: "__next_frontier_fighter_summary", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "f0d69b570a3fd92e", h_schema: "9fe6e05191af163e", h_rule: "" },
+  { rel_id: 32, parent_id: 13, ordinal: 0, local_name: "__txt_fighter_summary", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "1517b38af66c5749", h_schema: "39127c1a394f7ecd", h_rule: "" },
+  { rel_id: 33, parent_id: 29, ordinal: 0, local_name: "__txt___delta_fighter_summary", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "e5b47192905d1e2f", h_schema: "39127c1a394f7ecd", h_rule: "" },
+  { rel_id: 34, parent_id: 16, ordinal: 0, local_name: "__delta_squad", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "59eb0961da57e40d", h_schema: "d63e416beccf4892", h_rule: "" },
+  { rel_id: 35, parent_id: 16, ordinal: 0, local_name: "__frontier_squad", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "e40a145997cc827f", h_schema: "a186680c4c0c99e7", h_rule: "" },
+  { rel_id: 36, parent_id: 16, ordinal: 0, local_name: "__next_frontier_squad", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "30ad0a9a4f6de995", h_schema: "a186680c4c0c99e7", h_rule: "" },
+  { rel_id: 37, parent_id: 18, ordinal: 0, local_name: "__delta_squad__members", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "0791c319c36cb826", h_schema: "34a98920ab247bff", h_rule: "" },
+  { rel_id: 38, parent_id: 18, ordinal: 0, local_name: "__frontier_squad__members", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "3a16200116cf2986", h_schema: "68245381787988c4", h_rule: "" },
+  { rel_id: 39, parent_id: 18, ordinal: 0, local_name: "__next_frontier_squad__members", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "59964a344c943173", h_schema: "68245381787988c4", h_rule: "" },
+  { rel_id: 40, parent_id: 6, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 6, h_id: "01b45099e2988278", h_schema: "", h_rule: "" },
+  { rel_id: 41, parent_id: 6, ordinal: 0, local_name: "__ref_fighter_summary", kind: "dictionary", type_id: 13, arity: 4, module_id: 6, h_id: "5e1f71cece52d383", h_schema: "39127c1a394f7ecd", h_rule: "" },
+  { rel_id: 42, parent_id: 8, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "c9760a7b8427ca49", h_schema: "", h_rule: "" },
+  { rel_id: 43, parent_id: 10, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "5a5d7fceb898e0df", h_schema: "", h_rule: "" },
+  { rel_id: 44, parent_id: 11, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "d6af7f7b59252d0c", h_schema: "", h_rule: "" },
+  { rel_id: 45, parent_id: 12, ordinal: 3, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "cbf4b86723bdaf8b", h_schema: "", h_rule: "" },
+  { rel_id: 46, parent_id: 14, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "4505cd94dadac8b3", h_schema: "", h_rule: "" },
+  { rel_id: 47, parent_id: 15, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "b100ca62f4992fec", h_schema: "", h_rule: "" },
+  { rel_id: 48, parent_id: 17, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "e979760d0927895f", h_schema: "", h_rule: "" },
+  { rel_id: 49, parent_id: 19, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "8df6b65f16d5b172", h_schema: "", h_rule: "" },
+  { rel_id: 50, parent_id: 20, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "1008111db591b78b", h_schema: "", h_rule: "" },
 ];
 
 const rel_declared_column_types: Record<string, readonly string[]> = {
-  __gen__list_fighter_summary_b424a4b49951eef7: ["int"],
+  __gen__list_fighter_summary_b424a4b49951eef7: ["text"],
   __gen__list_fighter_summary_b424a4b49951eef7__member: ["int", "int", "other"],
   fighter_summary: ["text", "text"],
   squad: ["int"],
@@ -287,7 +292,7 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    __gen__list_fighter_summary_b424a4b49951eef7: select_rows(seam, `SELECT "id" FROM "__gen__list_fighter_summary_b424a4b49951eef7"`, rel_columns.__gen__list_fighter_summary_b424a4b49951eef7!, rel_column_types.__gen__list_fighter_summary_b424a4b49951eef7!),
+    __gen__list_fighter_summary_b424a4b49951eef7: select_rows(seam, `SELECT CASE WHEN json_valid("content") AND json_type("content") = 'object' AND json_type("content", '$.fn') = 'text' AND json_type("content", '$.args') = 'array' THEN json_extract("content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("content", '$.args')), '') || ')' ELSE "content" END AS "content" FROM "__txt___gen__list_fighter_summary_b424a4b49951eef7"`, rel_columns.__gen__list_fighter_summary_b424a4b49951eef7!, rel_column_types.__gen__list_fighter_summary_b424a4b49951eef7!),
     __gen__list_fighter_summary_b424a4b49951eef7__member: select_rows(seam, `SELECT "list_id", "idx", (SELECT d."__rendered" FROM "__ref_fighter_summary" d WHERE d."__id" = "value") AS "value" FROM "__gen__list_fighter_summary_b424a4b49951eef7__member"`, rel_columns.__gen__list_fighter_summary_b424a4b49951eef7__member!, rel_column_types.__gen__list_fighter_summary_b424a4b49951eef7__member!),
     fighter_summary: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("url") AND json_type("url") = 'object' AND json_type("url", '$.fn') = 'text' AND json_type("url", '$.args') = 'array' THEN json_extract("url", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("url", '$.args')), '') || ')' ELSE "url" END AS "url" FROM "__txt_fighter_summary"`, rel_columns.fighter_summary!, rel_column_types.fighter_summary!),
     squad: select_rows(seam, `SELECT "id" FROM "squad"`, rel_columns.squad!, rel_column_types.squad!),
@@ -299,7 +304,7 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    __gen__list_fighter_summary_b424a4b49951eef7: select_rows(seam, `SELECT "id" FROM "__gen__list_fighter_summary_b424a4b49951eef7"`, rel_columns.__gen__list_fighter_summary_b424a4b49951eef7!, rel_column_types.__gen__list_fighter_summary_b424a4b49951eef7!),
+    __gen__list_fighter_summary_b424a4b49951eef7: select_rows(seam, `SELECT "content" FROM "__gen__list_fighter_summary_b424a4b49951eef7"`, rel_columns.__gen__list_fighter_summary_b424a4b49951eef7!, rel_column_types.__gen__list_fighter_summary_b424a4b49951eef7!),
     __gen__list_fighter_summary_b424a4b49951eef7__member: select_rows(seam, `SELECT "list_id", "idx", "value" FROM "__gen__list_fighter_summary_b424a4b49951eef7__member"`, rel_columns.__gen__list_fighter_summary_b424a4b49951eef7__member!, rel_column_types.__gen__list_fighter_summary_b424a4b49951eef7__member!),
     fighter_summary: select_rows(seam, `SELECT "name", "url" FROM "fighter_summary"`, rel_columns.fighter_summary!, rel_column_types.fighter_summary!),
     squad: select_rows(seam, `SELECT "id" FROM "squad"`, rel_columns.squad!, rel_column_types.squad!),
@@ -312,7 +317,7 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  __gen__list_fighter_summary_b424a4b49951eef7: `SELECT "id" FROM "__gen__list_fighter_summary_b424a4b49951eef7"`,
+  __gen__list_fighter_summary_b424a4b49951eef7: `SELECT CASE WHEN json_valid("content") AND json_type("content") = 'object' AND json_type("content", '$.fn') = 'text' AND json_type("content", '$.args') = 'array' THEN json_extract("content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("content", '$.args')), '') || ')' ELSE "content" END AS "content" FROM "__txt___gen__list_fighter_summary_b424a4b49951eef7"`,
   __gen__list_fighter_summary_b424a4b49951eef7__member: `SELECT "list_id", "idx", (SELECT d."__rendered" FROM "__ref_fighter_summary" d WHERE d."__id" = "value") AS "value" FROM "__gen__list_fighter_summary_b424a4b49951eef7__member"`,
   fighter_summary: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("url") AND json_type("url") = 'object' AND json_type("url", '$.fn') = 'text' AND json_type("url", '$.args') = 'array' THEN json_extract("url", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("url", '$.args')), '') || ')' ELSE "url" END AS "url" FROM "__txt_fighter_summary"`,
   squad: `SELECT "id" FROM "squad"`,
@@ -320,7 +325,7 @@ const final_select: Record<string, string> = {
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_fighter_summary_b424a4b49951eef7: { kind: "set", add_sql: `INSERT INTO "__gen__list_fighter_summary_b424a4b49951eef7" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_fighter_summary_b424a4b49951eef7" WHERE "id" = ?` },
+  __gen__list_fighter_summary_b424a4b49951eef7: { kind: "set", add_sql: `INSERT INTO "__gen__list_fighter_summary_b424a4b49951eef7" ("content") VALUES (?) ON CONFLICT ("content") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_fighter_summary_b424a4b49951eef7" WHERE "content" = ?` },
   __gen__list_fighter_summary_b424a4b49951eef7__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_fighter_summary_b424a4b49951eef7__member" ("list_id", "idx", "value") VALUES (?, ?, ?) ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_fighter_summary_b424a4b49951eef7__member" WHERE "list_id" = ? AND "idx" = ? AND "value" = ?` },
   fighter_summary: { kind: "set", add_sql: `INSERT OR IGNORE INTO "fighter_summary" ("name", "url") VALUES (?, ?)`, del_sql: `DELETE FROM "fighter_summary" WHERE "name" = ? AND "url" = ?` },
   squad: { kind: "set", add_sql: `INSERT INTO "squad" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "squad" WHERE "id" = ?` },
@@ -350,7 +355,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "__gen__list_fighter_summary_b424a4b49951eef7", kind: "set", table_name: "__gen__list_fighter_summary_b424a4b49951eef7", delta_table_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7", frontier_table_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7", next_frontier_table_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_fighter_summary_b424a4b49951eef7" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "__gen__list_fighter_summary_b424a4b49951eef7" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__list_fighter_summary_b424a4b49951eef7" WHERE "_sign" IN (-1, 1) GROUP BY "id", "_sign"`, rule_observers: [] },
+  { rel: "__gen__list_fighter_summary_b424a4b49951eef7", kind: "set", table_name: "__gen__list_fighter_summary_b424a4b49951eef7", delta_table_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7", frontier_table_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7", next_frontier_table_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7", columns: ["content"], column_types: ["text"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_fighter_summary_b424a4b49951eef7" ("content") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("content") DO NOTHING RETURNING "content"`, arrival_del_sql: `DELETE FROM "__gen__list_fighter_summary_b424a4b49951eef7" WHERE ("content") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "content"`, boundary_sql: `SELECT CASE WHEN json_valid("content") AND json_type("content") = 'object' AND json_type("content", '$.fn') = 'text' AND json_type("content", '$.args') = 'array' THEN json_extract("content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("content", '$.args')), '') || ')' ELSE "content" END AS "content", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_fighter_summary_b424a4b49951eef7" WHERE "_sign" IN (-1, 1) GROUP BY "content", "_sign"`, rule_observers: [] },
   { rel: "__gen__list_fighter_summary_b424a4b49951eef7__member", kind: "set", table_name: "__gen__list_fighter_summary_b424a4b49951eef7__member", delta_table_name: "__delta___gen__list_fighter_summary_b424a4b49951eef7__member", frontier_table_name: "__frontier___gen__list_fighter_summary_b424a4b49951eef7__member", next_frontier_table_name: "__next_frontier___gen__list_fighter_summary_b424a4b49951eef7__member", columns: ["list_id", "idx", "value"], column_types: ["int", "int", "ref"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "__gen__list_fighter_summary_b424a4b49951eef7__member" ("list_id", "idx", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value" RETURNING "list_id", "idx", "value"`, arrival_del_sql: `DELETE FROM "__gen__list_fighter_summary_b424a4b49951eef7__member" WHERE ("list_id", "idx", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "list_id", "idx", "value"`, boundary_sql: `SELECT "list_id", "idx", (SELECT d."__rendered" FROM "__ref_fighter_summary" d WHERE d."__id" = "value") AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__list_fighter_summary_b424a4b49951eef7__member" WHERE "_sign" IN (-1, 1) GROUP BY "list_id", "idx", "value", "_sign"`, rule_observers: [] },
   { rel: "fighter_summary", kind: "set", table_name: "fighter_summary", delta_table_name: "__delta_fighter_summary", frontier_table_name: "__frontier_fighter_summary", next_frontier_table_name: "__next_frontier_fighter_summary", columns: ["name", "url"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "fighter_summary" ("name", "url") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "url"`, arrival_del_sql: `DELETE FROM "fighter_summary" WHERE ("name", "url") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "url"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", CASE WHEN json_valid("url") AND json_type("url") = 'object' AND json_type("url", '$.fn') = 'text' AND json_type("url", '$.args') = 'array' THEN json_extract("url", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("url", '$.args')), '') || ')' ELSE "url" END AS "url", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fighter_summary" WHERE "_sign" IN (-1, 1) GROUP BY "name", "url", "_sign"`, rule_observers: [] },
   { rel: "squad", kind: "set", table_name: "squad", delta_table_name: "__delta_squad", frontier_table_name: "__frontier_squad", next_frontier_table_name: "__next_frontier_squad", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "squad" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "squad" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_squad" WHERE "_sign" IN (-1, 1) GROUP BY "id", "_sign"`, rule_observers: [] },

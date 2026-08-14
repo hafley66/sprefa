@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "has_sep": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "sym": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"contains_is_instr_greater_than_zero#598b049696df3cb0",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

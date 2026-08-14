@@ -753,3 +753,8 @@ ruling(generic_template_rules, declarations_only, user,
 % their type, same as any plain column (oneOf payloads reference relations).
 ruling(enum_variant_rel_payload, variant_fields_can_ref_relations, user,
        'user 2026-08-10: dispatch "fix/enum-rel-payload": rel-typed variant payload fields in payload enums; oneOf mapping needs variant payloads to reference relations').
+
+% 2026-08-14: template bound surface spelling. Bounds live inside the existing
+% parameter parens; angle brackets stay out of the grammar entirely.
+ruling(template_bound_spelling, bound_in_parameter_parens, user,
+       'user 2026-08-14: "parens all the way, i dont want antisymmetry" — rel pair(T: json_encodable)(first: T, second: T). over <T: ...> and where-clauses; parens are the one grouping symbol').

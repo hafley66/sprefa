@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "prefix": {
+      "additionalProperties":false,
+      "properties": {"text_value": {"type":"string"}},
+      "required": ["text_value" ],
+      "type":"object"
+    },
+    "prefixed": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"prefix": {"type":"string"}},
+      "required": ["name", "prefix" ],
+      "type":"object"
+    },
+    "sym": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"starts_with_takes_the_prefix_from_a_column#5f7ed7138a5e1a03",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

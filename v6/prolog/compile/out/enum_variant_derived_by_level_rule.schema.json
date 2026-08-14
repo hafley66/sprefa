@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "review_done": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"verdict": {"type":"string"}},
+      "required": ["id", "verdict" ],
+      "type":"object"
+    },
+    "review_pending": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "review_tag": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"tag": {"type":"string"}},
+      "required": ["id", "tag" ],
+      "type":"object"
+    },
+    "submission": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"verdict": {"type":"string"}},
+      "required": ["id", "verdict" ],
+      "type":"object"
+    }
+  },
+  "$id":"enum_variant_derived_by_level_rule#b4e0dcd3a1cdf5e9",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

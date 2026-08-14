@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "node": {
+      "additionalProperties":false,
+      "properties": {"children": {"type":"integer"},"name": {"type":"string"}},
+      "required": ["name", "children" ],
+      "type":"object"
+    }
+  },
+  "$id":"recursive_list_arg_parent_holds_child_node_values#9704936ee6ab4259",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

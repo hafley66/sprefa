@@ -2,6 +2,7 @@
 // HostRunner contract (serve/1_hosts.ts), sharing its emitted HostPlanData.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Component, Path};
 
 use crate::types::{Arrival, ArrivalSign, HostColumnPlan, HostPlanData, TickDeltas, Value};
 
@@ -33,6 +34,22 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
         "sprefa_extract" | "sprefa_extract_repo" => Some(&SprefaExtractExecutor),
         _ => None,
     }
+}
+
+// `sh files*` is an established emitted HostPlanData contract. Keeping its
+// execution tag and template byte-for-byte preserves the TS/runtime ABI; the
+// Rust live runner recognizes these four ruled names and delegates their Git
+// mechanics to Soopy instead of spawning the emitted pipeline.
+fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> {
+    if plan.execution == "shell"
+        && matches!(
+            plan.name.as_str(),
+            "files" | "files_at" | "repo_files" | "repo_files_at"
+        )
+    {
+        return Some(&SoopyFilesExecutor);
+    }
+    executor_for(&plan.execution)
 }
 
 // Executors whose invocations fold across identical (execution, template,
@@ -71,6 +88,103 @@ impl IHostExecutor for ShellExecutor {
 }
 
 pub struct SprefaExtractExecutor;
+
+/// Linked implementation of the four ruled Git file-feed hosts. The emitted
+/// templates still document the portable shell contract; this executor reads
+/// exactly the same input columns and emits the same whitespace grid.
+pub struct SoopyFilesExecutor;
+
+impl IHostExecutor for SoopyFilesExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let glob = env
+            .get("glob")
+            .cloned()
+            .ok_or_else(|| named("missing required host input `glob`".to_string()))?;
+        let cwd =
+            std::env::current_dir().map_err(|error| named(format!("read process cwd: {error}")))?;
+        let root = match host {
+            "files" | "files_at" => cwd.clone(),
+            "repo_files" | "repo_files_at" => env
+                .get("repo")
+                .map(std::path::PathBuf::from)
+                .ok_or_else(|| named("missing required host input `repo`".to_string()))?,
+            _ => return Err(named("not a Soopy file host".to_string())),
+        };
+        let revision = match host {
+            "files" | "repo_files" => soopy::Revision::Worktree,
+            "files_at" | "repo_files_at" => soopy::Revision::Named(std::sync::Arc::from(
+                env.get("rev")
+                    .ok_or_else(|| named("missing required host input `rev`".to_string()))?
+                    .as_str(),
+            )),
+            _ => unreachable!(),
+        };
+        let repository =
+            soopy::discover(root).map_err(|error| named(format!("open repository: {error}")))?;
+        let mut tree = soopy::SourceTree::open(repository);
+        let entries = tree
+            .git_files_from(
+                &soopy::GitFilesQuery {
+                    revision,
+                    pathspecs: vec![glob],
+                },
+                &cwd,
+            )
+            .map_err(|error| named(format!("enumerate tracked files: {error}")))?;
+        let repo_root = tree.repository().root.clone();
+        let mut lines = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let soopy::ContentId::GitBlob(oid) = entry.content else {
+                return Err(named(
+                    "Git file feed returned a non-Git content id".to_string(),
+                ));
+            };
+            let path = if matches!(host, "files" | "files_at") {
+                path_from_cwd(&cwd, &repo_root, entry.source.path.0.as_ref())
+                    .map_err(|error| named(format!("render cwd-relative path: {error}")))?
+            } else {
+                entry.source.path.0.to_string()
+            };
+            lines.push(format!("{path} {}", oid.0));
+        }
+        Ok(lines.join("\n"))
+    }
+}
+
+fn path_from_cwd(
+    cwd: &Path,
+    repository_root: &Path,
+    repository_path: &str,
+) -> std::io::Result<String> {
+    let cwd = cwd.canonicalize()?;
+    let target = repository_root.join(repository_path);
+    let from: Vec<_> = cwd.components().collect();
+    let to: Vec<_> = target.components().collect();
+    let common = from
+        .iter()
+        .zip(&to)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let mut result = std::path::PathBuf::new();
+    for _ in &from[common..] {
+        result.push("..");
+    }
+    for component in &to[common..] {
+        if let Component::Normal(part) = component {
+            result.push(part);
+        }
+    }
+    Ok(result.to_string_lossy().replace('\\', "/"))
+}
 
 impl IHostExecutor for SprefaExtractExecutor {
     fn run(
@@ -302,7 +416,11 @@ fn env_for_inputs(inputs: &BTreeMap<String, Value>) -> BTreeMap<String, String> 
 
 // ═══ output decode (three shapes, same precedence as serve/1_hosts.ts) ══════
 
-fn coerce(host: &str, column: &HostColumnPlan, raw: &serde_json::Value) -> Result<Value, HostError> {
+fn coerce(
+    host: &str,
+    column: &HostColumnPlan,
+    raw: &serde_json::Value,
+) -> Result<Value, HostError> {
     let named = |message: String| HostError {
         host: host.to_string(),
         message,
@@ -382,7 +500,10 @@ fn parse_json_items(text: &str) -> Option<Vec<serde_json::Value>> {
     Some(items)
 }
 
-fn carries_every_column(item: &serde_json::Map<String, serde_json::Value>, outputs: &[HostColumnPlan]) -> bool {
+fn carries_every_column(
+    item: &serde_json::Map<String, serde_json::Value>,
+    outputs: &[HostColumnPlan],
+) -> bool {
     outputs
         .iter()
         .all(|column| matches!(item.get(&column.name), Some(value) if !value.is_null()))
@@ -405,9 +526,10 @@ fn decode_object_items(
                     .enumerate()
                     .map(|(index, column)| {
                         let raw = match item {
-                            serde_json::Value::Array(fields) => {
-                                fields.get(index).cloned().unwrap_or(serde_json::Value::Null)
-                            }
+                            serde_json::Value::Array(fields) => fields
+                                .get(index)
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null),
                             other => other.clone(),
                         };
                         coerce(host, column, &raw)
@@ -469,7 +591,9 @@ fn parse_whitespace(
             outputs
                 .iter()
                 .enumerate()
-                .map(|(index, column)| coerce(host, column, &text_value(fields.get(index).copied())))
+                .map(|(index, column)| {
+                    coerce(host, column, &text_value(fields.get(index).copied()))
+                })
                 .collect()
         })
         .collect()
@@ -512,7 +636,7 @@ impl<'p> HostLiveRunner<'p> {
         rel_columns: &'p HashMap<String, Vec<String>>,
     ) -> Result<Self, HostError> {
         for plan in plans {
-            if executor_for(&plan.execution).is_none() {
+            if executor_for_plan(plan).is_none() {
                 return Err(HostError {
                     host: plan.name.clone(),
                     message: format!("unknown host executor '{}'", plan.execution),
@@ -562,7 +686,11 @@ impl<'p> HostLiveRunner<'p> {
         self.claimed.insert(format!("{plan_name}|{witness_digest}"))
     }
 
-    fn project(demand: &HostDemand<'p>, stdout: &str, rel_columns: &HashMap<String, Vec<String>>) -> Result<Vec<Arrival>, HostError> {
+    fn project(
+        demand: &HostDemand<'p>,
+        stdout: &str,
+        rel_columns: &HashMap<String, Vec<String>>,
+    ) -> Result<Vec<Arrival>, HostError> {
         let output_rows = decode_output(&demand.plan.name, stdout, &demand.plan.outputs)?;
         let response_columns = rel_columns
             .get(&demand.plan.response_rel)
@@ -661,8 +789,7 @@ impl<'p> HostLiveRunner<'p> {
         }
         for group in groups {
             let first = group[0];
-            let executor =
-                executor_for(&first.plan.execution).expect("validated at construction");
+            let executor = executor_for_plan(first.plan).expect("validated at construction");
             let command_line = fill_template(&first.plan.template, &first.inputs);
             let env = env_for_inputs(&first.inputs);
             let stdout = executor.run(&first.plan.name, &command_line, &env)?;

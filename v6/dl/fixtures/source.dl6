@@ -1,0 +1,8 @@
+# Source coordinates shared by repository, Git, filesystem, and extraction
+# binds.  Relation declarations are the authored struct types.
+
+rel repo(root: text).
+rel rev(repo: repo, oid: text).
+rel blob(oid: text).
+rel file(rev: rev, path: text, blob: blob).
+rel span(file: file, start_byte: int, end_byte: int).

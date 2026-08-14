@@ -6,7 +6,8 @@
 //! HTML and YAML (and JSON and CSS, which the doc does not mention) already
 //! produce CST facts through the ast-grep fallback, because ast-grep-language
 //! ships those grammars and `AstgrepSource` routes anything with a grammar.
-//! Only Markdown, TOML and XML genuinely produce nothing.
+//! TOML and XML genuinely produce nothing. Markdown has its own tree-sitter-md
+//! source because ast-grep-language does not ship that grammar.
 //!
 //! The gap was in the DOCUMENTATION, not the code: the CLI's language coverage
 //! table said "python/c/... (any ast-grep grammar) cst only", which is true and
@@ -28,7 +29,7 @@ const FORMATS: &[(&str, bool, &str)] = &[
     ("yaml", true, "ast-grep-language ships the yaml grammar"),
     ("json", true, "ast-grep-language ships the json grammar"),
     ("css", true, "ast-grep-language ships the css grammar"),
-    ("md", false, "no markdown grammar in ast-grep-language"),
+    ("md", true, "tree-sitter-md block and inline grammars"),
     ("toml", false, "no toml grammar in ast-grep-language"),
     ("xml", false, "no xml grammar in ast-grep-language"),
 ];

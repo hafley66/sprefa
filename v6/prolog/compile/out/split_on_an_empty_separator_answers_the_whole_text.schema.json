@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "line": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    },
+    "line_parts": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "required": ["name", "parts" ],
+      "type":"object"
+    }
+  },
+  "$id":"split_on_an_empty_separator_answers_the_whole_text#5cd34f11a38f385a",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

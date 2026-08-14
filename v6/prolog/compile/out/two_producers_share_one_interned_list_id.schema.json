@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "left_parts": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "required": ["name", "parts" ],
+      "type":"object"
+    },
+    "left_text": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    },
+    "right_parts": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "required": ["name", "parts" ],
+      "type":"object"
+    },
+    "right_text": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    }
+  },
+  "$id":"two_producers_share_one_interned_list_id#d7a0154146416ff0",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

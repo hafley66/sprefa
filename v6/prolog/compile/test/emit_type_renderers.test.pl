@@ -37,4 +37,24 @@ test(rust_types) :-
     once(rust_types_text(main, Rows, Text)),
     Text == "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Child {\n    pub id: i64,\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Parent {\n    pub count: i64,\n    pub ratio: f64,\n    pub name: String,\n    pub active: bool,\n    pub value: serde_json::Value,\n    pub values: Vec<i64>,\n    pub note: Option<String>,\n    pub child: Child,\n}\n".
 
+generic_rows([
+    row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),
+    row(6, 0, 0, json_encodable, interface, 0, 0, 0, '', '', ''),
+    row(7, 0, 0, pair, generic_rel, 0, 0, 0, '', '', ''),
+    row(8, 7, 1, 'T', type_parameter, 0, 0, 0, '', '', ''),
+    row(9, 8, 1, json_encodable, constraint, 6, 0, 0, '', '', ''),
+    row(10, 7, 1, first, generic_column, 8, 0, 0, '', '', ''),
+    row(11, 7, 2, second, generic_column, 8, 0, 0, '', '', '')
+]).
+
+test(ts_preserves_generic_declaration_and_bound) :-
+    generic_rows(Rows),
+    once(ts_types_text(main, Rows, Text)),
+    Text == "export interface JsonEncodable {}\n\nexport interface Pair<T extends JsonEncodable> {\n  first: T;\n  second: T;\n}\n".
+
+test(rust_preserves_generic_declaration_and_bound) :-
+    generic_rows(Rows),
+    once(rust_types_text(main, Rows, Text)),
+    Text == "pub trait JsonEncodable {}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Pair<T: JsonEncodable> {\n    pub first: T,\n    pub second: T,\n}\n".
+
 :- end_tests(emit_type_renderers).

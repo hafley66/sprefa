@@ -3,7 +3,9 @@
 % for every edge/level statement lower.pl emits. These are UNIT tests over
 % the Prolog compiler stages themselves (analyze -> strat -> lower), never
 % touching sqlite3 -- test/run_sql_check.pl is the separate execution-level
-% harness (self-grading item 2).
+% harness (self-grading item 2). ONE EXCEPTION, the list_value_position unit:
+% an access-path claim is only answerable by the planner that makes it, so it
+% runs EXPLAIN QUERY PLAN through the sqlite3 CLI.
 %
 % Run: swipl -q -l v6/prolog/compile/test/plunit_tests.pl -g run_tests -g halt
 
@@ -13,6 +15,8 @@
 
 :- use_module(library(plunit)).
 :- use_module(library(apply)).
+:- use_module(library(process)).
+:- use_module(library(readutil)).
 :- use_module('../../compile',
               [ read_fixture_term/4, program_plan/2, program_plan/3,
                 compile_dl6/2, default_intern_mode/1,
@@ -43,8 +47,9 @@
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_generic_expand',
               [ expand_generic_program/2, expand_generic_program_raw/2,
-                canonical_type_name/2 ]).
+                canonical_type_name/2, generic_type_ir/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
+:- use_module('../../0_type_ids', [ decl_id/3, app_id/3, id_kind_name/3 ]).
 :- use_module('../../0_ast_expand',
               [ expand_ast_program/2,
                 expand_ast_program_with_bindings/3 ]).
@@ -1600,7 +1605,92 @@ test(catalog_inferred_list_column_resolves_to_the_list_row) :-
     forall(member(row(_, _, _, payloads, column, TypeId, _, _, _, _, _), Rows),
            TypeId == ListId).
 
+test(catalog_preserves_generic_interface_and_instance_graph) :-
+    canonical_type_name(box(text), BoxName),
+    inferred_relplans(
+        [ rel_spec(BoxName/1, set, [value], none, [text]),
+          rel_spec(holder/1, set, [value], none, [ref(BoxName)]) ],
+        RelPlans),
+    Source = prog(
+        [ interface_decl(json_encodable, []),
+          rel_template([box], [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(text)) ], []),
+    expand_generic_program(Source, prog(Decls, [])),
+    lower:catalog_decl_rows(generic_catalog, [], RelPlans, Decls, Rows, _),
+    memberchk(row(InterfaceId, _, 0, json_encodable, interface,
+                  0, 0, _, _, _, _), Rows),
+    memberchk(row(GenericId, _, 0, box, generic_rel,
+                  0, 0, _, _, _, _), Rows),
+    memberchk(row(ParameterId, GenericId, 1, 'T', type_parameter,
+                  0, 0, _, _, _, _), Rows),
+    memberchk(row(_, ParameterId, 1, json_encodable, constraint,
+                  InterfaceId, 0, _, _, _, _), Rows),
+    memberchk(row(ConcreteRelId, _, 0, BoxName, rel,
+                  0, 1, _, _, _, _), Rows),
+    memberchk(row(InstanceId, ConcreteRelId, 0, BoxName, concrete_type,
+                  GenericId, 0, _, _, _, _), Rows),
+    memberchk(row(_, InstanceId, 1, argument, type_argument,
+                  1, 0, _, _, _, _), Rows).
+
+test(catalog_generic_rows_carry_normalized_semantic_ids) :-
+    canonical_type_name(pair(int), PairName),
+    Program = prog(
+        [ rel_template([pair], ['T'], [column(value, 'T')]),
+          col_type(edge/1, value, pair(int)) ], []),
+    expand_generic_program(Program, prog(Expanded, [])),
+    memberchk(semantic_type_rows(SemanticRows), Expanded),
+    lower:semantic_generic_instance(SemanticRows, PairName, pair, [int]),
+    inferred_relplans(
+        [ rel_spec(edge/1, set, [value], none, [ref(PairName)]),
+          rel_spec(PairName/1, set, [value], none, [int]) ], RelPlans),
+    lower:catalog_decl_rows(generic_semantic_catalog, [], RelPlans,
+                            Expanded, Rows, _),
+    atomic_list_concat(['decl:relation:', PairName], SemanticConcreteId),
+    memberchk(row(_, _, _, pair, generic_rel, _, _, _, _,
+                  'decl:relation:pair', _), Rows),
+    memberchk(row(_, _, _, PairName, concrete_type, _, _, _, _,
+                  SemanticConcreteId, _), Rows),
+    true.
+
 :- end_tests(catalog_type_ids).
+
+:- begin_tests(type_id_rail).
+
+% Row ids are built and read in 0_type_ids.pl only; id_kind_name/3 is the
+% single inverse, so a decl-id prefix strip anywhere else is a defect.
+test(no_decl_id_reverse_parse_outside_the_id_module) :-
+    findall(Path-Count,
+            ( type_id_rail_source(Path),
+              \+ sub_atom(Path, _, _, 0, '0_type_ids.pl'),
+              read_file_to_string(Path, Text, []),
+              type_id_rail_occurrences(Text, Count),
+              Count > 0 ),
+            Offenders),
+    Offenders == [].
+
+test(the_id_module_still_owns_one_reverse_parse) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../0_type_ids.pl'], Path),
+    read_file_to_string(Path, Text, []),
+    type_id_rail_occurrences(Text, Count),
+    Count =:= 1.
+
+type_id_rail_source(Path) :-
+    test_dir_fact(Here),
+    member(Relative, ['/../..', '/../../compile', '/../../conformance', '/..']),
+    atomic_list_concat([Here, Relative], Dir),
+    directory_files(Dir, Entries),
+    msort(Entries, Ordered),
+    member(Entry, Ordered),
+    sub_atom(Entry, _, 3, 0, '.pl'),
+    atomic_list_concat([Dir, '/', Entry], Path).
+
+type_id_rail_occurrences(Text, Count) :-
+    findall(mark, sub_string(Text, _, _, _, "atom_concat('decl:"), Marks),
+    length(Marks, Count).
+
+:- end_tests(type_id_rail).
 
 :- begin_tests(catalog_nested_rows).
 
@@ -4323,6 +4413,200 @@ test(existing_target_membership_is_not_duplicated) :-
         (post(user(Id, Name)) <-
             (source(Id, Name), user(Id, Name))).
 
+% FAIL-PRE-FIX: enum expansion rewrote decl lists only, so a variant rel had no
+% edge back to the enum it came from and the graph could not name its origin.
+test(enum_variant_rels_carry_origin_rows) :-
+    Program = prog([enum_decl(body, (page(view:int) ; redirect(to:text)))], []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(enum, body, EnumId),
+    decl_id(relation, body_page, PageId),
+    decl_id(relation, body_redirect, RedirectId),
+    memberchk(declaration(EnumId, root, body, enum, compile_time), Rows),
+    memberchk(declaration(PageId, root, body_page, relation, materialized), Rows),
+    memberchk(declaration(RedirectId, root, body_redirect, relation, materialized),
+              Rows),
+    memberchk(derived_from(PageId, EnumId), Rows),
+    memberchk(derived_from(RedirectId, EnumId), Rows),
+    memberchk(member(_, EnumId, 1, page, type_ref(declaration(PageId))), Rows),
+    memberchk(member(_, EnumId, 2, redirect, type_ref(declaration(RedirectId))),
+              Rows).
+
+test(both_doors_mint_the_same_enum_origin_rows) :-
+    Program = prog([enum_decl(body, (page(view:int) ; redirect(to:text)))], []),
+    expand_program(Program, prog(DriverDecls, _), _),
+    expand_match_program(Program, prog(MatchDecls, _)),
+    memberchk(semantic_type_rows(DriverRows), DriverDecls),
+    memberchk(semantic_type_rows(MatchRows), MatchDecls),
+    DriverRows == MatchRows.
+
+% FAIL-PRE-FIX: option desugar rewrote decl lists only, so the companion split
+% rel had no edge back to the parent column it encodes and the graph could not
+% name its origin.
+test(option_companion_rels_carry_origin_rows) :-
+    Program = prog(
+        [ col_type(user/2, id, int), col_type(user/2, name, text),
+          keyed(user/2, [1]),
+          col_type(post/2, id, int), col_type(post/2, author, option(user)),
+          keyed(post/2, [1]) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(relation, post, PostId),
+    decl_id(relation, post__author, CompanionId),
+    memberchk(declaration(PostId, root, post, relation, materialized), Rows),
+    memberchk(declaration(CompanionId, root, post__author, relation,
+                          materialized), Rows),
+    memberchk(derived_from(CompanionId, PostId), Rows),
+    memberchk(origin(CompanionId, option_column(post, author, user)), Rows).
+
+% FAIL-PRE-FIX: the minted '__opt_<t>' enum came from a marker the row merge
+% never read, so a scalar option column's enum had no rows at all.
+test(minted_option_enums_carry_origin_rows) :-
+    Program = prog(
+        [ col_type(post/2, id, int),
+          col_type(post/2, subtitle, option(text)),
+          keyed(post/2, [1]) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(enum, '__opt_text', OptEnumId),
+    decl_id(relation, '__opt_text_none', NoneRelId),
+    decl_id(relation, '__opt_text_some', SomeRelId),
+    memberchk(declaration(OptEnumId, root, '__opt_text', enum, compile_time),
+              Rows),
+    memberchk(derived_from(NoneRelId, OptEnumId), Rows),
+    memberchk(derived_from(SomeRelId, OptEnumId), Rows),
+    memberchk(member(_, OptEnumId, 1, none, type_ref(declaration(NoneRelId))),
+              Rows),
+    memberchk(member(_, OptEnumId, 2, some, type_ref(declaration(SomeRelId))),
+              Rows),
+    memberchk(origin(OptEnumId, option_column(post, subtitle, text)), Rows).
+
+% The match door runs no option desugar; a program already carrying the
+% option_column markers merges the same rows the driver door mints.
+test(match_door_merges_option_origin_rows_from_markers) :-
+    Program = prog(
+        [ col_type(user/2, id, int), col_type(user/2, name, text),
+          keyed(user/2, [1]),
+          col_type(post/1, id, int), keyed(post/1, [1]),
+          col_type(post__author/2, post_id, int),
+          col_type(post__author/2, user_id, int),
+          keyed(post__author/2, [1]),
+          option_column(post/2, author, user) ],
+        []),
+    expand_match_program(Program, prog(Decls, _)),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(relation, post, PostId),
+    decl_id(relation, post__author, CompanionId),
+    memberchk(derived_from(CompanionId, PostId), Rows),
+    memberchk(origin(CompanionId, option_column(post, author, user)), Rows).
+
+% FAIL-PRE-FIX: the list-flavor fixpoint minted rels with no semantic rows at
+% all, so a list(text) column left the graph blank about its two minted rels.
+test(list_flavor_mints_carry_origin_rows) :-
+    Program = prog(
+        [ col_type(post/2, id, int), col_type(post/2, tags, list(text)),
+          keyed(post/2, [1]) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    canonical_type_name(list(text), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName),
+    decl_id(relation, list, Constructor),
+    app_id(Constructor, [text], AppId),
+    decl_id(relation, EntityName, EntityId),
+    decl_id(relation, MemberName, MemberRelId),
+    memberchk(application(AppId, Constructor), Rows),
+    memberchk(argument(_, AppId, 1, type_atom(text)), Rows),
+    memberchk(declaration(EntityId, root, EntityName, relation, materialized),
+              Rows),
+    memberchk(declaration(MemberRelId, root, MemberName, relation,
+                          materialized), Rows),
+    memberchk(derived_from(EntityId, AppId), Rows),
+    memberchk(derived_from(MemberRelId, AppId), Rows),
+    % No compile_time row for the builtin constructor: lower's
+    % semantic_generic_instance view must NOT see list mints as instances,
+    % or the emitted catalog changes.
+    \+ memberchk(declaration(Constructor, _, _, _, _), Rows).
+
+test(all_four_list_families_carry_origin_rows) :-
+    Program = prog(
+        [ col_type(a/2, id, int), col_type(a/2, xs, list(int)),
+          keyed(a/2, [1]),
+          col_type(b/2, id, int),
+          col_type(b/2, xs, list_entity_dense_sequence(int)),
+          keyed(b/2, [1]),
+          col_type(c/2, id, int), col_type(c/2, xs, list_interned_set(int)),
+          keyed(c/2, [1]),
+          col_type(d/2, id, int),
+          col_type(d/2, xs, list_entity_linked_sequence(int)),
+          keyed(d/2, [1]) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    forall(member(Flavor, [ list(int), list_entity_dense_sequence(int),
+                            list_interned_set(int),
+                            list_entity_linked_sequence(int) ]),
+           ( Flavor =.. [ConstructorName | Arguments],
+             decl_id(relation, ConstructorName, Constructor),
+             app_id(Constructor, Arguments, AppId),
+             canonical_type_name(Flavor, EntityName),
+             decl_id(relation, EntityName, EntityId),
+             memberchk(derived_from(EntityId, AppId), Rows) )),
+    canonical_type_name(list_entity_dense_sequence(int), DenseName),
+    atomic_list_concat([DenseName, refcount], '__', RefcountName),
+    decl_id(relation, RefcountName, RefcountId),
+    memberchk(declaration(RefcountId, root, RefcountName, relation,
+                          materialized), Rows).
+
+% FAIL-PRE-FIX: bounds were checked at mint time against the application
+% SPELLING, so a nested bounded application threw
+% generic_bound_unsatisfied(pair(document), json_encodable) even though the
+% minted inner instance satisfies the bound.
+test(nested_bounded_generic_application_compiles) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          rel_template([pair],
+                       [type_parameter('T', [json_encodable])],
+                       [column(first, 'T'), column(second, 'T')]),
+          type_decl(document, [col(body, json)]),
+          col_type(document/1, body, json),
+          rel_is_implementation(document/1, [json_encodable]),
+          col_type(index/1, nested, pair(pair(document))) ],
+        []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(pair(document), InnerName),
+    canonical_type_name(pair(pair(document)), OuterName),
+    memberchk(type_decl(InnerName, _), Decls),
+    memberchk(type_decl(OuterName, _), Decls),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(relation, pair, Constructor),
+    app_id(Constructor, [document], InnerAppId),
+    app_id(Constructor, [pair(document)], OuterAppId),
+    memberchk(well_formed(InnerAppId), Rows),
+    memberchk(well_formed(OuterAppId), Rows),
+    memberchk(substitution(OuterAppId, _, pair(document)), Rows),
+    memberchk(obligation(_, OuterAppId, _, pair(document)), Rows),
+    memberchk(resolved_by(_, structural(pair(document))), Rows),
+    memberchk(resolved_by(_, impl(_)), Rows).
+
+% FAIL-PRE-FIX: the old payload was the bare leaf and interface; the path
+% (template -> application -> argument) was thrown away.
+test(unsatisfied_bound_error_carries_the_path) :-
+    Program = prog(
+        [ interface_decl(addressable, []),
+          col_type(file/1, path, text),
+          rel_template([box],
+                       [type_parameter('T', [addressable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(file)) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(
+                  generic_bound_unsatisfied(file, addressable,
+                      path([template(box), application(box(file)),
+                            argument(1, file)]))).
+
 % Enum-first through the driver produces exactly what match-first produced.
 test(enum_first_preserves_expanded_terms) :-
     exhaustive_match(Program),
@@ -4367,6 +4651,218 @@ test(generic_template_vocabularies_expand_the_e2e_fixture_identically) :-
     expand_generic_program(Program, Typed),
     expand_generic_program_raw(Program, Raw),
     Typed == Raw.
+
+test(user_generic_template_mints_one_ground_relation) :-
+    Program = prog(
+        [ rel_template([pair], ['T'],
+                       [column(first, 'T'), column(second, 'T')]),
+          col_type(edge/1, endpoints, pair(int)) ],
+        []),
+    canonical_type_name(pair(int), PairName),
+    expand_generic_program(Program, prog(Decls, [])),
+    memberchk(type_decl(PairName,
+                        [col(first, int), col(second, int)]), Decls),
+    memberchk(col_type(PairName/2, first, int), Decls),
+    memberchk(col_type(PairName/2, second, int), Decls),
+    memberchk(col_type(edge/1, endpoints, PairName), Decls),
+    memberchk(semantic_type_rows(SemanticRows), Decls),
+    lower:semantic_generic(SemanticRows, pair, [type_parameter('T', [])], _),
+    lower:semantic_generic_instance(SemanticRows, PairName, pair, [int]),
+    \+ member(rel_template(_, _, _), Decls),
+    \+ member(generic_decl(_, _, _), Decls),
+    \+ member(generic_instance(_, _, _), Decls).
+
+test(generic_type_ir_separates_declarations_and_implementations) :-
+    Decls = [ rel_template([pair],
+                           [type_parameter('T', [json_encodable])],
+                           [column(value, 'T')]),
+              type_decl(span, [col(value, text)]),
+              interface_decl(json_encodable, []),
+              rel_is_implementation(span/2, [json_encodable]) ],
+    generic_type_ir(Decls, Rows),
+    member(declaration(PairId, root, pair, relation, compile_time), Rows),
+    member(declaration(InterfaceId, root, json_encodable, interface, compile_time), Rows),
+    member(parameter(ParameterId, PairId, 1, 'T'), Rows),
+    member(member(_, PairId, 1, value,
+                  type_ref(parameter(ParameterId))), Rows),
+    member(constraint(_, ParameterId, InterfaceId), Rows),
+    member(implementation(_, SubjectId, interface_application(InterfaceId)), Rows),
+    member(declaration(SubjectId, root, span, relation, materialized), Rows).
+
+test(generic_type_ir_ids_survive_declaration_permutation) :-
+    A = [ type_decl(span, [col(value, text)]),
+          rel_template([pair], [type_parameter('T', [])],
+                       [column(value, 'T')]),
+          interface_decl(json_encodable, []) ],
+    reverse(A, B),
+    generic_type_ir(A, RowsA),
+    generic_type_ir(B, RowsB),
+    RowsA == RowsB.
+
+test(generic_type_ir_parameter_identity_is_not_named_type) :-
+    Decls = [ type_decl('T', [col(value, text)]),
+              rel_template([box], [type_parameter('T', [])],
+                           [column(value, 'T')]) ],
+    generic_type_ir(Decls, Rows),
+    member(declaration(NamedId, root, 'T', relation, materialized), Rows),
+    member(declaration(BoxId, root, box, relation, compile_time), Rows),
+    member(parameter(ParameterId, BoxId, 1, 'T'), Rows),
+    ParameterId \== NamedId,
+    member(member(_, BoxId, 1, value, type_ref(parameter(ParameterId))), Rows).
+
+test(generic_type_ir_reuses_equal_application) :-
+    Decls = [ rel_template([pair], ['T'],
+                           [column(first, 'T'), column(second, 'T')]),
+              type_decl(left, [col(value, pair(int))]),
+              type_decl(right, [col(value, pair(int))]) ],
+    generic_type_ir(Decls, Rows),
+    findall(Id, member(application(Id, _), Rows), ApplicationIds),
+    ApplicationIds = [_].
+
+test(json_encodable_bound_accepts_a_primitive) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(text)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(text), BoxName),
+    memberchk(type_decl(BoxName, [col(value, text)]), Decls).
+
+test(json_encodable_bound_refuses_a_relational_list) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(list(text))) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(
+                  generic_bound_unsatisfied(list(text), json_encodable,
+                      path([template(box), application(box(list(text))),
+                            argument(1, list(text))]))).
+
+test(json_encodable_bound_closes_over_named_record_columns) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          type_decl(span, [col(start, int), col(label, option(text))]),
+          col_type(span/2, start, int),
+          col_type(span/2, label, option(text)),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(span)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(span), BoxName),
+    memberchk(type_decl(BoxName, [col(value, span)]), Decls).
+
+test(json_encodable_bound_closes_over_enum_payloads) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          enum_decl(status, (ready ; failed(reason:text))),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(status)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(status), BoxName),
+    memberchk(type_decl(BoxName, [col(value, int)]), Decls),
+    memberchk(col_type(BoxName/1, value, status), Decls).
+
+test(an_unknown_interface_is_named_before_expansion) :-
+    Program = prog(
+        [ rel_template([box],
+                       [type_parameter('T', [missing_capability])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(text)) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(interface_unknown(missing_capability)).
+
+test(an_explicit_interface_application_arity_mismatch_is_named) :-
+    Program = prog(
+        [ interface_decl(addressable, ['T']),
+          type_decl(file, [col(path, text)]),
+          col_type(file/1, path, text),
+          rel_is_implementation(file/1, [addressable(int, int)]) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(interface_arity(addressable, 1, 2)).
+
+test(an_explicit_interface_application_matching_arity_passes) :-
+    Program = prog(
+        [ interface_decl(addressable, ['T']),
+          type_decl(file, [col(path, text)]),
+          col_type(file/1, path, text),
+          rel_is_implementation(file/1, [addressable(int)]) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    memberchk(rel_is_implementation(file/1, [addressable(int)]), Decls).
+
+test(a_declared_marker_interface_satisfies_a_generic_bound) :-
+    Program = prog(
+        [ interface_decl(addressable, []),
+          type_decl(file, [col(path, text)]),
+          col_type(file/1, path, text),
+          rel_is_implementation(file/1, [addressable]),
+          rel_template([box],
+                       [type_parameter('T', [addressable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(file)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(file), BoxName),
+    memberchk(type_decl(BoxName, [col(value, file)]), Decls).
+
+test(an_unimplemented_marker_interface_refuses_a_generic_bound) :-
+    Program = prog(
+        [ interface_decl(addressable, []),
+          type_decl(file, [col(path, text)]),
+          col_type(file/1, path, text),
+          rel_template([box],
+                       [type_parameter('T', [addressable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(file)) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(
+                  generic_bound_unsatisfied(file, addressable,
+                      path([template(box), application(box(file)),
+                            argument(1, file)]))).
+
+test(user_generic_template_reuses_an_equal_ground_application) :-
+    Program = prog(
+        [ rel_template([pair], ['T'],
+                       [column(first, 'T'), column(second, 'T')]),
+          col_type(left_edge/1, endpoints, pair(text)),
+          col_type(right_edge/1, endpoints, pair(text)) ],
+        []),
+    canonical_type_name(pair(text), PairName),
+    expand_generic_program(Program, prog(Decls, [])),
+    findall(PairName, member(type_decl(PairName, _), Decls), Minted),
+    Minted == [PairName],
+    memberchk(col_type(left_edge/1, endpoints, PairName), Decls),
+    memberchk(col_type(right_edge/1, endpoints, PairName), Decls).
+
+test(user_generic_template_fixpoint_instantiates_nested_application) :-
+    Program = prog(
+        [ rel_template([pair], ['T'],
+                       [column(first, 'T'), column(second, 'T')]),
+          rel_template([box], ['T'], [column(value, pair('T'))]),
+          col_type(holder/1, value, box(text)) ],
+        []),
+    canonical_type_name(pair(text), PairName),
+    canonical_type_name(box(text), BoxName),
+    expand_generic_program(Program, prog(Decls, [])),
+    memberchk(type_decl(PairName, [col(first, text), col(second, text)]),
+              Decls),
+    memberchk(type_decl(BoxName, [col(value, PairName)]), Decls),
+    memberchk(col_type(holder/1, value, BoxName), Decls).
+
+test(user_generic_template_wrong_arity_is_named) :-
+    Program = prog(
+        [ rel_template([pair], ['T'],
+                       [column(first, 'T'), column(second, 'T')]),
+          col_type(edge/1, endpoints, pair(int, text)) ],
+        []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(generic_template_arity(pair, 1, 2)).
 
 test(generic_expansion_retargets_ref_target_schema_mirror) :-
     Program = prog(
@@ -4440,9 +4936,9 @@ test(list_flavor_fixture_declaration_permutation_is_byte_deterministic) :-
 test(generic_nested_list_mints_inner_and_outer) :-
     nested_list_decls(Decls),
     expand_generic_program(prog(Decls, []), prog(Expanded, _)),
-    member(col_type('__gen__list_list_text_735a7cc11c2152ea'/1, id, int),
+    member(col_type('__gen__list_list_text_735a7cc11c2152ea'/1, content, text),
            Expanded),
-    member(col_type('__gen__list_text_df210f232c1299bd'/1, id, int), Expanded),
+    member(col_type('__gen__list_text_df210f232c1299bd'/1, content, text), Expanded),
     \+ member(col_type(_, value, list(text)), Expanded).
 
 test(generic_nested_list_declaration_permutation_is_byte_deterministic) :-
@@ -4585,6 +5081,7 @@ expected_row(substr/2,  typed_scalar,        3, substr, typed([text, int],      
 expected_row(substr/3,  typed_scalar,        3, substr, typed([text, int, int], text)).
 expected_row(instr/2,   typed_scalar,        3, instr,  typed([text, text],     int)).
 expected_row(length/1,  typed_scalar,        3, length, typed([text],           int)).
+expected_row(split/2,   typed_scalar,        3, split_list_intern, typed([text, text], list(text))).
 expected_row(json_patch/2, json_scalar,      3, json_patch,           json_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
@@ -4679,6 +5176,21 @@ test(every_comparison_row_lowers_to_its_sql_operator) :-
              compile_comparison(direct, Goal, [], Text),
              atomic_list_concat(['(1 ', SqlOperator, ' 2)'], Expected),
              Text == Expected )).
+
+% FAIL-PRE-FIX (slice 2): split still lowers to the json carrier. Flipping the
+% registry row to list(text) makes the value position the interned list id (the
+% surrogate travels; the elements rest in the minted member rel).
+test(split_lowers_to_the_interned_list_id) :-
+    compile_expr(dict, identity, split('a,b,c', ','), [], Sql, list(text),
+                 list_intern(text, ArraySql)),
+    once(sub_atom(ArraySql, _, _, _, 'json_group_array("part")')),
+    canonical_type_name(list(text), EntityName),
+    format(atom(FromPrefix),
+           '(SELECT e."__id" FROM "~w" e WHERE e."content" = ',
+           [EntityName]),
+    sub_atom(Sql, 0, _, _, FromPrefix),
+    once(sub_atom(Sql, _, _, _,
+                  'e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ')).
 
 % The printer parenthesizes by the table's precedence: a tighter operator
 % nested inside a looser one needs no parens, the reverse does.
@@ -5892,7 +6404,7 @@ door_emitted_text(Slot, Source, Emitted) :-
 
 test(a_template_declaration_parses_to_one_record_and_no_rel_entry) :-
     surface_decls('rel pair(T)(first: T, second: T).', Decls),
-    Decls == [rel_template([pair], ['T'],
+    Decls == [rel_template([pair], [type_parameter('T', [])],
                            [column(first, 'T'), column(second, 'T')])].
 
 test(a_template_declaration_round_trips_through_the_printer) :-
@@ -5907,6 +6419,25 @@ test(a_two_parameter_template_at_a_module_path_round_trips) :-
     once(sub_atom(Text, _, _, _,
                   'rel shapes.pair(Left, Right)(head: Left, tail: Right).')),
     Program =@= RoundTripped.
+
+test(a_ground_generic_type_application_round_trips) :-
+    surface_round_trip(
+        'rel pair(T)(first: T, second: T). rel edge(value: pair(int)).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'value: pair(int)')),
+    Program =@= RoundTripped.
+
+test(a_bounded_generic_parameter_round_trips) :-
+    surface_round_trip(
+        'interface json_encodable. rel pair(T: json_encodable)(value: T).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _,
+                  'rel pair(T: json_encodable)(value: T).')),
+    Program =@= RoundTripped.
+
+test(an_interface_declaration_parses_to_one_record) :-
+    surface_decls('interface json_encodable.', Decls),
+    Decls == [interface_decl(json_encodable, [])].
 
 test(an_is_clause_rides_beside_the_ordinary_column_entries) :-
     surface_decls('rel file(path: text, digest: text) is addressable.', Decls),
@@ -5984,23 +6515,35 @@ test(a_free_parameter_outside_a_template_still_reaches_column_type_unknown) :-
     once(( sub_term(column_type_unknown, Error)
          ; sub_term(column_type_unknown(_), Error) )).
 
-test(a_template_declaration_emits_the_module_the_program_without_it_emits) :-
+test(an_unused_template_changes_only_catalog_metadata) :-
     door_emitted_text(with,
         'rel pair(T)(first: T, second: T).\nrel point(x: int, y: int).\nrel line(a: point, b: point).\n',
         WithTemplate),
     door_emitted_text(without,
         'rel point(x: int, y: int).\nrel line(a: point, b: point).\n',
         WithoutTemplate),
-    WithTemplate == WithoutTemplate.
+    WithTemplate \== WithoutTemplate,
+    once(sub_atom(WithTemplate, _, _, _, 'generic_rel')).
 
-test(an_is_clause_emits_the_module_the_bare_declaration_emits) :-
+test(a_ground_template_application_reaches_the_text_door) :-
+    canonical_type_name(pair(int), PairName),
+    door_emitted_text(generic_pair,
+        'rel pair(T)(first: T, second: T).\nrel edge(id: int, endpoints: pair(int)).\n',
+        Emitted),
+    format(atom(TableNeedle), 'CREATE TABLE "~w"', [PairName]),
+    once(sub_atom(Emitted, _, _, _, TableNeedle)),
+    once(sub_atom(Emitted, _, _, _, '"first" INTEGER NOT NULL')),
+    once(sub_atom(Emitted, _, _, _, '"second" INTEGER NOT NULL')).
+
+test(an_is_clause_emits_interface_catalog_metadata) :-
     door_emitted_text(with,
-        'rel file(path: text, digest: text) is addressable.\nrel seen(n: int).\n',
+        'interface addressable.\nrel file(path: text, digest: text) is addressable.\nrel seen(n: int).\n',
         WithClause),
     door_emitted_text(without,
         'rel file(path: text, digest: text).\nrel seen(n: int).\n',
         WithoutClause),
-    WithClause == WithoutClause.
+    WithClause \== WithoutClause,
+    once(sub_atom(WithClause, _, _, _, 'implementation')).
 
 :- end_tests(rel_template_and_is_clause).
 
@@ -7259,6 +7802,13 @@ test(use_item_parses_an_alias) :-
     string_codes("use \"lib.dl6\" as orchard.", Codes),
     use_item(use("lib.dl6", orchard), Codes, []).
 
+% A qualified relation type reaches this phase as a path, because the parser
+% has not loaded the module that its alias names yet.
+test(qualified_relation_type_path_parses_before_mount_resolution) :-
+    atom_codes('rel dependency(owner: source.span).', Codes),
+    once(parse_dl(Codes, prog(Decls, _), _, [])),
+    Decls == [col_type(dependency/1, owner, type_path([source, span]))].
+
 test(use_item_without_an_alias_still_parses) :-
     string_codes("use \"lib.dl6\".", Codes),
     use_item(use("lib.dl6"), Codes, []).
@@ -7383,6 +7933,24 @@ test(compile_dl6_compiles_a_mounted_path) :-
     compile_dl6(Entry, OutFile),
     read_file_to_string(OutFile, Text, []),
     sub_string(Text, _, _, _, "tree").
+
+% The checked-in offline golden covers the authored source model and its
+% extractor projection.  `source.span` must lower through the mount to the
+% ordinary span struct type before the relation-reference type plane runs.
+test(offline_source_golden_compiles_qualified_span_owner) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../../dl/fixtures/source-offline-golden.dl6'], Source),
+    tmp_file(source_offline_golden, OutFile),
+    setup_call_cleanup(
+        true,
+        ( compile_dl6(Source, OutFile),
+          read_file_to_string(OutFile, Text, []),
+          sub_string(Text, _, _, _, '"source_specifier": ["span", null, null, null]'),
+          sub_string(Text, _, _, _, '"dependency": ["span", null, null, null]'),
+          \+ sub_string(Text, _, _, _, 'rev_file_id'),
+          \+ sub_string(Text, _, _, _, 'blob_id'),
+          \+ sub_string(Text, _, _, _, 'file_span_id') ),
+        catch(delete_file(OutFile), _, true)).
 
 % ── the mount reaches the catalog as data ───────────────────────────────────
 
@@ -8234,3 +8802,55 @@ test(schema_parity_is_one_executable_golden) :-
     Path \== ''.
 
 :- end_tests(schema_parity_golden).
+
+:- begin_tests(list_value_position).
+
+% FAIL-PRE-FIX: before the shared rewrite, `decode(Parts, [... Part])` over a
+% list(T) source threw decode_source_not_struct at lower.pl:compile_json_decodes.
+test(spread_over_a_list_column_joins_the_member_rel) :-
+    lowered_for('19_list_value_position.pl',
+                list_element_type_flows_through_spread, Lowered),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    symbol_word_insert(LevelStatements, InsertSql),
+    member_rel_name(MemberName),
+    format(atom(Join), '"~w" b1 WHERE b1."list_id" = b0."parts"', [MemberName]),
+    once(sub_atom(InsertSql, _, _, _, Join)),
+    \+ sub_atom(InsertSql, _, _, _, 'json_each').
+
+% The keyed-read claim, measured by the planner rather than asserted: the
+% member rel's UNIQUE (list_id, idx) is what keeps the spread off a full scan.
+test(member_join_searches_the_list_id_index) :-
+    lowered_for('19_list_value_position.pl',
+                list_element_type_flows_through_spread, Lowered),
+    Lowered = lowered(_, Ddl, _, _, LevelStatements, _, _, _),
+    symbol_word_insert(LevelStatements, InsertSql),
+    explain_query_plan(Ddl, InsertSql, Plan),
+    member_rel_name(MemberName),
+    format(atom(Search),
+           'SEARCH b1 USING INDEX sqlite_autoindex_~w_1 (list_id=?)',
+           [MemberName]),
+    once(sub_atom(Plan, _, _, _, Search)),
+    \+ sub_atom(Plan, _, _, _, 'SCAN b1').
+
+symbol_word_insert(LevelStatements, InsertSql) :-
+    memberchk(levelstmt(symbol_word/2, _, InsertSqls, _, _, _, _), LevelStatements),
+    once(( member(InsertSql, InsertSqls),
+           sub_atom(InsertSql, 0, _, _, 'INSERT OR IGNORE INTO "symbol_word"') )).
+
+member_rel_name(MemberName) :-
+    canonical_type_name(list(text), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName).
+
+explain_query_plan(Ddl, Sql, Plan) :-
+    atomic_list_concat(Ddl, ';\n', DdlText),
+    format(atom(Script), '~w;\nEXPLAIN QUERY PLAN ~w;\n', [DdlText, Sql]),
+    process_create(path(sqlite3), [':memory:'],
+                   [stdin(pipe(Input)), stdout(pipe(Output)), process(Pid)]),
+    format(Input, '~w', [Script]),
+    close(Input),
+    read_string(Output, _, Text),
+    close(Output),
+    process_wait(Pid, exit(0)),
+    atom_string(Plan, Text).
+
+:- end_tests(list_value_position).

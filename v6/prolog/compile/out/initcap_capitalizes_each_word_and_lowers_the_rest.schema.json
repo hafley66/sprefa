@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "text": {
+      "additionalProperties":false,
+      "properties": {"text": {"type":"string"}},
+      "required": ["text" ],
+      "type":"object"
+    },
+    "titled": {
+      "additionalProperties":false,
+      "properties": {"out": {"type":"string"},"text": {"type":"string"}},
+      "required": ["text", "out" ],
+      "type":"object"
+    }
+  },
+  "$id":"initcap_capitalizes_each_word_and_lowers_the_rest#65040955d49755dc",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

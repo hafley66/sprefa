@@ -11,6 +11,7 @@ pub mod astgrep;
 pub mod dl6;
 pub mod go;
 pub mod kotlin;
+pub mod markdown;
 pub mod prolog;
 pub mod rust;
 pub mod ts;
@@ -22,6 +23,7 @@ pub use astgrep::{
 pub use dl6::DlSource;
 pub use go::GoSource;
 pub use kotlin::KotlinSource;
+pub use markdown::MarkdownSource;
 pub use prolog::PrologSource;
 pub use rust::RustSource;
 pub use ts::{CallProjector, DfProjector, OxcParser, TsSource, TypeProjector};
@@ -40,6 +42,7 @@ pub fn sources() -> &'static [&'static dyn Source] {
         &RustSource,
         &GoSource,
         &KotlinSource,
+        &MarkdownSource,
         &PrologSource,
         &DlSource,
         &TsSource,

@@ -12,7 +12,8 @@
             ast_capture_names/2,
             % Declaration queries shared by both doors.
             relation_kind/3,
-            declared_key/3
+            declared_key/3,
+            level_headed/2
           ]).
 
 :- use_module(library(lists)).

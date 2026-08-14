@@ -6,9 +6,12 @@
 use std::collections::BTreeMap;
 
 use sprefa_engine_rs::driver::{run_schedule, run_schedule_live};
-use sprefa_engine_rs::hosts::HostLiveRunner;
+use sprefa_engine_rs::hosts::{HostLiveRunner, IHostExecutor, ShellExecutor, SoopyFilesExecutor};
 use sprefa_engine_rs::sql::{SqlRunner, SqliteSeam};
-use sprefa_engine_rs::types::{Arrival, ArrivalSign, ProgramJson, SqlStatement, Value};
+use sprefa_engine_rs::types::{
+    Arrival, ArrivalSign, HostColumnPlan, HostPlanData, ProgramJson, RelDelta, SqlStatement,
+    TickDeltas, Value,
+};
 use sprefa_engine_rs::GenProgram;
 
 fn fixture_program(name: &str) -> GenProgram {
@@ -161,4 +164,178 @@ fn template_fill_escapes_for_the_landing_quote_context() {
     let filled =
         sprefa_engine_rs::hosts::fill_template("head -1 {path} '{path}' \"{path}\"", &inputs);
     assert_eq!(filled, "head -1 'a'\\''b c.rs' 'a'\\''b c.rs' \"a'b c.rs\"");
+}
+
+fn git_fixture_repo() -> std::path::PathBuf {
+    let root = std::env::temp_dir().join(format!(
+        "sprefa_engine_soopy_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(root.join("src")).expect("fixture directory");
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "sprefa-engine-rs")
+            .env("GIT_AUTHOR_EMAIL", "sprefa-engine-rs@example.invalid")
+            .env("GIT_COMMITTER_NAME", "sprefa-engine-rs")
+            .env("GIT_COMMITTER_EMAIL", "sprefa-engine-rs@example.invalid")
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q"]);
+    std::fs::write(root.join("src/file.rs"), "pub const VERSION: u8 = 1;\n").expect("tracked file");
+    git(&["add", "."]);
+    git(&["commit", "-qm", "initial"]);
+    std::fs::write(root.join("src/file.rs"), "pub const VERSION: u8 = 2;\n").expect("dirty file");
+    std::fs::write(
+        root.join("src/untracked.rs"),
+        "pub const UNTRACKED: u8 = 9;\n",
+    )
+    .expect("untracked file");
+    root
+}
+
+fn output_lines(output: String) -> Vec<String> {
+    output.lines().map(str::to_string).collect()
+}
+
+#[test]
+fn linked_soopy_file_hosts_match_the_existing_shell_contracts() {
+    let root = git_fixture_repo();
+    let mut scoped = BTreeMap::new();
+    scoped.insert("repo".to_string(), root.display().to_string());
+    scoped.insert("glob".to_string(), "**/*.rs".to_string());
+    let mut scoped_at = scoped.clone();
+    scoped_at.insert("rev".to_string(), "HEAD".to_string());
+
+    let cases = [
+        (
+            "repo_files",
+            scoped,
+            format!(
+                "git -C '{}' ls-files -- '**/*.rs' | while IFS= read -r entry; do printf '%s %s\\n' \"$entry\" \"$(git -C '{}' hash-object -- \"$entry\")\"; done",
+                root.display(), root.display()
+            ),
+        ),
+        (
+            "repo_files_at",
+            scoped_at,
+            format!(
+                "git -C '{}' ls-files --with-tree='HEAD' -- '**/*.rs' | while IFS= read -r entry; do oid=\"$(git -C '{}' rev-parse 'HEAD':\"$entry\" 2>/dev/null)\"; [ -n \"$oid\" ] && printf '%s %s\\n' \"$entry\" \"$oid\"; done",
+                root.display(), root.display()
+            ),
+        ),
+    ];
+    for (host, env, shell_contract) in cases {
+        let linked = SoopyFilesExecutor
+            .run(host, "deliberately not a shell command", &env)
+            .expect("linked result");
+        let shell = ShellExecutor
+            .run(host, &shell_contract, &BTreeMap::new())
+            .expect("shell contract result");
+        assert_eq!(output_lines(linked), output_lines(shell), "{host}");
+    }
+    std::fs::remove_dir_all(root).expect("remove fixture repository");
+}
+
+#[test]
+fn linked_soopy_unscoped_hosts_match_the_existing_shell_contracts() {
+    let mut work = BTreeMap::new();
+    work.insert(
+        "glob".to_string(),
+        "../dl/fixtures/files-hosts.dl6".to_string(),
+    );
+    let mut at = work.clone();
+    at.insert("rev".to_string(), "HEAD".to_string());
+    let cases = [
+        (
+            "files",
+            work,
+            "git ls-files -- '../dl/fixtures/files-hosts.dl6' | while IFS= read -r entry; do printf '%s %s\\n' \"$entry\" \"$(git hash-object -- \"$entry\")\"; done",
+        ),
+        (
+            "files_at",
+            at,
+            "git ls-files --with-tree='HEAD' -- '../dl/fixtures/files-hosts.dl6' | while IFS= read -r entry; do oid=\"$(git rev-parse 'HEAD':\"$entry\" 2>/dev/null)\"; [ -n \"$oid\" ] && printf '%s %s\\n' \"$entry\" \"$oid\"; done",
+        ),
+    ];
+    for (host, env, shell_contract) in cases {
+        let linked = SoopyFilesExecutor
+            .run(host, "deliberately not a shell command", &env)
+            .expect("linked result");
+        let shell = ShellExecutor
+            .run(host, shell_contract, &BTreeMap::new())
+            .expect("shell contract result");
+        assert_eq!(output_lines(linked), output_lines(shell), "{host}");
+    }
+}
+
+#[test]
+fn live_runner_selects_soopy_for_the_unchanged_shell_host_plan() {
+    let plan = HostPlanData {
+        name: "files".to_string(),
+        inputs: vec![HostColumnPlan {
+            name: "glob".to_string(),
+            column_type: "text".to_string(),
+        }],
+        outputs: vec![
+            HostColumnPlan {
+                name: "path".to_string(),
+                column_type: "text".to_string(),
+            },
+            HostColumnPlan {
+                name: "digest".to_string(),
+                column_type: "text".to_string(),
+            },
+        ],
+        template: "this must never execute {glob}".to_string(),
+        demand_rel: "__host_demand_files".to_string(),
+        response_rel: "__host_response_files".to_string(),
+        execution: "shell".to_string(),
+    };
+    let rel_columns = std::collections::HashMap::from([
+        (
+            "__host_demand_files".to_string(),
+            vec!["glob".to_string(), "witness_digest".to_string()],
+        ),
+        (
+            "__host_response_files".to_string(),
+            vec![
+                "witness_digest".to_string(),
+                "ordinal".to_string(),
+                "path".to_string(),
+                "digest".to_string(),
+            ],
+        ),
+    ]);
+    let mut runner = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
+        .expect("linked host plan accepted");
+    let arrivals = runner
+        .collect(&TickDeltas {
+            rels: vec![RelDelta {
+                rel: "__host_demand_files".to_string(),
+                add: vec![vec![
+                    text("../dl/fixtures/files-hosts.dl6"),
+                    text("witness-1"),
+                ]],
+                del: vec![],
+            }],
+            carry_pending: false,
+        })
+        .expect("native file host, not the sabotaged template");
+    assert_eq!(arrivals.len(), 1);
+    assert_eq!(arrivals[0].rel, "__host_response_files");
+    assert_eq!(arrivals[0].row[0], text("witness-1"));
+    assert_eq!(arrivals[0].row[2], text("../dl/fixtures/files-hosts.dl6"));
 }
