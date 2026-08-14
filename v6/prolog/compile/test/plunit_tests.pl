@@ -45,7 +45,7 @@
               [ expand_generic_program/2, expand_generic_program_raw/2,
                 canonical_type_name/2, generic_type_ir/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
-:- use_module('../../0_type_ids', [ decl_id/3, id_kind_name/3 ]).
+:- use_module('../../0_type_ids', [ decl_id/3, app_id/3, id_kind_name/3 ]).
 :- use_module('../../0_ast_expand',
               [ expand_ast_program/2,
                 expand_ast_program_with_bindings/3 ]).
@@ -4497,6 +4497,64 @@ test(match_door_merges_option_origin_rows_from_markers) :-
     decl_id(relation, post__author, CompanionId),
     memberchk(derived_from(CompanionId, PostId), Rows),
     memberchk(origin(CompanionId, option_column(post, author, user)), Rows).
+
+% FAIL-PRE-FIX: the list-flavor fixpoint minted rels with no semantic rows at
+% all, so a list(text) column left the graph blank about its two minted rels.
+test(list_flavor_mints_carry_origin_rows) :-
+    Program = prog(
+        [ col_type(post/2, id, int), col_type(post/2, tags, list(text)),
+          keyed(post/2, [1]) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    canonical_type_name(list(text), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName),
+    decl_id(relation, list, Constructor),
+    app_id(Constructor, [text], AppId),
+    decl_id(relation, EntityName, EntityId),
+    decl_id(relation, MemberName, MemberRelId),
+    memberchk(application(AppId, Constructor), Rows),
+    memberchk(argument(_, AppId, 1, type_atom(text)), Rows),
+    memberchk(declaration(EntityId, root, EntityName, relation, materialized),
+              Rows),
+    memberchk(declaration(MemberRelId, root, MemberName, relation,
+                          materialized), Rows),
+    memberchk(derived_from(EntityId, AppId), Rows),
+    memberchk(derived_from(MemberRelId, AppId), Rows),
+    % No compile_time row for the builtin constructor: lower's
+    % semantic_generic_instance view must NOT see list mints as instances,
+    % or the emitted catalog changes.
+    \+ memberchk(declaration(Constructor, _, _, _, _), Rows).
+
+test(all_four_list_families_carry_origin_rows) :-
+    Program = prog(
+        [ col_type(a/2, id, int), col_type(a/2, xs, list(int)),
+          keyed(a/2, [1]),
+          col_type(b/2, id, int),
+          col_type(b/2, xs, list_entity_dense_sequence(int)),
+          keyed(b/2, [1]),
+          col_type(c/2, id, int), col_type(c/2, xs, list_interned_set(int)),
+          keyed(c/2, [1]),
+          col_type(d/2, id, int),
+          col_type(d/2, xs, list_entity_linked_sequence(int)),
+          keyed(d/2, [1]) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    forall(member(Flavor, [ list(int), list_entity_dense_sequence(int),
+                            list_interned_set(int),
+                            list_entity_linked_sequence(int) ]),
+           ( Flavor =.. [ConstructorName | Arguments],
+             decl_id(relation, ConstructorName, Constructor),
+             app_id(Constructor, Arguments, AppId),
+             canonical_type_name(Flavor, EntityName),
+             decl_id(relation, EntityName, EntityId),
+             memberchk(derived_from(EntityId, AppId), Rows) )),
+    canonical_type_name(list_entity_dense_sequence(int), DenseName),
+    atomic_list_concat([DenseName, refcount], '__', RefcountName),
+    decl_id(relation, RefcountName, RefcountId),
+    memberchk(declaration(RefcountId, root, RefcountName, relation,
+                          materialized), Rows).
 
 % Enum-first through the driver produces exactly what match-first produced.
 test(enum_first_preserves_expanded_terms) :-

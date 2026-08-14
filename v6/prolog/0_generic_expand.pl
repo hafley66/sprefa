@@ -32,7 +32,8 @@ expand_generic_program(prog(Decls0, Rules), prog(Decls, Rules)) :-
     validate_generated_name_collisions(UserDecls, Rules, Instances),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     generic_artifact_order(Instances, RewrittenDecls, CanonicalDecls),
-    expand_option_decls(CanonicalDecls, OptionDecls),
+    merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
+    expand_option_decls(FlavorRowedDecls, OptionDecls),
     retarget_type_decl_mirrors(OptionDecls, Decls).
 
 % Executable comparison arm, written as a second path so the template and
@@ -43,7 +44,8 @@ expand_generic_program_raw(prog(Decls0, Rules), prog(Decls, Rules)) :-
     validate_generated_name_collisions(UserDecls, Rules, Instances),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     generic_artifact_order(Instances, RewrittenDecls, CanonicalDecls),
-    expand_option_decls(CanonicalDecls, OptionDecls),
+    merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
+    expand_option_decls(FlavorRowedDecls, OptionDecls),
     retarget_type_decl_mirrors(OptionDecls, Decls).
 
 % Each ground application of a compile-time rel template mints one ordinary
@@ -354,6 +356,43 @@ instance_type_row(Application, derived_from(ConcreteId, ApplicationId)) :-
     app_id(Constructor, Arguments, ApplicationId),
     canonical_type_name(Application, ConcreteName),
     decl_id(relation, ConcreteName, ConcreteId).
+
+% NO compile_time row for the builtin constructor: semantic_generic_instance
+% in lower.pl requires one, so its absence keeps list mints out of the catalog.
+merge_flavor_type_rows(Instances, Decls0, Decls) :-
+    flavor_type_rows(Instances, Rows),
+    (   Rows == []
+    ->  Decls = Decls0
+    ;   memberchk(semantic_type_rows(_), Decls0)
+    ->  maplist(merge_one_flavor_type_rows(Rows), Decls0, Decls)
+    ;   append(Decls0, [semantic_type_rows(Rows)], Decls)
+    ).
+
+merge_one_flavor_type_rows(FlavorRows, semantic_type_rows(Rows0),
+                           semantic_type_rows(Rows)) :-
+    !,
+    append(Rows0, FlavorRows, Unsorted),
+    sort(Unsorted, Rows).
+merge_one_flavor_type_rows(_, Decl, Decl).
+
+flavor_type_rows(Instances, Rows) :-
+    instance_type_rows(Instances, ApplicationRows),
+    findall(Row, flavor_mint_row(Instances, Row), MintRows),
+    append(ApplicationRows, MintRows, Unsorted),
+    sort(Unsorted, Rows).
+
+flavor_mint_row(Instances, Row) :-
+    member(Type, Instances),
+    Type =.. [ConstructorName | Arguments],
+    decl_id(relation, ConstructorName, Constructor),
+    app_id(Constructor, Arguments, ApplicationId),
+    list_flavor_suffix(Type, Suffix),
+    Suffix \== list,
+    flavor_ref(Type, Suffix, MintName/_),
+    decl_id(relation, MintName, MintId),
+    member(Row,
+           [ declaration(MintId, root, MintName, relation, materialized),
+             derived_from(MintId, ApplicationId) ]).
 
 user_template_fixpoint(Decls, Templates, Seen, AllDecls, Instances) :-
     user_template_instances(Decls, Templates, Found),
