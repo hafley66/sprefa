@@ -302,12 +302,18 @@ parses through the generic identifier-then-paren path at
 change: `print_dl.pl:654` prints it as an ordinary compound, and the text door
 round-trips byte-identically.
 
+The one gap a real row would close is an EMPTY affix. `substr`'s position 0
+sits before the first character, so `substr(Text, 0 - 0)` reads the whole text
+where `ends_with(Text, '')` must answer true. Every affix in the fixture is
+non-empty for that reason, and that edge is the entire price difference
+between the spelling and the row.
+
 ### Still forked, and why
 
 | row | why it is still forked |
 |---|---|
 | format/printf | `concat([...])` already renders text from columns, which is what the typegen probe needed. printf buys padding and numeric formats only, and its oracle is a printf reimplementation. Not bought without a caller. |
-| contains, starts_with, ends_with | `typed_scalar` can now hold them (`typed([text, text], bool)`), so the family is no longer the blocker. The unpriced part is the `bool` result round-trip: a bool column is a CHECK-constrained integer (`0_type_plane.pl:577`) whose oracle value is `bool_lit(true)`, and nothing measures that path for a computed bool. Cheap, but it has no caller either. |
+| contains, starts_with, ends_with | all three are ALREADY SPELLABLE, and `16_string_affix_tests.pl` is the receipt rather than the assertion: `contains` is `Position := instr(Name, '::'), Position > 0`; `starts_with` is `Head := substr(Name, 1, length(Prefix)), Head == Prefix`; `ends_with` is `Tail := substr(Name, 0 - length(Suffix)), Tail == Suffix`. All four fixtures compile, run identical, and grade byte-clean in rust. A registry row would buy a NAME, not a capability. |
 | join | still `group_concat`, still an aggregate, and the split fixture shows `group_concat` folding split parts back, so the pair is closed in practice |
 | snake_to_pascal / camel / pascal_to_snake | `split` + `initcap` + `group_concat` spell PascalCase in three rules, graded by `split_initcap_and_fold_render_pascal_case`. A dedicated scalar would buy one rule, not a capability. |
 | repeat, pad_left, pad_right, char_at, char | no caller |

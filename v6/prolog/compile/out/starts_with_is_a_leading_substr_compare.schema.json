@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "is_emit": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "sym": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"starts_with_is_a_leading_substr_compare#90cbafa42bea276d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

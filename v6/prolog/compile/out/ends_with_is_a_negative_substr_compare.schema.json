@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "is_prolog": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "path": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    }
+  },
+  "$id":"ends_with_is_a_negative_substr_compare#53e491e81cda2313",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

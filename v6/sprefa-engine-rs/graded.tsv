@@ -42,6 +42,7 @@ concat_fold_reversed_arrival_reverses_result	clean	byte-clean
 concat_program_queue	clean	byte-clean
 conjunction_edge_control_for_combine	clean	byte-clean
 conjunction_level_control_for_combine	clean	byte-clean
+contains_is_instr_greater_than_zero	clean	byte-clean
 count_is_bag_of_derivations	clean	byte-clean
 counter_fold_matches_hand_computation	clean	byte-clean
 created_at_pinned_updated_at_advances	clean	byte-clean
@@ -61,6 +62,7 @@ duplicate_host_name_is_refused	unsupported	duplicate_host_decl(look)
 edge_chain_hops_tick_per_stage	clean	byte-clean
 edge_into_unkeyed_set_rejected	unsupported	edge_into_unkeyed_set(sink/1)
 edge_trigger_literal_filters_on_the_oracle_door	unsupported	trigger_arg_not_var(200)
+ends_with_is_a_negative_substr_compare	clean	byte-clean
 enum_decl_two_variants_union_in_tag_view	clean	byte-clean
 enum_decl_variant_name_collision_is_refused	unsupported	enum_variant_name_collision(page)
 enum_decl_variant_rows_round_trip_through_tag_view	clean	byte-clean
@@ -354,6 +356,8 @@ split_parts_carry_as_a_json_array	clean	byte-clean
 split_parts_keep_non_ascii_characters	clean	byte-clean
 split_takes_a_multi_character_separator	clean	byte-clean
 stale_keyed_retraction_keeps_replacement	clean	byte-clean
+starts_with_is_a_leading_substr_compare	clean	byte-clean
+starts_with_takes_the_prefix_from_a_column	clean	byte-clean
 state_flap_nets_to_zero_scope_churn	clean	byte-clean
 struct_arrival_field_type_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,field_not_int(span,end,nine))
 struct_arrival_functor_term_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,not_an_object(span,span(3,9)))

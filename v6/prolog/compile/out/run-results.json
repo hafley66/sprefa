@@ -434,6 +434,34 @@
     "final_detail": ""
   },
   {
+    "name": "contains_is_instr_greater_than_zero",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "starts_with_is_a_leading_substr_compare",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "ends_with_is_a_negative_substr_compare",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "starts_with_takes_the_prefix_from_a_column",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "match_classify_response",
     "bucket": "identical",
     "detail": "",
