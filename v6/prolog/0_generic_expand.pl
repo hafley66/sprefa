@@ -700,7 +700,7 @@ template_artifacts(option(_), []).
 list_flavor_artifacts(list(Element), Artifacts) :-
     flavor_ref(list(Element), list, Entity),
     flavor_ref(list(Element), member, Member),
-    Artifacts = [ artifact(decl(col_type(Entity, id, int))),
+    Artifacts = [ artifact(decl(col_type(Entity, content, text))),
                   artifact(decl(keyed(Entity, [1]))),
                   artifact(decl(col_type(Member, list_id, int))),
                   artifact(decl(col_type(Member, idx, int))),

@@ -4932,9 +4932,9 @@ test(list_flavor_fixture_declaration_permutation_is_byte_deterministic) :-
 test(generic_nested_list_mints_inner_and_outer) :-
     nested_list_decls(Decls),
     expand_generic_program(prog(Decls, []), prog(Expanded, _)),
-    member(col_type('__gen__list_list_text_735a7cc11c2152ea'/1, id, int),
+    member(col_type('__gen__list_list_text_735a7cc11c2152ea'/1, content, text),
            Expanded),
-    member(col_type('__gen__list_text_df210f232c1299bd'/1, id, int), Expanded),
+    member(col_type('__gen__list_text_df210f232c1299bd'/1, content, text), Expanded),
     \+ member(col_type(_, value, list(text)), Expanded).
 
 test(generic_nested_list_declaration_permutation_is_byte_deterministic) :-
