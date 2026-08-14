@@ -273,6 +273,9 @@ expression(rtrim/1,   text_scalar,         3, rtrim,                text_only).
 expression(rtrim/2,   text_scalar,         3, rtrim,                text_only).
 expression(reverse/1, text_scalar,         3, reverse,              text_only).
 expression(replace/3, text_scalar,         3, replace,              text_only).
+% SQL INITCAP (Oracle/Postgres) semantics: word boundary = any non-alnum,
+% rest lowercased; SQLite lacks it, so it renders as a norm-style CTE.
+expression(initcap/1, text_scalar,         3, initcap_words,        text_only).
 
 % The typed string scalars: substr/instr/length mix text and int operands and
 % return mixed results, so text_only (all-text operands) and the hardwired text

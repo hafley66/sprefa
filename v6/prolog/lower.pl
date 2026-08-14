@@ -619,6 +619,12 @@ text_scalar_rendering(_, ascii_alnum_lower, [ArgumentSql], Sql) :-
     format(atom(Sql),
            '(WITH RECURSIVE "__norm_chars"("i", "c") AS (SELECT 1, substr(~w, 1, 1) UNION ALL SELECT "i" + 1, substr(~w, "i" + 1, 1) FROM "__norm_chars" WHERE "i" < length(~w)) SELECT coalesce(group_concat(lower("c"), \'\'), \'\') FROM "__norm_chars" WHERE (unicode("c") BETWEEN 48 AND 57) OR (unicode("c") BETWEEN 65 AND 90) OR (unicode("c") BETWEEN 97 AND 122))',
            [ArgumentSql, ArgumentSql, ArgumentSql]).
+% Uppercase after a non-alnum boundary or at position 1, lowercase elsewhere;
+% group_concat follows the CTE's scan order, the same bet norm already makes.
+text_scalar_rendering(_, initcap_words, [ArgumentSql], Sql) :-
+    format(atom(Sql),
+           '(WITH RECURSIVE "__cap_chars"("i", "c", "p") AS (SELECT 1, substr(~w, 1, 1), \'\' UNION ALL SELECT "i" + 1, substr(~w, "i" + 1, 1), substr(~w, "i", 1) FROM "__cap_chars" WHERE "i" < length(~w)) SELECT coalesce(group_concat(CASE WHEN "p" = \'\' OR NOT ((unicode("p") BETWEEN 48 AND 57) OR (unicode("p") BETWEEN 65 AND 90) OR (unicode("p") BETWEEN 97 AND 122)) THEN upper("c") ELSE lower("c") END, \'\'), \'\') FROM "__cap_chars")',
+           [ArgumentSql, ArgumentSql, ArgumentSql, ArgumentSql]).
 % Direct SQLite scalar: the rendering IS the function name, so rtrim/2 lowers
 % to rtrim(a, b) and replace/3 to replace(a, b, c), no UDF.
 text_scalar_rendering(Function, Rendering, ArgumentSqls, Sql) :-
