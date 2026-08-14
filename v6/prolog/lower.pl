@@ -157,6 +157,7 @@
 :- use_module(analyze).
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
+:- use_module('0_generic_expand', [canonical_type_name/2]).
 :- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
               [ type_definition/4, column_storage/3,
@@ -1445,13 +1446,236 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     catalog_rel_block_end(CatalogRelPlans, FirstRelId, RelBlockEnd),
     catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, RelBlockEnd,
                       NestMap, RoomRows, IdAfterRooms),
-    catalog_module_edge_rows(Decls, HashIdMap, IdAfterRooms, EdgeRows, FinalId),
+    catalog_module_edge_rows(Decls, HashIdMap, IdAfterRooms, EdgeRows,
+                             IdAfterEdges),
+    catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap,
+                               IdAfterEdges, TypeRows, FinalId),
     catalog_rel_rows(CatalogRelPlans, CatalogRelModulesWithIds, BodiesMap, Modules, RelIdMap,
                      ListIdMap, NestMap, FirstRelId, _, RelRows),
     append([PrimitiveRows, ListRowRows, [ModuleRow], SplicedRows, RelRows,
-            RoomRows, EdgeRows],
+            RoomRows, EdgeRows, TypeRows],
            AllRows),
     Context = ctx(Modules, RelIdMap, ListIdMap, FinalId).
+
+catalog_type_metadata_rows(Decls, ModuleId, RelIdMap, ListIdMap, Id0, Rows,
+                           IdFinal) :-
+    findall(Name-Parameters,
+            member(interface_decl(Name, Parameters), Decls), Interfaces),
+    metadata_named_rows(Interfaces, interface, ModuleId, Id0,
+                        InterfaceRows, InterfaceMap, Id1),
+    findall(generic(Name, Parameters, Specs),
+            member(generic_decl(Name, Parameters, Specs), Decls),
+            GenericDefinitions),
+    findall(Name-Parameters,
+            member(generic(Name, Parameters, _), GenericDefinitions), Generics),
+    metadata_named_rows(Generics, generic_rel, ModuleId, Id1,
+                        GenericRows, GenericMap, Id2),
+    metadata_parameter_rows(Interfaces, InterfaceMap, InterfaceMap, Id2,
+                            InterfaceParameterRows, Id3),
+    metadata_parameter_rows(Generics, GenericMap, InterfaceMap, Id3,
+                            GenericParameterRows, Id4),
+    metadata_generic_column_rows(GenericDefinitions, GenericMap, RelIdMap, ListIdMap,
+                                 GenericParameterRows, Id4,
+                                 GenericColumnRows, Id4a),
+    findall(instance(Concrete, Generic, Arguments),
+            member(generic_instance(Concrete, Generic, Arguments), Decls),
+            Instances),
+    metadata_instance_rows(Instances, GenericMap, RelIdMap, ListIdMap, Id4a,
+                           InstanceRows, Id5),
+    findall(implementation(Ref, Application),
+            ( member(rel_is_implementation(Ref, Applications), Decls),
+              member(Application, Applications) ), Implementations),
+    metadata_implementation_rows(Implementations, InterfaceMap, RelIdMap, Id5,
+                                 ImplementationRows, IdFinal),
+    append([InterfaceRows, GenericRows, InterfaceParameterRows,
+            GenericParameterRows, GenericColumnRows, InstanceRows,
+            ImplementationRows], RawRows),
+    semantic_rows_from_decls(Decls, SemanticRows),
+    annotate_catalog_semantic_ids(RawRows, RawRows, SemanticRows, Rows).
+
+semantic_rows_from_decls(Decls, Rows) :-
+    ( member(semantic_type_rows(Rows0), Decls) -> Rows = Rows0 ; Rows = [] ).
+
+annotate_catalog_semantic_ids([], _, _, []).
+annotate_catalog_semantic_ids([Row | Rest], AllRows, SemanticRows,
+                              [Annotated | AnnotatedRest]) :-
+    catalog_semantic_id(Row, AllRows, SemanticRows, SemanticId),
+    annotate_catalog_row(Row, SemanticId, Annotated),
+    annotate_catalog_semantic_ids(Rest, AllRows, SemanticRows, AnnotatedRest).
+
+annotate_catalog_row(row(Id, Parent, Ordinal, Name, Kind, TypeId, Arity,
+                         ModuleId, Hash, _Extra, Extra2), SemanticId,
+                     row(Id, Parent, Ordinal, Name, Kind, TypeId, Arity,
+                         ModuleId, Hash, SemanticId, Extra2)).
+
+catalog_semantic_id(row(_, _, _, Name, interface, _, _, _, _, _, _), _, Rows, Id) :-
+    member(declaration(Id, _, Name, interface, _), Rows), !.
+catalog_semantic_id(row(_, _, _, Name, generic_rel, _, _, _, _, _, _), _, Rows, Id) :-
+    member(declaration(Id, _, Name, relation, compile_time), Rows), !.
+catalog_semantic_id(row(_, OwnerId, Ordinal, Name, type_parameter, _, _, _, _, _, _),
+                    AllRows, Rows, Id) :-
+    semantic_owner_id(OwnerId, AllRows, Rows, Owner),
+    member(parameter(Id, Owner, Ordinal, Name), Rows), !.
+catalog_semantic_id(row(_, OwnerId, Ordinal, Name, generic_column, _, _, _, _, _, _),
+                    AllRows, Rows, Id) :-
+    semantic_owner_id(OwnerId, AllRows, Rows, Owner),
+    member(member(Id, Owner, Ordinal, Name, _), Rows), !.
+catalog_semantic_id(row(_, ParameterId, _, Name, constraint, _, _, _, _, _, _),
+                    AllRows, Rows, Id) :-
+    semantic_parameter_id(ParameterId, AllRows, Rows, Parameter),
+    atom_concat('decl:interface:', Name, Interface),
+    member(constraint(Id, Parameter, Interface), Rows), !.
+catalog_semantic_id(row(_, SubjectId, _, Interface, implementation, _, _, _, _, _, _),
+                    AllRows, Rows, Id) :-
+    semantic_relation_id(SubjectId, AllRows, Rows, Subject),
+    atom_concat('decl:interface:', InterfaceId, Interface),
+    member(implementation(Id, Subject, interface_application(InterfaceId)), Rows), !.
+catalog_semantic_id(row(_, _, _, Name, concrete_type, _, _, _, _, _, _), _, Rows, Id) :-
+    member(declaration(Id, _, Name, relation, materialized), Rows), !.
+catalog_semantic_id(_, _, _, '').
+
+semantic_owner_id(CatalogId, AllRows, Rows, SemanticId) :-
+    member(row(CatalogId, _, _, Name, generic_rel, _, _, _, _, _, _), AllRows),
+    member(declaration(SemanticId, _, Name, relation, compile_time), Rows), !.
+semantic_owner_id(CatalogId, AllRows, Rows, SemanticId) :-
+    member(row(CatalogId, _, _, Name, interface, _, _, _, _, _, _), AllRows),
+    member(declaration(SemanticId, _, Name, interface, _), Rows), !.
+
+semantic_parameter_id(CatalogId, AllRows, Rows, SemanticId) :-
+    member(row(CatalogId, OwnerId, Ordinal, Name, type_parameter, _, _, _, _, _, _), AllRows),
+    semantic_owner_id(OwnerId, AllRows, Rows, Owner),
+    member(parameter(SemanticId, Owner, Ordinal, Name), Rows), !.
+
+semantic_relation_id(CatalogId, AllRows, Rows, SemanticId) :-
+    member(row(CatalogId, _, _, Name, rel, _, _, _, _, _, _), AllRows),
+    member(declaration(SemanticId, _, Name, relation, _), Rows), !.
+
+metadata_named_rows([], _, _, Id, [], [], Id).
+metadata_named_rows([Name-_ | Rest], Kind, ModuleId, Id0,
+                    [row(Id0, ModuleId, 0, Name, Kind, 0, 0, ModuleId,
+                         '', '', '') | Rows],
+                    [Name-Id0 | Map], IdFinal) :-
+    Id1 is Id0 + 1,
+    metadata_named_rows(Rest, Kind, ModuleId, Id1, Rows, Map, IdFinal).
+
+metadata_parameter_rows([], _, _, Id, [], Id).
+metadata_parameter_rows([Name-Parameters | Rest], OwnerMap, InterfaceMap, Id0,
+                        Rows, IdFinal) :-
+    memberchk(Name-OwnerId, OwnerMap),
+    metadata_one_parameter_set(Parameters, OwnerId, InterfaceMap, 1, Id0,
+                               ParameterRows, Id1),
+    metadata_parameter_rows(Rest, OwnerMap, InterfaceMap, Id1, RestRows,
+                            IdFinal),
+    append(ParameterRows, RestRows, Rows).
+
+metadata_one_parameter_set([], _, _, _, Id, [], Id).
+metadata_one_parameter_set([Parameter | Rest], OwnerId, InterfaceMap, Ordinal,
+                           Id0, Rows, IdFinal) :-
+    metadata_parameter_parts(Parameter, ParameterName, Constraints),
+    ParameterRow = row(Id0, OwnerId, Ordinal, ParameterName, type_parameter,
+                       0, 0, 0, '', '', ''),
+    Id1 is Id0 + 1,
+    metadata_constraint_rows(Constraints, Id0, InterfaceMap, 1, Id1,
+                             ConstraintRows, Id2),
+    NextOrdinal is Ordinal + 1,
+    metadata_one_parameter_set(Rest, OwnerId, InterfaceMap, NextOrdinal, Id2,
+                               RestRows, IdFinal),
+    append([[ParameterRow], ConstraintRows, RestRows], Rows).
+
+metadata_parameter_parts(type_parameter(Name, Constraints), Name, Constraints) :- !.
+metadata_parameter_parts(Name, Name, []).
+
+metadata_constraint_rows([], _, _, _, Id, [], Id).
+metadata_constraint_rows([Interface | Rest], ParameterId, InterfaceMap,
+                         Ordinal, Id0,
+                         [row(Id0, ParameterId, Ordinal, Interface, constraint,
+                              InterfaceId, 0, 0, '', '', '') | Rows], IdFinal) :-
+    ( memberchk(Interface-InterfaceId, InterfaceMap) -> true ; InterfaceId = 0 ),
+    Id1 is Id0 + 1,
+    NextOrdinal is Ordinal + 1,
+    metadata_constraint_rows(Rest, ParameterId, InterfaceMap, NextOrdinal,
+                             Id1, Rows, IdFinal).
+
+metadata_generic_column_rows([], _, _, _, _, Id, [], Id).
+metadata_generic_column_rows([generic(Name, _Parameters, Specs) | Rest], GenericMap, RelIdMap,
+                             ListIdMap, ParameterRows, Id0, Rows, IdFinal) :-
+    memberchk(Name-GenericId, GenericMap),
+    metadata_one_generic_columns(Specs, GenericId, ParameterRows, RelIdMap,
+                                 ListIdMap, 1, Id0, ColumnRows, Id1),
+    metadata_generic_column_rows(Rest, GenericMap, RelIdMap, ListIdMap,
+                                 ParameterRows, Id1, RestRows, IdFinal),
+    append(ColumnRows, RestRows, Rows).
+
+metadata_one_generic_columns([], _, _, _, _, _, Id, [], Id).
+metadata_one_generic_columns([column(Name, Type) | Rest], GenericId,
+                             ParameterRows, RelIdMap, ListIdMap, Ordinal, Id0,
+                             [row(Id0, GenericId, Ordinal, Name, generic_column,
+                                  TypeId, 0, 0, '', '', '') | Rows], IdFinal) :-
+    metadata_generic_type_id(Type, GenericId, ParameterRows, RelIdMap,
+                             ListIdMap, TypeId),
+    Id1 is Id0 + 1,
+    NextOrdinal is Ordinal + 1,
+    metadata_one_generic_columns(Rest, GenericId, ParameterRows, RelIdMap,
+                                 ListIdMap, NextOrdinal, Id1, Rows, IdFinal).
+
+metadata_generic_type_id(Type, GenericId, ParameterRows, _, _, TypeId) :-
+    atom(Type),
+    memberchk(row(TypeId, GenericId, _, Type, type_parameter,
+                  _, _, _, _, _, _), ParameterRows),
+    !.
+metadata_generic_type_id(Type, _, _, RelIdMap, ListIdMap, TypeId) :-
+    catalog_source_type_id(Type, RelIdMap, ListIdMap, TypeId).
+
+metadata_instance_rows([], _, _, _, Id, [], Id).
+metadata_instance_rows([instance(Concrete, Generic, Arguments) | Rest],
+                       GenericMap, RelIdMap, ListIdMap, Id0, Rows, IdFinal) :-
+    memberchk(Generic-GenericId, GenericMap),
+    memberchk(Concrete-ConcreteRelId, RelIdMap),
+    InstanceRow = row(Id0, ConcreteRelId, 0, Concrete, concrete_type,
+                      GenericId, 0, 0, '', '', ''),
+    Id1 is Id0 + 1,
+    metadata_argument_rows(Arguments, Id0, RelIdMap, ListIdMap, 1, Id1,
+                           ArgumentRows, Id2),
+    metadata_instance_rows(Rest, GenericMap, RelIdMap, ListIdMap, Id2,
+                           RestRows, IdFinal),
+    append([[InstanceRow], ArgumentRows, RestRows], Rows).
+
+metadata_argument_rows([], _, _, _, _, Id, [], Id).
+metadata_argument_rows([Argument | Rest], InstanceId, RelIdMap, ListIdMap,
+                       Ordinal, Id0,
+                       [row(Id0, InstanceId, Ordinal, argument, type_argument,
+                            TypeId, 0, 0, '', '', '') | Rows], IdFinal) :-
+    catalog_source_type_id(Argument, RelIdMap, ListIdMap, TypeId),
+    Id1 is Id0 + 1,
+    NextOrdinal is Ordinal + 1,
+    metadata_argument_rows(Rest, InstanceId, RelIdMap, ListIdMap, NextOrdinal,
+                           Id1, Rows, IdFinal).
+
+catalog_source_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
+    ( list_row_id(ListIdMap, json_list(Element), TypeId) -> true ; TypeId = 0 ).
+catalog_source_type_id(Type, RelIdMap, _ListIdMap, TypeId) :-
+    atom(Type),
+    ( catalog_type_id(Type, PrimitiveId), PrimitiveId =\= 0
+    -> TypeId = PrimitiveId
+    ; ( rel_row_id(RelIdMap, Type, TypeId) -> true ; TypeId = 0 ) ), !.
+catalog_source_type_id(Application, RelIdMap, _ListIdMap, TypeId) :-
+    canonical_type_name(Application, Concrete),
+    ( rel_row_id(RelIdMap, Concrete, TypeId) -> true ; TypeId = 0 ).
+
+metadata_implementation_rows([], _, _, Id, [], Id).
+metadata_implementation_rows([implementation(Name/_, Application) | Rest],
+                             InterfaceMap, RelIdMap, Id0,
+                             [row(Id0, SubjectId, 0, Interface, implementation,
+                                  InterfaceId, 0, 0, '', '', '') | Rows],
+                             IdFinal) :-
+    ( compound(Application)
+    -> functor(Application, Interface, _)
+    ; Interface = Application ),
+    ( memberchk(Interface-InterfaceId, InterfaceMap) -> true ; InterfaceId = 0 ),
+    ( rel_row_id(RelIdMap, Name, SubjectId) -> true ; SubjectId = 0 ),
+    Id1 is Id0 + 1,
+    metadata_implementation_rows(Rest, InterfaceMap, RelIdMap, Id1, Rows,
+                                 IdFinal).
 
 catalog_rel_plans(Decls, RelPlans, CatalogRelPlans, CatalogRelModules) :-
     module_rel_columns(Decls, ModuleRelColumns),

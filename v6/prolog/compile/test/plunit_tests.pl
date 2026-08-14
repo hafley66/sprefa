@@ -43,7 +43,7 @@
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_generic_expand',
               [ expand_generic_program/2, expand_generic_program_raw/2,
-                canonical_type_name/2 ]).
+                canonical_type_name/2, generic_type_ir/2 ]).
 :- use_module('../../0_match_expand', [ expand_match_program/2 ]).
 :- use_module('../../0_ast_expand',
               [ expand_ast_program/2,
@@ -1599,6 +1599,52 @@ test(catalog_inferred_list_column_resolves_to_the_list_row) :-
     memberchk(row(ListId, 0, 0, 'json_list(json)', json_list, _, _, _, _, _, _), Rows),
     forall(member(row(_, _, _, payloads, column, TypeId, _, _, _, _, _), Rows),
            TypeId == ListId).
+
+test(catalog_preserves_generic_interface_and_instance_graph) :-
+    canonical_type_name(box(text), BoxName),
+    inferred_relplans(
+        [ rel_spec(BoxName/1, set, [value], none, [text]),
+          rel_spec(holder/1, set, [value], none, [ref(BoxName)]) ],
+        RelPlans),
+    Decls = [ interface_decl(json_encodable, []),
+              generic_decl(box,
+                           [type_parameter('T', [json_encodable])],
+                           [column(value, 'T')]),
+              generic_instance(BoxName, box, [text]) ],
+    lower:catalog_decl_rows(generic_catalog, [], RelPlans, Decls, Rows, _),
+    memberchk(row(InterfaceId, _, 0, json_encodable, interface,
+                  0, 0, _, _, _, _), Rows),
+    memberchk(row(GenericId, _, 0, box, generic_rel,
+                  0, 0, _, _, _, _), Rows),
+    memberchk(row(ParameterId, GenericId, 1, 'T', type_parameter,
+                  0, 0, _, _, _, _), Rows),
+    memberchk(row(_, ParameterId, 1, json_encodable, constraint,
+                  InterfaceId, 0, _, _, _, _), Rows),
+    memberchk(row(ConcreteRelId, _, 0, BoxName, rel,
+                  0, 1, _, _, _, _), Rows),
+    memberchk(row(InstanceId, ConcreteRelId, 0, BoxName, concrete_type,
+                  GenericId, 0, _, _, _, _), Rows),
+    memberchk(row(_, InstanceId, 1, argument, type_argument,
+                  1, 0, _, _, _, _), Rows).
+
+test(catalog_generic_rows_carry_normalized_semantic_ids) :-
+    canonical_type_name(pair(int), PairName),
+    Program = prog(
+        [ rel_template([pair], ['T'], [column(value, 'T')]),
+          col_type(edge/1, value, pair(int)) ], []),
+    expand_generic_program(Program, prog(Expanded, [])),
+    member(generic_instance(PairName, pair, [int]), Expanded),
+    inferred_relplans(
+        [ rel_spec(edge/1, set, [value], none, [ref(PairName)]),
+          rel_spec(PairName/1, set, [value], none, [int]) ], RelPlans),
+    lower:catalog_decl_rows(generic_semantic_catalog, [], RelPlans,
+                            Expanded, Rows, _),
+    atomic_list_concat(['decl:relation:', PairName], SemanticConcreteId),
+    memberchk(row(_, _, _, pair, generic_rel, _, _, _, _,
+                  'decl:relation:pair', _), Rows),
+    memberchk(row(_, _, _, PairName, concrete_type, _, _, _, _,
+                  SemanticConcreteId, _), Rows),
+    true.
 
 :- end_tests(catalog_type_ids).
 
@@ -4368,6 +4414,193 @@ test(generic_template_vocabularies_expand_the_e2e_fixture_identically) :-
     expand_generic_program_raw(Program, Raw),
     Typed == Raw.
 
+test(user_generic_template_mints_one_ground_relation) :-
+    Program = prog(
+        [ rel_template([pair], ['T'],
+                       [column(first, 'T'), column(second, 'T')]),
+          col_type(edge/1, endpoints, pair(int)) ],
+        []),
+    canonical_type_name(pair(int), PairName),
+    expand_generic_program(Program, prog(Decls, [])),
+    memberchk(type_decl(PairName,
+                        [col(first, int), col(second, int)]), Decls),
+    memberchk(col_type(PairName/2, first, int), Decls),
+    memberchk(col_type(PairName/2, second, int), Decls),
+    memberchk(col_type(edge/1, endpoints, PairName), Decls),
+    memberchk(generic_decl(pair, [type_parameter('T', [])], _), Decls),
+    memberchk(generic_instance(PairName, pair, [int]), Decls),
+    \+ member(rel_template(_, _, _), Decls).
+
+test(generic_type_ir_separates_declarations_and_implementations) :-
+    Decls = [ rel_template([pair],
+                           [type_parameter('T', [json_encodable])],
+                           [column(value, 'T')]),
+              type_decl(span, [col(value, text)]),
+              interface_decl(json_encodable, []),
+              rel_is_implementation(span/2, [json_encodable]) ],
+    generic_type_ir(Decls, Rows),
+    member(declaration(PairId, root, pair, relation, compile_time), Rows),
+    member(declaration(InterfaceId, root, json_encodable, interface, compile_time), Rows),
+    member(parameter(ParameterId, PairId, 1, 'T'), Rows),
+    member(member(_, PairId, 1, value,
+                  type_ref(parameter(ParameterId))), Rows),
+    member(constraint(_, ParameterId, InterfaceId), Rows),
+    member(implementation(_, SubjectId, interface_application(InterfaceId)), Rows),
+    member(declaration(SubjectId, root, span, relation, materialized), Rows).
+
+test(generic_type_ir_ids_survive_declaration_permutation) :-
+    A = [ type_decl(span, [col(value, text)]),
+          rel_template([pair], [type_parameter('T', [])],
+                       [column(value, 'T')]),
+          interface_decl(json_encodable, []) ],
+    reverse(A, B),
+    generic_type_ir(A, RowsA),
+    generic_type_ir(B, RowsB),
+    RowsA == RowsB.
+
+test(generic_type_ir_parameter_identity_is_not_named_type) :-
+    Decls = [ type_decl('T', [col(value, text)]),
+              rel_template([box], [type_parameter('T', [])],
+                           [column(value, 'T')]) ],
+    generic_type_ir(Decls, Rows),
+    member(declaration(NamedId, root, 'T', relation, materialized), Rows),
+    member(declaration(BoxId, root, box, relation, compile_time), Rows),
+    member(parameter(ParameterId, BoxId, 1, 'T'), Rows),
+    ParameterId \== NamedId,
+    member(member(_, BoxId, 1, value, type_ref(parameter(ParameterId))), Rows).
+
+test(generic_type_ir_reuses_equal_application) :-
+    Decls = [ rel_template([pair], ['T'],
+                           [column(first, 'T'), column(second, 'T')]),
+              type_decl(left, [col(value, pair(int))]),
+              type_decl(right, [col(value, pair(int))]) ],
+    generic_type_ir(Decls, Rows),
+    findall(Id, member(application(Id, _), Rows), ApplicationIds),
+    ApplicationIds = [_].
+
+test(json_encodable_bound_accepts_a_primitive) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(text)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(text), BoxName),
+    memberchk(type_decl(BoxName, [col(value, text)]), Decls).
+
+test(json_encodable_bound_refuses_a_relational_list) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(list(text))) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(
+                  generic_bound_unsatisfied(list(text), json_encodable)).
+
+test(json_encodable_bound_closes_over_named_record_columns) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          type_decl(span, [col(start, int), col(label, option(text))]),
+          col_type(span/2, start, int),
+          col_type(span/2, label, option(text)),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(span)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(span), BoxName),
+    memberchk(type_decl(BoxName, [col(value, span)]), Decls).
+
+test(json_encodable_bound_closes_over_enum_payloads) :-
+    Program = prog(
+        [ interface_decl(json_encodable, []),
+          enum_decl(status, (ready ; failed(reason:text))),
+          rel_template([box],
+                       [type_parameter('T', [json_encodable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(status)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(status), BoxName),
+    memberchk(type_decl(BoxName, [col(value, int)]), Decls),
+    memberchk(col_type(BoxName/1, value, status), Decls).
+
+test(an_unknown_interface_is_named_before_expansion) :-
+    Program = prog(
+        [ rel_template([box],
+                       [type_parameter('T', [missing_capability])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(text)) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(interface_unknown(missing_capability)).
+
+test(a_declared_marker_interface_satisfies_a_generic_bound) :-
+    Program = prog(
+        [ interface_decl(addressable, []),
+          type_decl(file, [col(path, text)]),
+          col_type(file/1, path, text),
+          rel_is_implementation(file/1, [addressable]),
+          rel_template([box],
+                       [type_parameter('T', [addressable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(file)) ], []),
+    expand_generic_program(Program, prog(Decls, [])),
+    canonical_type_name(box(file), BoxName),
+    memberchk(type_decl(BoxName, [col(value, file)]), Decls).
+
+test(an_unimplemented_marker_interface_refuses_a_generic_bound) :-
+    Program = prog(
+        [ interface_decl(addressable, []),
+          type_decl(file, [col(path, text)]),
+          col_type(file/1, path, text),
+          rel_template([box],
+                       [type_parameter('T', [addressable])],
+                       [column(value, 'T')]),
+          col_type(holder/1, value, box(file)) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(
+                  generic_bound_unsatisfied(file, addressable)).
+
+test(user_generic_template_reuses_an_equal_ground_application) :-
+    Program = prog(
+        [ rel_template([pair], ['T'],
+                       [column(first, 'T'), column(second, 'T')]),
+          col_type(left_edge/1, endpoints, pair(text)),
+          col_type(right_edge/1, endpoints, pair(text)) ],
+        []),
+    canonical_type_name(pair(text), PairName),
+    expand_generic_program(Program, prog(Decls, [])),
+    findall(PairName, member(type_decl(PairName, _), Decls), Minted),
+    Minted == [PairName],
+    memberchk(col_type(left_edge/1, endpoints, PairName), Decls),
+    memberchk(col_type(right_edge/1, endpoints, PairName), Decls).
+
+test(user_generic_template_fixpoint_instantiates_nested_application) :-
+    Program = prog(
+        [ rel_template([pair], ['T'],
+                       [column(first, 'T'), column(second, 'T')]),
+          rel_template([box], ['T'], [column(value, pair('T'))]),
+          col_type(holder/1, value, box(text)) ],
+        []),
+    canonical_type_name(pair(text), PairName),
+    canonical_type_name(box(text), BoxName),
+    expand_generic_program(Program, prog(Decls, [])),
+    memberchk(type_decl(PairName, [col(first, text), col(second, text)]),
+              Decls),
+    memberchk(type_decl(BoxName, [col(value, PairName)]), Decls),
+    memberchk(col_type(holder/1, value, BoxName), Decls).
+
+test(user_generic_template_wrong_arity_is_named) :-
+    Program = prog(
+        [ rel_template([pair], ['T'],
+                       [column(first, 'T'), column(second, 'T')]),
+          col_type(edge/1, endpoints, pair(int, text)) ],
+        []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(generic_template_arity(pair, 1, 2)).
+
 test(generic_expansion_retargets_ref_target_schema_mirror) :-
     Program = prog(
         [ type_decl(item, [col(item_id, int), col(note, option(text)),
@@ -5892,7 +6125,7 @@ door_emitted_text(Slot, Source, Emitted) :-
 
 test(a_template_declaration_parses_to_one_record_and_no_rel_entry) :-
     surface_decls('rel pair(T)(first: T, second: T).', Decls),
-    Decls == [rel_template([pair], ['T'],
+    Decls == [rel_template([pair], [type_parameter('T', [])],
                            [column(first, 'T'), column(second, 'T')])].
 
 test(a_template_declaration_round_trips_through_the_printer) :-
@@ -5907,6 +6140,25 @@ test(a_two_parameter_template_at_a_module_path_round_trips) :-
     once(sub_atom(Text, _, _, _,
                   'rel shapes.pair(Left, Right)(head: Left, tail: Right).')),
     Program =@= RoundTripped.
+
+test(a_ground_generic_type_application_round_trips) :-
+    surface_round_trip(
+        'rel pair(T)(first: T, second: T). rel edge(value: pair(int)).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _, 'value: pair(int)')),
+    Program =@= RoundTripped.
+
+test(a_bounded_generic_parameter_round_trips) :-
+    surface_round_trip(
+        'interface json_encodable. rel pair(T: json_encodable)(value: T).',
+        Program, RoundTripped, Text),
+    once(sub_atom(Text, _, _, _,
+                  'rel pair(T: json_encodable)(value: T).')),
+    Program =@= RoundTripped.
+
+test(an_interface_declaration_parses_to_one_record) :-
+    surface_decls('interface json_encodable.', Decls),
+    Decls == [interface_decl(json_encodable, [])].
 
 test(an_is_clause_rides_beside_the_ordinary_column_entries) :-
     surface_decls('rel file(path: text, digest: text) is addressable.', Decls),
@@ -5984,23 +6236,35 @@ test(a_free_parameter_outside_a_template_still_reaches_column_type_unknown) :-
     once(( sub_term(column_type_unknown, Error)
          ; sub_term(column_type_unknown(_), Error) )).
 
-test(a_template_declaration_emits_the_module_the_program_without_it_emits) :-
+test(an_unused_template_changes_only_catalog_metadata) :-
     door_emitted_text(with,
         'rel pair(T)(first: T, second: T).\nrel point(x: int, y: int).\nrel line(a: point, b: point).\n',
         WithTemplate),
     door_emitted_text(without,
         'rel point(x: int, y: int).\nrel line(a: point, b: point).\n',
         WithoutTemplate),
-    WithTemplate == WithoutTemplate.
+    WithTemplate \== WithoutTemplate,
+    once(sub_atom(WithTemplate, _, _, _, 'generic_rel')).
 
-test(an_is_clause_emits_the_module_the_bare_declaration_emits) :-
+test(a_ground_template_application_reaches_the_text_door) :-
+    canonical_type_name(pair(int), PairName),
+    door_emitted_text(generic_pair,
+        'rel pair(T)(first: T, second: T).\nrel edge(id: int, endpoints: pair(int)).\n',
+        Emitted),
+    format(atom(TableNeedle), 'CREATE TABLE "~w"', [PairName]),
+    once(sub_atom(Emitted, _, _, _, TableNeedle)),
+    once(sub_atom(Emitted, _, _, _, '"first" INTEGER NOT NULL')),
+    once(sub_atom(Emitted, _, _, _, '"second" INTEGER NOT NULL')).
+
+test(an_is_clause_emits_interface_catalog_metadata) :-
     door_emitted_text(with,
-        'rel file(path: text, digest: text) is addressable.\nrel seen(n: int).\n',
+        'interface addressable.\nrel file(path: text, digest: text) is addressable.\nrel seen(n: int).\n',
         WithClause),
     door_emitted_text(without,
         'rel file(path: text, digest: text).\nrel seen(n: int).\n',
         WithoutClause),
-    WithClause == WithoutClause.
+    WithClause \== WithoutClause,
+    once(sub_atom(WithClause, _, _, _, 'implementation')).
 
 :- end_tests(rel_template_and_is_clause).
 

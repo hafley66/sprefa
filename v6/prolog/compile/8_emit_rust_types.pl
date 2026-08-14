@@ -3,9 +3,12 @@
 :- use_module(library(lists)).
 
 rust_types_text(_Name, Rows, Text) :-
+    findall(InterfaceText, rust_interface_text(Rows, InterfaceText), InterfaceParts),
+    findall(GenericText, rust_generic_text(Rows, GenericText), GenericParts),
     findall(RelRow, renderable_rel(Rows, RelRow), RelRows),
     collision_type_names(RelRows, CollisionTypeNames),
-    maplist(rust_rel_text(Rows, CollisionTypeNames), RelRows, Parts),
+    maplist(rust_rel_text(Rows, CollisionTypeNames), RelRows, RelParts),
+    append([InterfaceParts, GenericParts, RelParts], Parts),
     atomic_list_concat(Parts, '\n', Atom),
     atom_string(Atom, Text).
 
@@ -15,12 +18,55 @@ emit_rust_types(Name, Rows, Path) :-
 
 renderable_rel(Rows, RelRow) :-
     member(RelRow, Rows),
-    RelRow = row(_, _, _, Name, rel, _, _, _ModuleId, _, _, _),
-    \+ compiler_helper_rel(Name),
+    RelRow = row(RelId, _, _, Name, rel, _, _, _ModuleId, _, _, _),
+    ( \+ compiler_helper_rel(Name) ; concrete_rel(Rows, RelId) ),
     rel_columns(Rows, RelRow, Columns),
     maplist(rust_column_type(Rows), Columns, _).
 
 compiler_helper_rel(Name) :- sub_atom(Name, _, _, _, '__').
+concrete_rel(Rows, RelId) :-
+    memberchk(row(_, RelId, _, _, concrete_type, _, _, _, _, _, _), Rows).
+
+rust_interface_text(Rows, Text) :-
+    member(row(_, _, _, Name, interface, _, _, _, _, _, _), Rows),
+    type_name(Name, TypeName),
+    format(string(Text), 'pub trait ~w {}\n', [TypeName]).
+
+rust_generic_text(Rows, Text) :-
+    member(row(GenericId, _, _, Name, generic_rel, _, _, _, _, _, _), Rows),
+    type_name(Name, TypeName),
+    rust_generic_parameters_text(Rows, GenericId, ParametersText),
+    findall(Ord-Column-TypeId,
+            member(row(_, GenericId, Ord, Column, generic_column, TypeId,
+                       _, _, _, _, _), Rows), Columns0),
+    keysort(Columns0, Columns),
+    maplist(rust_generic_property_text(Rows), Columns, Properties),
+    atomic_list_concat(Properties, '', Body),
+    format(string(Text), '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct ~w~w {\n~s}\n',
+           [TypeName, ParametersText, Body]).
+
+rust_generic_parameters_text(Rows, GenericId, Text) :-
+    findall(Ord-Name-ParameterId,
+            member(row(ParameterId, GenericId, Ord, Name, type_parameter,
+                       _, _, _, _, _, _), Rows), Parameters0),
+    keysort(Parameters0, Parameters),
+    maplist(rust_parameter_text(Rows), Parameters, ParameterTexts),
+    ( ParameterTexts == [] -> Text = ''
+    ; atomic_list_concat(ParameterTexts, ', ', Joined),
+      format(atom(Text), '<~w>', [Joined]) ).
+
+rust_parameter_text(Rows, _Ord-Name-ParameterId, Text) :-
+    findall(Constraint,
+            ( member(row(_, ParameterId, _, Interface, constraint, _, _, _,
+                         _, _, _), Rows),
+              type_name(Interface, Constraint) ), Constraints),
+    ( Constraints == [] -> Text = Name
+    ; atomic_list_concat(Constraints, ' + ', Bound),
+      format(atom(Text), '~w: ~w', [Name, Bound]) ).
+
+rust_generic_property_text(Rows, _Ord-Name-TypeId, Text) :-
+    rust_type(Rows, TypeId, Type),
+    format(string(Text), '    pub ~w: ~w,\n', [Name, Type]).
 
 collision_type_names(RelRows, CollisionTypeNames) :-
     findall(TypeName,
@@ -74,6 +120,7 @@ rust_kind(_Rows, _CollisionTypeNames, _TypeRow, float, primitive, _ElementId, 'f
 rust_kind(_Rows, _CollisionTypeNames, _TypeRow, text, primitive, _ElementId, 'String').
 rust_kind(_Rows, _CollisionTypeNames, _TypeRow, bool, primitive, _ElementId, 'bool').
 rust_kind(_Rows, _CollisionTypeNames, _TypeRow, json, primitive, _ElementId, 'serde_json::Value').
+rust_kind(_Rows, _CollisionTypeNames, _TypeRow, Name, type_parameter, _ElementId, Name).
 rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, json_list, ElementId, Type) :-
     rust_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), 'Vec<~w>', [Element]).

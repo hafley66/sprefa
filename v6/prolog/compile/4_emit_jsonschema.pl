@@ -118,8 +118,7 @@ rel_object(Rows, RefPrefix, RelRow, Schema) :-
             Triples0),
     keysort(Triples0, Triples),
     maplist(column_property(Rows, RefPrefix), Triples, Pairs),
-    exclude(nullable_pair, Pairs, RequiredPairs),
-    pairs_keys(RequiredPairs, Required),
+    pairs_keys(Pairs, Required),
     dict_pairs(Properties, properties, Pairs),
     Schema = _{ type: object,
                 properties: Properties,
@@ -128,8 +127,6 @@ rel_object(Rows, RefPrefix, RelRow, Schema) :-
 
 column_property(Rows, RefPrefix, _Ord-ColumnName-ColumnTypeId, ColumnName-Schema) :-
     column_schema(Rows, RefPrefix, ColumnTypeId, Schema).
-
-nullable_pair(_Name-_{ anyOf: _ }).
 
 column_schema(Rows, RefPrefix, ColumnTypeId, Schema) :-
     row_at(Rows, ColumnTypeId, TargetRow),

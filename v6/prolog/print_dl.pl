@@ -224,6 +224,7 @@ shadowed_by_type_decl(Decls, Name/Arity) :-
     length(Specs, Arity).
 
 decl_order_item(enum_decl(Name, Variants), enum_decl(Name, Variants)).
+decl_order_item(Decl, Decl) :- Decl = interface_decl(_, _).
 decl_order_item(Decl, Decl) :- Decl = rel_template(_, _, _).
 decl_order_item(Decl, Decl) :- Decl = type_decl(_, _).
 decl_order_item(Decl, Decl) :- Decl = sh_decl(_, _, _, _).
@@ -245,6 +246,12 @@ dedup_preserve_order_([X | Xs], Acc, Out) :-
     ; dedup_preserve_order_(Xs, [X | Acc], Out)
     ).
 
+print_generic_parameter(type_parameter(Name, []), Name) :- !.
+print_generic_parameter(type_parameter(Name, Constraints), Text) :-
+    atomic_list_concat(Constraints, ' + ', ConstraintText),
+    format(atom(Text), "~w: ~w", [Name, ConstraintText]).
+print_generic_parameter(Name, Name).
+
 % ═══ decl line : `rel Name(cols[: type]) [log] [keep(policy)] [key(positions)].`
 % Reproduces EXACTLY the literal decl/2 entries this ref has in the original
 % Decls list, in their original relative order -- never rel_kind/3's or
@@ -256,15 +263,24 @@ decl_line(_, _, _, enum_decl(Name, Variants), Line) :-
     !,
     print_enum_variants(Variants, VariantsText),
     format(atom(Line), "rel ~w(~w).~n", [Name, VariantsText]).
+decl_line(_, _, _, interface_decl(Name, Parameters), Line) :-
+    !,
+    ( Parameters == []
+    -> format(atom(Line), "interface ~w.~n", [Name])
+    ; atomic_list_concat(Parameters, ', ', ParametersText),
+      format(atom(Line), "interface ~w(~w).~n", [Name, ParametersText])
+    ).
 % Two parenthesized groups is the whole surface of a template, and its record
 % holds the path segments, so the printed name is rebuilt from them.
 decl_line(_, _, _, rel_template(Segments, Parameters, Specs), Line) :-
     !,
     atomic_list_concat(Segments, '.', Name),
-    atomic_list_concat(Parameters, ', ', ParametersText),
+    maplist(print_generic_parameter, Parameters, ParameterTexts),
+    atomic_list_concat(ParameterTexts, ', ', ParametersText),
     maplist(print_template_column, Specs, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
     format(atom(Line), "rel ~w(~w)(~w).~n", [Name, ParametersText, ColumnsText]).
+
 decl_line(Decls, _, _, type_decl(Name, Specs), Line) :-
     !,
     maplist(print_host_column, Specs, ColumnTexts),
