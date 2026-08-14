@@ -4567,6 +4567,7 @@ expected_row(rtrim/1,   text_scalar,         3, rtrim,                text_only)
 expected_row(rtrim/2,   text_scalar,         3, rtrim,                text_only).
 expected_row(reverse/1, text_scalar,         3, reverse,              text_only).
 expected_row(replace/3, text_scalar,         3, replace,              text_only).
+expected_row(initcap/1, text_scalar,         3, initcap_words,        text_only).
 expected_row(substr/2,  typed_scalar,        3, substr, typed([text, int],      text)).
 expected_row(substr/3,  typed_scalar,        3, substr, typed([text, int, int], text)).
 expected_row(instr/2,   typed_scalar,        3, instr,  typed([text, text],     int)).

@@ -133,6 +133,14 @@ text_scalar_value(reverse, [Text], Out) :-
     reverse(Codes, RevCodes),
     atom_codes(Out, RevCodes).
 
+% Word boundary = any non-alnum, matching the emitted CTE's unicode ranges;
+% the fold is ASCII-only like SQLite upper()/lower().
+text_scalar_value(initcap_words, [Text], Out) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    atom_codes(Text, Codes),
+    initcap_codes(Codes, 0' , OutCodes),
+    atom_codes(Out, OutCodes).
+
 % SQLite replace(X, Y, Z): replace every occurrence of Y in X with Z.
 text_scalar_value(replace, [Text, From, To], Out) :-
     ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
@@ -218,6 +226,14 @@ charset_codes(Chars, Codes) :- atomic(Chars), atom_codes(Chars, Codes).
 
 ascii_upper_code(Code, Upper) :-
     ( between(0'a, 0'z, Code) -> Upper is Code - 32 ; Upper = Code ).
+
+initcap_codes([], _, []).
+initcap_codes([Code | Rest], Previous, [Folded | FoldedRest]) :-
+    (   ascii_alnum_code(Previous)
+    ->  ascii_lower_code(Code, Folded)
+    ;   ascii_upper_code(Code, Folded)
+    ),
+    initcap_codes(Rest, Code, FoldedRest).
 
 
 drop_leading_in_set([], _, []).
