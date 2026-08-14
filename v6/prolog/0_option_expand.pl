@@ -5,6 +5,7 @@
             expand_option_program/2,
             expand_option_decls/2,
             option_enum_name/2,
+            option_enum_decl/2,
             companion_rel_name/3,
             scalar_element/1 ]).
 
@@ -77,11 +78,17 @@ desugar_scalar_option(Decls0, Ref, Column, Element, Decls) :-
               Decls1),
     ( memberchk(enum_decl(EnumName, _), Decls1)
     -> Decls = Decls1
-    ; Decls = [enum_decl(EnumName, (none ; some(value:Element))) | Decls1]
+    ; option_enum_decl(Element, EnumDecl),
+      Decls = [EnumDecl | Decls1]
     ).
 
 option_enum_name(Element, EnumName) :-
     atomic_list_concat(['__opt_', Element], EnumName).
+
+% The one spelling of the minted enum, shared with the row merge so the
+% graph cannot drift from what expansion mints.
+option_enum_decl(Element, enum_decl(EnumName, (none ; some(value:Element)))) :-
+    option_enum_name(Element, EnumName).
 
 desugar_reference_option(Decls0, ParentName/Arity, Column, Element, Position,
                          Decls) :-

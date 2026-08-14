@@ -14,6 +14,7 @@
 :- use_module(library(lists)).
 :- use_module('0_enum_expand', [expand_enum_program/2, enum_context/2,
                                 merge_enum_type_rows/3,
+                                merge_option_type_rows/2,
                                 drop_minted_keyed_on_derived/3]).
 
 :- op(1150, xfx, <-).
@@ -26,7 +27,8 @@ expand_match_program(prog(SugaredDecls, SugaredRules), ExpandedProgram) :-
     expand_enum_program(prog(SugaredDecls, MatchExpandedRules),
                         EnumExpandedProgram),
     drop_minted_keyed_on_derived(Enums, EnumExpandedProgram, DroppedProgram),
-    merge_enum_type_rows(SugaredDecls, DroppedProgram, ExpandedProgram).
+    merge_enum_type_rows(SugaredDecls, DroppedProgram, EnumRowedProgram),
+    merge_option_type_rows(EnumRowedProgram, ExpandedProgram).
 
 % Driver entry: arms only, no enum pass, coverage checked against a context
 % built from the SURFACE declarations. Enum expansion has already run and

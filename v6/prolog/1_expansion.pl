@@ -15,6 +15,7 @@
 :- use_module(library(lists)).
 :- use_module('0_enum_expand', [enum_context/2,
                                 merge_enum_type_rows/3,
+                                merge_option_type_rows/2,
                                 drop_minted_keyed_on_derived/3]).
 :- use_module('0_generic_expand', [expand_generic_program/2]).
 :- use_module('0_match_expand', []).
@@ -89,7 +90,8 @@ expand_program_run(SurfaceProgram, Bindings, ExpandedProgram,
           OrderedPhases,
           SurfaceProgram, PhasedProgram),
     drop_minted_keyed_on_derived(EnumContext, PhasedProgram, DroppedProgram),
-    merge_enum_type_rows(SurfaceDecls, DroppedProgram, ExpandedProgram),
+    merge_enum_type_rows(SurfaceDecls, DroppedProgram, EnumRowedProgram),
+    merge_option_type_rows(EnumRowedProgram, ExpandedProgram),
     ExpansionContext = EnumContext.
 
 run_phase(_, _-_-unwired, Program, Program) :- !.

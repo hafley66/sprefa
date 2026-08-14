@@ -4436,6 +4436,68 @@ test(both_doors_mint_the_same_enum_origin_rows) :-
     memberchk(semantic_type_rows(MatchRows), MatchDecls),
     DriverRows == MatchRows.
 
+% FAIL-PRE-FIX: option desugar rewrote decl lists only, so the companion split
+% rel had no edge back to the parent column it encodes and the graph could not
+% name its origin.
+test(option_companion_rels_carry_origin_rows) :-
+    Program = prog(
+        [ col_type(user/2, id, int), col_type(user/2, name, text),
+          keyed(user/2, [1]),
+          col_type(post/2, id, int), col_type(post/2, author, option(user)),
+          keyed(post/2, [1]) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(relation, post, PostId),
+    decl_id(relation, post__author, CompanionId),
+    memberchk(declaration(PostId, root, post, relation, materialized), Rows),
+    memberchk(declaration(CompanionId, root, post__author, relation,
+                          materialized), Rows),
+    memberchk(derived_from(CompanionId, PostId), Rows),
+    memberchk(origin(CompanionId, option_column(post, author, user)), Rows).
+
+% FAIL-PRE-FIX: the minted '__opt_<t>' enum came from a marker the row merge
+% never read, so a scalar option column's enum had no rows at all.
+test(minted_option_enums_carry_origin_rows) :-
+    Program = prog(
+        [ col_type(post/2, id, int),
+          col_type(post/2, subtitle, option(text)),
+          keyed(post/2, [1]) ],
+        []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(enum, '__opt_text', OptEnumId),
+    decl_id(relation, '__opt_text_none', NoneRelId),
+    decl_id(relation, '__opt_text_some', SomeRelId),
+    memberchk(declaration(OptEnumId, root, '__opt_text', enum, compile_time),
+              Rows),
+    memberchk(derived_from(NoneRelId, OptEnumId), Rows),
+    memberchk(derived_from(SomeRelId, OptEnumId), Rows),
+    memberchk(member(_, OptEnumId, 1, none, type_ref(declaration(NoneRelId))),
+              Rows),
+    memberchk(member(_, OptEnumId, 2, some, type_ref(declaration(SomeRelId))),
+              Rows),
+    memberchk(origin(OptEnumId, option_column(post, subtitle, text)), Rows).
+
+% The match door runs no option desugar; a program already carrying the
+% option_column markers merges the same rows the driver door mints.
+test(match_door_merges_option_origin_rows_from_markers) :-
+    Program = prog(
+        [ col_type(user/2, id, int), col_type(user/2, name, text),
+          keyed(user/2, [1]),
+          col_type(post/1, id, int), keyed(post/1, [1]),
+          col_type(post__author/2, post_id, int),
+          col_type(post__author/2, user_id, int),
+          keyed(post__author/2, [1]),
+          option_column(post/2, author, user) ],
+        []),
+    expand_match_program(Program, prog(Decls, _)),
+    memberchk(semantic_type_rows(Rows), Decls),
+    decl_id(relation, post, PostId),
+    decl_id(relation, post__author, CompanionId),
+    memberchk(derived_from(CompanionId, PostId), Rows),
+    memberchk(origin(CompanionId, option_column(post, author, user)), Rows).
+
 % Enum-first through the driver produces exactly what match-first produced.
 test(enum_first_preserves_expanded_terms) :-
     exhaustive_match(Program),
