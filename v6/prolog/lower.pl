@@ -549,6 +549,10 @@ compile_expr(Mode, Demand, Expr, Bound, Sql, Type, Encoding) :-
     -> compile_text_operands(Mode, Arguments, Bound, Expr, ArgumentSqls),
        text_scalar_sql(Function, ArgumentSqls, Sql),
        Type = text, Encoding = direct
+    ; typed_scalar_expr(Expr, Function, Arguments, OperandTypes, ResultType)
+    -> compile_typed_operands(Mode, OperandTypes, Arguments, Bound, Expr, ArgumentSqls),
+       typed_scalar_sql(Function, ArgumentSqls, Sql),
+       Type = ResultType, Encoding = direct
     ; json_scalar_expr(Expr, Function, Arguments)
     -> compile_json_operands(Mode, Arguments, Bound, Expr, ArgumentSqls),
        json_scalar_sql(Function, ArgumentSqls, Sql),
@@ -618,6 +622,32 @@ text_scalar_rendering(_, ascii_alnum_lower, [ArgumentSql], Sql) :-
 % Direct SQLite scalar: the rendering IS the function name, so rtrim/2 lowers
 % to rtrim(a, b) and replace/3 to replace(a, b, c), no UDF.
 text_scalar_rendering(Function, Rendering, ArgumentSqls, Sql) :-
+    Rendering == Function,
+    atomic_list_concat(ArgumentSqls, ', ', ArgsJoined),
+    format(atom(Sql), '~w(~w)', [Function, ArgsJoined]).
+
+typed_scalar_expr(Expr, Function, Arguments, OperandTypes, ResultType) :-
+    compound(Expr), Expr =.. [Function | Arguments],
+    length(Arguments, Arity),
+    expression(Function/Arity, typed_scalar, _, _, typed(OperandTypes, ResultType)).
+
+% float is rejected as an index operand: SQLite would truncate silently, and
+% "no coercions" makes that a compile error here instead.
+compile_typed_operands(_, [], [], _, _, []).
+compile_typed_operands(Mode, [text | Types], [Operand | Rest], Bound, Whole, [Sql | Sqls]) :-
+    compile_text_operand(Mode, Operand, Bound, Whole, Sql),
+    compile_typed_operands(Mode, Types, Rest, Bound, Whole, Sqls).
+compile_typed_operands(Mode, [int | Types], [Operand | Rest], Bound, Whole, [Sql | Sqls]) :-
+    compile_expr(Mode, identity, Operand, Bound, Sql, Type, _Encoding),
+    (   Type == int
+    ->  true
+    ;   throw(unsupported_construct(typed_operand_not_int(Whole, Operand, Type)))
+    ),
+    compile_typed_operands(Mode, Types, Rest, Bound, Whole, Sqls).
+
+typed_scalar_sql(Function, ArgumentSqls, Sql) :-
+    length(ArgumentSqls, Arity),
+    expression(Function/Arity, typed_scalar, _, Rendering, _),
     Rendering == Function,
     atomic_list_concat(ArgumentSqls, ', ', ArgsJoined),
     format(atom(Sql), '~w(~w)', [Function, ArgsJoined]).

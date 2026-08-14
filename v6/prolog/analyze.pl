@@ -792,6 +792,9 @@ expression_type(Expr, Environment, text) :-
     text_scalar_expression(Expr, Argument), !,
     expression_type(Argument, Environment, ArgumentType),
     ( ArgumentType == text ; ArgumentType == none ).
+expression_type(Expr, Environment, ResultType) :-
+    typed_scalar_expression(Expr, Arguments, OperandTypes, ResultType), !,
+    typed_operands_typed(Environment, Arguments, OperandTypes).
 expression_type(Expr, Environment, Type) :-
     arithmetic_expression(Expr, Operator, Left, Right), !,
     expression_type(Left, Environment, LeftType),
@@ -832,6 +835,17 @@ arithmetic_result_type(_, _, _, text).
 text_scalar_expression(Expr, Argument) :-
     compound(Expr), Expr =.. [Functor, Argument],
     expression(Functor/1, text_scalar, _, _, _).
+
+typed_scalar_expression(Expr, Arguments, OperandTypes, ResultType) :-
+    compound(Expr), Expr =.. [Functor | Arguments],
+    length(Arguments, Arity),
+    expression(Functor/Arity, typed_scalar, _, _, typed(OperandTypes, ResultType)).
+
+typed_operands_typed(_, [], []).
+typed_operands_typed(Environment, [Argument | Rest], [OperandType | RestTypes]) :-
+    expression_type(Argument, Environment, ArgumentType),
+    ( ArgumentType == OperandType ; ArgumentType == none ),
+    typed_operands_typed(Environment, Rest, RestTypes).
 
 % Positionwise combine, only where the seed is open/1: text dominates, then
 % int, then none. A frozen(Type) position is returned unchanged.
