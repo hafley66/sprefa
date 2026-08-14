@@ -1828,6 +1828,19 @@ test(json_object_aggregate_lowers_with_order_and_duplicate_key_guard) :-
     memberchk(levelstmt(doc/2, _, [InsertSql], _, _, _, _), Statements),
     InsertSql == 'INSERT OR IGNORE INTO "doc" ("col1", "col2") SELECT b0."col1", CASE WHEN count(DISTINCT json_array(b0."col2", json(b0."col3"))) = count(DISTINCT b0."col2") THEN json_group_object(b0."col2", json(b0."col3") ORDER BY b0."col2") ELSE json(\'json_object_dup_key\') END FROM "pair" b0 GROUP BY b0."col1" HAVING count(*) > 0'.
 
+% FOUND BY PROBE 2026-08-13: `Body := group_concat(...)` compiled rc=0 and
+% stored the literal `{"fn":"group_concat","args":[...]}` through the
+% tagged-term door. Aggregates are head-only; value position now throws.
+test(rejects_aggregate_in_expression_position,
+     [throws(unsupported_construct(aggregate_in_expression_position(group_concat/3)))]) :-
+    Prog = prog([], [ (joined(Group, Out) <-
+                         item(Group, Ordinal, Value),
+                         Out := group_concat(Value, '\n', Ordinal)) ]),
+    Term = fixture(refuse_aggregate_in_value_position, Prog,
+                   [ item(north, 1, pear) ], [], []),
+    program_plan(Term-[], Plan),
+    lower_program(Plan, _).
+
 % An aggregate whose body reads its own head: engine.pl forces Gap=1 for
 % every body ref of an aggregate head (level_eval.pl rule_body_constraint/4),
 % so the oracle throws not_stratified. Refused by a precise name here.

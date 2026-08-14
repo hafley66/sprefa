@@ -157,7 +157,7 @@
 :- use_module(analyze).
 :- use_module(use_resolve, [short_hash/2]).
 :- use_module('0_rel_record').
-:- use_module('compile/registry', [expression/5, body_surface_for_term/6]).
+:- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
               [ type_definition/4, column_storage/3,
                 type_topological_order/2, type_canonical_json/4,
@@ -566,6 +566,10 @@ compile_expr(Mode, Demand, Expr, Bound, Sql, Type, Encoding) :-
     ; json_value_expr(Expr)
     -> compile_json_document(Mode, Expr, Bound, Sql),
        Type = json, Encoding = direct
+    % An aggregate functor reaching value position would fall into the
+    % tagged-term door below and store a json literal, silently wrong.
+    ; aggregate_expr_functor(Expr, Functor, Arity)
+    -> throw(unsupported_construct(aggregate_in_expression_position(Functor/Arity)))
     ; compound(Expr)
     -> Expr =.. [Functor | SubArgs],
        maplist(compile_term_sub_expr(Mode, Bound), SubArgs, SubSqls),
@@ -584,6 +588,11 @@ demanded_sql(value, dict, IdSql, Sql, direct) :- !, dictionary_content_sql(IdSql
 demanded_sql(_, Encoding, Sql, Sql, Encoding).
 
 compile_term_sub_expr(Mode, Bound, Arg, Sql) :- compile_expr(Mode, value, Arg, Bound, Sql, _Type, _Encoding).
+
+aggregate_expr_functor(Expr, Functor, Arity) :-
+    compound(Expr),
+    functor(Expr, Functor, Arity),
+    surface(Functor/Arity, aggregate, _, _, _).
 
 % The operator inventory is registry.pl's expression/5 (rank R5 of
 % plans/2026-07-29-prolog-org-review.md), not a local list.
