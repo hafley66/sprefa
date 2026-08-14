@@ -183,6 +183,12 @@ typed_scalar_value(split_json_array, [Text, Separator], Parts) :-
     ->  Parts = [Text]
     ;   split_on_separator(Text, Separator, Parts)
     ).
+typed_scalar_value(split_list_intern, [Text, Separator], Parts) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    (   Separator == ''
+    ->  Parts = [Text]
+    ;   split_on_separator(Text, Separator, Parts)
+    ).
 
 % sub_atom enumerates Before ascending, so the first solution is the leftmost
 % occurrence; a separator is a SUBSTRING, never split_string/4's character set.

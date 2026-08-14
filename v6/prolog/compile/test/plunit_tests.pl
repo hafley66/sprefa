@@ -5077,7 +5077,7 @@ expected_row(substr/2,  typed_scalar,        3, substr, typed([text, int],      
 expected_row(substr/3,  typed_scalar,        3, substr, typed([text, int, int], text)).
 expected_row(instr/2,   typed_scalar,        3, instr,  typed([text, text],     int)).
 expected_row(length/1,  typed_scalar,        3, length, typed([text],           int)).
-expected_row(split/2,   typed_scalar,        3, split_json_array, typed([text, text], json)).
+expected_row(split/2,   typed_scalar,        3, split_list_intern, typed([text, text], list(text))).
 expected_row(json_patch/2, json_scalar,      3, json_patch,           json_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
@@ -5172,6 +5172,21 @@ test(every_comparison_row_lowers_to_its_sql_operator) :-
              compile_comparison(direct, Goal, [], Text),
              atomic_list_concat(['(1 ', SqlOperator, ' 2)'], Expected),
              Text == Expected )).
+
+% FAIL-PRE-FIX (slice 2): split still lowers to the json carrier. Flipping the
+% registry row to list(text) makes the value position the interned list id (the
+% surrogate travels; the elements rest in the minted member rel).
+test(split_lowers_to_the_interned_list_id) :-
+    compile_expr(dict, identity, split('a,b,c', ','), [], Sql, list(text),
+                 list_intern(text, ArraySql)),
+    once(sub_atom(ArraySql, _, _, _, 'json_group_array("part")')),
+    canonical_type_name(list(text), EntityName),
+    format(atom(FromPrefix),
+           '(SELECT e."__id" FROM "~w" e WHERE e."content" = ',
+           [EntityName]),
+    sub_atom(Sql, 0, _, _, FromPrefix),
+    once(sub_atom(Sql, _, _, _,
+                  'e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ')).
 
 % The printer parenthesizes by the table's precedence: a tighter operator
 % nested inside a looser one needs no parens, the reverse does.

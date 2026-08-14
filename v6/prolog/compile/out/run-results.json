@@ -386,52 +386,52 @@
   },
   {
     "name": "split_parts_carry_as_a_json_array",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "SQLITE_ERROR: no such table: __gen__list_text_df210f232c1299bd",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "split_fans_out_through_spread",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "SQLITE_ERROR: no such table: __gen__list_text_df210f232c1299bd",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "split_keeps_empty_parts",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "SQLITE_ERROR: no such table: __gen__list_text_df210f232c1299bd",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "split_takes_a_multi_character_separator",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "SQLITE_ERROR: no such table: __gen__list_text_df210f232c1299bd",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "split_parts_keep_non_ascii_characters",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "SQLITE_ERROR: no such table: __gen__list_text_df210f232c1299bd",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "split_on_an_empty_separator_answers_the_whole_text",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "SQLITE_ERROR: no such table: __gen__list_text_df210f232c1299bd",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "split_initcap_and_fold_render_pascal_case",
-    "bucket": "identical",
-    "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "bucket": "emitted_crash",
+    "detail": "SQLITE_ERROR: no such table: __gen__list_text_df210f232c1299bd",
+    "final_bucket": "final_wrong",
+    "final_detail": "run threw before the final state could be read"
   },
   {
     "name": "contains_is_instr_greater_than_zero",
