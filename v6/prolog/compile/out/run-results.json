@@ -462,6 +462,27 @@
     "final_detail": ""
   },
   {
+    "name": "recursive_enum_acyclic_tree_round_trips",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "recursive_enum_cyclic_values_store_and_render",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "recursive_list_arg_parent_holds_child_node_values",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "match_classify_response",
     "bucket": "identical",
     "detail": "",
