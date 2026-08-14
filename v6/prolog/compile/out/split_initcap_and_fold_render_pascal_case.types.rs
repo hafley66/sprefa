@@ -12,7 +12,7 @@ pub struct Sym {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SymParts {
     pub name: String,
-    pub parts: Vec<String>,
+    pub parts: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

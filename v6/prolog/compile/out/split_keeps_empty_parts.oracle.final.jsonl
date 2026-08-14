@@ -1,1 +1,1 @@
-{"final":{"line":[["blank",""],["inner","a,,b"],["trailing","a,"]],"line_parts":[["blank",[""]],["inner",["a","","b"]],["trailing",["a",""]]]}}
+{"final":{"__gen__list_text_df210f232c1299bd":[["[\"\"]"],["[\"a\",\"\",\"b\"]"],["[\"a\",\"\"]"]],"__gen__list_text_df210f232c1299bd__member":[[1,0,""],[2,0,"a"],[2,1,""],[2,2,"b"],[3,0,"a"],[3,1,""]],"line":[["blank",""],["inner","a,,b"],["trailing","a,"]],"line_parts":[["blank",1],["inner",2],["trailing",3]]}}

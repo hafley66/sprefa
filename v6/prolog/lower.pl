@@ -553,8 +553,8 @@ compile_expr(Mode, Demand, Expr, Bound, Sql, Type, Encoding) :-
        Type = text, Encoding = direct
     ; typed_scalar_expr(Expr, Function, Arguments, OperandTypes, ResultType)
     -> compile_typed_operands(Mode, OperandTypes, Arguments, Bound, Expr, ArgumentSqls),
-       typed_scalar_sql(Function, ArgumentSqls, Sql),
-       Type = ResultType, Encoding = direct
+       typed_scalar_sql(Function, ArgumentSqls, ResultType, Sql, Encoding),
+       Type = ResultType
     ; json_scalar_expr(Expr, Function, Arguments)
     -> compile_json_operands(Mode, Arguments, Bound, Expr, ArgumentSqls),
        json_scalar_sql(Function, ArgumentSqls, Sql),
@@ -662,10 +662,32 @@ compile_typed_operands(Mode, [int | Types], [Operand | Rest], Bound, Whole, [Sql
     ),
     compile_typed_operands(Mode, Types, Rest, Bound, Whole, Sqls).
 
-typed_scalar_sql(Function, ArgumentSqls, Sql) :-
+typed_scalar_sql(Function, ArgumentSqls, ResultType, Sql, Encoding) :-
     length(ArgumentSqls, Arity),
     expression(Function/Arity, typed_scalar, _, Rendering, _),
-    typed_scalar_rendering(Function, Rendering, ArgumentSqls, Sql).
+    (   ResultType = list(ElementType)
+    ->  list_intern_sql(Function, Rendering, ArgumentSqls, ElementType, Sql,
+                         Encoding)
+    ;   typed_scalar_rendering(Function, Rendering, ArgumentSqls, Sql),
+        Encoding = direct
+    ).
+
+% The expression answers the interned list id; Encoding carries the intern
+% request the caller owes, and Encoding == direct means a plain scalar.
+list_intern_sql(split, split_list_intern, [TextSql, SeparatorSql], ElementType,
+                Sql, Encoding) :-
+    typed_scalar_rendering(split, split_json_array, [TextSql, SeparatorSql],
+                           ArraySql),
+    list_entity_id_lookup(ElementType, ArraySql, Sql),
+    Encoding = list_intern(ElementType, ArraySql).
+
+list_entity_id_lookup(ElementType, ArraySql, Sql) :-
+    canonical_type_name(list(ElementType), EntityName),
+    quote_ident(EntityName, QuotedEntity),
+    interned_id_sql(ArraySql, ContentIdSql),
+    format(atom(Sql),
+           '(SELECT e."__id" FROM ~w e WHERE e."content" = ~w)',
+           [QuotedEntity, ContentIdSql]).
 
 % The trailing-separator seed makes the last part ordinary; its NULL row
 % filters out. An empty separator never advances instr, so it cannot walk.
@@ -2232,23 +2254,35 @@ check_comparison_types(same_type, Goal, LeftType, RightType) :-
 
 % BuiltValues is the content SQL of every head position that had to be interned
 % on write (contract §5.7): the caller owes each one an intern statement.
+% ListInterns is the list(T)-typed head positions whose value is an interned
+% list id: the caller owes each one the content + member intern statements.
 head_select_list(Mode, ColumnTypes, Head, Bound, ColumnAliases, SelectExprs,
-                 BuiltValues) :-
+                 BuiltValues, ListInterns) :-
     Head =.. [_ | Args],
     maplist(head_column_expr(Mode, Bound), Args, ColumnTypes, SelectExprs0,
-            BuiltGroups),
-    append(BuiltGroups, BuiltValues),
+            InternGroups),
+    append(InternGroups, Interns),
+    partition_head_interns(Interns, BuiltValues, ListInterns),
     ( is_list(ColumnAliases)
     -> maplist(alias_select_expr, SelectExprs0, ColumnAliases, SelectExprs)
     ; SelectExprs = SelectExprs0
     ).
 
-head_column_expr(Mode, Bound, Arg, ColumnType, SelectExpr, Built) :-
+head_column_expr(Mode, Bound, Arg, ColumnType, SelectExpr, Interns) :-
     compile_expr(Mode, identity, Arg, Bound, Sql, _Type, Encoding),
-    (   column_encoding(Mode, ColumnType, dict), Encoding == direct
-    ->  interned_id_sql(Sql, SelectExpr), Built = [Sql]
-    ;   SelectExpr = Sql, Built = []
+    (   Encoding = list_intern(ElementType, ArraySql)
+    ->  SelectExpr = Sql, Interns = [list_intern(ElementType, ArraySql)]
+    ;   column_encoding(Mode, ColumnType, dict), Encoding == direct
+    ->  interned_id_sql(Sql, SelectExpr), Interns = [built_text(Sql)]
+    ;   SelectExpr = Sql, Interns = []
     ).
+
+partition_head_interns([], [], []).
+partition_head_interns([built_text(Sql) | Rest], [Sql | Built], ListInterns) :-
+    !, partition_head_interns(Rest, Built, ListInterns).
+partition_head_interns([list_intern(ElementType, ArraySql) | Rest], Built,
+                       [list_intern(ElementType, ArraySql) | ListInterns]) :-
+    partition_head_interns(Rest, Built, ListInterns).
 
 intern_write_statements([], _, _, []) :- !.
 intern_write_statements(BuiltValues, FromSql, WhereSql, [InternSql]) :-
@@ -2275,6 +2309,47 @@ intern_write_arm(FromSql, WhereSql, ValueSql, Arm) :-
            [ValueSql, FromSql, WhereSql]).
 
 alias_select_expr(Expr, Alias, AliasedExpr) :- format(atom(AliasedExpr), '~w AS "~w"', [Expr, Alias]).
+
+% Statement order is forced: the content text and each member value reach
+% "__str" before the entity and member rows that read their ids back out.
+list_intern_statements([], _, _, []) :- !.
+list_intern_statements(ListInterns, FromSql, WhereSql, Statements) :-
+    maplist(list_intern_statement(FromSql, WhereSql), ListInterns, StatementLists),
+    append(StatementLists, Statements).
+
+list_intern_statement(FromSql, WhereSql, list_intern(ElementType, ArraySql),
+                      Statements) :-
+    canonical_type_name(list(ElementType), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName),
+    quote_ident(EntityName, QuotedEntity),
+    quote_ident(MemberName, QuotedMember),
+    interned_id_sql(ArraySql, ContentIdSql),
+    list_intern_from(FromSql, From),
+    list_intern_where(WhereSql, Where),
+    member_intern_from(FromSql, ArraySql, MemberFrom),
+    intern_write_sql([ArraySql], FromSql, WhereSql, ContentInternSql),
+    format(atom(EntityInternSql),
+           'INSERT OR IGNORE INTO ~w ("content") SELECT DISTINCT ~w~w~w',
+           [QuotedEntity, ContentIdSql, From, Where]),
+    format(atom(MemberValueInternSql),
+           'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT i.value FROM ~w~w',
+           [MemberFrom, Where]),
+    format(atom(MemberInsertSql),
+           'INSERT OR IGNORE INTO ~w ("list_id", "idx", "value") SELECT e."__id", i.key, s."__id" FROM ~w JOIN ~w e ON e."content" = ~w JOIN "__str" s ON s."content" = i.value~w ON CONFLICT ("list_id", "idx") DO NOTHING',
+           [QuotedMember, MemberFrom, QuotedEntity, ContentIdSql, Where]),
+    Statements = [ContentInternSql, EntityInternSql, MemberValueInternSql,
+                  MemberInsertSql].
+
+list_intern_from(none, '') :- !.
+list_intern_from(FromSql, From) :- format(atom(From), ' FROM ~w', [FromSql]).
+
+list_intern_where(none, '') :- !.
+list_intern_where(WhereSql, Where) :- format(atom(Where), ' WHERE ~w', [WhereSql]).
+
+member_intern_from(none, ArraySql, From) :- !,
+    format(atom(From), 'json_each(~w) i', [ArraySql]).
+member_intern_from(FromSql, ArraySql, From) :-
+    format(atom(From), '~w, json_each(~w) i', [FromSql, ArraySql]).
 
 % ═══ interning (plans/2026-08-08-interning-contract.md rev 3) ══════════════
 % Threaded, never a flag: a runtime toggle cannot undo a declared column type.
@@ -3444,9 +3519,11 @@ edge_statement_single(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     % aliases by string surgery on an alias-free SELECT would be unsafe --
     % a json_object(...) expression's OWN internal commas would look
     % identical to expression-list separators to any naive re-splitter.
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    intern_write_statements(BuiltValues, FromSql, WhereSql, ProjectInternSqls),
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, ProjectInternSqls),
     % A FROM-less SELECT with a WHERE is the guard-only arm (every body goal
     % past the trigger is a comparison, a bind or a NOT EXISTS): SQLite
     % evaluates it over the one implicit row and returns zero rows when the
@@ -3545,7 +3622,7 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     compile_guard_goals(Mode, GuardGoals, PositiveBound, Bound, GuardWhereTexts),
     maplist(negated_atom_use, NegAtoms, NegUses),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w ~w', [QuotedFrontierTable, DeltaAlias]),
     append([DeltaFrom], OtherFromParts, FromParts),
@@ -3556,7 +3633,9 @@ edge_delta_project_sql(Mode, RelPlans, Head, TriggerAtom, OtherAtoms, PreAtoms,
     format(atom(DeltaProjectSql),
            'SELECT ~w FROM ~w WHERE ~w ORDER BY d0."_phase", d0."_sequence"',
            [SelectSql, FromSql, WhereSql]),
-    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, InternSqls).
 
 excluded_assignment(QuotedColumn, Text) :- format(atom(Text), '~w = excluded.~w', [QuotedColumn, QuotedColumn]).
 
@@ -4993,16 +5072,21 @@ level_recursive_arm_parts(Mode, RelPlans, Rule, PosUses, PosFromParts, JsonFromP
     append([PosWhereTexts, GuardWhereTexts, NegWhereTexts], AllWhereTexts),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, SelectExprs, BuiltValues, ListInterns),
     recursive_arm_builds_no_string(HeadRef, BuiltValues),
+    recursive_arm_builds_no_list(HeadRef, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, RawExprs, _).
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, RawExprs, _, _).
 
 % A recursive arm lives inside one WITH RECURSIVE statement, so there is no
 % place to put the intern write (§5.7.3, the per-round case).
 recursive_arm_builds_no_string(_, []) :- !.
 recursive_arm_builds_no_string(HeadRef, _) :-
     throw(unsupported_construct(built_text_in_recursive_head(HeadRef))).
+
+recursive_arm_builds_no_list(_, []) :- !.
+recursive_arm_builds_no_list(HeadRef, _) :-
+    throw(unsupported_construct(built_list_in_recursive_head(HeadRef))).
 
 level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
     Rule = (Head <- Body),
@@ -5018,7 +5102,7 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
     atomic_list_concat(AllFromParts, ', ', FromSql),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, BuiltValues, ListInterns),
     ref_count_group_exprs(Mode, Head, Bound, GroupExprs),
     atomic_list_concat(AliasedSelectExprs, ', ', SelectSql),
     atomic_list_concat(GroupExprs, ', ', GroupSql),
@@ -5032,7 +5116,9 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
               'SELECT ~w, count(*) AS "__refcount" FROM ~w WHERE ~w GROUP BY ~w',
               [SelectSql, FromSql, WhereSql, GroupSql])
     ),
-    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, InternSqls).
 
 % SQLite treats a bare integer in GROUP BY as a one-based SELECT-list
 % position, including when the integer is parenthesized. Adding zero makes it
@@ -5092,7 +5178,7 @@ level_insert_sql(Mode, RelPlans, HeadRef, (Head <- Body), InsertSql, InternSqls)
     ( aggregate_head_template(Head, Template)
     -> aggregate_select_statement(Mode, HeadColumnTypes, Head, Template, Bound, FromSql,
                                   AllWhereTexts, SelectStatement, InternSqls)
-    ;  head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues),
+    ;  head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues, ListInterns),
        atomic_list_concat(SelectExprs, ', ', SelectSql),
        ( AllWhereTexts == []
        -> WhereSql = none,
@@ -5100,7 +5186,9 @@ level_insert_sql(Mode, RelPlans, HeadRef, (Head <- Body), InsertSql, InternSqls)
        ; atomic_list_concat(AllWhereTexts, ' AND ', WhereSql),
          format(atom(SelectStatement), 'SELECT ~w FROM ~w WHERE ~w', [SelectSql, FromSql, WhereSql])
        ),
-       intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls)
+       intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+       list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+       append(TextInternSqls, ListInternSqls, InternSqls)
     ),
     maplist(quote_ident, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
@@ -5700,7 +5788,7 @@ level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos,
                           OtherFromParts, OtherWhereTexts),
     compile_body_guards(Mode, Body, Bound0, Bound, JsonFromParts, GuardWhereTexts),
     compile_negative_uses(Mode, RelPlans, NegUses, Bound, NegWhereTexts),
-    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues),
+    head_select_list(Mode, HeadColumnTypes, Head, Bound, none, SelectExprs, BuiltValues, ListInterns),
     atomic_list_concat(SelectExprs, ', ', SelectSql),
     format(atom(DeltaFrom), '~w d0', [QuotedFrontierTable]),
     append([[DeltaFrom], IdentityFromParts, OtherFromParts, JsonFromParts],
@@ -5712,7 +5800,9 @@ level_delta_select_arm(Mode, RelPlans, Head, Body, use(DeltaRef, DeltaArgs, pos,
     atomic_list_concat(WhereTexts, ' AND ', WhereSql),
     format(atom(DeltaArm), 'SELECT DISTINCT ~w FROM ~w WHERE ~w',
            [SelectSql, FromSql, WhereSql]),
-    intern_write_statements(BuiltValues, FromSql, WhereSql, InternSqls).
+    intern_write_statements(BuiltValues, FromSql, WhereSql, TextInternSqls),
+    list_intern_statements(ListInterns, FromSql, WhereSql, ListInternSqls),
+    append(TextInternSqls, ListInternSqls, InternSqls).
 
 delta_reference_identity(RelPlans, Name/Arity, Args, Columns,
                          Bound0, Bound, [From], Equalities) :-
@@ -6256,8 +6346,8 @@ tag_boot_statements(Name, [bootstmt(Sql, Params) | Rest],
                     [bootstmt(Name, Sql, Params) | Tagged]) :-
     tag_boot_statements(Name, Rest, Tagged).
 
-% engine.pl:run_program computes level_closure(PlainLevel, AggRules, BaseRows,
-% 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's
+% engine.pl:run_program computes level_closure(Decls, PlainLevel, AggRules,
+% BaseRows, 0, Level0) ONCE, immediately after seeding Initial rows and before tick 1's
 % state(...) exists -- the SAME DELETE/INSERT-SELECT SQL recomputeLevels runs
 % inside a tick (lower.pl:level_statement_group/3), run once more here with
 % no bind params (a literal statement, not a template) so a level view over

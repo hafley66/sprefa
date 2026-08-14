@@ -286,9 +286,12 @@ expression(substr/2,  typed_scalar, 3, substr, typed([text, int],      text)).
 expression(substr/3,  typed_scalar, 3, substr, typed([text, int, int], text)).
 expression(instr/2,   typed_scalar, 3, instr,  typed([text, text],     int)).
 expression(length/1,  typed_scalar, 3, length, typed([text],           int)).
-% split answers the json array carrier `decode(Parts, [... Part])` already fans
-% out; SQLite has no split scalar, so the rendering is not the function name.
-expression(split/2,   typed_scalar, 3, split_json_array, typed([text, text], json)).
+% split answers the interned list id: the value travelling through a column or
+% an `:=` binding is the surrogate id of a content-interned list, and the
+% elements rest in the minted member rel (split_list_intern rendering in
+% lower.pl). split_json_array stays for any other json producer that wants the
+% raw array.
+expression(split/2,   typed_scalar, 3, split_list_intern, typed([text, text], list(text))).
 % RFC 7396 merge patch, the streaming scan operator over two json documents.
 % Its own family because text_only would reject a json operand.
 expression(json_patch/2, json_scalar,      3, json_patch,           json_only).

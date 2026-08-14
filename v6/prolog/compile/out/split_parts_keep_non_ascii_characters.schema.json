@@ -8,10 +8,7 @@
     },
     "line_parts": {
       "additionalProperties":false,
-      "properties": {
-        "name": {"type":"string"},
-        "parts": {"items": {"type":"string"},"type":"array"}
-      },
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
       "required": ["name", "parts" ],
       "type":"object"
     }

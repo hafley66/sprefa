@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "symbol": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"}},
+      "required": ["name" ],
+      "type":"object"
+    },
+    "symbol_parts": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "required": ["name", "parts" ],
+      "type":"object"
+    },
+    "symbol_word": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"word": {"type":"string"}},
+      "required": ["name", "word" ],
+      "type":"object"
+    }
+  },
+  "$id":"list_element_type_flows_through_spread#2117a60174116268",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

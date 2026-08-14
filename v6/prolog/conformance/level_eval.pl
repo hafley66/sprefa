@@ -4,7 +4,7 @@
 % reserved head forms incl. the json arm.
 
 :- module(level_eval,
-          [ split_rules/4, level_closure/5,
+          [ split_rules/4, level_closure/6,
             % Its not/1 clause carries an ordering contract the shared walker
             % deliberately does not reproduce.
             goal_rel_refs/3 ]).
@@ -14,6 +14,8 @@
 :- use_module(library(pairs)).
 :- use_module(body).
 :- use_module('../compile/registry', [surface_for_term/6]).
+:- use_module('../0_type_plane', [canonical_json_text/2]).
+:- use_module('../0_generic_expand', [canonical_type_name/2]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -70,13 +72,13 @@ split_rules(Rules, AggRules, PlainLevel, EdgeRules) :-
 
 % A negated or aggregated relation must sit strictly below its consumer, so a
 % stratum reads complete inputs.
-level_closure(PlainLevel, AggRules, Base, Tick, Level) :-
+level_closure(Decls, PlainLevel, AggRules, Base, Tick, Level) :-
     append(PlainLevel, AggRules, LevelRules),
     stratify_level_rules(LevelRules, Strata),
-    eval_strata(Strata, Base, Tick, [], Level).
+    eval_strata(Strata, Decls, Base, Tick, [], Level).
 
-eval_strata([], _, _, Acc, Level) :- sort(Acc, Level).
-eval_strata([Group | Rest], Base, Tick, Acc0, Level) :-
+eval_strata([], _, _, _, Acc, Level) :- sort(Acc, Level).
+eval_strata([Group | Rest], Plane, Base, Tick, Acc0, Level) :-
     append(Base, Acc0, Lower),
     findall(Rule, ( member(Rule, Group), Rule = (Head <- _), aggregate_head(Head, _, _) ),
             GroupAgg),
@@ -84,9 +86,9 @@ eval_strata([Group | Rest], Base, Tick, Acc0, Level) :-
             GroupPlain),
     findall(Row, ( member(Rule, GroupAgg), agg_rule_rows(Rule, Lower, Tick, Row) ), AggRows),
     append(Lower, AggRows, StratumBase),
-    plain_fixpoint(GroupPlain, StratumBase, Tick, [], PlainRows),
+    plain_fixpoint(Plane, GroupPlain, StratumBase, Tick, [], PlainRows),
     append([Acc0, AggRows, PlainRows], Acc),
-    eval_strata(Rest, Base, Tick, Acc, Level).
+    eval_strata(Rest, Plane, Base, Tick, Acc, Level).
 
 % ── stratum assignment ──────────────────────────────────────────────────────
 % S(head) >= S(body rel) for a positive read; strictly greater for a rel under
@@ -180,30 +182,74 @@ relax_strata(Constraints, Cap, Strata0, Strata) :-
         relax_strata(Constraints, Cap, Strata1, Strata)
     ).
 
-plain_fixpoint(PlainLevel, Base, Tick, Known0, Level) :-
+plain_fixpoint(Plane, PlainLevel, Base, Tick, Known0, Level) :-
     rows_index(Base, BaseIndex),
-    plain_fixpoint_(PlainLevel, BaseIndex, Tick, Known0, Level).
+    plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Known0, Level).
 
-plain_fixpoint_(PlainLevel, BaseIndex, Tick, Known0, Level) :-
+plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Known0, Level) :-
     findall(EvaluatedHead,
             ( member((Head <- Body), PlainLevel),
               solve(Body, ctx(rows(BaseIndex, Known0), [], Tick)),
               eval_head(Head, EvaluatedHead) ),
-            Heads),
-    append(Known0, Heads, Merged0),
+            Derived),
+    mint_heads(Plane, Derived, Heads, MintedRows),
+    append([Known0, Heads, MintedRows], Merged0),
     sort(Merged0, Merged),
     ( Merged == Known0 -> Level = Known0
-    ; plain_fixpoint_(PlainLevel, BaseIndex, Tick, Merged, Level) ).
+    ; plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Merged, Level) ).
 
+% ── list(T) in head position: the value IS the interned list id ─────────────
+% Derivation order, never findall order over a set: the counter this walks
+% must land on the same id the emitted entity's autoincrement "__id" does.
 
-agg_loop(PlainLevel, AggRules, Base, Tick, Known0, Level) :-
-    append(Base, Known0, Visible),
-    findall(Row, ( member(Rule, AggRules), agg_rule_rows(Rule, Visible, Tick, Row) ), AggRows),
-    append(Known0, AggRows, Merged0),
-    sort(Merged0, Merged),
-    ( Merged == Known0 -> Level = Known0
-    ; plain_fixpoint(PlainLevel, Base, Tick, Merged, Widened),
-      agg_loop(PlainLevel, AggRules, Base, Tick, Widened, Level) ).
+mint_heads(_, [], [], []).
+mint_heads(Decls, [Derived | Rest], [Head | Heads], Rows) :-
+    mint_head(Decls, Derived, Head, HereRows),
+    mint_heads(Decls, Rest, Heads, MoreRows),
+    append(HereRows, MoreRows, Rows).
+
+mint_head(Decls, Derived, Head, Rows) :-
+    Derived =.. [Name | Values],
+    length(Values, Arity),
+    (   list_column_element_types(Decls, Name/Arity, ElementTypes)
+    ->  mint_values(ElementTypes, Values, Minted, [], Rows),
+        Head =.. [Name | Minted]
+    ;   Head = Derived, Rows = []
+    ).
+
+% none at a position whose column is not a list; the arity check keeps a rel
+% whose columns are undeclared out of the walk entirely.
+list_column_element_types(Decls, Name/Arity, ElementTypes) :-
+    findall(Column, member(col_type(Name/Arity, Column, _), Decls), Columns),
+    length(Columns, Arity),
+    findall(Element,
+            ( member(Column, Columns),
+              (   memberchk(list_column(Name/Arity, Column, list(Found)), Decls)
+              ->  Element = Found
+              ;   Element = none
+              ) ),
+            ElementTypes),
+    once(( member(Element0, ElementTypes), Element0 \== none )).
+
+mint_values([], [], [], Rows, Rows).
+mint_values([Element | Elements], [Value | Values], [Minted | Rest], Rows0, Rows) :-
+    (   Element \== none, is_list(Value)
+    ->  mint_list_value(Element, Value, Minted, HereRows),
+        append(Rows0, HereRows, Rows1)
+    ;   Minted = Value, Rows1 = Rows0
+    ),
+    mint_values(Elements, Values, Rest, Rows1, Rows).
+
+mint_list_value(ElementType, Elements, Id, [EntityRow | MemberRows]) :-
+    canonical_json_text(Elements, ContentText),
+    list_mint_id(ContentText, Id),
+    canonical_type_name(list(ElementType), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName),
+    EntityRow =.. [EntityName, ContentText],
+    findall(MemberRow,
+            ( nth0(Index, Elements, Element),
+              MemberRow =.. [MemberName, Id, Index, Element] ),
+            MemberRows).
 
 agg_rule_rows((Head <- Body), Visible, Tick, Row) :-
     aggregate_head(Head, Template, Ref),

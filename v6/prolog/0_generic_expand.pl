@@ -23,13 +23,17 @@
               [ decl_id/3, param_id/4, member_id/4, constraint_id/3,
                 impl_id/3, app_id/3, arg_id/3, id_kind_name/3 ]).
 
+:- op(1150, xfx, <-).
+:- op(1150, xfx, <+).
+
 expand_generic_in_context(_Context, Program, Expanded) :-
     expand_generic_program(Program, Expanded).
 
-expand_generic_program(prog(Decls0, Rules), prog(Decls, Rules)) :-
-    expand_user_templates(Decls0, Rules, _UserInstances, UserDecls),
+expand_generic_program(prog(Decls0, Rules0), prog(Decls, Rules)) :-
+    expand_user_templates(Decls0, Rules0, _UserInstances, UserDecls),
     generic_fixpoint(UserDecls, Instances, WithMintedDecls),
-    validate_generated_name_collisions(UserDecls, Rules, Instances),
+    validate_generated_name_collisions(UserDecls, Rules0, Instances),
+    expand_list_decodes(WithMintedDecls, Rules0, Rules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     generic_artifact_order(Instances, RewrittenDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
@@ -38,15 +42,77 @@ expand_generic_program(prog(Decls0, Rules), prog(Decls, Rules)) :-
 
 % Executable comparison arm, written as a second path so the template and
 % replacement logic cannot drift apart from the wired entry above.
-expand_generic_program_raw(prog(Decls0, Rules), prog(Decls, Rules)) :-
-    expand_user_templates(Decls0, Rules, _UserInstances, UserDecls),
+expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
+    expand_user_templates(Decls0, Rules0, _UserInstances, UserDecls),
     generic_fixpoint(UserDecls, Instances, WithMintedDecls),
-    validate_generated_name_collisions(UserDecls, Rules, Instances),
+    validate_generated_name_collisions(UserDecls, Rules0, Instances),
+    expand_list_decodes(WithMintedDecls, Rules0, Rules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     generic_artifact_order(Instances, RewrittenDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
     retarget_type_decl_mirrors(OptionDecls, Decls).
+
+% `decode(Parts, [... Part])` over a list(T) source is a keyed read of the
+% minted member rel, and becomes that atom for BOTH doors here.
+expand_list_decodes(Decls, Rules0, Rules) :-
+    (   member(col_type(_, _, Type), Decls), list_flavor(Type)
+    ->  maplist(expand_list_decode_rule(Decls), Rules0, Rules)
+    ;   Rules = Rules0
+    ).
+
+expand_list_decode_rule(Decls, (Head <- Body0), (Head <- Body)) :- !,
+    rewrite_list_decodes(Decls, Body0, Body).
+expand_list_decode_rule(Decls, (Head <+ Body0), (Head <+ Body)) :- !,
+    rewrite_list_decodes(Decls, Body0, Body).
+expand_list_decode_rule(_, Rule, Rule).
+
+% An untouched body keeps its ORIGINAL term, never a rebuilt copy: every
+% emitted module for a program with no list decode has to stay byte-identical.
+rewrite_list_decodes(Decls, Body0, Body) :-
+    body_conjunction_goals(Body0, Goals0),
+    maplist(rewrite_list_decode(Decls, Goals0), Goals0, Goals),
+    (   Goals == Goals0
+    ->  Body = Body0
+    ;   goals_body_conjunction(Goals, Body)
+    ).
+
+rewrite_list_decode(Decls, Goals, Goal0, Goal) :-
+    (   nonvar(Goal0), Goal0 = decode(Source, Pattern),
+        nonvar(Pattern), Pattern = spread(Element),
+        var(Source), ( var(Element) ; atomic(Element) ),
+        list_decode_member_ref(Decls, Goals, Source, MemberName)
+    ->  Goal =.. [MemberName, Source, _Index, Element]
+    ;   Goal = Goal0
+    ).
+
+% Variable IDENTITY resolves the source, so the walk is member/2 and never a
+% findall: findall copies its template and every source would read unbound.
+list_decode_member_ref(Decls, Goals, Source, MemberName) :-
+    member(Atom, Goals),
+    compound(Atom),
+    functor(Atom, Name, Arity),
+    Atom =.. [_ | Args],
+    nth1(Position, Args, Argument),
+    Argument == Source,
+    findall(Type, member(col_type(Name/Arity, _, Type), Decls), ColumnTypes),
+    length(ColumnTypes, Arity),
+    nth1(Position, ColumnTypes, list(ElementType)),
+    !,
+    canonical_type_name(list(ElementType), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName).
+
+body_conjunction_goals(Body, Goals) :-
+    (   nonvar(Body), Body = (Left, Right)
+    ->  body_conjunction_goals(Left, LeftGoals),
+        body_conjunction_goals(Right, RightGoals),
+        append(LeftGoals, RightGoals, Goals)
+    ;   Goals = [Body]
+    ).
+
+goals_body_conjunction([Goal], Goal) :- !.
+goals_body_conjunction([Goal | Rest], (Goal, More)) :-
+    goals_body_conjunction(Rest, More).
 
 % Each ground application of a compile-time rel template mints one ordinary
 % relation schema; downstream storage machinery sees no generic construct.
@@ -817,8 +883,16 @@ plain_decl_name(keyed(Name/_, _), Name).
 plain_decl_name(kind(Name/_, _), Name).
 plain_decl_name(keep(Name/_, _), Name).
 
+% The collapsed list column keeps a record of the type it collapsed FROM, the
+% option_column/3 precedent: nothing downstream can read `int` and know better.
 replace_generic_types(Decls0, Instances, Decls) :-
-    maplist(replace_generic_decl(Instances), Decls0, Decls).
+    maplist(replace_generic_decl(Instances), Decls0, Rewritten),
+    findall(list_column(Ref, Column, Type),
+            ( member(col_type(Ref, Column, Type), Decls0),
+              list_flavor(Type),
+              memberchk(Type, Instances) ),
+            ListColumns),
+    append(Rewritten, ListColumns, Decls).
 
 replace_generic_decl(Instances,
                      col_type(Ref, Column, Type0),

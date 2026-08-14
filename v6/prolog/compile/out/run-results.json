@@ -476,7 +476,28 @@
     "final_detail": ""
   },
   {
-    "name": "recursive_list_arg_parent_holds_child_node_values",
+    "name": "split_value_is_the_interned_list_id",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "two_producers_share_one_interned_list_id",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "list_element_type_flows_through_spread",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "empty_separator_interns_a_one_element_list",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",

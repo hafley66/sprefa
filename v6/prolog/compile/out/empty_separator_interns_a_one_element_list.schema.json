@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "line": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    },
+    "line_parts": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "required": ["name", "parts" ],
+      "type":"object"
+    }
+  },
+  "$id":"empty_separator_interns_a_one_element_list#08a3ac1679fad8d8",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

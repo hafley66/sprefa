@@ -3,7 +3,9 @@
 % for every edge/level statement lower.pl emits. These are UNIT tests over
 % the Prolog compiler stages themselves (analyze -> strat -> lower), never
 % touching sqlite3 -- test/run_sql_check.pl is the separate execution-level
-% harness (self-grading item 2).
+% harness (self-grading item 2). ONE EXCEPTION, the list_value_position unit:
+% an access-path claim is only answerable by the planner that makes it, so it
+% runs EXPLAIN QUERY PLAN through the sqlite3 CLI.
 %
 % Run: swipl -q -l v6/prolog/compile/test/plunit_tests.pl -g run_tests -g halt
 
@@ -13,6 +15,8 @@
 
 :- use_module(library(plunit)).
 :- use_module(library(apply)).
+:- use_module(library(process)).
+:- use_module(library(readutil)).
 :- use_module('../../compile',
               [ read_fixture_term/4, program_plan/2, program_plan/3,
                 compile_dl6/2, default_intern_mode/1,
@@ -5077,7 +5081,7 @@ expected_row(substr/2,  typed_scalar,        3, substr, typed([text, int],      
 expected_row(substr/3,  typed_scalar,        3, substr, typed([text, int, int], text)).
 expected_row(instr/2,   typed_scalar,        3, instr,  typed([text, text],     int)).
 expected_row(length/1,  typed_scalar,        3, length, typed([text],           int)).
-expected_row(split/2,   typed_scalar,        3, split_json_array, typed([text, text], json)).
+expected_row(split/2,   typed_scalar,        3, split_list_intern, typed([text, text], list(text))).
 expected_row(json_patch/2, json_scalar,      3, json_patch,           json_only).
 
 test(inventory_is_exactly_the_expected_rows) :-
@@ -5172,6 +5176,21 @@ test(every_comparison_row_lowers_to_its_sql_operator) :-
              compile_comparison(direct, Goal, [], Text),
              atomic_list_concat(['(1 ', SqlOperator, ' 2)'], Expected),
              Text == Expected )).
+
+% FAIL-PRE-FIX (slice 2): split still lowers to the json carrier. Flipping the
+% registry row to list(text) makes the value position the interned list id (the
+% surrogate travels; the elements rest in the minted member rel).
+test(split_lowers_to_the_interned_list_id) :-
+    compile_expr(dict, identity, split('a,b,c', ','), [], Sql, list(text),
+                 list_intern(text, ArraySql)),
+    once(sub_atom(ArraySql, _, _, _, 'json_group_array("part")')),
+    canonical_type_name(list(text), EntityName),
+    format(atom(FromPrefix),
+           '(SELECT e."__id" FROM "~w" e WHERE e."content" = ',
+           [EntityName]),
+    sub_atom(Sql, 0, _, _, FromPrefix),
+    once(sub_atom(Sql, _, _, _,
+                  'e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ')).
 
 % The printer parenthesizes by the table's precedence: a tighter operator
 % nested inside a looser one needs no parens, the reverse does.
@@ -8783,3 +8802,55 @@ test(schema_parity_is_one_executable_golden) :-
     Path \== ''.
 
 :- end_tests(schema_parity_golden).
+
+:- begin_tests(list_value_position).
+
+% FAIL-PRE-FIX: before the shared rewrite, `decode(Parts, [... Part])` over a
+% list(T) source threw decode_source_not_struct at lower.pl:compile_json_decodes.
+test(spread_over_a_list_column_joins_the_member_rel) :-
+    lowered_for('19_list_value_position.pl',
+                list_element_type_flows_through_spread, Lowered),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    symbol_word_insert(LevelStatements, InsertSql),
+    member_rel_name(MemberName),
+    format(atom(Join), '"~w" b1 WHERE b1."list_id" = b0."parts"', [MemberName]),
+    once(sub_atom(InsertSql, _, _, _, Join)),
+    \+ sub_atom(InsertSql, _, _, _, 'json_each').
+
+% The keyed-read claim, measured by the planner rather than asserted: the
+% member rel's UNIQUE (list_id, idx) is what keeps the spread off a full scan.
+test(member_join_searches_the_list_id_index) :-
+    lowered_for('19_list_value_position.pl',
+                list_element_type_flows_through_spread, Lowered),
+    Lowered = lowered(_, Ddl, _, _, LevelStatements, _, _, _),
+    symbol_word_insert(LevelStatements, InsertSql),
+    explain_query_plan(Ddl, InsertSql, Plan),
+    member_rel_name(MemberName),
+    format(atom(Search),
+           'SEARCH b1 USING INDEX sqlite_autoindex_~w_1 (list_id=?)',
+           [MemberName]),
+    once(sub_atom(Plan, _, _, _, Search)),
+    \+ sub_atom(Plan, _, _, _, 'SCAN b1').
+
+symbol_word_insert(LevelStatements, InsertSql) :-
+    memberchk(levelstmt(symbol_word/2, _, InsertSqls, _, _, _, _), LevelStatements),
+    once(( member(InsertSql, InsertSqls),
+           sub_atom(InsertSql, 0, _, _, 'INSERT OR IGNORE INTO "symbol_word"') )).
+
+member_rel_name(MemberName) :-
+    canonical_type_name(list(text), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName).
+
+explain_query_plan(Ddl, Sql, Plan) :-
+    atomic_list_concat(Ddl, ';\n', DdlText),
+    format(atom(Script), '~w;\nEXPLAIN QUERY PLAN ~w;\n', [DdlText, Sql]),
+    process_create(path(sqlite3), [':memory:'],
+                   [stdin(pipe(Input)), stdout(pipe(Output)), process(Pid)]),
+    format(Input, '~w', [Script]),
+    close(Input),
+    read_string(Output, _, Text),
+    close(Output),
+    process_wait(Pid, exit(0)),
+    atom_string(Plan, Text).
+
+:- end_tests(list_value_position).

@@ -461,11 +461,11 @@ dropped_entry(Ref, Dropped, lrow(Stamp, Row)) :-
 
 tick(Prog, state(Tick, Store0, PrevLevel, PrevAll), CarryIn, OutsideArrivals,
      state(NextTick, Store, Level, NextAll), CarryOut, Deltas) :-
-    Prog = prog(_, Rules),
+    Prog = prog(TickDecls, Rules),
     split_rules(Rules, AggRules, PlainLevel, _),
     absorb_arrivals(Prog, Tick, OutsideArrivals, Store0, 1, StoreArrived, _, ArrivalOccs),
     store_rows(StoreArrived, MidBase),
-    level_closure(PlainLevel, AggRules, MidBase, Tick, MidLevel),
+    level_closure(TickDecls, PlainLevel, AggRules, MidBase, Tick, MidLevel),
     ord_subtract(MidLevel, PrevLevel, NewLevelRows),
     stamp_extra(Tick, NewLevelRows, 1000, LevelOccs),
     stamp_extra(Tick, CarryIn, 2000, CarryOccs),
@@ -474,7 +474,7 @@ tick(Prog, state(Tick, Store0, PrevLevel, PrevAll), CarryIn, OutsideArrivals,
                         StoreArrived, StoreWritten, WrittenRows),
     apply_retention(Prog, StoreWritten, Store),
     store_rows(Store, FinalBase),
-    level_closure(PlainLevel, AggRules, FinalBase, Tick, Level),
+    level_closure(TickDecls, PlainLevel, AggRules, FinalBase, Tick, Level),
     ord_subtract(Level, MidLevel, PostWriteLevelRows),
     append(FinalBase, Level, NextAll0), sort(NextAll0, NextAll),
     boundary_deltas(Prog, Store0, Store, PrevAll, NextAll, Deltas),
@@ -541,6 +541,7 @@ delta_ref_is_set(Decls, Row) :-
 % ═══ the run loop, engine-owned drains (q5) ═════════════════════════════════
 
 run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
+    list_mint_reset,
     prepare_program(SugaredProg, HostProg, _, _, _),
     % Host preparation stays a PRE-PASS: it mixes syntax normalization with
     % world-plan extraction, so it does not belong in the four-phase table.
@@ -573,7 +574,7 @@ run_program(SugaredProg, Initial0, Schedule0, FinalAll, DeltaTicks) :-
     subscribed_rels(ProgDecls, Rules, Queries, _SubscribedRels),
     split_rules(Rules, AggRules, PlainLevel, _),
     store_rows(Store0, BaseRows),
-    level_closure(PlainLevel, AggRules, BaseRows, 0, Level0),
+    level_closure(ProgDecls, PlainLevel, AggRules, BaseRows, 0, Level0),
     append(BaseRows, Level0, All0), sort(All0, PrevAll),
     run_ticks(Prog, state(1, Store0, Level0, PrevAll), [], Schedule, 0, FinalAll, DeltaTicks).
 

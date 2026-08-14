@@ -1665,7 +1665,7 @@ check_level_rule_shape((Head <- Body)) :-
     ; true ),
     % COMPILER-ONLY unsupported construct, deliberately NOT mirrored into 0_program_check.pl
     % or engine.pl: the oracle DOES solve now/1 in a level body (solve/2 reads
-    % the tick straight out of ctx/3, and level_closure/5 is handed the same
+    % the tick straight out of ctx/3, and level_closure/6 is handed the same
     % Tick), so this is a capability gap named precisely, not a semantics
     % change. Lowering it would need the tick inside the level DELETE/INSERT
     % pair as well as inside an edge arm, and no fixture writes one; leaving
