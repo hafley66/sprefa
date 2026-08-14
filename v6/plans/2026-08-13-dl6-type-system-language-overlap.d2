@@ -1,0 +1,640 @@
+direction: down
+
+vars: {
+  d2-config: {
+    layout-engine: elk
+    theme-id: 200
+    dark-theme-id: 200
+    pad: 48
+    sketch: false
+  }
+}
+
+classes: {
+  source: {
+    style: {
+      fill: "#eef6ff"
+      stroke: "#3574a8"
+      font-color: "#17212b"
+      border-radius: 8
+    }
+  }
+  semantic: {
+    style: {
+      fill: "#f5f0ff"
+      stroke: "#7355a3"
+      font-color: "#211a2b"
+      border-radius: 8
+    }
+  }
+  operation: {
+    shape: hexagon
+    style: {
+      fill: "#fff6dc"
+      stroke: "#9a6b00"
+      font-color: "#2b220d"
+    }
+  }
+  runtime: {
+    style: {
+      fill: "#eefaf1"
+      stroke: "#3b7f50"
+      font-color: "#17261b"
+      border-radius: 8
+    }
+  }
+  boundary: {
+    style: {
+      fill: "#fff0f0"
+      stroke: "#a34a4a"
+      font-color: "#2b1717"
+      stroke-dash: 5
+      border-radius: 8
+    }
+  }
+  note: {
+    style: {
+      fill: "#f8f8f8"
+      stroke: "#777777"
+      font-color: "#202020"
+    }
+  }
+  guide: {
+    style: {
+      fill: "#f1f1f1"
+      stroke: "#6f6f6f"
+      font-color: "#202020"
+      stroke-dash: 4
+      border-radius: 4
+    }
+  }
+  junction: {
+    shape: diamond
+    style: {
+      fill: "#f5f0ff"
+      stroke: "#7355a3"
+      font-color: "#211a2b"
+    }
+  }
+  proof: {
+    shape: parallelogram
+    style: {
+      fill: "#eefaf1"
+      stroke: "#3b7f50"
+      font-color: "#17261b"
+    }
+  }
+  artifact: {
+    shape: cylinder
+    style: {
+      fill: "#eefaf1"
+      stroke: "#3b7f50"
+      font-color: "#17261b"
+    }
+  }
+  policy: {
+    shape: diamond
+    style: {
+      fill: "#fff0f0"
+      stroke: "#a34a4a"
+      font-color: "#2b1717"
+    }
+  }
+}
+
+title: "DL6 type-system map: shared algebra, language differences, and lowering choices" {
+  shape: text
+  style.font-size: 28
+}
+
+legend: {
+  direction: right
+  source: "source declaration" {class: source}
+  semantic: "semantic graph row" {class: semantic}
+  operation: "compiler operation" {class: operation}
+  runtime: "retained at runtime / target artifact" {class: runtime}
+  boundary: "design choice or deferred capability" {class: boundary}
+  guide: "suggested reading path" {class: guide}
+  junction: "semantic junction: several paths meet" {class: junction}
+  proof: "resolved evidence / proof record" {class: proof}
+  artifact: "retained or emitted artifact" {class: artifact}
+  policy: "compiler policy fork" {class: policy}
+}
+
+shared_algebra: "1. Shared algebra" {
+  direction: down
+
+  guide: "PATH A · Read the generic equation\nDeclaration → parameters and bounds\nApplication → substitution → obligations\nProof + substituted members → instance" {
+    class: guide
+  }
+
+  declaration: "Declaration\nD<P>" {class: source}
+  parameters: "Parameters\nP = [T, U, ...]" {class: semantic}
+  bounds: "Bounds\nC(P) = required capabilities" {class: semantic}
+  members: "Members\nM(P) = fields / relation columns / operations" {class: semantic}
+  application: "Application\nD<A>" {class: source}
+  substitute: "Substitute\nσ = [P ↦ A]\n[G1]" {class: operation}
+  obligations: "Obligations\nC(A)\n[R1 · G1]" {class: semantic}
+  prove: "Resolve / prove\nA satisfies every bound\n[R1 · R2]" {class: operation}
+  instance: "Specialized instance\nσ(M)\n[R3]" {class: artifact}
+
+  declaration -> parameters: "binds"
+  declaration -> bounds: "constrains"
+  declaration -> members: "types"
+  application -> substitute: "supplies arguments"
+  parameters -> substitute: "receives arguments"
+  bounds -> obligations: "instantiate with σ"
+  substitute -> obligations
+  obligations -> prove
+  members -> instance: "apply σ"
+  prove -> instance: "permits"
+}
+
+language_views: "2. Cross-language mechanics and convergence" {
+  direction: down
+
+  guide: "PATH B · Compare one language\nStart at its blue node\nFollow contribution labels into purple junctions\nContinue through satisfaction and reachability\nFinish at the target-representation fork" {
+    class: guide
+  }
+
+  rust: "Rust\ntraits + explicit impls\nmonomorphized generics\n[R1 · R2 · R3]" {class: source}
+  go: "Go\nconstraint type sets\nstructural method satisfaction\n[G1]" {class: source}
+  typescript: "TypeScript\nstructural constraints\nfull type erasure\n[TS1]" {class: source}
+  flix: "Flix\ntype-class instances\nSchemaRow + higher kinds\n[F1 · F2 · F3]" {class: source}
+  souffle: "Soufflé\nclosed typed relations\nrecords + ADTs\n[S1]" {class: source}
+  glean: "Glean / Angle\nstored predicate identity\nversioned schemas\n[GL1]" {class: source}
+
+  declarations: "Generic declaration\nconstructor + parameters + typed members" {class: semantic}
+  applications: "Type application\nconstructor + ordered arguments" {class: semantic}
+  substitution: "Substitution\nreplace each parameter with its argument\n[G1]" {class: operation}
+  obligations: "Instantiated obligations\nbounds after substitution\n[R1 · G1]" {class: semantic}
+  satisfaction: "Constraint satisfaction\nfind evidence or derive compatibility" {class: junction}
+  evidence: "Resolved evidence\nimplementation + proof path" {class: proof}
+  reachable: "Reachable instance graph\napplications closed to a fixpoint" {class: operation}
+  representation: "Target representation policy" {class: policy}
+
+  explicit: "Explicit nominal evidence\nRust impl · Flix instance · current DL6 is" {class: junction}
+  structural: "Structural satisfaction\nGo method set · TypeScript object shape" {class: junction}
+  type_set: "Admissible type set\nGo constraint interface" {class: junction}
+  row_kind: "Open schema composition\nFlix SchemaRow remainder\n[F1 · F3]" {class: junction}
+  closed_schema: "Closed executable schema\nSoufflé relation attributes" {class: junction}
+  stored_identity: "Stored relation identity\nGlean predicate + key/value + version" {class: junction}
+
+  retain: "Retain generic declarations\nRust source · TypeScript declarations" {class: artifact}
+  specialize: "Specialize reachable applications\nSQLite · JSON Schema · closed Rust artifacts" {class: artifact}
+  erase: "Erase evidence and parameters\nTypeScript runtime" {class: artifact}
+  serialize: "Serialize semantic graph\nRust IR request boundary" {class: artifact}
+
+  rust -> declarations: "parameterized items"
+  rust -> explicit: "trait selection"
+  rust -> retain: "generic source"
+  rust -> specialize: "monomorphization"
+
+  go -> declarations: "type parameters"
+  go -> type_set: "constraint meaning"
+  go -> structural: "implicit implementation"
+
+  typescript -> declarations: "generic interfaces"
+  typescript -> structural: "assignability"
+  typescript -> erase: "runtime fate"
+
+  flix -> declarations: "kinded parameters"
+  flix -> explicit: "instance resolution"
+  flix -> row_kind: "open relation sets"
+
+  souffle -> closed_schema: "execution boundary"
+  glean -> stored_identity: "storage boundary"
+
+  declarations -> applications: "instantiate"
+  applications -> substitution: "bind arguments"
+  substitution -> obligations: "apply σ to bounds"
+
+  explicit -> satisfaction: "lookup evidence"
+  structural -> satisfaction: "derive from members"
+  type_set -> satisfaction: "test membership"
+  obligations -> satisfaction: "must discharge"
+  satisfaction -> evidence: "records why it holds"
+
+  row_kind -> declarations: "kind-check open schema parameters"
+  evidence -> reachable: "permits instance"
+  applications -> reachable: "seed"
+  reachable -> closed_schema: "close relation set"
+  reachable -> stored_identity: "assign stable relation identity"
+  closed_schema -> representation: "requires concrete relations"
+  stored_identity -> representation: "preserve identity/version"
+  reachable -> representation: "choose by target"
+
+  representation -> retain
+  representation -> specialize
+  representation -> erase
+  representation -> serialize
+}
+
+cross_language_matrix: "3. What DL6 takes, in compiler sequence" {
+  direction: down
+
+  guide: "PATH C · Follow the compiler\nRead the numbered gold spine from 1 through 8\nSide rows state what each stage writes\nSchema and identity branches rejoin before lowering\nGreen cylinders are resulting target artifacts" {
+    class: guide
+  }
+
+  parse: "1 · Parse one declaration vocabulary\nrelation · interface · enum · struct" {class: operation}
+  bind: "2 · Bind parameters and kinds\nType · RecordRow · SchemaRow · Type → Type\n[F3]" {class: operation}
+  apply: "3 · Build applications\nconstructor identity + ordered type arguments\n[G1]" {class: operation}
+  substitute: "4 · Substitute arguments\nσ(parameter) = argument\n[G1]" {class: operation}
+  require: "5 · Produce obligations\ncapability<argument>\n[R1 · R2]" {class: operation}
+  resolve: "6 · Resolve evidence\nexplicit implementation first\noptional structural derivation at declared borders\n[R2 · F2 · TS1]" {class: operation}
+  close: "7 · Close reachable applications\nfixed point over nested constructors\n[R3]" {class: operation}
+  lower: "8 · Select representation by target" {class: operation}
+
+  parameter_rows: "parameter rows" {class: semantic}
+  kind_rows: "kind rows\nFlix contribution" {class: semantic}
+  member_rows: "member rows" {class: semantic}
+  application_rows: "application + argument rows" {class: semantic}
+  constraint_rows: "constraint rows" {class: semantic}
+  implementation_rows: "implementation rows\nRust / Flix contribution" {class: semantic}
+  proof_rows: "resolved_by rows\nretain diagnostic path" {class: proof}
+  derivation_rows: "derived_from rows" {class: semantic}
+
+  open_schema: "Open SchemaRow\nrequired relations + remainder" {class: boundary}
+  closed_relations: "Closed relation catalog\nSoufflé / SQLite execution shape" {class: artifact}
+  stable_identity: "Predicate identity + schema version\nGlean contribution" {class: artifact}
+  rust_target: "Rust source\nretain generics or specialize" {class: artifact}
+  ts_target: "TypeScript declarations\nretain types, erase runtime evidence" {class: artifact}
+  json_target: "JSON Schema\nspecialize reachable shapes" {class: artifact}
+  ir_target: "Rust IR\nserialize declaration + proof graph" {class: artifact}
+
+  parse -> bind -> apply -> substitute -> require -> resolve -> close -> lower
+
+  parse -> member_rows: "records fields / columns"
+  bind -> parameter_rows
+  bind -> kind_rows
+  apply -> application_rows
+  require -> constraint_rows
+  resolve -> implementation_rows
+  resolve -> proof_rows
+  close -> derivation_rows
+
+  kind_rows -> open_schema: "SchemaRow kind"
+  open_schema -> close: "instantiate remainder at program border"
+  close -> closed_relations: "materialize reachable set"
+  close -> stable_identity: "name/version storage schema"
+
+  lower -> rust_target
+  lower -> ts_target
+  lower -> json_target
+  lower -> ir_target
+  closed_relations -> rust_target: "pure Rust / DD form"
+  closed_relations -> json_target: "concrete shapes"
+  stable_identity -> ir_target: "cross-revision references"
+
+  implementation_rows -> resolve: "candidate evidence"
+  constraint_rows -> resolve: "obligations"
+  derivation_rows -> lower: "reachable instances"
+}
+dl6_today: "4. DL6 today: actual terms and lowering" {
+  direction: down
+
+  guide: "PATH D · Audit current implementation\nChoose one source declaration\nTrace parser term → normalized row\nFollow that row into validation or fixed-point expansion\nFinish at the target that consumes it" {
+    class: guide
+  }
+
+  surface: "Surface declarations" {
+    direction: right
+    interface: |text
+interface json_encodable.
+| {
+      class: source
+    }
+    generic: |text
+rel pair(T: json_encodable)(
+  first: T,
+  second: T
+).
+| {
+      class: source
+    }
+    implementation: |text
+rel document(...) is json_encodable.
+| {
+      class: source
+    }
+    application: |text
+rel envelope(value: pair(document)).
+| {
+      class: source
+    }
+  }
+
+  parser: "Parser terms" {
+    direction: right
+    interface: "interface_decl(Name, Parameters)" {class: semantic}
+    generic: "rel_template(Segments, Parameters, Columns)" {class: semantic}
+    implementation: "rel_is_implementation(Ref, Applications)" {class: semantic}
+    application: "pair(document)\nas a compound type term" {class: semantic}
+  }
+
+  normalized: "Normalized type graph rows" {
+    direction: right
+    declaration: "declaration(Id, Parent, Name, Kind, Phase)" {class: semantic}
+    parameter: "parameter(Id, Owner, Ordinal, Name)" {class: semantic}
+    member: "member(Id, Owner, Ordinal, Name, TypeRef)" {class: semantic}
+    bound_row: "constraint(Id, ParameterId, InterfaceId)" {class: semantic}
+    application: "application(Id, ConstructorId)\nargument(Id, ApplicationId, Ordinal, Type)" {class: semantic}
+    implementation: "implementation(Id, SubjectId, interface_application(InterfaceId))" {class: semantic}
+    derivation: "derived_from(ConcreteId, ApplicationId)" {class: semantic}
+  }
+
+  compile: "Compile-time closure" {
+    direction: right
+    discover: "Discover ground applications" {class: operation}
+    validate: "Validate arity, names, duplicate evidence, bounds" {class: operation}
+    fixpoint: "Repeat until nested applications stop producing instances" {class: operation}
+    mint: "Mint concrete relation declarations" {class: operation}
+    replace: "Replace generic type applications with concrete names" {class: operation}
+    order: "Topologically order generated artifacts" {class: operation}
+    discover -> validate -> fixpoint -> mint -> replace -> order
+  }
+
+  targets: "Target-specific fate" {
+    direction: right
+    ts: "TypeScript declaration emitter\nretain <T extends Bound>" {class: runtime}
+    rust: "Rust declaration emitter\nretain <T: Bound>" {class: runtime}
+    json: "JSON Schema\nemit concrete reachable shapes" {class: runtime}
+    sqlite: "SQLite relation plane\nconsume concrete monomorphized schemas" {class: runtime}
+    ir: "Rust IR request\ncarry normalized declaration graph" {class: runtime}
+  }
+
+  surface.interface -> parser.interface -> normalized.declaration
+  surface.generic -> parser.generic -> normalized.parameter
+  parser.generic -> normalized.member
+  normalized.parameter -> normalized.bound_row
+  surface.implementation -> parser.implementation -> normalized.implementation
+  surface.application -> parser.application -> normalized.application
+  normalized.application -> normalized.derivation
+
+  normalized.declaration -> compile.discover
+  normalized.parameter -> compile.discover
+  normalized.member -> compile.discover
+  normalized.bound_row -> compile.validate
+  normalized.implementation -> compile.validate
+  normalized.application -> compile.discover
+  normalized.derivation -> compile.mint
+
+  compile.order -> targets.ts
+  compile.order -> targets.rust
+  compile.order -> targets.json
+  compile.order -> targets.sqlite
+  normalized.declaration -> targets.ir
+}
+
+dl6_adjustment: "5. Proposed DL6 semantic shape" {
+  direction: down
+
+  guide: "PATH E · Read the proposed type system\nSurface syntax only feeds the declaration graph\nThe graph feeds five typing judgments\nEvery judgment is intended to become queryable data\nThe final specialization remains target-selected" {
+    class: guide
+  }
+
+  surface: "Surface syntax: one declaration form" {
+    direction: right
+    plain: |text
+rel document(
+  body: json
+).
+| {
+      class: source
+    }
+    generic: |text
+rel pair<T>(
+  first: T,
+  second: T
+)
+where T: json_encodable.
+| {
+      class: source
+    }
+    capability: |text
+interface json_encodable<T>.
+| {
+      class: source
+    }
+    evidence: |text
+document is json_encodable<document>.
+| {
+      class: source
+    }
+    use: |text
+rel envelope(
+  value: pair<document>
+).
+| {
+      class: source
+    }
+  }
+
+  unification: "One declaration graph" {
+    direction: right
+    declaration: "declaration\nkind = relation | interface | enum | struct" {class: semantic}
+    parameter: "parameter\nkind = Type | RecordRow | SchemaRow | Type → Type" {class: semantic}
+    member: "member\ncolumn | operation | associated_type" {class: semantic}
+    bound_edge: "constraint\nsubject parameter + capability application" {class: semantic}
+    evidence: "implementation\nsubject type + capability application + members" {class: semantic}
+    application: "application\nconstructor + ordered arguments" {class: semantic}
+    declaration -> parameter
+    declaration -> member
+    parameter -> bound_edge
+    declaration -> evidence
+    declaration -> application
+  }
+
+  formulas: "Typing judgments represented as rows" {
+    direction: right
+    wf: "well_formed(Application)\nconstructor arity and kinds agree" {class: operation}
+    subst: "substitution(Application, Parameter, Argument)\nσ(P) = A" {class: operation}
+    obligation: "obligation(Application, Capability<Argument>)\nσ(C(P)) = C(A)" {class: operation}
+    resolution: "resolved_by(Obligation, Implementation)" {class: operation}
+    concrete: "specialization(Application, ConcreteDeclaration)" {class: operation}
+    wf -> subst -> obligation -> resolution -> concrete
+  }
+
+  surface.plain -> unification.declaration
+  surface.generic -> unification.parameter
+  surface.capability -> unification.declaration
+  surface.evidence -> unification.evidence
+  surface.use -> unification.application
+
+  unification.application -> formulas.wf
+  unification.parameter -> formulas.subst
+  unification.bound_edge -> formulas.obligation
+  unification.evidence -> formulas.resolution
+  unification.member -> formulas.concrete
+}
+
+phases: "6. Capability phases and target borders" {
+  grid-columns: 2
+
+  guide: "PATH F · Read implementation order\nComplete each column top to bottom\nCross-column arrows are prerequisites\nPhase 0 stabilizes identity before evidence\nKinds precede target legality rules" {
+    class: guide
+  }
+
+  phase_0: "Phase 0\nCurrent ergonomic cleanup" {
+    direction: down
+    p0a: "Use <...> only for type application"
+    p0b: "Move bounds into where clauses"
+    p0c: "Infer generic status from parameter rows"
+    p0d: "Remove rel_template as a semantic kind"
+    p0e: "Keep parser compatibility while migrating fixtures"
+    p0a -> p0b -> p0c -> p0d -> p0e
+  }
+
+  phase_1: "Phase 1\nEvidence and composition" {
+    direction: down
+    p1a: "Generic interfaces: Interface<T>"
+    p1b: "Recursive evidence: list<T> satisfies C when T satisfies C"
+    p1c: "Multiple bounds and superinterfaces"
+    p1d: "Coherence: one applicable implementation per obligation"
+    p1e: "Diagnostics retain declaration, application, and proof path"
+    p1a -> p1b -> p1c -> p1d -> p1e
+  }
+
+  phase_2: "Phase 2\nRows and higher kinds" {
+    direction: down
+    p2a: "Introduce kind rows"
+    p2b: "SchemaRow for open sets of relations"
+    p2c: "RecordRow for open structural values"
+    p2d: "Type → Type for list / option / target constructors"
+    p2e: "Associated types only when an emitter requires projection"
+    p2a -> p2b -> p2c -> p2d -> p2e
+  }
+
+  phase_3: "Phase 3\nLowering policy" {
+    direction: down
+    p3a: "Analyze reachable applications per target"
+    p3b: "TS: retain declarations, erase runtime evidence"
+    p3c: "Rust source: retain generics or specialize by policy"
+    p3d: "SQLite / Soufflé-like plane: require closed concrete relations"
+    p3e: "JSON Schema: specialize reachable closed shapes"
+    p3f: "IR: serialize applications, constraints, and resolved evidence"
+    p3a -> p3b
+    p3a -> p3c
+    p3a -> p3d
+    p3a -> p3e
+    p3a -> p3f
+  }
+
+  phase_0 -> phase_1: "stable declaration graph"
+  phase_1 -> phase_2: "evidence model established"
+  phase_2 -> phase_3: "kinds make target legality explicit"
+}
+
+decision_points: "7. Decisions kept visible in the graph" {
+  grid-columns: 2
+
+  guide: "PATH G · Review unresolved semantics\nRead each red question first\nDescend through the currently represented option\nSibling branches preserve alternatives without selecting them" {
+    class: guide
+  }
+
+  structural_nominal: "Capability satisfaction" {
+    direction: down
+    question: "Explicit implementation rows, structural derivation, or both?" {class: boundary}
+    current: "Current DL6: explicit rel ... is ... rows" {class: semantic}
+    rust_flix: "Rust / Flix contribution: coherent explicit evidence" {class: note}
+    go_ts: "Go / TS contribution: derived compatibility at selected borders" {class: note}
+    question -> current
+    rust_flix -> current
+    go_ts -> current
+  }
+
+  specialization: "Representation" {
+    direction: down
+    question: "Which targets retain a generic declaration?" {class: boundary}
+    source: "Semantic graph retains constructor + arguments" {class: semantic}
+    closed: "Storage targets consume concrete relation schemas" {class: runtime}
+    retained: "Rust / TS source targets may retain generic syntax" {class: runtime}
+    question -> source
+    source -> closed
+    source -> retained
+  }
+
+  rows: "Open worlds" {
+    direction: down
+    question: "When does a compiler input need an open relation set?" {class: boundary}
+    closed: "Current program relation catalog is closed" {class: semantic}
+    open: "SchemaRow variable permits required rels plus an unknown remainder" {class: semantic}
+    use: "Emitter signatures and module interfaces can consume the open form" {class: runtime}
+    question -> closed
+    question -> open -> use
+  }
+
+  behavior: "Interface members" {
+    direction: down
+    question: "Marker capability, required operations, or associated output types?" {class: boundary}
+    marker: "json_encodable<T> can begin as a marker proof" {class: semantic}
+    operation: "Later: encode(T) -> json" {class: semantic}
+    associated: "Later: associated wire / storage representation" {class: semantic}
+    question -> marker
+    marker -> operation
+    operation -> associated
+  }
+}
+
+research_sources: "Research citations" {
+  grid-columns: 2
+
+  r1: "[R1] rustc: goals and clauses\nTrait references become logical goals and clauses." {
+    class: guide
+    link: "https://rustc-dev-guide.rust-lang.org/traits/goals-and-clauses.html"
+  }
+  r2: "[R2] rustc: trait resolution\nObligations are paired with impl or parameter-environment evidence." {
+    class: guide
+    link: "https://rustc-dev-guide.rust-lang.org/traits/resolution.html"
+  }
+  r3: "[R3] rustc: monomorphization\nCollection finds the concrete generic items required for code generation." {
+    class: guide
+    link: "https://rustc-dev-guide.rust-lang.org/backend/monomorph.html"
+  }
+  g1: "[G1] Go specification\nInstantiation substitutes arguments, checks constraints, and infers through unification." {
+    class: guide
+    link: "https://go.dev/ref/spec"
+  }
+  ts1: "[TS1] TypeScript design and compiler FAQ\nThe type system is structural and fully erasable." {
+    class: guide
+    link: "https://github.com/microsoft/TypeScript/wiki/TypeScript-Design-Goals"
+  }
+  f1: "[F1] Flix fixpoints\nSchema-row variables describe composable open sets of predicates." {
+    class: guide
+    link: "https://doc.flix.dev/fixpoints.html"
+  }
+  f2: "[F2] Flix traits\nInstances provide coherent type-class evidence; overlaps are rejected." {
+    class: guide
+    link: "https://doc.flix.dev/traits.html"
+  }
+  f3: "[F3] Flix higher-kinded types\nKinds distinguish Type, RecordRow, SchemaRow, and type constructors." {
+    class: guide
+    link: "https://doc.flix.dev/higher-kinded-types.html"
+  }
+  s1: "[S1] Soufflé types\nExecution schemas use concrete relation attributes, records, unions, and ADTs." {
+    class: guide
+    link: "https://souffle-lang.github.io/types"
+  }
+  gl1: "[GL1] Glean schema basics\nPredicates give facts stored identity, keys, optional values, and uniqueness." {
+    class: guide
+    link: "https://glean.software/docs/schema/basic/"
+  }
+}
+
+reading_path: "Reading path" {
+  direction: right
+  a: "Shared algebra"
+  b: "Language views"
+  c: "DL6 compiler sequence"
+  d: "DL6 today"
+  e: "Proposed semantic shape"
+  f: "Phases"
+  g: "Open decisions"
+  h: "Research citations"
+  a -> b -> c -> d -> e -> f -> g -> h
+}
+
+title -> legend -> shared_algebra -> language_views -> cross_language_matrix -> dl6_today -> dl6_adjustment -> phases -> decision_points -> research_sources -> reading_path: {
+  style.opacity: 0
+}
