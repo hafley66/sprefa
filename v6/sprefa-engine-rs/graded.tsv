@@ -62,6 +62,7 @@ duplicate_host_name_is_refused	unsupported	duplicate_host_decl(look)
 edge_chain_hops_tick_per_stage	clean	byte-clean
 edge_into_unkeyed_set_rejected	unsupported	edge_into_unkeyed_set(sink/1)
 edge_trigger_literal_filters_on_the_oracle_door	unsupported	trigger_arg_not_var(200)
+empty_separator_interns_a_one_element_list	clean	byte-clean
 ends_with_is_a_negative_substr_compare	clean	byte-clean
 enum_decl_two_variants_union_in_tag_view	clean	byte-clean
 enum_decl_variant_name_collision_is_refused	unsupported	enum_variant_name_collision(page)
@@ -188,6 +189,7 @@ list_bare_column_round_trips	clean	byte-clean
 list_bare_text_door	clean	byte-clean
 list_column_fans_out_through_spread	clean	byte-clean
 list_dense_sequence_text_door	clean	byte-clean
+list_element_type_flows_through_spread	clean	byte-clean
 list_entity_dense_sequence_end_to_end	clean	byte-clean
 list_entity_linked_sequence_end_to_end	clean	byte-clean
 list_interned_set_dictionary_content_deduplicates	clean	byte-clean
@@ -292,6 +294,9 @@ pre_in_level_rule_rejected	unsupported	pre_in_level_rule(source_item/1)
 probe_output_comparison_guard	clean	byte-clean
 quote_in_literal_doubles_the_escape	clean	byte-clean
 range_join_over_arithmetic	clean	byte-clean
+recursive_enum_acyclic_tree_round_trips	clean	byte-clean
+recursive_enum_cyclic_values_store_and_render	clean	byte-clean
+recursive_list_arg_parent_holds_child_node_values	unsupported	type_arrival_shape_mismatch('__gen__list_node_b0871c875897'/1,content,text,field_not_text(100))
 reference_target_emptied_by_option_split_is_named	unsupported	reference_target_has_no_columns(squad/0)
 regexp_non_match	clean	byte-clean
 regexp_operand_not_text	unsupported	regexp_operand_not_text(source/1,value,int)
@@ -355,6 +360,7 @@ split_on_an_empty_separator_answers_the_whole_text	clean	byte-clean
 split_parts_carry_as_a_json_array	clean	byte-clean
 split_parts_keep_non_ascii_characters	clean	byte-clean
 split_takes_a_multi_character_separator	clean	byte-clean
+split_value_is_the_interned_list_id	clean	byte-clean
 stale_keyed_retraction_keeps_replacement	clean	byte-clean
 starts_with_is_a_leading_substr_compare	clean	byte-clean
 starts_with_takes_the_prefix_from_a_column	clean	byte-clean
@@ -393,6 +399,7 @@ trigger_marker_is_what_stops_backlog_replay	unsupported	edge_body_needs_json_des
 trim_charset_strips_both_ends	clean	byte-clean
 trim_default_strips_only_space	clean	byte-clean
 two_pins_dedup_to_one_demand_row	clean	byte-clean
+two_producers_share_one_interned_list_id	clean	byte-clean
 typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))
 typed_int_without_literal_witness	clean	byte-clean
 unmarked_chain_replays_to_late_subscriber	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
