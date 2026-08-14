@@ -66,8 +66,10 @@ enum_decl_variant_name_collision_is_refused	unsupported	enum_variant_name_collis
 enum_decl_variant_rows_round_trip_through_tag_view	clean	byte-clean
 enum_name_is_a_column_type	clean	byte-clean
 enum_nullary_variant_boots_and_tags	clean	byte-clean
+enum_variant_derived_by_level_rule	clean	byte-clean
 enum_variant_field_typed_as_rel_is_a_ref	clean	byte-clean
 enum_variant_field_undeclared_type_still_throws	unsupported	column_type_unknown(treee)
+enum_variants_run_unchanged_under_the_origin_row_pass	clean	byte-clean
 error_is_a_named_unsupported	unsupported	lifecycle_arm(error)
 exhaust_policy	clean	byte-clean
 extraction_fork_callgraph	clean	byte-clean
@@ -116,6 +118,10 @@ host_output_column_shadows_runtime_ordinal	unsupported	host_column_shadows_runti
 identical_demand_dedups	clean	byte-clean
 identical_increments_stack_as_log_deltas	clean	byte-clean
 increment_decrement_same_tick_nets_zero	clean	byte-clean
+initcap_capitalizes_each_word_and_lowers_the_rest	clean	byte-clean
+initcap_replace_projects_snake_to_pascal	clean	byte-clean
+instr_answers_first_position_or_zero	clean	byte-clean
+instr_result_feeds_a_substr_operand	clean	byte-clean
 int_accepts_integral_float	clean	byte-clean
 int_float_arithmetic_keeps_real_result	clean	byte-clean
 int_out_of_range_is_named_unsupported	unsupported	int_out_of_range(measure/1,value,9007199254740993)
@@ -173,6 +179,8 @@ keyed_level_head_is_refused	unsupported	keyed_level_head(current_value/2)
 keyed_log_rejected	unsupported	keyed_log_rel(latest/2,[1])
 keyed_replace_departs_the_old_row	clean	byte-clean
 latest_in_level_rule_rejected	unsupported	latest_in_level_rule(source_item/1)
+length_counts_characters	clean	byte-clean
+length_result_joins_a_comparison	clean	byte-clean
 level_view_reads_set_projection_not_occurrences	clean	byte-clean
 list_bare_column_round_trips	clean	byte-clean
 list_bare_text_door	clean	byte-clean
@@ -195,6 +203,8 @@ log_rel_identical_arrival_is_two_occurrences	clean	byte-clean
 log_retraction_rejected	compiled	no oracle tick log
 log_stacks_within_tick_and_across_ticks	clean	byte-clean
 log_without_retention_rejected	unsupported	missing_retention(event/1)
+lower_folds_ascii_untouches_nonascii	clean	byte-clean
+ltrim_strips_leading_default_and_charset	clean	byte-clean
 lww_fold_follows_arrival_order	clean	byte-clean
 marker_stops_backlog_replay	clean	byte-clean
 match_classify_response	clean	byte-clean
@@ -318,6 +328,8 @@ retention_prune_is_a_visible_minus	clean	byte-clean
 retention_single_arm_still_prunes	clean	byte-clean
 retraction_only_tick_retracts_level_view	clean	byte-clean
 rev_fill_not_behind_keeps_stale_pin_empty	clean	byte-clean
+reverse_reverses_characters	runtime-error	boot statement failed: SqlInputError { error: Error { code: Unknown, extended_code: 1 }, msg: "no such function: reverse", sql: "INSERT OR IGNORE INTO \"__str\" (\"content\") SELEC
+rtrim_one_arg_strips_trailing_whitespace	clean	byte-clean
 rtrim_strips_trailing_chars	clean	byte-clean
 same_tick_error_then_fresh_chains_arms	unsupported	trigger_arg_not_var(error(_))
 scan_is_a_named_unsupported	unsupported	removed_word(scan)
@@ -334,6 +346,13 @@ set_dedups_log_stacks	clean	byte-clean
 set_rel_identical_arrival_is_one_occurrence	clean	byte-clean
 shared_demand_refcount	clean	byte-clean
 shuffled_arrival_reorders_log_deltas	clean	byte-clean
+split_fans_out_through_spread	clean	byte-clean
+split_initcap_and_fold_render_pascal_case	clean	byte-clean
+split_keeps_empty_parts	clean	byte-clean
+split_on_an_empty_separator_answers_the_whole_text	clean	byte-clean
+split_parts_carry_as_a_json_array	clean	byte-clean
+split_parts_keep_non_ascii_characters	clean	byte-clean
+split_takes_a_multi_character_separator	clean	byte-clean
 stale_keyed_retraction_keeps_replacement	clean	byte-clean
 state_flap_nets_to_zero_scope_churn	clean	byte-clean
 struct_arrival_field_type_rejected	unsupported	type_arrival_shape_mismatch(finding/2,at,span,field_not_int(span,end,nine))
@@ -355,6 +374,9 @@ struct_span_columns_are_int_after_decode	clean	byte-clean
 struct_type_cycle_rejected	unsupported	type_cycle([node])
 struct_type_mutual_cycle_rejected	unsupported	type_cycle([left,right])
 subscribe_is_a_named_unsupported	unsupported	lifecycle_arm(subscribe)
+substr_negative_start_counts_from_the_end	clean	byte-clean
+substr_positive_start_is_one_based	clean	byte-clean
+substr_with_span_takes_span_characters	clean	byte-clean
 sum_min_max_group_by_plain_columns	clean	byte-clean
 switch_as_keyed_replace	clean	byte-clean
 take_until_keyed_replace_negated_done	clean	byte-clean
@@ -364,6 +386,8 @@ text_one_and_numeric_one_never_join	unsupported	join_column_type_mismatch('b1."v
 text_rejects_number_ingress	unsupported	type_arrival_shape_mismatch(label/1,value,text,field_not_text(4))
 tightened_baseline_catches_regrowth	clean	byte-clean
 trigger_marker_is_what_stops_backlog_replay	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
+trim_charset_strips_both_ends	clean	byte-clean
+trim_default_strips_only_space	clean	byte-clean
 two_pins_dedup_to_one_demand_row	clean	byte-clean
 typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))
 typed_int_without_literal_witness	clean	byte-clean
@@ -375,6 +399,7 @@ unsubscribe_is_a_named_unsupported	unsupported	lifecycle_arm(unsubscribe)
 unwrap_aggregate_and_interpolation	clean	byte-clean
 unwrap_below_budget_silent	clean	byte-clean
 unwrap_unchanged_file_silent	clean	byte-clean
+upper_folds_ascii_untouches_nonascii	clean	byte-clean
 variant_field_bool_stays_bool	clean	byte-clean
 variant_field_float_stays_float	clean	byte-clean
 variant_field_int_and_text_unchanged	clean	byte-clean

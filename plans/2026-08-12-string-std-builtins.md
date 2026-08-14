@@ -198,3 +198,116 @@ imports, not for integral row-wise values.
 | arch | `cd v6/prolog && swipl -g go -t halt ARCH.pl` | 7 PASS / 0 FAIL | see run |
 
 `MANIFEST_REASON_DIFF` must stay all zero.
+
+## 2026-08-14: the fork table, resolved by implementation
+
+Three of the fork rows above are closed. What closed them, and the spelling
+each landed with.
+
+### Already closed before this section was written
+
+| fork row | closed by | spelling |
+|---|---|---|
+| substr, length, instr (int operand / int result) | the `typed_scalar` family, `registry.pl` | `Out := substr(Text, 2)`, `Out := substr(Text, 2, 2)`, `Out := instr(Text, '_')`, `Out := length(Text)` |
+| the `text_only` gate | not widened; sidestepped | `typed(OperandTypes, ResultType)` carries per-operand types and a result type, so `text_only` never had to admit an int |
+
+The inventory table's verdict column is therefore stale for those rows: they
+read FORK and they are LAND. `expression/5` is the truth.
+
+### split, landed here
+
+**split introduces no table-valued construct.** The plan above priced split as
+a new body-header relation (`split_field(Rel, Field, part(Idx, Text))`). That
+was the wrong shape. split returns the json array carrier the language
+already has, and the multi-row half is the `[... Part]` spread that
+`json_arm.pl:159` has graded since the list-flavor ruling.
+
+| row | family | rendering | type rule |
+|---|---|---|---|
+| `split/2` | `typed_scalar` | `split_json_array` | `typed([text, text], json)` |
+
+The surface is a two-rule idiom, and both rules are constructs that already
+existed:
+
+```
+rel sym(name: text).
+rel sym_parts(name: text, parts: json_list(text)).
+rel sym_word(name: text, word: text).
+rel pascal(name: text, rendered: text).
+
+sym_parts(Name, Parts) <-
+  sym(Name),
+  Parts := split(Name, '_').
+sym_word(Name, Word) <-
+  sym_parts(Name, Parts),
+  decode(Parts, [... Part]),
+  Word := initcap(Part).
+pascal(Name, group_concat(Word, '')) <- sym_word(Name, Word).
+```
+
+Pure-rxjs lowering, per the every-snippet law: rule 1 is `map` (one text to
+one array), rule 2 is `mergeMap` over the array's parts followed by `map`,
+rule 3 is `scan`/`reduce` keyed on Name. The spread IS the mergeMap, which is
+why reusing it rather than inventing a table-valued relation is the shape
+that keeps the rx story honest.
+
+**Why two rules and not one.** `Parts := split(Text, ','), decode(Parts, ...)`
+inside ONE body does not compile: `compile_body_guards/6` at `lower.pl:5113`
+compiles decode goals BEFORE the bind fold, so the decode source is not yet
+bound and `decode_source_not_bound` throws. A stored json column between the
+two rules is also the cheaper shape, because the separator scan is a
+correlated recursive CTE and the spread would otherwise inline it twice (once
+for the array type guard, once for `json_each`).
+
+**Semantics**, JS `String.prototype.split` with a non-empty separator, probed
+against sqlite3 3.43.2 and graded by the oracle:
+
+| input | parts |
+|---|---|
+| `split('id,name,age', ',')` | `["id","name","age"]` |
+| `split('', ',')` | `[""]` |
+| `split('a,', ',')` | `["a",""]` |
+| `split('a,,b', ',')` | `["a","","b"]` |
+| `split('std::io::Read', '::')` | `["std","io","Read"]` |
+| `split('café,naïve', ',')` | `["café","naïve"]` |
+| `split('abc', '')` | `["abc"]` |
+
+N separators give N+1 parts, so no empty part is ever dropped. The separator
+is a SUBSTRING, never a character set: the oracle uses `sub_atom/5` rather
+than `split_string/4`, which would read `'::'` as the set `{:}` and answer
+`["std","","io","","Read"]`.
+
+**The empty separator is a decision, and it is reversible.** JS walks
+characters; this returns the whole text as one part. The reason is
+termination: the SQL scan advances by `instr(rest, sep) + length(sep)`, and an
+empty separator leaves `instr` at 0 and the position never moving, so a
+character walk is not the cheap branch of the same CTE. Reverse it by adding a
+character-walk arm to `split_json_array` in `lower.pl` and the matching oracle
+clause, not by changing the surface.
+
+**Lowering**: `typed_scalar_sql/3` no longer requires `Rendering == Function`;
+it dispatches through a new `typed_scalar_rendering/4` that mirrors
+`text_scalar_rendering/4`. The bare-name branch is the last clause, so
+substr/instr/length are unchanged. The split clause seeds the scan with one
+trailing separator, which makes the last part ordinary rather than a special
+case, and filters the seed row's NULL part back out.
+
+**Sites touched**: `compile/registry.pl` (one row), `lower.pl`
+(`typed_scalar_rendering/4`), `conformance/body.pl`
+(`typed_scalar_value(split_json_array, ...)` + `split_on_separator/3`),
+`compile/test/plunit_tests.pl` (one `expected_row`),
+`conformance/fixtures/15_string_split.pl` (new). No parser change: `split(A, B)`
+parses through the generic identifier-then-paren path at
+`parse_dl_dcg.pl:1209`, the same door `upper` and `substr` use. No printer
+change: `print_dl.pl:654` prints it as an ordinary compound, and the text door
+round-trips byte-identically.
+
+### Still forked, and why
+
+| row | why it is still forked |
+|---|---|
+| format/printf | `concat([...])` already renders text from columns, which is what the typegen probe needed. printf buys padding and numeric formats only, and its oracle is a printf reimplementation. Not bought without a caller. |
+| contains, starts_with, ends_with | `typed_scalar` can now hold them (`typed([text, text], bool)`), so the family is no longer the blocker. The unpriced part is the `bool` result round-trip: a bool column is a CHECK-constrained integer (`0_type_plane.pl:577`) whose oracle value is `bool_lit(true)`, and nothing measures that path for a computed bool. Cheap, but it has no caller either. |
+| join | still `group_concat`, still an aggregate, and the split fixture shows `group_concat` folding split parts back, so the pair is closed in practice |
+| snake_to_pascal / camel / pascal_to_snake | `split` + `initcap` + `group_concat` spell PascalCase in three rules, graded by `split_initcap_and_fold_render_pascal_case`. A dedicated scalar would buy one rule, not a capability. |
+| repeat, pad_left, pad_right, char_at, char | no caller |

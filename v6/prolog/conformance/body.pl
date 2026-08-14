@@ -177,6 +177,22 @@ typed_scalar_value(instr, [Text, Needle], Out) :-
 typed_scalar_value(length, [Text], Out) :-
     ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
     atom_length(Text, Out).
+typed_scalar_value(split_json_array, [Text, Separator], Parts) :-
+    ( atomic(Text) -> true ; throw(non_display_in_concat(Text)) ),
+    (   Separator == ''
+    ->  Parts = [Text]
+    ;   split_on_separator(Text, Separator, Parts)
+    ).
+
+% sub_atom enumerates Before ascending, so the first solution is the leftmost
+% occurrence; a separator is a SUBSTRING, never split_string/4's character set.
+split_on_separator(Text, Separator, [Part | Rest]) :-
+    (   sub_atom(Text, Before, _, After, Separator)
+    ->  sub_atom(Text, 0, Before, _, Part),
+        sub_atom(Text, _, After, 0, Remainder),
+        split_on_separator(Remainder, Separator, Rest)
+    ;   Part = Text, Rest = []
+    ).
 
 substr_first(Start, TextLen, First) :-
     ( Start < 0 -> First is TextLen + Start + 1 ; First = Start ).

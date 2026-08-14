@@ -1,0 +1,21 @@
+{
+  "$defs": {
+    "line": {
+      "additionalProperties":false,
+      "properties": {"body": {"type":"string"},"name": {"type":"string"}},
+      "required": ["name", "body" ],
+      "type":"object"
+    },
+    "line_parts": {
+      "additionalProperties":false,
+      "properties": {
+        "name": {"type":"string"},
+        "parts": {"items": {"type":"string"},"type":"array"}
+      },
+      "required": ["name", "parts" ],
+      "type":"object"
+    }
+  },
+  "$id":"split_takes_a_multi_character_separator#c4314dce3b73d6a3",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -5077,6 +5077,7 @@ expected_row(substr/2,  typed_scalar,        3, substr, typed([text, int],      
 expected_row(substr/3,  typed_scalar,        3, substr, typed([text, int, int], text)).
 expected_row(instr/2,   typed_scalar,        3, instr,  typed([text, text],     int)).
 expected_row(length/1,  typed_scalar,        3, length, typed([text],           int)).
+expected_row(split/2,   typed_scalar,        3, split_json_array, typed([text, text], json)).
 expected_row(json_patch/2, json_scalar,      3, json_patch,           json_only).
 
 test(inventory_is_exactly_the_expected_rows) :-

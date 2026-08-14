@@ -665,6 +665,16 @@ compile_typed_operands(Mode, [int | Types], [Operand | Rest], Bound, Whole, [Sql
 typed_scalar_sql(Function, ArgumentSqls, Sql) :-
     length(ArgumentSqls, Arity),
     expression(Function/Arity, typed_scalar, _, Rendering, _),
+    typed_scalar_rendering(Function, Rendering, ArgumentSqls, Sql).
+
+% The trailing-separator seed makes the last part ordinary; its NULL row
+% filters out. An empty separator never advances instr, so it cannot walk.
+typed_scalar_rendering(_, split_json_array, [TextSql, SeparatorSql], Sql) :-
+    format(atom(Sql),
+           '(CASE WHEN ~w = \'\' THEN json_array(~w) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT ~w || ~w, NULL UNION ALL SELECT substr("rest", instr("rest", ~w) + length(~w)), substr("rest", 1, instr("rest", ~w) - 1) FROM "__split_parts" WHERE "rest" <> \'\') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)',
+           [SeparatorSql, TextSql, TextSql, SeparatorSql,
+            SeparatorSql, SeparatorSql, SeparatorSql]).
+typed_scalar_rendering(Function, Rendering, ArgumentSqls, Sql) :-
     Rendering == Function,
     atomic_list_concat(ArgumentSqls, ', ', ArgsJoined),
     format(atom(Sql), '~w(~w)', [Function, ArgsJoined]).
