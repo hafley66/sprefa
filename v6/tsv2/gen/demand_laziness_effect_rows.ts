@@ -31,6 +31,7 @@ import { concatMap, forkJoin, map, type Observable } from "rxjs";
 
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { list_at_scalar_seam } from "../runtime/boundary.ts";
 import type { IArrivalBatch, IGenProgram, IRow, ISqlSeam, ITickDeltas, SqlStatement } from "../runtime/types.ts";
 
 // ── DDL (run once at boot) ───────────────────────────────────────────────────
@@ -42,7 +43,7 @@ import type { IArrivalBatch, IGenProgram, IRow, ISqlSeam, ITickDeltas, SqlStatem
 function scalar_args(values: IRow): (string | number | boolean)[] {
   return values.map((value) => {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
-    throw new Error("a list value reached a SQL parameter");
+    throw list_at_scalar_seam("sql_parameter");
   });
 }
 

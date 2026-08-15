@@ -17,6 +17,7 @@ import type {
   QueryResult,
   SqlStatement,
 } from "./types.ts";
+import { list_at_scalar_seam } from "./boundary.ts";
 import { RuntimeTrace } from "./trace.ts";
 
 type DeltaEvent = {
@@ -75,7 +76,7 @@ function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
     if (typeof value === "boolean") return BigInt(value ? 1 : 0);
     if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
     if (typeof value === "string") return value;
-    throw new Error("a list value reached a SQL parameter");
+    throw list_at_scalar_seam("sql_parameter");
   });
 }
 
