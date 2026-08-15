@@ -2,13 +2,19 @@
   "$defs": {
     "box": {
       "additionalProperties":false,
-      "properties": {"id": {"type":"integer"},"items": {"type":"integer"}},
+      "properties": {
+        "id": {"type":"integer"},
+        "items": {"items": {"type":"string"},"type":"array"}
+      },
       "required": ["id", "items" ],
       "type":"object"
     },
     "carry": {
       "additionalProperties":false,
-      "properties": {"id": {"type":"integer"},"items": {"type":"integer"}},
+      "properties": {
+        "id": {"type":"integer"},
+        "items": {"items": {"type":"string"},"type":"array"}
+      },
       "required": ["id", "items" ],
       "type":"object"
     }

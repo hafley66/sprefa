@@ -7,5 +7,5 @@ pub struct FighterSummary {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Squad {
     pub id: i64,
-    pub members: i64,
+    pub members: Vec<FighterSummary>,
 }

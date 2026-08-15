@@ -8,7 +8,13 @@
     },
     "squad": {
       "additionalProperties":false,
-      "properties": {"id": {"type":"integer"},"members": {"type":"integer"}},
+      "properties": {
+        "id": {"type":"integer"},
+        "members": {
+          "items": {"items": {"$ref":"#/$defs/fighter_summary"},"type":"array"},
+          "type":"array"
+        }
+      },
       "required": ["id", "members" ],
       "type":"object"
     }

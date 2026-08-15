@@ -4,7 +4,7 @@ export interface Symbol {
 
 export interface SymbolParts {
   name: string;
-  parts: number;
+  parts: Array<string>;
 }
 
 export interface SymbolWord {

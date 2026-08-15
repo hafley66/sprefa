@@ -102,30 +102,36 @@ rel list_element(id: int, text: text).
 list_element(Id, Text) <- leaf_type(Id, Text).
 list_element(Id, Text) <- option_of_leaf(Id, Text).
 
+# Both list spellings render one TS type: json_list(T) carries the array inline,
+# list(T) carries the elements in a member rel, and a consumer sees Array<T>.
+rel list_row(id: int, element_id: int).
+list_row(Id, ElemId) <- type_row(Id, _, _, _, 'json_list', ElemId, _).
+list_row(Id, ElemId) <- type_row(Id, _, _, _, 'list', ElemId, _).
+
 # @comment-ok: the nesting bound; a self-recursive stratum settles a tick late.
 # Nesting unrolls to four levels, one stratum per level. A recursive list_type
 # loads and derives one level per tick, so a single arrival batch renders short.
 rel list_depth_one(id: int, text: text).
 list_depth_one(Id, Text) <-
-  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  list_row(Id, ElemId),
   list_element(ElemId, Element),
   Text := concat(['Array<', Element, '>']).
 
 rel list_depth_two(id: int, text: text).
 list_depth_two(Id, Text) <-
-  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  list_row(Id, ElemId),
   list_depth_one(ElemId, Element),
   Text := concat(['Array<', Element, '>']).
 
 rel list_depth_three(id: int, text: text).
 list_depth_three(Id, Text) <-
-  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  list_row(Id, ElemId),
   list_depth_two(ElemId, Element),
   Text := concat(['Array<', Element, '>']).
 
 rel list_depth_four(id: int, text: text).
 list_depth_four(Id, Text) <-
-  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  list_row(Id, ElemId),
   list_depth_three(ElemId, Element),
   Text := concat(['Array<', Element, '>']).
 

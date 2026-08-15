@@ -2,7 +2,10 @@
   "$defs": {
     "box_list": {
       "additionalProperties":false,
-      "properties": {"items": {"type":"integer"},"tree_id": {"type":"integer"}},
+      "properties": {
+        "items": {"items": {"type":"string"},"type":"array"},
+        "tree_id": {"type":"integer"}
+      },
       "required": ["tree_id", "items" ],
       "type":"object"
     },

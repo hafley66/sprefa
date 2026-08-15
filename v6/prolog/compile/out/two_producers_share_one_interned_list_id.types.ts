@@ -1,6 +1,6 @@
 export interface LeftParts {
   name: string;
-  parts: number;
+  parts: Array<string>;
 }
 
 export interface LeftText {
@@ -10,7 +10,7 @@ export interface LeftText {
 
 export interface RightParts {
   name: string;
-  parts: number;
+  parts: Array<string>;
 }
 
 export interface RightText {

@@ -6,7 +6,7 @@ pub struct Symbol {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SymbolParts {
     pub name: String,
-    pub parts: i64,
+    pub parts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

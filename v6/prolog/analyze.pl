@@ -418,7 +418,9 @@ column_type_at_decl(Decls, Types, Rules, Initial, Schedule, Ref, Columns,
                   literal_witness(Witness),
                   literal_witness_type(Witness, WitnessType)
                 ), WitnessTypes),
-       ( Storage = ref(_)
+       % list(_) joins ref(_) here: both store a minted id, so an integer
+       % witness is the id itself and never a contradiction.
+       ( ( Storage = ref(_) ; Storage = list(_) )
        -> Type = Storage
        % A `json` column accepts EVERY json scalar, so an int or text literal
        % witness in one is not a conflict. Running the cross-check anyway made
@@ -875,6 +877,11 @@ merge_type(json, json, json) :- !.
 merge_type(json_list(X), none, json_list(X)) :- !.
 merge_type(none, json_list(X), json_list(X)) :- !.
 merge_type(json_list(X), json_list(X), json_list(X)) :- !.
+% A head column fed by a list body column is itself a list column; letting the
+% text clause win would render the entity id as a quoted string.
+merge_type(list(X), none, list(X)) :- !.
+merge_type(none, list(X), list(X)) :- !.
+merge_type(list(X), list(X), list(X)) :- !.
 merge_type(Left, Right, _) :-
     ( Left = ref(_) ; Right = ref(_) ), !,
     throw(unsupported_construct(column_ref_type_conflict(Left, Right))).

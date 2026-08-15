@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RowParts {
     pub name: String,
-    pub parts: i64,
+    pub parts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

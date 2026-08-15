@@ -939,8 +939,12 @@ mirror_column_type(_, Type, Type).
 replace_generic_type(option(Type0), Instances, option(Name)) :-
     !,
     replace_option_element(Type0, Instances, Name).
-% A bare list column IS its list entity's id, so the column type lowers to the
-% integer id exactly like every companion `_id` column the flavors already emit.
+% A bare list column stores its entity id and is SPELLED list(Element) to the
+% relplan; the named flavors have no boundary render and still collapse.
+replace_generic_type(list(Element0), Instances, list(Element)) :-
+    memberchk(list(Element0), Instances),
+    !,
+    replace_generic_type(Element0, Instances, Element).
 replace_generic_type(Type, Instances, int) :-
     list_flavor(Type),
     memberchk(Type, Instances),

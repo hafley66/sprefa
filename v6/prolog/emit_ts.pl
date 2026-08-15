@@ -824,6 +824,8 @@ gate_column_type(bool,  bool)  :- !.
 gate_column_type(text,  text)  :- !.
 gate_column_type(json,  json)  :- !.
 gate_column_type(json_list(_), json) :- !.
+% The stored id is what the gate sees; the elements live in the member rel.
+gate_column_type(list(_), int) :- !.
 gate_column_type(_,     other).
 
 boundary_column_type(ref(_), ref) :- !.
@@ -843,6 +845,8 @@ boundary_column_type(ref(_), ref) :- !.
 % default text does); the seam that switches on it is ticklog.ts's encoder.
 boundary_column_type(json, json) :- !.
 boundary_column_type(json_list(_), json) :- !.
+% The entity id is what crosses until the list read surface lands.
+boundary_column_type(list(_), int) :- !.
 boundary_column_type(Type, Type).
 
 arrival_targets_lines(ArrivalTargets, Lines) :-
