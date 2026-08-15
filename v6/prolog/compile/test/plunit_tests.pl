@@ -82,7 +82,7 @@
               [ emit_program/5,
                 % The emitter-mode seam (rank R8): which statement family a
                 % plan compiles to, asserted by the incremental_mode unit.
-                incremental_program_safe/4, reconcile_every_tick/2,
+                reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
 :- use_module('../../lower', [ boot_statements/7 ]).
 :- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3 ]).
@@ -689,17 +689,8 @@ test(latest_keyed_sample_is_one_edge_arm_with_key_predicates) :-
 
 :- begin_tests(incremental_mode).
 
-test(positive_edge_level_program_is_incremental) :-
-    load_plan(switch_as_keyed_replace, Plan),
-    lower_program(Plan, Lowered),
-    Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
-    incremental_program_safe(Plan, EdgeStatements, LevelStatements, true).
-
 test(negative_level_body_uses_incremental_reconcile) :-
     load_plan(merge_policy, Plan),
-    lower_program(Plan, Lowered),
-    Lowered = lowered(_, _, _, EdgeStatements, LevelStatements, _, _, _),
-    incremental_program_safe(Plan, EdgeStatements, LevelStatements, true),
     reconcile_every_tick(Plan, true).
 
 test(derived_edge_trigger_requires_incremental_carry_path) :-
@@ -710,7 +701,7 @@ test(derived_edge_trigger_requires_incremental_carry_path) :-
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
     derived_edge_carry_required(Plan, EdgeStatements, true).
 
-test(edb_edge_trigger_keeps_naive_referee_available) :-
+test(edb_edge_trigger_needs_no_derived_carry) :-
     load_plan(switch_as_keyed_replace, Plan),
     lower_program(Plan, Lowered),
     Lowered = lowered(_, _, _, EdgeStatements, _, _, _, _),
@@ -2252,11 +2243,7 @@ test(emitted_incremental_tick_freezes_the_level_plane_before_edges) :-
     once(sub_atom(Text, BeforeAt, _, _, 'IncrementalRuntime.apply_levels_before_edges')),
     once(sub_atom(Text, ReconcileAt, _, _, 'IncrementalRuntime.recompute_levels_before_edges')),
     once(sub_atom(Text, EdgesAt, _, _, 'IncrementalRuntime.apply_edges')),
-    BeforeAt < ReconcileAt, ReconcileAt < EdgesAt,
-    % The naive referee's own freeze: recomputeLevels once before the edge
-    % batch and once after (engine.pl's two level closures).
-    findall(At, sub_atom(Text, At, _, _, 'concatMap((before) => recompute_levels(seam)'), RecomputeAts),
-    length(RecomputeAts, 2), !.
+    BeforeAt < ReconcileAt, ReconcileAt < EdgesAt, !.
 
 % The narrowing that keeps exhaust_policy compiled: a level rel whose own
 % derivation reads only EDGE-WRITTEN rels cannot be moved by an arrival before
@@ -7679,12 +7666,12 @@ test(a_struct_target_row_crosses_the_ingest_plan_at_dict) :-
     interning_emitted(dict, '4_struct_values.pl',
                       struct_nested_value_renders_whole_tree, Text),
     once(sub_atom(Text, _, _, _,
-                  '(targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,')).
+                  '(targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS), TEXT_INTERN_PLAN,')).
 
 test(a_struct_target_row_takes_no_ingest_plan_at_direct) :-
     interning_emitted(direct, '4_struct_values.pl',
                       struct_nested_value_renders_whole_tree, Text),
-    once(sub_atom(Text, _, _, _, '(targets) => apply_arrivals(seam, targets),')),
+    once(sub_atom(Text, _, _, _, '(targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS),')),
     \+ sub_atom(Text, _, _, _, 'TEXT_INTERN_PLAN').
 
 % read_snapshot decodes for the tick log. An occurrence row is bound BACK into
@@ -7721,17 +7708,6 @@ test(there_is_no_stored_snapshot_at_direct) :-
     \+ sub_atom(Text, _, _, _, 'read_stored_snapshot'),
     once(sub_atom(Text, _, _, _,
                   'process_ordered_occurrences(seam, before, mid, arrivals)')).
-
-% The naive door binds the same rows one arm at a time, so its resolver takes
-% the plane the ordered loop takes.
-test(an_edge_resolver_reads_the_stored_snapshot_at_dict) :-
-    interning_emitted(dict, 'scopes.pl', switch_as_keyed_replace, Text),
-    once(sub_atom(Text, _, _, _, 'Writes(seam, before.stored, arrivals)')).
-
-test(an_edge_resolver_reads_the_one_snapshot_at_direct) :-
-    interning_emitted(direct, 'scopes.pl', switch_as_keyed_replace, Text),
-    \+ sub_atom(Text, _, _, _, 'before.stored'),
-    once(sub_atom(Text, _, _, _, 'Writes(seam, before, arrivals)')).
 
 % ═══ rel-term demand keys: json_extract reads characters ═══════════════════
 % FAIL-FIRST, measured: with compile_pattern_arg/8's compound branch handing

@@ -1,9 +1,8 @@
 % Emit lowered compiler plans as TypeScript modules.
 
-% The four extra exports form the emitter-mode seam.
+% The three extra exports form the emitter-mode seam.
 :- module(emit_ts,
           [ emit_program/5,
-            incremental_program_safe/4,
             reconcile_every_tick/2,
             derived_edge_carry_required/3,
             retraction_guard/2 ]).
@@ -154,8 +153,7 @@ header_lines(Name, Lines) :-
       '// executes emitted frontier-side joins for positive level rules, promotes',
       '// edge and post-write level growth across drain ticks, and computes boundary',
       '// changes from the staged stream. Retractions and negative bodies use emitted',
-      '// support-count reconciliation. The snapshot path remains selectable with',
-      '// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.',
+      '// support-count reconciliation.',
       '//',
       '// IGenProgram has no slot for boot-time work (seeding Initial rows before',
       '// tick 1). `boot` is an extra field added beyond the five pinned names',
@@ -330,8 +328,8 @@ struct_tick_wrapper_lines(_, _, []).
 
 % Before StructPlane and before any level statement: a rewritten row must
 % never reach a statement that would store a string in an id column.
-naive_text_intern_lines(false, []) :- !.
-naive_text_intern_lines(true,
+snapshot_text_intern_lines(false, []) :- !.
+snapshot_text_intern_lines(true,
     [ '    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)',
       '      .pipe(map((interned) => { arrivals = interned; return before; }))),'
     ]).
@@ -347,8 +345,8 @@ incremental_text_intern_lines(true,
 struct_text_plan_argument(false, '').
 struct_text_plan_argument(true, ' TEXT_INTERN_PLAN,').
 
-naive_reference_normalize_lines(false, _, []) :- !.
-naive_reference_normalize_lines(true, HasTextIntern,
+snapshot_reference_normalize_lines(false, _, []) :- !.
+snapshot_reference_normalize_lines(true, HasTextIntern,
     [ '    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,',
       ApplyLine,
       '    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),'
@@ -367,14 +365,8 @@ incremental_reference_normalize_lines(true, HasTextIntern,
     format(atom(ApplyLine),
            '      (targets) => IncrementalRuntime.apply_arrivals(seam, targets, SUBSCRIBED_RELATIONS),~w',
            [TextPlanArgument]).
-    % `of` covers two zero-op shapes, not just the edge-rule forkJoin([])
-    % guard it was originally added for: an edge-free tick still needs it for
-    % edge_resolver_block/3's `of([])` when EdgeStatements is nonempty, AND
-    % recompute_levels_fn_lines/2's no-level-rules fallback below needs
-    % `of(undefined)`. Always importing it is simpler than tracking two
-    % independent conditions, and tsconfig.json carries no
-    % noUnusedLocals/noUnusedParameters flag, so an unused import is not a
-    % typecheck error on the (rare) program shape that needs neither.
+    % `of` is always imported (edge-free MergeLine + recompute fallback need
+    % it); tsconfig has no noUnused* flags, so an unused import cannot error.
 
 % ═══ local supporting types ══════════════════════════════════════════════════
 
@@ -950,9 +942,6 @@ stored_snapshot_read_entry_line(
 tick_head_read_line(false, '  return read_snapshot(seam).pipe(').
 tick_head_read_line(true, '  return read_snapshots(seam).pipe(').
 
-tick_decoded_before(false, 'before').
-tick_decoded_before(true, 'before.decoded').
-
 tick_stored_before(false, 'before').
 tick_stored_before(true, 'before.stored').
 
@@ -1482,228 +1471,6 @@ aggregate_sql_text(avgsql(_ScopeColumns, _ScopeTypes, ScopeClearSql, ScopeSeedSq
 
 quote_ident_local(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
-% ═══ edge rule resolution (one resolver function per ARM -- PHASE C2 RULING
-% 2: an unmarked_conjunction rule with N body atoms lowers to N edgestmt
-% entries, one per atom acting as trigger. A sampled_conjunction does the
-% same over its bare trigger atoms; its latest-wrapped atoms are already
-% base-table joins inside ProjectSql and DeltaProjectSql. ═════════════════
-% ProjectSql (from lower.pl) is already aliased AS HeadColumns
-% (lower.pl:edge_statement_single/5 passes HeadColumns, not `none`, to
-% head_select_list/4 for exactly this reason), so the resolver reads each
-% projected row back by named column access the same way runtime/rows.ts's
-% select_rows does -- no string surgery on the SQL text happens in this file.
-%
-% A trigger occurrence's ProjectSql, once OtherAtoms is nonempty, is a real
-% JOIN and can return ZERO, ONE, or MANY rows for a SINGLE triggering
-% arrival (the forkJoin/rendezvous case the ruling names: the LAST-arriving
-% input's occurrence, joined against every CURRENTLY matching row of the
-% other atoms, can multiply). The resolver therefore iterates
-% `result.rows` in full, not just its first entry (round 2's shape, correct
-% only when there was never another atom to join).
-%
-% Global Index (this arm's 0-based position in the WHOLE flattened
-% EdgeStatements list, not per-head) disambiguates names: multiple rules
-% -- or multiple arms of ONE rule -- can share a HeadRef (merge_family.pl's
-% `out(Item) <+ event_a(Item)` / `out(Item) <+ event_b(Item)`), which would
-% otherwise collide on `resolve<Head>Writes`.
-
-% `none` when the arm builds nothing, which is every arm at intern(direct):
-% the const is absent and the fork line keeps its original text.
-edge_intern_const_lines([], _, _, [], none) :- !.
-edge_intern_const_lines(InternSqls, Upper, Index, [Line], InternConst) :-
-    format(atom(InternConst), 'EDGE_~w_~w_INTERN_SQL', [Upper, Index]),
-    sql_template_array_text(InternSqls, ArrayText),
-    format(atom(Line), 'const ~w: readonly string[] = ~w;',
-           [InternConst, ArrayText]).
-
-edge_resolver_fork_line(none, ProjectConst, ForkLine) :- !,
-    format(atom(ForkLine),
-           '  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: ~w, args: bind_args(arrival.row) }))).pipe(',
-           [ProjectConst]).
-edge_resolver_fork_line(InternConst, ProjectConst, ForkLine) :-
-    format(atom(ForkLine),
-           '  return forkJoin(trigger_rows.map((arrival) => intern_then_execute(seam, ~w, { sql: ~w, args: bind_args(arrival.row) }))).pipe(',
-           [InternConst, ProjectConst]).
-
-edge_resolver_blocks(EdgeStatements, RelPlans, ConstLines, FnLines) :-
-    findall(Index-EdgeStmt, nth0(Index, EdgeStatements, EdgeStmt), IndexedStatements),
-    maplist(edge_resolver_block_indexed(RelPlans), IndexedStatements, ConstLineGroups, FnLineGroups),
-    flatten_with_blank_separators(ConstLineGroups, ConstLines),
-    flatten_with_blank_separators(FnLineGroups, FnLines).
-
-edge_resolver_block_indexed(RelPlans, Index-edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind, EdgeInterns), ConstLines, FnLines) :-
-    relplan_kind(RelPlans, TriggerRef, TriggerKind),
-    relplan_kind(RelPlans, HeadRef, HeadKind),
-    relplan_columns(RelPlans, TriggerRef, TriggerColumns),
-    edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _, EdgeTriggerKind, EdgeInterns), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines).
-
-% HeadKind decides how projected rows become SqlStatements (engine.pl
-% apply_edge_writes/6, :236-254, unchanged distinction from before this
-% ruling): a `set` head upserts by key, LAST WRITE WINS across every
-% triggering arrival AND every row a single arrival's join produced (a
-% `Map<string, IRow>` keyed by the key-column values, natural overwrite via
-% `.set()`); a `log` head APPENDS every projected row unconditionally --
-% collapsing through a key Map would be wrong (KeyColumns is `[]` for a Log
-% head, so every row would collapse to the SAME key and only the last
-% survive, contradicting q1's "duplicate rows are distinct occurrences").
-edge_resolver_block(edgestmt(HeadRef, TriggerRef, HeadColumns, KeyColumns, ProjectSql, WriteSql, _DeltaProjectSql, EdgeTriggerKind, edgeinterns(ProjectInternSqls, _)), TriggerKind, TriggerColumns, HeadKind, Index, ConstLines, FnLines) :-
-    ref_name(TriggerRef, TriggerName),
-    upper_snake(HeadRef, Upper),
-    format(atom(ProjectConst), 'EDGE_~w_~w_PROJECT_SQL', [Upper, Index]),
-    format(atom(WriteConst), 'EDGE_~w_~w_WRITE_SQL', [Upper, Index]),
-    format(atom(ColumnsConst), 'EDGE_~w_~w_HEAD_COLUMNS', [Upper, Index]),
-    js_template(ProjectSql, ProjectTemplate),
-    js_template(WriteSql, WriteTemplate),
-    quoted_string_array_text(HeadColumns, ColumnsArrayText),
-    format(atom(ProjectLine), 'const ~w = ~w;', [ProjectConst, ProjectTemplate]),
-    format(atom(WriteLine), 'const ~w = ~w;', [WriteConst, WriteTemplate]),
-    format(atom(ColumnsLine), 'const ~w: readonly string[] = ~w;', [ColumnsConst, ColumnsArrayText]),
-    departure_resolver_const_lines(EdgeTriggerKind, TriggerRef, TriggerColumns,
-                                   Upper, Index, DepartureConstLines),
-    edge_intern_const_lines(ProjectInternSqls, Upper, Index, InternConstLines,
-                            InternConst),
-    ( HeadKind == log
-    -> ConstLines0 = [ProjectLine, WriteLine, ColumnsLine]
-    ;  format(atom(IndicesConst), 'EDGE_~w_~w_KEY_INDICES', [Upper, Index]),
-       key_indices(HeadColumns, KeyColumns, Indices),
-       atomic_list_concat(Indices, ', ', IndicesJoined),
-       format(atom(IndicesArrayText), '[~w]', [IndicesJoined]),
-       format(atom(IndicesLine), 'const ~w: readonly number[] = ~w;', [IndicesConst, IndicesArrayText]),
-       ConstLines0 = [ProjectLine, WriteLine, ColumnsLine, IndicesLine]
-    ),
-    append([ConstLines0, InternConstLines, DepartureConstLines], ConstLines),
-    pascal_case(HeadRef, Pascal),
-    format(atom(FnName), 'resolve~w_~wWrites', [Pascal, Index]),
-    format(atom(SigLine), 'function ~w(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {', [FnName]),
-    format(atom(TriggerLine), '  const trigger_rows = trigger_occurrences("~w", "~w", before.~w, arrivals);', [TriggerKind, TriggerName, TriggerName]),
-    edge_resolver_fork_line(InternConst, ProjectConst, ForkLine),
-    format(atom(RowsLine), '        const projected_rows = result.rows.map((row) => ~w.map((column) => row[column] as IRowValue) as IRow);', [ColumnsConst]),
-    % bind_args again, not just at the project bind above: a projected value
-    % just read back through result.rows may itself be a plain JS number
-    % (an INTEGER query-result column, not a TEXT one), and this second bind
-    % is the one that actually writes the destination column -- the same
-    % "number" -> REAL -> "N.0" hazard applies here independently of the
-    % project-side fix (harmless, and still correct, against an INTEGER
-    % destination column too -- PHASE C2 RULING 1, verified empirically).
-    ( HeadKind == log
-    -> format(atom(PushLine), '          written.push({ sql: ~w, args: bind_args(projected_row) });', [WriteConst]),
-       MapBodyLines =
-       [ '      const written: SqlStatement[] = [];',
-         '      for (const result of results) {',
-         RowsLine,
-         '        for (const projected_row of projected_rows) {',
-         PushLine,
-         '        }',
-         '      }',
-         '      return written;'
-       ]
-    ;  format(atom(IndicesConst), 'EDGE_~w_~w_KEY_INDICES', [Upper, Index]),
-       format(atom(KeyLine), '          const key = JSON.stringify(~w.map((index) => projected_row[index]));', [IndicesConst]),
-       format(atom(WriteMapLine),
-              '      return [...resolved.values()].map((row): SqlStatement => ({ sql: ~w, args: bind_args(row) }));',
-              [WriteConst]),
-       MapBodyLines =
-       [ '      const resolved = new Map<string, IRow>();',
-         '      for (const result of results) {',
-         RowsLine,
-         '        for (const projected_row of projected_rows) {',
-         KeyLine,
-         '          resolved.set(key, projected_row);',
-         '        }',
-         '      }',
-         WriteMapLine
-       ]
-    ),
-    % forkJoin([]) COMPLETES WITHOUT EMITTING (verified against rxjs 7.8.2,
-    % not assumed) -- a drain tick, or any tick where no arrival matches this
-    % trigger, has an empty trigger_rows, and without this guard the WHOLE
-    % tick() chain silently completes with no ITickDeltas at all for that tick
-    % (a real bug caught running the emitted program against the real seam,
-    % not by typecheck -- tsgo has no way to know forkJoin([]) is
-    % empty-completing rather than []-emitting).
-    EmptyGuardLine = '  if (trigger_rows.length === 0) return of([]);',
-    (   memberchk(EdgeTriggerKind, [departure, ordered_departure])
-    ->  % The referee's cross-tick carry: the departure table is written at the
-        % END of a naive tick from that tick's own multiset_diff `del` rows, and
-        % READ here on the next one. It is the one piece of state the snapshot
-        % path keeps between ticks, and it keeps it in SQLite beside the
-        % frontier tables rather than in a module variable, so both pipelines
-        % lose or keep a pending departure together (they are TEMP tables:
-        % neither survives a process restart -- the Ti-carry durability class,
-        % match-frontier lab C7, inherited here, not closed).
-        format(atom(DepartureSqlConst), 'EDGE_~w_~w_DEPARTURE_SQL', [Upper, Index]),
-        format(atom(DepartureColumnsConst), 'EDGE_~w_~w_TRIGGER_COLUMNS', [Upper, Index]),
-        format(atom(DepartureReadLine),
-               '  return departure_occurrences(seam, ~w, ~w).pipe(',
-               [DepartureSqlConst, DepartureColumnsConst]),
-        format(atom(DepartureForkLine),
-               '      return forkJoin(trigger_rows.map((departed_row) => seam.runner.execute(seam.db, { sql: ~w, args: bind_args(departed_row) }))).pipe(',
-               [ProjectConst]),
-        append(
-            [ [ SigLine,
-                '  void before;',
-                '  void arrivals;',
-                DepartureReadLine,
-                '    concatMap((trigger_rows) => {',
-                '      if (trigger_rows.length === 0) return of<readonly SqlStatement[]>([]);',
-                DepartureForkLine,
-                '        map((results) => {'
-              ],
-              MapBodyLines,
-              [ '        }),',
-                '      );',
-                '    }),',
-                '  );',
-                '}'
-              ]
-            ], FnLines)
-    ;   append(
-            [ [ SigLine,
-                TriggerLine,
-                EmptyGuardLine,
-                ForkLine,
-                '    map((results) => {'
-              ],
-              MapBodyLines,
-              [ '    }),',
-                '  );',
-                '}'
-              ]
-            ], FnLines)
-    ).
-
-departure_resolver_const_lines(arrival, _, _, _, _, []) :- !.
-departure_resolver_const_lines(ordered_arrival, _, _, _, _, []) :- !.
-departure_resolver_const_lines(departure, TriggerRef, TriggerColumns, Upper, Index,
-                               [SqlLine, ColumnsLine]) :-
-    departure_read_sql(TriggerRef, TriggerColumns, Sql),
-    js_template(Sql, SqlTemplate),
-    format(atom(SqlConst), 'EDGE_~w_~w_DEPARTURE_SQL', [Upper, Index]),
-    format(atom(ColumnsConst), 'EDGE_~w_~w_TRIGGER_COLUMNS', [Upper, Index]),
-    format(atom(SqlLine), 'const ~w = ~w;', [SqlConst, SqlTemplate]),
-    quoted_string_array_text(TriggerColumns, ColumnsArrayText),
-    format(atom(ColumnsLine), 'const ~w: readonly string[] = ~w;',
-           [ColumnsConst, ColumnsArrayText]).
-departure_resolver_const_lines(ordered_departure, TriggerRef, TriggerColumns,
-                               Upper, Index, Lines) :-
-    departure_resolver_const_lines(departure, TriggerRef, TriggerColumns,
-                                   Upper, Index, Lines).
-
-% Emitted once per program that has any departure arm; nothing else changes
-% for a program without one.
-departure_occurrences_helper_lines(EdgeStatements, Lines) :-
-    (   member(edgestmt(_, _, _, _, _, _, _, TriggerKind, _), EdgeStatements),
-        memberchk(TriggerKind, [departure, ordered_departure])
-    ->  Lines =
-        [ 'function departure_occurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {',
-          '  return seam.runner.execute(seam.db, sql).pipe(',
-          '    map((result) => result.rows.map((row) => columns.map((column) => row[column] as IRowValue) as IRow)),',
-          '  );',
-          '}'
-        ]
-    ;   Lines = []
-    ).
-
 key_indices(HeadColumns, KeyColumns, Indices) :-
     findall(Index0,
             ( member(Column, KeyColumns), nth0(Index0, HeadColumns, Column) ),
@@ -2060,13 +1827,14 @@ recompute_levels_fn_lines(_, [], Lines) :- !,
       '  return of(undefined);',
       '}'
     ].
+% @comment-ok: pre-existing fixpoint-ceiling receipts; the hunk shifted when
+% the adjacent naive tick predicates were deleted.
 % THE LEVEL FIXPOINT. One DELETE-then-INSERT-per-clause pass gives a
 % self-referential head exactly as many derivation rounds as it has clauses,
 % from an empty table, every tick: a two-clause fold reaches two links and
 % stops, whatever the data says (sprefa-lab-foldwall/FOLDWALL.md measured the
-% ceiling tracking clause count exactly). Both doors that call this function
-% carry the ceiling -- run_ordered_tick, which any seq/1 or pre/1 program takes,
-% and run_naive_tick.
+% ceiling tracking clause count exactly). The one caller carrying the ceiling
+% is run_ordered_tick, which any seq/1 or pre/1 program takes.
 %
 % So the DELETE runs ONCE and the INSERT set repeats until a round adds no row.
 % The round set is recursive_level_refs/2: self-reads PLUS mutual-cycle heads.
@@ -2236,104 +2004,21 @@ carry_pending_expr(EdgeStatements, DepartureRefs, Expr) :-
 
 % ═══ tick() + program export ════════════════════════════════════════════════
 
-naive_retention_fn_lines([], []) :- !.
-naive_retention_fn_lines(_RetentionStatements,
-    [ 'function apply_naive_retention(seam: ISqlSeam): Observable<void> {',
+snapshot_retention_fn_lines([], []) :- !.
+snapshot_retention_fn_lines(_RetentionStatements,
+    [ 'function apply_snapshot_retention(seam: ISqlSeam): Observable<void> {',
       '  const statements: SqlStatement[] = INCREMENTAL_RETENTION_STATEMENTS.map((statement) => ({ sql: statement.delete_sql, args: [] }));',
       '  return seam.runner.batch(seam.db, statements).pipe(map(() => undefined));',
       '}'
     ]).
 
-run_naive_tick_fn_lines(Name, [], HasRetention, UsesTick, DepartureRefs,
-                        HasStructTypes, HasTextIntern, Lines) :- !,
-    departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
-    format(atom(NameCommentLine), '  // ~w: no edge rules -- absorb arrivals, recompute levels, diff.', [Name]),
-    retention_tick_lines(HasRetention, RetentionLines),
-    advance_tick_naive_line(UsesTick, AdvanceTickLines),
-    naive_text_intern_lines(HasTextIntern, TextInternLines),
-    naive_reference_normalize_lines(HasStructTypes, HasTextIntern, NormalizeLines),
-    append(
-    [ [ 'function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-        '  return read_snapshot(seam).pipe('
-      ],
-      AdvanceTickLines,
-      TextInternLines,
-      NormalizeLines,
-      [ '    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),',
-        '  ).pipe(',
-        '    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),'
-      ],
-      RetentionLines,
-      [ '    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),'
-      ],
-      DepartureStageLines,
-      [ '  );',
-        NameCommentLine,
-        '}'
-      ]
-    ], Lines).
-run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
-                        DepartureRefs, HasStructTypes, HasTextIntern, Lines) :-
-    EdgeStatements \== [],
-    departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
-    advance_tick_naive_line(UsesTick, AdvanceTickLines),
-    naive_text_intern_lines(HasTextIntern, TextInternLines),
-    naive_reference_normalize_lines(HasStructTypes, HasTextIntern, NormalizeLines),
-    tick_head_read_line(HasTextIntern, HeadReadLine),
-    tick_decoded_before(HasTextIntern, DecodedBefore),
-    tick_stored_before(HasTextIntern, StoredBefore),
-    edge_resolve_call_exprs(StoredBefore, EdgeStatements, ResolveCallExprs),
-    ( ResolveCallExprs = [SingleCall]
-    -> format(atom(EdgeWritesExpr), '~w', [SingleCall])
-    ; atomic_list_concat(ResolveCallExprs, ', ', JoinedCalls),
-      format(atom(EdgeWritesExpr), 'forkJoin([~w]).pipe(map((groups) => groups.flat()))', [JoinedCalls])
-    ),
-    format(atom(EdgeWritesLine), '      ~w.pipe(', [EdgeWritesExpr]),
-    format(atom(BuildDeltasLine),
-           '    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(~w, after)))),',
-           [DecodedBefore]),
-    format(atom(NameCommentLine), '  // ~w: engine.pl process_occurrences -> level_closure -> boundary_deltas.', [Name]),
-    retention_tick_lines(HasRetention, RetentionLines),
-    append(
-    [ [ 'function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {',
-      HeadReadLine
-      ],
-      AdvanceTickLines,
-      TextInternLines,
-      NormalizeLines,
-      [ '    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),',
-      % TICK PHASE ALIGNMENT: the referee freezes the level plane where
-      % engine.pl does -- after arrivals, before the edge batch. The naive
-      % recompute is a DELETE + rebuild of every level table, so this one call
-      % supplies both halves of MidLevel; the second call below is the oracle's
-      % second closure, over the post-write store.
-      '    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),',
-      '    concatMap((before) =>',
-      EdgeWritesLine,
-      '        concatMap((statements) => seam.runner.batch(seam.db, statements)),',
-       '        map(() => before),',
-       '      ),',
-       '    ),',
-       % Keep each emitted naive tick pipe within RxJS's typed overload count.
-       '  ).pipe(',
-       '    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),'
-      ],
-      RetentionLines,
-      [ BuildDeltasLine ],
-      DepartureStageLines,
-      [ '  );',
-      NameCommentLine,
-      '}'
-      ]
-    ], Lines).
-
 run_ordered_tick_fn_lines(false, _, _, _, _, _, _, []) :- !.
 run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
                           HasStructTypes, HasTextIntern, Lines) :-
-    departure_stage_naive_lines(DepartureRefs, DepartureStageLines),
-    advance_tick_naive_line(UsesTick, AdvanceTickLines),
-    naive_text_intern_lines(HasTextIntern, TextInternLines),
-    naive_reference_normalize_lines(HasStructTypes, HasTextIntern, NormalizeLines),
+    snapshot_departure_stage_lines(DepartureRefs, DepartureStageLines),
+    snapshot_advance_tick_line(UsesTick, AdvanceTickLines),
+    snapshot_text_intern_lines(HasTextIntern, TextInternLines),
+    snapshot_reference_normalize_lines(HasStructTypes, HasTextIntern, NormalizeLines),
     retention_tick_lines_ordered(HasRetention, RetentionLines),
     tick_head_read_line(HasTextIntern, HeadReadLine),
     tick_stored_before(HasTextIntern, StoredBefore),
@@ -2372,16 +2057,12 @@ run_ordered_tick_fn_lines(true, Name, HasRetention, UsesTick, DepartureRefs,
       ]
     ], Lines).
 
-retention_tick_lines(true,
-    ['    concatMap((before) => apply_naive_retention(seam).pipe(map(() => before))),']).
-retention_tick_lines(false, []).
-
 % The ordered tick carries the { before, mid, written } triple at this point;
 % the bare `before` passthrough above collapses TypeScript's inference to
 % Observable<unknown> (first exercised when the golden gained an ordered pre
 % rule). Same stage, triple spelled out.
 retention_tick_lines_ordered(true,
-    ['    concatMap(({ before, mid, written }) => apply_naive_retention(seam).pipe(map(() => ({ before, mid, written })))),']).
+    ['    concatMap(({ before, mid, written }) => apply_snapshot_retention(seam).pipe(map(() => ({ before, mid, written })))),']).
 retention_tick_lines_ordered(false, []).
 
 % The referee's own end-of-tick departure staging. It reuses the RUNTIME's
@@ -2396,20 +2077,17 @@ departure_stage_incremental_lines(DepartureRefs,
     ['    concatMap((rels) => IncrementalRuntime.stage_departures(seam, SUBSCRIBED_RELATIONS, rels).pipe(map(() => rels))),']) :-
     DepartureRefs \== [].
 
-departure_stage_naive_lines([], []) :- !.
-departure_stage_naive_lines(DepartureRefs,
+snapshot_departure_stage_lines([], []) :- !.
+snapshot_departure_stage_lines(DepartureRefs,
     ['    concatMap((deltas) => IncrementalRuntime.stage_departures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),']) :-
     DepartureRefs \== [].
 
-incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
-    [ SafeLine, ReconcileLine,
-      'const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";'
-    ]) :-
-    format(atom(SafeLine), 'const INCREMENTAL_PROGRAM_SAFE = ~w;', [IncrementalSafe]),
+incremental_mode_lines(ReconcileEveryTick, [ReconcileLine]) :-
     format(atom(ReconcileLine), 'const RECONCILE_EVERY_TICK = ~w;',
            [ReconcileEveryTick]).
 
 % ═══ subscribe-cone pruning (ladder step 2, DEFAULT OFF) ═════════════════════
+% @comment-ok: pre-existing prune-contract doc; only the naive sentence changed.
 %
 % Read once, at module scope: the filters are pure and the emitted arrays never
 % change, so a per-tick call would buy nothing. With the flag off every
@@ -2419,10 +2097,8 @@ incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
 % (tests read statements out of it by rel name), where the consts below are the
 % tick path's own working lists.
 %
-% Only the incremental path can honor a cone. The naive referee rebuilds every
-% level rel from one fused SQL string and the ordered path replays whole
-% relations, so with the flag on those two refuse by name rather than answering
-% a pruned question with an unpruned tick.
+% Only the incremental path can honor a cone; the ordered path replays whole
+% relations, so with the flag on it refuses by name instead.
 subscribe_prune_lines(HasRetention, DerivedEdgeCarryRequired, HasOrderedProgram,
                       Lines) :-
     subscribe_prune_tick_path_line(DerivedEdgeCarryRequired, HasOrderedProgram,
@@ -2450,10 +2126,8 @@ subscribe_prune_lines(HasRetention, DerivedEdgeCarryRequired, HasOrderedProgram,
 % below a comparison tsgo reports as having no overlap (TS2367).
 subscribe_prune_tick_path_line(_, true,
     'const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";') :- !.
-subscribe_prune_tick_path_line(true, _,
-    'const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";') :- !.
 subscribe_prune_tick_path_line(_, _,
-    'const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;').
+    'const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";').
 
 incremental_plan_export_lines(RetractionGuard, HasRetention, Lines) :-
     ( HasRetention == true
@@ -2462,7 +2136,6 @@ incremental_plan_export_lines(RetractionGuard, HasRetention, Lines) :-
     ),
     append(
     [ [ 'export const incremental_plan: IIncrementalProgramPlan = {',
-      '  safe: INCREMENTAL_PROGRAM_SAFE,',
       '  reconcile_every_tick: RECONCILE_EVERY_TICK,',
       GuardLine,
       '  relations: INCREMENTAL_RELATIONS,',
@@ -2505,8 +2178,8 @@ advance_tick_pipeline_line(false, []) :- !.
 advance_tick_pipeline_line(true,
     ['    concatMap(() => advance_tick(seam)),']).
 
-advance_tick_naive_line(false, []) :- !.
-advance_tick_naive_line(true,
+snapshot_advance_tick_line(false, []) :- !.
+snapshot_advance_tick_line(true,
     ['    concatMap((before) => advance_tick(seam).pipe(map(() => before))),']).
 
 % TICK PHASE ALIGNMENT: the mid-tick level plane an edge body reads must be
@@ -2595,28 +2268,15 @@ run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
       DispatchLines
     ], Lines).
 
-run_tick_dispatch_lines(DerivedEdgeCarryRequired, Lines) :-
-    run_tick_dispatch_lines(DerivedEdgeCarryRequired, false, false, Lines).
-
 run_tick_dispatch_lines(_, HasStructTypes, true,
     [ Signature,
       '  arrivals = validate_arrivals(arrivals);',
       '  return run_ordered_tick(seam, arrivals);',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature), !.
-run_tick_dispatch_lines(true, HasStructTypes, false,
+run_tick_dispatch_lines(_, HasStructTypes, false,
     [ Signature,
       '  arrivals = validate_arrivals(arrivals);',
-      '  // Derived edge triggers consume the P1 current/next frontier, including drain carry.',
-      '  return run_incremental_tick(seam, arrivals);',
-      '}'
-    ]) :- dispatch_signature(HasStructTypes, Signature).
-run_tick_dispatch_lines(false, HasStructTypes, false,
-    [ Signature,
-      '  arrivals = validate_arrivals(arrivals);',
-      '  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {',
-      '    return run_naive_tick(seam, arrivals);',
-      '  }',
       '  return run_incremental_tick(seam, arrivals);',
       '}'
     ]) :- dispatch_signature(HasStructTypes, Signature).
@@ -2632,11 +2292,6 @@ derived_edge_carry_required(
     -> Required = true
     ;  Required = false
     ).
-
-% Nothing is left to gate: self-reads close through level_expand_plan/5's
-% wavefront, mutual cycles through the runtime's outer rounds.
-incremental_program_safe(plan(_, prog(_, _), _, _, _, _, _, _, _),
-                         _EdgeStatements, _LevelStatements, true).
 
 reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Reconcile) :-
     ( member(Rule, Rules),
@@ -2654,21 +2309,6 @@ retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Guard) :-
     ( RecursiveRefs == [] -> Guard = 'plain-count-acyclic'
     ; Guard = 'recursive-cte-reseed'
     ).
-
-% Each arm's resolver call passes `before` (PHASE C2 RULING 2: a Set-kind
-% trigger's occurrence detection needs the tick-start snapshot to tell a
-% genuine new row from a same-tick or standing duplicate -- trigger_occurrences
-% above); Index is this arm's 0-based position in the whole flattened
-% EdgeStatements list, matching edge_resolver_blocks/4's own naming.
-edge_resolve_call_exprs(BeforeExpr, EdgeStatements, Exprs) :-
-    findall(Expr,
-            ( nth0(Index, EdgeStatements, edgestmt(HeadRef, _, _, _, _, _, _, _, _)),
-              edge_resolve_call_expr(BeforeExpr, HeadRef, Index, Expr) ),
-            Exprs).
-
-edge_resolve_call_expr(BeforeExpr, HeadRef, Index, Expr) :-
-    pascal_case(HeadRef, Pascal),
-    format(atom(Expr), 'resolve~w_~wWrites(seam, ~w, arrivals)', [Pascal, Index, BeforeExpr]).
 
 % `boot` is the ONE field the cone filter reaches from out here: the tick path
 % takes its lists from the SUBSCRIBED_* consts, but boot is run by the harness
@@ -2719,7 +2359,11 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ),
     Plan = plan(_, prog(_, SelfRefScanRules), _, _, _, _, _, _, _),
     recursive_level_refs(SelfRefScanRules, SelfReferentialLevelRefs),
-    edge_statements_intern(EdgeStatements, HasInternWrite),
+    edge_statements_intern(EdgeStatements, ArmsInternWrite),
+    ( HasOrderedProgram == true
+    -> HasInternWrite = ArmsInternWrite
+    ;  HasInternWrite = false
+    ),
     imports_lines(HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
                   HasOrderedProgram, SelfReferentialLevelRefs, HasInternWrite,
                   ImportLines),
@@ -2727,7 +2371,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
     arrival_value_guard_lines(ArrivalValueGuardLines),
-    ( EdgeStatements == [] -> TriggerOccurrencesHelperLines = [] ; trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines) ),
+    ( HasOrderedProgram == true, EdgeStatements \== []
+    -> trigger_occurrences_helper_lines(TriggerOccurrencesHelperLines)
+    ;  TriggerOccurrencesHelperLines = []
+    ),
     Plan = plan(_, prog(_, PlanRules), _, _, _, _, _, _, _),
     listened_departure_refs(PlanRules, DepartureRefs),
     plan_pre_refs(Plan, PreRefs),
@@ -2737,7 +2384,6 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
               LevelRef = LevelName/LevelArity ),
             LevelRefs0),
     sort(LevelRefs0, LevelHeadedRefs),
-    departure_occurrences_helper_lines(EdgeStatements, DepartureOccurrencesHelperLines),
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     rel_column_types_lines(RelPlans, RelColumnTypesLines),
@@ -2748,13 +2394,22 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     rel_declared_column_types_lines(RelPlans, RelDeclaredColumnTypesLines),
     arrival_targets_lines(ArrivalTargets, ArrivalTargetsLines),
     boot_lines(BootStatements, BootLines),
-    snapshot_type_lines(RelPlans, SnapshotTypeLines),
-    read_snapshot_fn_lines(DeltaStatements, ReadSnapshotFnLines),
-    read_stored_snapshot_fn_lines(HasTextIntern, DeltaStatements,
-                                  ReadStoredSnapshotFnLines, _),
+    ( HasOrderedProgram == true
+    -> snapshot_type_lines(RelPlans, SnapshotTypeLines),
+       read_snapshot_fn_lines(DeltaStatements, ReadSnapshotFnLines),
+       read_stored_snapshot_fn_lines(HasTextIntern, DeltaStatements,
+                                     ReadStoredSnapshotFnLines, _)
+    ;  SnapshotTypeLines = [],
+       ReadSnapshotFnLines = [],
+       ReadStoredSnapshotFnLines = []
+    ),
     final_select_lines(DeltaStatements, FinalSelectLines),
-    arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
-    arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
+    ( HasOrderedProgram == true
+    -> arrival_statements_lines(ArrivalStatements, ArrivalStatementsLines),
+       arrival_statement_fn_lines(Name, ArrivalStatementFnLines)
+    ;  ArrivalStatementsLines = [],
+       ArrivalStatementFnLines = []
+    ),
     incremental_relation_lines(RelPlans, PlanRules, ArrivalStatements, DeltaStatements, DepartureRefs, IncrementalRelationLines),
     incremental_edge_statement_lines(Name, EdgeStatements, RelPlans, IncrementalEdgeStatementLines),
     cyclic_head_groups(SelfRefScanRules, CyclicHeadGroups),
@@ -2763,10 +2418,6 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                                       IncrementalLevelStatementLines),
     incremental_retention_statement_lines(RetentionStatements,
                                           IncrementalRetentionStatementLines),
-    ( EdgeStatements == []
-    -> EdgeConstLines = [], EdgeFnLines = []
-    ; edge_resolver_blocks(EdgeStatements, RelPlans, EdgeConstLines, EdgeFnLines)
-    ),
     ordered_pre_lines(HasOrderedProgram, RelPlans, PreRefs, EdgeStatements,
                       OrderedPreLines),
     ordered_occurrence_lines(HasOrderedProgram, EdgeStatements, RelPlans,
@@ -2774,26 +2425,26 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
                              OrderedOccurrenceLines),
     ordered_carry_lines(HasOrderedProgram, EdgeStatements, LevelHeadedRefs,
                         OrderedCarryLines),
-    recompute_levels_fn_lines(SelfReferentialLevelRefs, RuleLevelStatements,
-                              RecomputeLevelsFnLines),
-    naive_retention_fn_lines(RetentionStatements, NaiveRetentionFnLines),
-    build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
-                          DepartureRefs, BuildDeltasFnLines),
+    ( HasOrderedProgram == true
+    -> recompute_levels_fn_lines(SelfReferentialLevelRefs, RuleLevelStatements,
+                                 RecomputeLevelsFnLines),
+       snapshot_retention_fn_lines(RetentionStatements, SnapshotRetentionFnLines),
+       build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,
+                             DepartureRefs, BuildDeltasFnLines)
+    ;  RecomputeLevelsFnLines = [],
+       SnapshotRetentionFnLines = [],
+       BuildDeltasFnLines = []
+    ),
     Plan = plan(_, TickProg, _, _, _, _, _, _, _),
     program_uses_tick(TickProg, UsesTick),
     advance_tick_fn_lines(UsesTick, AdvanceTickFnLines),
-    run_naive_tick_fn_lines(Name, EdgeStatements, HasRetention, UsesTick,
-                            DepartureRefs, HasStructTypes, HasTextIntern,
-                            RunNaiveTickFnLines),
     run_ordered_tick_fn_lines(HasOrderedProgram, Name, HasRetention, UsesTick,
                               DepartureRefs, HasStructTypes, HasTextIntern,
                               RunOrderedTickFnLines),
-    incremental_program_safe(Plan, EdgeStatements, RuleLevelStatements, IncrementalSafe),
     reconcile_every_tick(Plan, ReconcileEveryTick),
     derived_edge_carry_required(Plan, EdgeStatements, DerivedEdgeCarryRequired),
     retraction_guard(Plan, RetractionGuard),
-    incremental_mode_lines(IncrementalSafe, ReconcileEveryTick,
-                           IncrementalModeLines),
+    incremental_mode_lines(ReconcileEveryTick, IncrementalModeLines),
     subscribe_prune_lines(HasRetention, DerivedEdgeCarryRequired,
                           HasOrderedProgram, SubscribePruneLines),
     run_incremental_tick_fn_lines(EdgeStatements, DerivedEdgeCarryRequired,
@@ -2808,7 +2459,6 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     Sections0 =
     [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
       BindArgsHelperLines, ArrivalValueGuardLines, TriggerOccurrencesHelperLines,
-      DepartureOccurrencesHelperLines,
       StructPlaneLines, TextInternPlanLines,
       DdlLines, RelColumnsLines, RelColumnTypesLines, RelCatalogLines,
       RelDeclaredColumnTypesLines, ArrivalTargetsLines,
@@ -2817,10 +2467,9 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
       ArrivalStatementsLines, ArrivalStatementFnLines,
       IncrementalRelationLines, IncrementalEdgeStatementLines,
       IncrementalLevelStatementLines, IncrementalRetentionStatementLines,
-      EdgeConstLines, EdgeFnLines,
       OrderedPreLines, OrderedOccurrenceLines, OrderedCarryLines,
-      RecomputeLevelsFnLines, NaiveRetentionFnLines, BuildDeltasFnLines,
-      AdvanceTickFnLines, RunNaiveTickFnLines, RunOrderedTickFnLines,
+      RecomputeLevelsFnLines, SnapshotRetentionFnLines, BuildDeltasFnLines,
+      AdvanceTickFnLines, RunOrderedTickFnLines,
       IncrementalModeLines, SubscribePruneLines, RunIncrementalTickFnLines,
       StructTickWrapperLines, IncrementalPlanExportLines,
       ProgramExportLines

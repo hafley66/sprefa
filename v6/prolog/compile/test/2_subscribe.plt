@@ -222,10 +222,9 @@ test(emitted_module_prunes_the_tick_path_behind_the_flag) :-
     % incrementalPlan describes the compiled program rather than the tick
     % path's working lists, so it stays unpruned.
     once(sub_atom(Text, _, _, _, '  levels: INCREMENTAL_LEVEL_STATEMENTS,')),
-    % Only the incremental path can honor a cone; the naive referee and the
-    % ordered path name themselves instead of answering a pruned question with
-    % an unpruned tick.
-    once(sub_atom(Text, _, _, _, 'const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;')),
+    % Only the incremental path can honor a cone; the ordered path names
+    % itself instead of answering a pruned question with an unpruned tick.
+    once(sub_atom(Text, _, _, _, 'const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";')),
     once(sub_atom(Text, _, _, _,
                   'if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {')),
     !.
