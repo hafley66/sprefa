@@ -3,8 +3,25 @@ set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 here="$root/v6/sprefa-engine-rs"
+
+# mkdir is atomic and needs no companion binary; macOS ships no flock(1).
+# Guards $here/target/debug/emit_rust_harness (docs/failure-modes.md entry 50).
+lock_dir="$here/target/.grade-sh.lock"
+mkdir -p "$here/target"
+if ! mkdir "$lock_dir" 2>/dev/null; then
+  holder_pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
+  if [ -n "$holder_pid" ] && kill -0 "$holder_pid" 2>/dev/null; then
+    printf 'grade.sh: another run holds the lock (pid %s); exiting\n' "$holder_pid" >&2
+    exit 1
+  fi
+  # Holder pid is dead: a prior run crashed without reaching its EXIT trap.
+  rm -rf "$lock_dir"
+  mkdir "$lock_dir"
+fi
+echo $$ >"$lock_dir/pid"
+
 scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+trap 'rm -rf "$scratch" "$lock_dir"' EXIT INT TERM
 corpus="$scratch/corpus"
 mkdir -p "$corpus"
 
