@@ -184,11 +184,23 @@ relax_strata(Constraints, Cap, Strata0, Strata) :-
         relax_strata(Constraints, Cap, Strata1, Strata)
     ).
 
+% A head whose measure grows every round (`Next := Value + 1`) has no finite
+% least model, so `Merged == Known0` never holds. Mirrors engine.pl's
+% drain_cap/1: bounded, loud, never a truncated answer.
+level_round_cap(1000).
+
 plain_fixpoint(Plane, PlainLevel, Base, Tick, Known0, Level) :-
     rows_index(Base, BaseIndex),
-    plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Known0, Level).
+    plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, 0, Known0, Level).
 
-plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Known0, Level) :-
+plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Round, Known0, Level) :-
+    level_round_cap(Cap),
+    (   Round >= Cap
+    ->  findall(Ref, ( member((Head <- _), PlainLevel), rel_ref(Head, Ref) ), Refs0),
+        sort(Refs0, Refs),
+        throw(diverging_measure_recursion(Refs, Cap))
+    ;   true
+    ),
     findall(EvaluatedHead,
             ( member((Head <- Body), PlainLevel),
               solve(Body, ctx(rows(BaseIndex, Known0), [], Tick)),
@@ -198,7 +210,8 @@ plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Known0, Level) :-
     append([Known0, Heads, MintedRows], Merged0),
     sort(Merged0, Merged),
     ( Merged == Known0 -> Level = Known0
-    ; plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Merged, Level) ).
+    ; NextRound is Round + 1,
+      plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, NextRound, Merged, Level) ).
 
 % ── list(T) in head position: the value IS the interned list id ─────────────
 % Canonical order, matching the emitted door's ORDER BY <array text>: every

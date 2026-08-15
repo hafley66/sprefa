@@ -111,7 +111,7 @@ impl GenProgram {
                 &self.relations,
                 self.reconcile_every_tick,
                 arrivals.len(),
-            );
+            )?;
             incremental::apply_edges(seam, &self.edges, &self.relations)?;
             incremental::merge_next_into_current(seam, &self.relations);
             incremental::apply_levels_after_edges(seam, &self.levels, &self.relations)?;

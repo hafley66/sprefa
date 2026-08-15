@@ -89,6 +89,7 @@
 :- use_module('../../compile/5_emit_openapi', [ openapi_text/3 ]).
 :- use_module('../../compile/7_emit_ts_types', [ ts_types_text/3 ]).
 :- use_module('../../compile/8_emit_rust_types', [ rust_types_text/3 ]).
+:- use_module('../../emit_rust', [ emit_program/5 as emit_rust_program ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
 % the oracle/compiler split, because the review's central claim is that
@@ -710,7 +711,7 @@ test(self_recursive_ref_count_uses_recursive_cte_reseed) :-
     % The rx-expand spelling of the same fixpoint rides beside the CTE: the
     % hop shadows the head name with the wavefront and dedups on the absorbed
     % refCount table, so the two spellings fill identical WITHOUT ROWID keys.
-    ExpandPlan = expandplan(_, _, [SeedArm], HopAB, HopBA, AbsorbA, _),
+    ExpandPlan = expandplan(_, _, [SeedArm], HopAB, HopBA, AbsorbA, _, _),
     once(sub_atom(SeedArm, _, _, _, 'INSERT OR IGNORE INTO "__expand_a_path"')),
     once(sub_atom(HopAB, _, _, _, 'WITH "path" ("node") AS (SELECT "node" FROM "__expand_a_path")')),
     once(sub_atom(HopAB, _, _, _, 'NOT EXISTS (SELECT 1 FROM "__support_next_path"')),
@@ -761,7 +762,7 @@ test(negated_body_refuses_the_in_place_plan) :-
         RelPlans, path/1, Rules,
         refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, none,
                     FixpointIr, _)),
-    ExpandPlan = expandplan(_, _, _, _, _, _, _),
+    ExpandPlan = expandplan(_, _, _, _, _, _, _, _),
     % The IR is fenced by the SAME predicate: no in-place plan, no IR.
     FixpointIr == none.
 
@@ -850,6 +851,27 @@ test(fixpoint_ir_emits_beside_the_sql_fields) :-
                   'stop: { seed: { kind: "absent", target: "head" }, hop: { kind: "absent", target: "head" } }, emit: "round_major"')),
     once(sub_atom(Text, _, _, _, 'head_rel: "flow_edge"')),
     once(sub_atom(Text, _, _, _, 'dred_sql: null, fixpoint_ir: null')).
+
+% FAIL-FIRST RECEIPT: without a cap the wavefront on `Next := Value + 1` ran
+% 45s in both emitted doors and 30s in the oracle before the timeout gun. Both
+% doors read the SAME number out of the plan, which is why it is emitted at
+% all rather than restated in two runtimes.
+test(both_doors_emit_the_one_fixpoint_round_cap) :-
+    once(( fixture_file('4_flagship_flow.pl', File),
+           read_fixture_term(File, flagship_flow_reach_over_resolved_edges,
+                             Term, Bindings),
+           program_plan(Term-Bindings, [intern(direct)], Plan),
+           lower_program(Plan, Lowered) )),
+    Term = fixture(_, _, Initial, _, _),
+    Plan = plan(_, prog(Decls, _), Types, RelPlans, _, _, _, _, Mode),
+    Lowered = lowered(_, _, _, _, LevelStatements, _, _, _),
+    boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements, Boot),
+    emit_program(flagship_flow_reach_over_resolved_edges, Plan, Lowered, Boot,
+                 TsText),
+    once(sub_atom(TsText, _, _, _, ', round_cap: 1000 }')),
+    emit_rust_program(flagship_flow_reach_over_resolved_edges, Plan,
+                      Lowered, Boot, RustText),
+    once(sub_atom(RustText, _, _, _, '"round_cap":1000')).
 
 % SABOTAGE RECEIPT: with arith/3 carrying no result type (the shape before this
 % test), both walks below emit the SAME `{ kind: "arith", op: "/" }` while the

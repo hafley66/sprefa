@@ -107,6 +107,8 @@
   {"name":"colliding_ref_column_names_render_the_child_tree","file":"22_ref_column_collision.pl","bucket":"compiled","reason":""},
   {"name":"disjoint_ref_column_names_render_the_child_tree","file":"22_ref_column_collision.pl","bucket":"compiled","reason":""},
   {"name":"one_colliding_ref_column_beside_a_disjoint_sibling","file":"22_ref_column_collision.pl","bucket":"compiled","reason":""},
+  {"name":"diverging_measure_recursion_is_bounded_and_loud","file":"23_diverging_recursion.pl","bucket":"compiled","reason":""},
+  {"name":"bounded_measure_recursion_still_closes","file":"23_diverging_recursion.pl","bucket":"compiled","reason":""},
   {"name":"ghcacher_json_normalization","file":"2_hosts_wiring.pl","bucket":"unsupported","reason":"level_body_goal(pull_request(A,B,C,D,E),json_each(F,G))"},
   {"name":"ghcacher_host_program_term","file":"2_hosts_wiring.pl","bucket":"unsupported","reason":"level_body_goal(pull_request(A,B,C,D,E),json_each(F,G))"},
   {"name":"extraction_fork_callgraph","file":"2_hosts_wiring.pl","bucket":"compiled","reason":""},

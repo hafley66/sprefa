@@ -1243,7 +1243,7 @@ ref_count_sql_text(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
 
 expand_sql_text(none, null) :- !.
 expand_sql_text(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,
-                           AbsorbASql, AbsorbBSql),
+                           AbsorbASql, AbsorbBSql, RoundCap),
                 Text) :-
     maplist(js_template, [ClearASql, ClearBSql, HopABSql, HopBASql,
                           AbsorbASql, AbsorbBSql],
@@ -1252,9 +1252,9 @@ expand_sql_text(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,
     maplist(js_template, SeedSqls, SeedTemplates),
     atomic_list_concat(SeedTemplates, ', ', SeedJoined),
     format(atom(Text),
-           '{ clear_a_sql: ~w, clear_b_sql: ~w, seed_sqls: [~w], hop_ab_sql: ~w, hop_ba_sql: ~w, absorb_a_sql: ~w, absorb_b_sql: ~w }',
+           '{ clear_a_sql: ~w, clear_b_sql: ~w, seed_sqls: [~w], hop_ab_sql: ~w, hop_ba_sql: ~w, absorb_a_sql: ~w, absorb_b_sql: ~w, round_cap: ~w }',
            [ClearATemplate, ClearBTemplate, SeedJoined, HopABTemplate,
-            HopBATemplate, AbsorbATemplate, AbsorbBTemplate]).
+            HopBATemplate, AbsorbATemplate, AbsorbBTemplate, RoundCap]).
 
 dred_sql_text(none, null) :- !.
 dred_sql_text(dredplan(ClearPingSql, ClearPongSql, ClearConeSql,

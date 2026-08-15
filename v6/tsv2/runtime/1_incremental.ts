@@ -538,6 +538,25 @@ function sequence_work<Item>(
   );
 }
 
+/** The wavefront driver both recursive walks share. A growing measure never
+ *  derives nothing, so the round index is the only thing that can stop it. */
+function bounded_wave(
+  head_rel: string,
+  round_cap: number,
+  round: (fills_b: boolean) => Observable<number>,
+): Observable<number> {
+  return round(true).pipe(
+    expand((derived, index) => {
+      if (derived === 0) return EMPTY;
+      if (index + 1 >= round_cap) {
+        throw new Error(`diverging_measure_recursion(${head_rel}, ${round_cap})`);
+      }
+      return round(index % 2 === 1);
+    }),
+    last(),
+  );
+}
+
 /**
  * The refCount reconcile of ONE plain (non-aggregate) level statement:
  * reseed `__support_next_<rel>` from the base tables, subtract the difference
@@ -626,18 +645,18 @@ function reconcile_ref_count_statement(
       expand_plan.absorb_a_sql,
     ]);
     return seam.runner.batch(seam.db, seed_wave).pipe(
-      concatMap(() =>
-        round(true).pipe(
-          expand((derived, index) => (derived === 0 ? EMPTY : round(index % 2 === 1))),
-          last(),
-        ),
-      ),
+      concatMap(() => bounded_wave(statement.head_rel, expand_plan.round_cap, round)),
       concatMap(() => seam.runner.batch(seam.db, tail)),
       map((results) => note_fill(results[fill_new_index]!.rowsAffected)),
     );
   };
   const dred_plan = statement.dred_sql ?? null;
   if (dred_plan === null) return recompute();
+  // lower.pl:4450 mints both plans on the one recursive branch, so a dred plan
+  // without the expand plan's cap is an emitter defect, never a runtime shape.
+  if (expand_plan === null) {
+    throw new Error(`incremental level dred plan without expand plan: ${statement.head_rel}`);
+  }
   const arrival_tail: SqlStatement[] = skipped
     ? []
     : [...to_statements([stage_add!]), ...frontier_stages];
@@ -652,6 +671,8 @@ function reconcile_ref_count_statement(
       arrival_tail,
       stage_retract: skipped ? [] : to_statements([dred_plan.stage_retract_sql]),
       note_fill,
+      head_rel: statement.head_rel,
+      round_cap: expand_plan.round_cap,
     },
     recompute,
   );
@@ -673,16 +694,14 @@ function maintain_head_in_place(
     readonly arrival_tail: readonly SqlStatement[];
     readonly stage_retract: readonly SqlStatement[];
     readonly note_fill: (rows: number) => void;
+    readonly head_rel: string;
+    readonly round_cap: number;
   },
   recompute: () => Observable<void>,
 ): Observable<void> {
   const walk = (
     round: (fills_b: boolean) => Observable<number>,
-  ): Observable<number> =>
-    round(true).pipe(
-      expand((derived, index) => (derived === 0 ? EMPTY : round(index % 2 === 1))),
-      last(),
-    );
+  ): Observable<number> => bounded_wave(staging.head_rel, staging.round_cap, round);
   // A skipped rel's `arrivalA/B` fills `__new_<rel>` only to feed the carry via
   // noteFill; with nothing reading it, commit's rowsAffected carries the same.
   const assert_round = (fills_b: boolean): Observable<number> =>
