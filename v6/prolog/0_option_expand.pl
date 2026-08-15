@@ -147,4 +147,12 @@ companion_rel_decls(ParentName, Column, Element,
     companion_rel_name(ParentName, Column, CompanionName),
     CompanionRef = CompanionName/2,
     atom_concat(ParentName, '_id', ParentIdColumn),
+    companion_element_column(ParentName, Column, Element, ElementIdColumn).
+
+% A self-typed column names both endpoints after the same rel and one CREATE
+% TABLE cannot carry the atom twice, so the column name qualifies the target.
+companion_element_column(ParentName, Column, ParentName, ElementIdColumn) :-
+    !,
+    atomic_list_concat([Column, '_', ParentName, '_id'], ElementIdColumn).
+companion_element_column(_, _, Element, ElementIdColumn) :-
     atom_concat(Element, '_id', ElementIdColumn).

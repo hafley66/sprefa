@@ -45,6 +45,7 @@
                 relplan_origins/2 ]).
 :- use_module('../../0_dot_expand', [ expand_dot_in_context/3 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
+:- use_module('../../0_option_expand', [ expand_option_program/2 ]).
 :- use_module('../../0_generic_expand',
               [ expand_generic_program/2, expand_generic_program_raw/2,
                 canonical_type_name/2, generic_type_ir/2 ]).
@@ -8854,3 +8855,63 @@ explain_query_plan(Ddl, Sql, Plan) :-
     atom_string(Plan, Text).
 
 :- end_tests(list_value_position).
+
+% A column typed option(<its own rel>) is the parent-chain shape. Both
+% companion endpoints were named '<rel>_id', which SQLite rejects at CREATE.
+:- begin_tests(self_ref_option_column).
+
+self_ref_node_program(
+    prog([ col_type(node/3, node_id, int),
+           col_type(node/3, name, text),
+           col_type(node/3, parent, option(node)),
+           keyed(node/3, [1]) ],
+         [])).
+
+% FAIL-PRE-FIX: companion_rel_decls/4 concatenated '_id' onto the owner rel
+% and onto the element rel, one atom when the element IS the owner.
+test(a_self_typed_option_names_two_distinct_endpoint_columns) :-
+    self_ref_node_program(Program),
+    expand_option_program(Program, prog(Decls, _)),
+    findall(ColumnName,
+            member(col_type(node__parent/2, ColumnName, int), Decls),
+            ColumnNames),
+    ColumnNames == [node_id, parent_node_id].
+
+test(a_self_typed_option_emits_a_creatable_companion_table) :-
+    self_ref_node_program(Program),
+    program_plan(fixture(self_ref_option, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TABLE "node__parent" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))', Ddl).
+
+% The qualifying rule fires ONLY when the element rel is the owner rel; every
+% other option(<rel>) column keeps the element-named endpoint.
+test(a_cross_rel_option_keeps_its_element_named_endpoint) :-
+    Program = prog([ col_type(person/2, person_id, int),
+                     col_type(person/2, name, text),
+                     keyed(person/2, [1]),
+                     col_type(commit/2, commit_id, int),
+                     col_type(commit/2, reviewed_by, option(person)),
+                     keyed(commit/2, [1]) ],
+                   []),
+    expand_option_program(Program, prog(Decls, _)),
+    findall(ColumnName,
+            member(col_type(commit__reviewed_by/2, ColumnName, int), Decls),
+            ColumnNames),
+    ColumnNames == [commit_id, person_id].
+
+% The degenerate spelling: the column name matches the rel name, so the
+% qualified endpoint is 'node_node_id' and still differs from the owner.
+test(a_self_typed_option_named_after_its_rel_still_disambiguates) :-
+    Program = prog([ col_type(node/3, node_id, int),
+                     col_type(node/3, name, text),
+                     col_type(node/3, node, option(node)),
+                     keyed(node/3, [1]) ],
+                   []),
+    expand_option_program(Program, prog(Decls, _)),
+    findall(ColumnName,
+            member(col_type(node__node/2, ColumnName, int), Decls),
+            ColumnNames),
+    ColumnNames == [node_id, node_node_id].
+
+:- end_tests(self_ref_option_column).

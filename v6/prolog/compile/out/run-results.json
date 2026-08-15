@@ -539,6 +539,13 @@
     "final_detail": ""
   },
   {
+    "name": "self_ref_option_chain_reads_through_the_companion",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "extraction_fork_callgraph",
     "bucket": "identical",
     "detail": "",

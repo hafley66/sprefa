@@ -91,6 +91,7 @@
   {"name":"match_enum_nonexhaustive_is_refused","file":"1_match_block.pl","bucket":"unsupported","reason":"match_nonexhaustive(body,redirect)"},
   {"name":"keyed_level_head_is_refused","file":"1_match_block.pl","bucket":"unsupported","reason":"keyed_level_head(current_value/2)"},
   {"name":"keyed_edge_head_still_replaces","file":"1_match_block.pl","bucket":"compiled","reason":""},
+  {"name":"self_ref_option_chain_reads_through_the_companion","file":"20_parent_chain.pl","bucket":"compiled","reason":""},
   {"name":"ghcacher_json_normalization","file":"2_hosts_wiring.pl","bucket":"unsupported","reason":"level_body_goal(pull_request(A,B,C,D,E),json_each(F,G))"},
   {"name":"ghcacher_host_program_term","file":"2_hosts_wiring.pl","bucket":"unsupported","reason":"level_body_goal(pull_request(A,B,C,D,E),json_each(F,G))"},
   {"name":"extraction_fork_callgraph","file":"2_hosts_wiring.pl","bucket":"compiled","reason":""},
