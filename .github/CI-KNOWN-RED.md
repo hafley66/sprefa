@@ -14,12 +14,17 @@ defect is fixed and the leg measured green.
 Rows removed by re-measure at base `259e0289`: `flagship`, `getting-started`,
 `scale-floor` (each measured green 3/3 after its stale pin was refreshed).
 
+Row removed 2026-08-14 (issue golden-flex-coverage) at base `dc97a827`:
+`golden-flex`, measured green 3/3 (coverage gate + text door + all four
+cardinality/mode-parity legs + served e2e) after the string-family/json
+registry landing's 16 unaccounted constructs were exercised or named-absent
+in `v6/dl/fixtures/golden-flex.dl6`.
+
 ## Red legs
 
 | leg | exact failure text | throw site |
 |---|---|---|
 | roundtrip | `G1 round-trip: 391 / 392 fixtures pass` then `FAIL mutual_recursion_matches_oracle (.../fixtures/engine_core.pl): fail(not_variant)` | `v6/prolog/compile/scripts/roundtrip.sh:132` |
-| golden-flex | `GOLDEN_COVERAGE FAIL: json_object/2 is excused as 'registry status refused' but its registry status is now live -- the excuse is stale`; `GOLDEN_COVERAGE FAIL: json_patch/2 (expression) is a registry construct the golden does not exercise`; `GOLDEN_COVERAGE 69 registry constructs, 2 unaccounted for` | `v6/prolog/compile/scripts/golden_coverage.pl:174,178` |
 | tsv2-test | 4 failures of 209: `hostDecode.test.ts:144` (actual `[1,2,2,3]`, expected `[0,1,2,3]`), two `bopCheck` exit-code tests, and `edge-body negation SEARCHes the negated rel by key`. The stated "needs `gen_emitted/`" cause is WRONG: `v6/tsv2/gen_emitted/` holds 287 files and all four still fail. Re-diagnose before fixing. | `v6/tsv2/tests/hostDecode.test.ts:144` |
 | rtkq-golden | `ERR_ASSERTION` `deepStrictEqual` at `labs/1_rtkq-extraction-golden.ts:200`: `api_endpoint` rows emit `updateUser`-before-`listUsers`, order-sensitive golden expects `listUsers`-first (spans identical, not a corpus move) | `v6/tsv2/labs/1_rtkq-extraction-golden.ts:200` |
 | plunit | `5 tests failed` (of 637): `catalog_plane_rail:level_plane_family_corpus_counts`, `rel_zero_arity:a_root_rel_zero_still_has_no_storage`, `json_merge_patch:json_patch_lowers_with_the_null_stand_in_guard`, `json_merge_patch:merge_patch_stops_on_the_json_null_stand_in` (no_exception), `json_merge_patch:merge_patch_stops_on_a_nested_json_null_stand_in` (no_exception). `expression_inventory` was fixed with the typed_scalar landing (the ratchet had gone stale at #238). | `v6/prolog/compile/test/plunit_tests.pl:1314,5809,7684,7739,7743` |
@@ -44,7 +49,6 @@ allow: rtkq-golden
 allow: compile-speed
 allow: tsv2-test
 allow: lsp-diags
-allow: golden-flex
 allow: memory-soak
 allow: roundtrip
 allow: serve-leak-soak

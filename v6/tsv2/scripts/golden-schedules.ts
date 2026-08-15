@@ -13,8 +13,10 @@
  *   1  quarantined('weed')                the anti-join's one row, always
  *   2  tree + sensor                      the value plane arrives whole
  *      + dispatch_manifest + leg 1        the composition scenario opens
+ *      + orchard_patch_sample (base)      json_patch/2's not/1 bootstrap row
  *   3  pick_event                         triggers every edge rule at once
  *      + leg 2                            the fold's second link
+ *      + orchard_patch_sample (patch)     json_patch/2's real fold step
  *   4  __host_response_weigh              the host's answers (see below)
  *   5  interval(1, bucket)                the bind row
  *   6  grade_ripe / grade_green / grade_bruised   the enum's variant rels
@@ -116,6 +118,26 @@ function orchard_list_row(index: number): IArrivalRow {
   };
 }
 
+/** json_patch/2's fold, fed as two log samples: the first (tick 2) becomes
+ *  the base snapshot outright via orchard_snapshot's `not/1` bootstrap arm,
+ *  and the second (tick 3) is the one that actually calls json_patch/2 --
+ *  `seeded` survives the merge (untouched key), `patched` is the new one. */
+function orchard_patch_sample_base_row(index: number): IArrivalRow {
+  return {
+    rel: "orchard_patch_sample",
+    sign: "add",
+    row: [index, StructPlane.canonical_text({ seeded: index })],
+  };
+}
+
+function orchard_patch_sample_row(index: number): IArrivalRow {
+  return {
+    rel: "orchard_patch_sample",
+    sign: "add",
+    row: [index, StructPlane.canonical_text({ patched: index + 1 })],
+  };
+}
+
 function orchard_tag_source_rows(index: number): readonly IArrivalRow[] {
   return [
     { rel: "orchard_tag_source", sign: "add", row: [index, "red"] },
@@ -207,8 +229,14 @@ export function schedule_for(count: number): readonly IArrivalBatch[] {
       ...all.map(orchard_list_row),
       ...all.map(dispatch_manifest_row),
       ...all.map((index) => dispatch_leg_row(index, 1)),
+      ...all.map(orchard_patch_sample_base_row),
     ],
-    all.flatMap((index) => [pick_row(index), ...orchard_tag_source_rows(index), dispatch_leg_row(index, 2)]),
+    all.flatMap((index) => [
+      pick_row(index),
+      ...orchard_tag_source_rows(index),
+      dispatch_leg_row(index, 2),
+      orchard_patch_sample_row(index),
+    ]),
     all.map(host_answer_row),
     [{ rel: "interval", sign: "add", row: [1, 1_800_000] }],
     all.flatMap((index) => [
@@ -237,8 +265,14 @@ export function perturbed_schedule(count: number): readonly IArrivalBatch[] {
       orchard_list_row(extra),
       dispatch_manifest_row(extra),
       dispatch_leg_row(extra, 1),
+      orchard_patch_sample_base_row(extra),
     ],
-    [pick_row(extra), ...orchard_tag_source_rows(extra), dispatch_leg_row(extra, 2)],
+    [
+      pick_row(extra),
+      ...orchard_tag_source_rows(extra),
+      dispatch_leg_row(extra, 2),
+      orchard_patch_sample_row(extra),
+    ],
     [
       host_answer_row(extra),
       grade_row(extra),

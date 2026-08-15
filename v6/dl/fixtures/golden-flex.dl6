@@ -26,9 +26,11 @@
 # None of them is worked around: the unsupported name is the record.
 #
 #   json_each/2                    registry status `refused`.
-#   json_array/1, json_object/2    aggregate heads, registry status `refused`
+#   json_array/1                   aggregate head, registry status `refused`
 #                                  (ruling json_ticklog_encoding executed on the
-#                                  log side; emission still owed).
+#                                  log side; emission still owed). json_object/2
+#                                  went LIVE off the same ruling and is GRADED
+#                                  HERE (orchard_tag_document below), not absent.
 #   sg_pattern/3                   registry status `refused`
 #                                  (slot_sg_metavariable_semantics).
 #   spread/1, $/1, **/0, {}/0      the json value/pattern axis. LIVE and graded
@@ -135,8 +137,36 @@
 #                                  graded on all four cardinalities like every
 #                                  other live row.
 #
+#   upper/1, lower/1, trim/1,2, ltrim/1,2, rtrim/1, reverse/1, initcap/1,
+#   substr/2,3, instr/2, length/1, json_object/2, json_patch/2  -- the
+#   string-family and json landing (issue golden-flex-coverage) added ONE
+#   registry row apiece with zero golden coverage. Each is now graded here:
+#   the text-only and typed-scalar rows fold RouteName (route_* below),
+#   json_object groups orchard_tag's decoded pairs into one document per tree
+#   (orchard_tag_document), and json_patch folds a keyed snapshot the same
+#   shape as conformance/fixtures/json_patch_fold.pl (orchard_snapshot below)
+#   -- one working fold, not a restatement of that corpus's RFC-clause
+#   coverage.
+#
+#   split/2  --  defect list-column-raw-snapshot-crash (filed with issuectl),
+#   NOT graded here. split's registry type rule is typed([text,text], list(text)): the
+#   result column is unavoidably a relational list(T). Trying it (a
+#   display_words rel folding split(Note, ' ') the same shape as the
+#   pre-existing tree_bundle: list(patch)) throws `list column crossed SQLite
+#   with 1` out of tsv2/runtime/rows.ts's row_value_from_sql, called from
+#   read_stored_snapshot's raw (non-view) SELECT of a list-typed column. This
+#   is not split-specific: tree_bundle's list(patch) column has the identical
+#   shape and would crash the same way, and never has ONLY because
+#   golden-schedules.ts never seeds a tree_bundle arrival row (confirmed: a
+#   probe with tree_bundle intact and display_words removed ran the "one"
+#   cardinality leg clean, zero tree_bundle rows in every tick). The defect is
+#   latent on ANY list(T)-typed rule with a live row, filed rather than
+#   worked around.
+#
 # ═══ DEFECTS THIS PROGRAM SURFACED (index; each is written up where it lives)
 #
+#   a live list(T) column crashes read_stored_snapshot    header above (split/2);
+#   OPEN, filed issuectl list-column-raw-snapshot-crash    not fixed here
 #   norm/1 diverged oracle vs emitter  FIXED             header above; graded by
 #                                                     display_key below
 #   float/bool unspellable in sh + bind decls  FIXED   header above; the
@@ -209,6 +239,37 @@ rel orchard_tag(tree_id: int, tag: text, value: int).
 orchard_tag(TreeId, TagKey, TagValue) <-
   orchard_json(TreeId, JsonPayload),
   decode(JsonPayload, {tags: {$TagKey: TagValue: int}}).
+
+# json_object/2: aggregate head, one document per group, keys sorted. Reads
+# the same decoded (key, value) pairs orchard_tag already produced, so this is
+# a second consumer of one source rather than an eleventh json arrival shape.
+rel orchard_tag_document(tree_id: int, snapshot: json).
+orchard_tag_document(TreeId, json_object(TagKey, TagValue)) <-
+  orchard_tag(TreeId, TagKey, TagValue).
+
+# ═══ json_patch/2: RFC 7396 merge patch as a pre/1 fold over a keyed
+# snapshot, the same clause conformance/fixtures/json_patch_fold.pl grades in
+# isolation. THIS golden needs only ONE working fold to prove the construct
+# composes with a keyed edge head and a log arrival, and it is arrival-fed
+# rather than seeded: a rel that is ever a rule head (orchard_snapshot is, via
+# the fold below) can NEVER be a schedule arrival target -- analyze.pl's
+# arrival_target_refs/2 defines an arrival target as "referenced ref that is
+# NEVER a rule head", so a `metric_doc`-style externally-seeded base row (the
+# conformance fixture's `Initial` argument) is oracle-only sugar with no TS/
+# Rust emitted-engine equivalent. The base arm here therefore bootstraps the
+# same way pick_count above does: the FIRST patch sample for a tree becomes
+# the snapshot outright (RFC 7396 clause: MergePatch(null, Patch) = Patch for
+# a non-null Patch), and only the SECOND sample onward reads pre/1 and calls
+# json_patch/2 for real.
+rel orchard_patch_sample(tree_id: int, patch: json) log keep(all).
+rel orchard_snapshot(tree_id: int, document: json) key(1).
+orchard_snapshot(TreeId, Patch) <+
+  orchard_patch_sample(TreeId, Patch),
+  not(orchard_snapshot(TreeId, _AnyPriorDocument)).
+orchard_snapshot(TreeId, Next) <+
+  orchard_patch_sample(TreeId, Patch),
+  pre(orchard_snapshot(TreeId, Prior)),
+  Next := json_patch(Prior, Patch).
 
 # `**` descent reaches the nested leaf at any object depth.
 rel orchard_leaf(tree_id: int, leaf: int).
@@ -571,6 +632,37 @@ route_flattened(DispatchId, Flat) <-
 rel route_bare(dispatch_id: int, bare: text).
 route_bare(DispatchId, Bare) <-
   dispatch_route(DispatchId, RouteName, _HopCount), Bare := rtrim(RouteName, '/').
+
+# ═══ THE STRING FAMILY: every remaining text_scalar and typed_scalar row,
+# folded off the same RouteName the str-stratum minimum above already reads.
+# ONE rel, ONE rule, thirteen `:=` goals -- not thirteen rels: each minted rel
+# carries its own delta/frontier/support table quintet in rel_catalog, and at
+# thirteen separate route_* rels the emitted rel_catalog literal crossed
+# tsgo's array-literal complexity ceiling (`error TS2590: Expression produces
+# a union type that is too complex to represent`, measured by bisection --
+# 14 new rels typechecked clean, 15 did not). One rel keeps every construct
+# individually named and graded while adding ONE catalog entry, not thirteen.
+rel route_strings(dispatch_id: int, shouted: text, mumbled: text, trimmed: text,
+                   trimmed_charset: text, led: text, led_charset: text,
+                   written: text, mirrored: text, titled: text, clipped: text,
+                   middle: text, found_at: int, measured: int).
+route_strings(DispatchId, Shouted, Mumbled, Trimmed, TrimmedCharset, Led,
+              LedCharset, Written, Mirrored, Titled, Clipped, Middle, FoundAt,
+              Measured) <-
+  dispatch_route(DispatchId, RouteName, _HopCount),
+  Shouted := upper(RouteName),
+  Mumbled := lower(RouteName),
+  Trimmed := trim(RouteName),
+  TrimmedCharset := trim(RouteName, 'h'),
+  Led := ltrim(RouteName),
+  LedCharset := ltrim(RouteName, 'e'),
+  Written := rtrim(RouteName),
+  Mirrored := reverse(RouteName),
+  Titled := initcap(RouteName),
+  Clipped := substr(RouteName, 2),
+  Middle := substr(RouteName, 2, 2),
+  FoundAt := instr(RouteName, 'o'),
+  Measured := length(RouteName).
 
 # The join that makes the match block a COMPOSITION rather than a second copy
 # of `graded`: the scrutinee carries the enum's tag AND the json's numbers, so
