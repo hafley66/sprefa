@@ -1,0 +1,295 @@
+# @comment-ok: the dl6 door contract, the single doc site for the IR shape.
+# render_rust.dl6 -- the dl6 door for the Rust type plane (Phase F twin).
+# Reads the type plane as arrivals on EDB rel type_row/7 (one JSONL line per
+# semantic type row, written by v6/prolog/compile/typegen_export.pl) and
+# renders each renderable relation as a Rust struct. The twin of
+# render_ts.dl6: same strata and naming, swapping the TS surface syntax for
+# what 8_emit_rust_types.pl emits (structs, Vec<T>, Option<T>, module-prefix
+# collision names, trait declarations, generic bounds). The 3-rule IR shape is
+# the proven probe (chat_log/20260813.2):
+#   field_line(TypeName, Ordinal, LineText)   <- concat per column
+#   body_text(TypeName, group_concat(LineText, '\n', Ordinal))
+#   rendered_type(TypeName, FileText)         <- concat wrap
+# type_row columns (from row/11): id, parent, ordinal, name, kind, type_id,
+# module_id.
+
+rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
+             type_id: int, module_id: int).
+
+# PascalCase = replace(initcap(Name), '_', ''), matching the prolog emitter.
+# Inline, because an assignment-only rule has no positive body to group on.
+
+# A leaf type is a primitive or a reference to another relation. Rel references
+# render as the referenced rel's own PascalCase name. The Rust primitive set
+# differs from the TS one: int is i64, text is String, json is
+# serde_json::Value, and the float primitive maps to f64.
+rel leaf_type(id: int, text: text).
+leaf_type(Id, 'String') <- type_row(Id, _, _, 'text', 'primitive', _, _).
+leaf_type(Id, 'i64') <- type_row(Id, _, _, 'int', 'primitive', _, _).
+leaf_type(Id, 'f64') <- type_row(Id, _, _, 'float', 'primitive', _, _).
+leaf_type(Id, 'bool') <- type_row(Id, _, _, 'bool', 'primitive', _, _).
+leaf_type(Id, 'serde_json::Value') <- type_row(Id, _, _, 'json', 'primitive', _, _).
+leaf_type(Id, TypeName) <- emitted_type_name(Id, TypeName).
+
+# A type parameter stands for itself inside its generic's body, uncased.
+leaf_type(Id, ParameterName) <-
+  type_row(Id, _, _, ParameterName, 'type_parameter', _, _).
+
+# @comment-ok: the __ namespace filter; no contains/2 builtin, so instr marks it.
+# The `__` namespace marks compiler-minted rels (list companions, option enums,
+# split refs); only author rels render. There is no contains/2 builtin, so a
+# name carries the marker when instr finds the double underscore at a position
+# past the first character.
+rel minted_rel(name: text).
+minted_rel(Name) <-
+  type_row(_, _, _, Name, 'rel', _, _),
+  Position := instr(Name, '__'),
+  Position > 0.
+
+# A concrete_type row's parent is the rel id it instantiates; that rel reaches
+# the file even when minted, mirroring 8_emit_rust_types.pl's concrete_rel/2.
+rel concrete_type_row(id: int, rel_id: int).
+concrete_type_row(Id, RelId) <- type_row(Id, RelId, _, _, 'concrete_type', _, _).
+
+rel concrete_rel(rel_id: int).
+concrete_rel(RelId) <- concrete_type_row(_, RelId).
+
+# The rels that reach the file, with the PascalCase name each one asks for.
+rel renderable_rel(rel_id: int, bare_type: text, module_id: int).
+renderable_rel(RelId, BareType, ModuleId) <-
+  type_row(RelId, _, _, RelName, 'rel', _, ModuleId),
+  not(minted_rel(RelName)),
+  BareType := replace(initcap(RelName), '_', '').
+renderable_rel(RelId, BareType, ModuleId) <-
+  type_row(RelId, _, _, RelName, 'rel', _, ModuleId),
+  minted_rel(RelName),
+  concrete_rel(RelId),
+  BareType := replace(initcap(RelName), '_', '').
+
+# Two rels asking for one name collide; the id inequality names each pair once.
+rel colliding_type_name(bare_type: text).
+colliding_type_name(BareType) <-
+  renderable_rel(LeftRelId, BareType, _),
+  renderable_rel(RightRelId, BareType, _),
+  LeftRelId < RightRelId.
+
+# @comment-ok: sanitizer bound; initcap_words lower-cases non-boundary chars,
+# mangling camelCase ("myModule" -> "Mymodule"), so this caps only each split word's first character, mirroring module_type_name/2.
+rel module_name_normalized(module_id: int, normalized: text).
+module_name_normalized(ModuleId, Normalized) <-
+  type_row(ModuleId, _, _, ModuleName, 'module', _, _),
+  Normalized := replace(replace(replace(ModuleName, '.', '_'), '-', '_'), '/', '_').
+
+rel module_name_parts(module_id: int, parts: list(text)).
+module_name_parts(ModuleId, Parts) <-
+  module_name_normalized(ModuleId, Normalized),
+  Parts := split(Normalized, '_').
+
+# A split word carries no internal separator, so capping only substr(.,1,1)
+# preserves the rest verbatim instead of lower-casing it like initcap_words.
+rel module_name_word(module_id: int, word: text).
+module_name_word(ModuleId, Word) <-
+  module_name_parts(ModuleId, Parts),
+  decode(Parts, spread(Part)),
+  Word := concat([upper(substr(Part, 1, 1)), substr(Part, 2)]).
+
+rel module_type_stem(module_id: int, stem: text).
+module_type_stem(ModuleId, group_concat(Word, '')) <-
+  module_name_word(ModuleId, Word).
+
+# A Rust identifier cannot open on a digit, so a digit-leading stem takes an 'M'.
+rel module_prefix(module_id: int, prefix: text).
+module_prefix(ModuleId, Prefix) <-
+  module_type_stem(ModuleId, Stem),
+  DigitPosition := instr('0123456789', substr(Stem, 1, 1)),
+  DigitPosition > 0,
+  Prefix := concat(['M', Stem]).
+module_prefix(ModuleId, Stem) <-
+  module_type_stem(ModuleId, Stem),
+  DigitPosition := instr('0123456789', substr(Stem, 1, 1)),
+  DigitPosition < 1.
+
+# The name a rel actually emits: bare when unique, module-prefixed when not.
+rel emitted_type_name(rel_id: int, type_name: text).
+emitted_type_name(RelId, BareType) <-
+  renderable_rel(RelId, BareType, _),
+  not(colliding_type_name(BareType)).
+emitted_type_name(RelId, TypeName) <-
+  renderable_rel(RelId, BareType, ModuleId),
+  colliding_type_name(BareType),
+  module_prefix(ModuleId, Prefix),
+  TypeName := concat([Prefix, BareType]).
+
+# An option over a leaf, kept apart from option_type so a list can hold one
+# without the list strata reading the option stratum that reads them back.
+rel option_of_leaf(id: int, text: text).
+option_of_leaf(Id, Text) <-
+  type_row(Id, _, _, _, 'option', ElemId, _),
+  leaf_type(ElemId, Element),
+  Text := concat(['Option<', Element, '>']).
+
+# The innermost thing a list holds: a leaf, or a nullable leaf.
+rel list_element(id: int, text: text).
+list_element(Id, Text) <- leaf_type(Id, Text).
+list_element(Id, Text) <- option_of_leaf(Id, Text).
+
+# Both list spellings render one Rust type: json_list(T) carries the array
+# inline, list(T) carries the elements in a member rel, and a consumer sees
+# Vec<T>.
+rel list_row(id: int, element_id: int).
+list_row(Id, ElemId) <- type_row(Id, _, _, _, 'json_list', ElemId, _).
+list_row(Id, ElemId) <- type_row(Id, _, _, _, 'list', ElemId, _).
+
+# @comment-ok: nesting bound; a self-recursive stratum settles a tick late.
+# Nesting unrolls to five levels; a recursive list_type derives one level per tick, so a single arrival batch renders short.
+rel list_depth_one(id: int, text: text).
+list_depth_one(Id, Text) <-
+  list_row(Id, ElemId),
+  list_element(ElemId, Element),
+  Text := concat(['Vec<', Element, '>']).
+
+rel list_depth_two(id: int, text: text).
+list_depth_two(Id, Text) <-
+  list_row(Id, ElemId),
+  list_depth_one(ElemId, Element),
+  Text := concat(['Vec<', Element, '>']).
+
+rel list_depth_three(id: int, text: text).
+list_depth_three(Id, Text) <-
+  list_row(Id, ElemId),
+  list_depth_two(ElemId, Element),
+  Text := concat(['Vec<', Element, '>']).
+
+rel list_depth_four(id: int, text: text).
+list_depth_four(Id, Text) <-
+  list_row(Id, ElemId),
+  list_depth_three(ElemId, Element),
+  Text := concat(['Vec<', Element, '>']).
+
+rel list_depth_five(id: int, text: text).
+list_depth_five(Id, Text) <-
+  list_row(Id, ElemId),
+  list_depth_four(ElemId, Element),
+  Text := concat(['Vec<', Element, '>']).
+
+rel list_type(id: int, text: text).
+list_type(Id, Text) <- list_depth_one(Id, Text).
+list_type(Id, Text) <- list_depth_two(Id, Text).
+list_type(Id, Text) <- list_depth_three(Id, Text).
+list_type(Id, Text) <- list_depth_four(Id, Text).
+list_type(Id, Text) <- list_depth_five(Id, Text).
+
+# What an option wraps: a leaf, or a list of any rendered depth.
+rel element_type(id: int, text: text).
+element_type(Id, Text) <- leaf_type(Id, Text).
+element_type(Id, Text) <- list_type(Id, Text).
+
+# An option column renders its element type wrapped in Option<...>.
+rel option_type(id: int, text: text).
+option_type(Id, Text) <-
+  type_row(Id, _, _, _, 'option', ElemId, _),
+  element_type(ElemId, Element),
+  Text := concat(['Option<', Element, '>']).
+
+# type_of is the union of the kind arms; each type id is one kind.
+rel type_of(id: int, text: text).
+type_of(Id, Text) <- element_type(Id, Text).
+type_of(Id, Text) <- option_type(Id, Text).
+
+# Two rels can mint one PascalCase name, so the owner rel id is the key here
+# and the name is joined on only at the wrap. A Rust field carries `pub`.
+rel field_line(rel_id: int, ordinal: int, line_text: text).
+field_line(RelId, Ordinal, LineText) <-
+  type_row(_ColumnId, RelId, Ordinal, ColumnName, 'column', TypeId, _),
+  renderable_rel(RelId, _, _),
+  type_of(TypeId, Type),
+  LineText := concat(['    pub ', ColumnName, ': ', Type, ',']).
+
+# The struct body: field lines joined in ordinal order by newline.
+rel body_text(rel_id: int, body: text).
+body_text(RelId, group_concat(LineText, '\n', Ordinal)) <-
+  field_line(RelId, Ordinal, LineText).
+
+# Body carries no trailing newline, so the closing brace lands on its own line.
+# Assembly order is (part_ordinal, source_id): interfaces 0, generic rels 1, rels 2.
+rel rendered_type(type_name: text, part_ordinal: int, source_id: int,
+                  file_text: text).
+rendered_type(TypeName, 2, RelId, FileText) <-
+  body_text(RelId, Body),
+  emitted_type_name(RelId, TypeName),
+  FileText := concat(['#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n',
+                      'pub struct ', TypeName, ' {\n', Body, '\n}\n']).
+
+# An interface declaration names a capability and holds no columns; its whole
+# text is the empty-brace pair on one line after the trait keyword.
+rendered_type(TypeName, 0, InterfaceId, FileText) <-
+  type_row(InterfaceId, _, _, InterfaceName, 'interface', _, _),
+  TypeName := replace(initcap(InterfaceName), '_', ''),
+  FileText := concat(['pub trait ', TypeName, ' {}\n']).
+
+# A constraint row hangs off the parameter it bounds; Rust joins bounds with ' + '.
+rel constraint_type(parameter_id: int, ordinal: int, type_name: text).
+constraint_type(ParameterId, Ordinal, TypeName) <-
+  type_row(_ConstraintId, ParameterId, Ordinal, InterfaceName, 'constraint', _, _),
+  TypeName := replace(initcap(InterfaceName), '_', '').
+
+rel parameter_bound(parameter_id: int, bound: text).
+parameter_bound(ParameterId, group_concat(TypeName, ' + ', Ordinal)) <-
+  constraint_type(ParameterId, Ordinal, TypeName).
+
+rel bounded_parameter(parameter_id: int).
+bounded_parameter(ParameterId) <- constraint_type(ParameterId, _, _).
+
+# An unbounded parameter is its bare name; a bounded one carries `: Bound`.
+rel parameter_text(generic_id: int, ordinal: int, parameter_text: text).
+parameter_text(GenericId, Ordinal, ParameterText) <-
+  type_row(ParameterId, GenericId, Ordinal, ParameterName, 'type_parameter', _, _),
+  parameter_bound(ParameterId, Bound),
+  ParameterText := concat([ParameterName, ': ', Bound]).
+parameter_text(GenericId, Ordinal, ParameterName) <-
+  type_row(ParameterId, GenericId, Ordinal, ParameterName, 'type_parameter', _, _),
+  not(bounded_parameter(ParameterId)).
+
+rel parameters_text(generic_id: int, parameters: text).
+parameters_text(GenericId, group_concat(ParameterText, ', ', Ordinal)) <-
+  parameter_text(GenericId, Ordinal, ParameterText).
+
+rel parameterized_generic(generic_id: int).
+parameterized_generic(GenericId) <-
+  type_row(_ParameterId, GenericId, _, _, 'type_parameter', _, _).
+
+# The declaration head: PascalCase name, then the parameter list when there is one.
+rel generic_head(generic_id: int, type_name: text, head_text: text).
+generic_head(GenericId, TypeName, HeadText) <-
+  type_row(GenericId, _, _, GenericName, 'generic_rel', _, _),
+  parameters_text(GenericId, Parameters),
+  TypeName := replace(initcap(GenericName), '_', ''),
+  HeadText := concat([TypeName, '<', Parameters, '>']).
+generic_head(GenericId, TypeName, TypeName) <-
+  type_row(GenericId, _, _, GenericName, 'generic_rel', _, _),
+  not(parameterized_generic(GenericId)),
+  TypeName := replace(initcap(GenericName), '_', '').
+
+rel generic_field_line(generic_id: int, ordinal: int, line_text: text).
+generic_field_line(GenericId, Ordinal, LineText) <-
+  type_row(_ColumnId, GenericId, Ordinal, ColumnName, 'generic_column', TypeId, _),
+  type_of(TypeId, Type),
+  LineText := concat(['    pub ', ColumnName, ': ', Type, ',']).
+
+rel generic_body(generic_id: int, body: text).
+generic_body(GenericId, group_concat(LineText, '\n', Ordinal)) <-
+  generic_field_line(GenericId, Ordinal, LineText).
+
+rel columned_generic(generic_id: int).
+columned_generic(GenericId) <- generic_field_line(GenericId, _, _).
+
+rendered_type(TypeName, 1, GenericId, FileText) <-
+  generic_head(GenericId, TypeName, HeadText),
+  generic_body(GenericId, Body),
+  FileText := concat(['#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n',
+                      'pub struct ', HeadText, ' {\n', Body, '\n}\n']).
+rendered_type(TypeName, 1, GenericId, FileText) <-
+  generic_head(GenericId, TypeName, HeadText),
+  not(columned_generic(GenericId)),
+  FileText := concat(['#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n',
+                      'pub struct ', HeadText, ' {\n}\n']).
