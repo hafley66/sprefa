@@ -1808,6 +1808,30 @@ sites but not against new code. **missing** = nothing.
   you write a swipl entry point that does not load `compile.pl`, set the
   encoding flag yourself.
 
+## 47. A reactive gate that reads its verdict rel before the retraction tick lands
+
+- WHAT IT LOOKS LIKE: `comment-budget-rail.sh` posts arrivals, waits for "no
+  tick event for `COMMENT_RAIL_IDLE_MS` (default 700ms)", then reads
+  `/idb/violation_run`. `violation_run` rows are minted by one host round and
+  RETRACTED by a later waiver-join round. A >=700ms gap between those rounds
+  reads a stale finding: the gate reports a violation the program itself
+  retracts one tick later.
+- HOW IT BIT US: 2026-08-15, landing chore/delete-naive-arm. The same staged
+  index (identical `git write-tree` digest) graded rc=0 three times standalone
+  and rc=2 three times as the pre-commit hook, flagging
+  `v6/tsv2/runtime/3_subscribe.ts:1-22` WITH a `@comment-ok:` waiver on line 1.
+  `COMMENT_RAIL_IDLE_MS=3000` on the identical index dropped that finding and
+  surfaced the two real ones (`7_scale-floor.sh`), which then waived clean.
+- THE LAW: a reactive gate reads its verdict only at fixpoint. Idle-time is a
+  heuristic for fixpoint and must dominate the slowest host-round gap, or the
+  serve layer must expose a real quiescence signal the gate can block on.
+- THE RAIL: pending — tracked as issue `comment-rail-early-read`. Until it
+  lands, a rail verdict that contradicts a visible waiver is re-measured with
+  `COMMENT_RAIL_IDLE_MS=3000` before anything is reworded.
+- SAY THIS TO AN AGENT: if the comment rail flags a line that carries
+  `@comment-ok:`, the rail raced; re-run with a longer idle window before
+  touching the comment.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
