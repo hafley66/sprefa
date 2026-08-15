@@ -16,6 +16,7 @@ PROLOG_DIR="$(cd "$COMPILE_DIR/.." && pwd)"
 V6_DIR="$(cd "$PROLOG_DIR/.." && pwd)"
 TSV2_DIR="$V6_DIR/tsv2"
 RENDERER="$V6_DIR/dl/typegen/render_ts.dl6"
+RUST_RENDERER="$V6_DIR/dl/typegen/render_rust.dl6"
 GOLDEN_DIR="$SCRIPT_DIR/typegen_golden"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/typegen-golden.XXXXXX")"
@@ -51,8 +52,8 @@ dump_rows() { # name fixture_file -> writes $WORK/<name>.jsonl
   swipl_run "dump_fixture_rows('conformance/fixtures/$fixture_file', '$name', '$WORK/$name.jsonl')"
 }
 
-render_fixture() { # name -> writes $WORK/<name>.types.ts
-  local name="$1"
+render_fixture() { # name renderer outfile -> writes $WORK/<outfile>
+  local name="$1" renderer="$2" outfile="$3"
   local port
   port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
   local base="http://127.0.0.1:$port"
@@ -79,14 +80,14 @@ import json,sys
 arrs=[json.loads(l) for l in open('$WORK/$name.jsonl') if l.strip()]
 json.dump({'batch':arrs}, open('$WORK/$name.arrivals.json','w'))
 "
-    if curl -s -o /dev/null -X POST --data-binary @"$RENDERER" "$base/program"; then
+    if curl -s -o /dev/null -X POST --data-binary @"$renderer" "$base/program"; then
       if curl -s -o /dev/null -X POST --data-binary @"$WORK/$name.arrivals.json" "$base/edb/events"; then
         curl -s "$base/idb/rendered_type" >"$WORK/$name.rendered.json"
         python3 -c "
 import json
 d=json.load(open('$WORK/$name.rendered.json'))
 rows=sorted(d['rows'], key=lambda r: (r[1], r[2]))
-open('$WORK/$name.types.ts','w').write('\n'.join(r[3] for r in rows))
+open('$WORK/$outfile','w').write('\n'.join(r[3] for r in rows))
 "
         ok=1
       fi
@@ -104,10 +105,22 @@ render_prolog() { # name -> writes $WORK/<name>.prolog.ts from the same JSONL
   [ -s "$WORK/$name.prolog.ts" ]
 }
 
+# @comment-ok: 8_emit_rust_types has no JSONL reader; the rows come out of
+# typegen_export's reader (unexported, reached by module qualification), then
+# rust_types_text/3 renders them, so one golden judges both rust doors.
+render_rust_prolog() { # name -> writes $WORK/<name>.prolog.rs
+  local name="$1"
+  ( cd "$PROLOG_DIR" && swipl -q -l "$COMPILE_DIR/typegen_export.pl" \
+      -l "$COMPILE_DIR/8_emit_rust_types.pl" \
+      -g "typegen_export:read_row_lines('$WORK/$name.jsonl', Rows), emit_rust_types:rust_types_text(rows, Rows, Text), open('$WORK/$name.prolog.rs', write, Stream), format(Stream, '~s', [Text]), close(Stream)" \
+      -g halt 2>/dev/null )
+  [ -s "$WORK/$name.prolog.rs" ]
+}
+
 judge() { # name -> diffs the dl6 render and the prolog render against one golden
   local name="$1"
   local golden="$GOLDEN_DIR/$name.types.ts"
-  if ! render_fixture "$name"; then
+  if ! render_fixture "$name" "$RENDERER" "$name.types.ts"; then
     echo "FAIL  $name: render_ts.dl6 did not run on tsv2"
     FAILED=1
     return
@@ -132,6 +145,34 @@ judge() { # name -> diffs the dl6 render and the prolog render against one golde
   echo "PASS  $name"
 }
 
+judge_rust() { # name -> diffs the rust dl6 render and the rust prolog render against one golden
+  local name="$1"
+  local golden="$GOLDEN_DIR/$name.types.rs"
+  if ! render_fixture "$name" "$RUST_RENDERER" "$name.types.rs"; then
+    echo "FAIL  $name: render_rust.dl6 did not run on tsv2"
+    FAILED=1
+    return
+  fi
+  if ! diff -u "$golden" "$WORK/$name.types.rs" >"$WORK/$name.rust.diff" 2>&1; then
+    echo "FAIL  $name: rust dl6 rendered text differs from golden"
+    cat "$WORK/$name.rust.diff"
+    FAILED=1
+    return
+  fi
+  if ! render_rust_prolog "$name"; then
+    echo "FAIL  $name: rust_types_text failed"
+    FAILED=1
+    return
+  fi
+  if ! diff -u "$golden" "$WORK/$name.prolog.rs" >"$WORK/$name.rust.parity.diff" 2>&1; then
+    echo "FAIL  $name: rust prolog emitter text differs from golden"
+    cat "$WORK/$name.rust.parity.diff"
+    FAILED=1
+    return
+  fi
+  echo "PASS  $name (rust)"
+}
+
 main() {
   mkdir -p "$GOLDEN_DIR"
   for entry in "${PINNED[@]}"; do
@@ -143,11 +184,13 @@ main() {
       continue
     fi
     judge "$name"
+    judge_rust "$name"
   done
 
   for name in ${SHAPES[@]+"${SHAPES[@]}"}; do
     cp "$GOLDEN_DIR/$name.type_rows.jsonl" "$WORK/$name.jsonl"
     judge "$name"
+    judge_rust "$name"
   done
 
   if [ "$FAILED" = 1 ]; then
