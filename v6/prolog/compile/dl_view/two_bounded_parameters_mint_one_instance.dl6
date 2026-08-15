@@ -1,0 +1,5 @@
+interface json_encodable.
+rel span(Start: json_encodable, Label: json_encodable)(start: Start, label: Label).
+rel marker(id: int, extent: span(int,text)) key(1).
+
+carry(Id, Extent) <- marker(Id, Extent).

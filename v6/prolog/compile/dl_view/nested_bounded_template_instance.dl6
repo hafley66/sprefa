@@ -1,0 +1,6 @@
+interface json_encodable.
+rel wrap(T: json_encodable)(value: T).
+rel couple(Left: json_encodable, Right: json_encodable)(first: Left, second: Right).
+rel index(id: int, nested: couple(wrap(int),wrap(text))) key(1).
+
+carry(Id, Nested) <- index(Id, Nested).
