@@ -2271,8 +2271,14 @@ head_select_list(Mode, ColumnTypes, Head, Bound, ColumnAliases, SelectExprs,
 
 head_column_expr(Mode, Bound, Arg, ColumnType, SelectExpr, Interns) :-
     compile_expr(Mode, identity, Arg, Bound, Sql, _Type, Encoding),
-    (   Encoding = list_intern(ElementType, ArraySql)
+    (   Encoding = list_intern(ElementType, ArraySql),
+        ColumnType = list(ElementType)
     ->  SelectExpr = Sql, Interns = [list_intern(ElementType, ArraySql)]
+    ;   Encoding = list_intern(_, ArraySql),
+        ( ColumnType == json ; ColumnType = json_list(_) )
+    ->  % split bound into an untyped json column: the value is the json array
+        % carrier, unchanged (the json_each consumer path).
+        SelectExpr = ArraySql, Interns = []
     ;   column_encoding(Mode, ColumnType, dict), Encoding == direct
     ->  interned_id_sql(Sql, SelectExpr), Interns = [built_text(Sql)]
     ;   SelectExpr = Sql, Interns = []
@@ -5109,7 +5115,7 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     relplan_column_types(RelPlans, HeadRef, HeadColumnTypes),
     head_select_list(Mode, HeadColumnTypes, Head, Bound, HeadColumns, AliasedSelectExprs, BuiltValues, ListInterns),
-    ref_count_group_exprs(Mode, Head, Bound, GroupExprs),
+    ref_count_group_exprs(Mode, HeadColumnTypes, Head, Bound, GroupExprs),
     atomic_list_concat(AliasedSelectExprs, ', ', SelectSql),
     atomic_list_concat(GroupExprs, ', ', GroupSql),
     ( AllWhereTexts == []
@@ -5133,15 +5139,19 @@ level_ref_count_arm(Mode, RelPlans, Rule, RefCountArm, InternSqls) :-
 % atom, and compound head expression retains its existing emitted SQL bytes.
 % Shared by the ref-count arm and both aggregate grouping arms
 % (scoped-delta insert + recompute) so the SQLite grammar fact lives once.
-ref_count_group_exprs(Mode, Head, Bound, GroupExprs) :-
+ref_count_group_exprs(Mode, ColumnTypes, Head, Bound, GroupExprs) :-
     Head =.. [_ | Args],
-    maplist(group_expr(Mode, Bound), Args, GroupExprs).
+    maplist(group_expr(Mode, Bound), Args, ColumnTypes, GroupExprs).
 
-group_expr(Mode, Bound, Arg, GroupExpr) :-
-    compile_expr(Mode, identity, Arg, Bound, Sql, _Type, _Encoding),
-    ( sql_bare_integer(Sql)
-    -> format(atom(GroupExpr), '(~w + 0)', [Sql])
-    ;  GroupExpr = Sql
+group_expr(Mode, Bound, Arg, ColumnType, GroupExpr) :-
+    compile_expr(Mode, identity, Arg, Bound, Sql, _Type, Encoding),
+    (   Encoding = list_intern(_, ArraySql),
+        ( ColumnType == json ; ColumnType = json_list(_) )
+    ->  GroupExpr = ArraySql
+    ;   ( sql_bare_integer(Sql)
+    ->  format(atom(GroupExpr), '(~w + 0)', [Sql])
+    ;   GroupExpr = Sql
+    )
     ).
 
 % The guard must read the COMPILED SQL, not the head term: a variable bound
@@ -5697,7 +5707,7 @@ compile_aggregate_number_operand(Mode, Kind, Expr, Bound, Sql, Type) :-
 
 aggregate_group_exprs(Mode, Template, Bound, GroupExprs) :-
     findall(GroupExpr,
-            ( member(plain(Expr), Template), group_expr(Mode, Bound, Expr, GroupExpr) ),
+            ( member(plain(Expr), Template), group_expr(Mode, Bound, Expr, none, GroupExpr) ),
             GroupExprs).
 
 % The head columns an aggregate rule GROUPS BY, as SQL text, reused by the
