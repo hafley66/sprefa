@@ -729,6 +729,7 @@ fn go_flow_fn(
                     sink,
                     strings,
                     name_node.start_byte() as u32,
+                    name_node.end_byte() as u32,
                     DfNodeKind::Param,
                     Some(&name),
                 );
@@ -762,7 +763,14 @@ fn flow_go(
     match node.kind() {
         "identifier" => {
             let name = go_text(node, src).to_string();
-            let read = df_push(sink, strings, start_byte, DfNodeKind::VarRead, Some(&name));
+            let read = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::VarRead,
+                Some(&name),
+            );
             if let Some(binding) = scope.get(&name) {
                 df_edge(sink, *binding, read);
             }
@@ -777,7 +785,14 @@ fn flow_go(
         | "true"
         | "false"
         | "nil"
-        | "iota" => Some(df_push(sink, strings, start_byte, DfNodeKind::Lit, None)),
+        | "iota" => Some(df_push(
+            sink,
+            strings,
+            start_byte,
+            node.end_byte() as u32,
+            DfNodeKind::Lit,
+            None,
+        )),
         // f(args): every argument flows into the call result; a selector callee
         // `recv.M(args)` flows the receiver in too. Go has no syntactic ctor
         // marker (capitalization means EXPORTED), so every call is `call_res`.
@@ -800,7 +815,14 @@ fn flow_go(
                     }
                 }
             }
-            let call_res = df_push(sink, strings, start_byte, DfNodeKind::CallRes, None);
+            let call_res = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::CallRes,
+                None,
+            );
             if let Some(recv) = receiver {
                 df_edge(sink, recv, call_res);
                 sink.aux.args.push(DfArg {
@@ -832,7 +854,14 @@ fn flow_go(
                 .child_by_field_name("field")
                 .map(|f| go_text(f, src).to_string())
                 .unwrap_or_default();
-            let member = df_push(sink, strings, start_byte, DfNodeKind::Member, Some(&name));
+            let member = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::Member,
+                Some(&name),
+            );
             if let Some(operand) = operand {
                 df_edge(sink, operand, member);
             }
@@ -846,7 +875,14 @@ fn flow_go(
                 .child_by_field_name("type")
                 .map(|t| go_type_name_text(t, src))
                 .unwrap_or_default();
-            let new_node = df_push(sink, strings, start_byte, DfNodeKind::New, Some(&type_name));
+            let new_node = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::New,
+                Some(&type_name),
+            );
             if let Some(body) = node.child_by_field_name("body") {
                 go_flow_literal_fields(body, src, fn_sym, strings, scope, sink, new_node);
             }
@@ -855,7 +891,14 @@ fn flow_go(
         // A `literal_value` reached directly (not via `composite_literal`): a
         // nested element literal whose type is implied by the enclosing composite.
         "literal_value" => {
-            let new_node = df_push(sink, strings, start_byte, DfNodeKind::New, None);
+            let new_node = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::New,
+                None,
+            );
             go_flow_literal_fields(node, src, fn_sym, strings, scope, sink, new_node);
             Some(new_node)
         }
@@ -866,7 +909,14 @@ fn flow_go(
             let right = node
                 .child_by_field_name("right")
                 .and_then(|n| flow_go(n, src, fn_sym, strings, scope, sink));
-            let binop = df_push(sink, strings, start_byte, DfNodeKind::Binop, None);
+            let binop = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::Binop,
+                None,
+            );
             if let Some(left) = left {
                 df_edge(sink, left, binop);
             }
@@ -879,7 +929,14 @@ fn flow_go(
             let inner = node
                 .child_by_field_name("operand")
                 .and_then(|n| flow_go(n, src, fn_sym, strings, scope, sink));
-            let unop = df_push(sink, strings, start_byte, DfNodeKind::Unop, None);
+            let unop = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::Unop,
+                None,
+            );
             if let Some(inner) = inner {
                 df_edge(sink, inner, unop);
             }
@@ -973,6 +1030,7 @@ fn flow_go(
                             sink,
                             strings,
                             expr.start_byte() as u32,
+                            expr.end_byte() as u32,
                             DfNodeKind::Ret,
                             None,
                         );
@@ -982,7 +1040,14 @@ fn flow_go(
                 }
             }
             if !minted {
-                df_push(sink, strings, start_byte, DfNodeKind::Ret, None);
+                df_push(
+                    sink,
+                    strings,
+                    start_byte,
+                    node.end_byte() as u32,
+                    DfNodeKind::Ret,
+                    None,
+                );
             }
             None
         }
@@ -999,7 +1064,14 @@ fn flow_go(
             if let Some(alt) = node.child_by_field_name("alternative") {
                 flow_go(alt, src, fn_sym, strings, scope, sink);
             }
-            Some(df_push(sink, strings, start_byte, DfNodeKind::If, None))
+            Some(df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::If,
+                None,
+            ))
         }
         // `for range/clause/cond { body }`: walk the header (binding the range
         // variable when present), then walk the body. The loop FACT (span/var) is
@@ -1029,6 +1101,7 @@ fn flow_go(
                                     sink,
                                     strings,
                                     name_node.start_byte() as u32,
+                                    name_node.end_byte() as u32,
                                     DfNodeKind::LetBind,
                                     Some(&name),
                                 );
@@ -1063,6 +1136,7 @@ fn flow_go(
                 sink,
                 strings,
                 start_byte,
+                node.end_byte() as u32,
                 DfNodeKind::Loop,
                 Some(&loop_var),
             ))
@@ -1101,6 +1175,7 @@ fn flow_go(
                             sink,
                             strings,
                             name_node.start_byte() as u32,
+                            name_node.end_byte() as u32,
                             DfNodeKind::Param,
                             Some(&name),
                         );
@@ -1120,6 +1195,7 @@ fn flow_go(
                 sink,
                 strings,
                 start_byte,
+                node.end_byte() as u32,
                 DfNodeKind::Closure,
                 Some(&lam_sym),
             ))
@@ -1170,6 +1246,7 @@ fn go_bind(
             sink,
             strings,
             name_node.start_byte() as u32,
+            name_node.end_byte() as u32,
             kind,
             Some(&name),
         );
@@ -1287,21 +1364,24 @@ fn go_recurse_children(
 }
 
 /// Push one df node, returning its `NodeRef` (the dense index edges reference).
-/// The span is start-only (len 0): df node identity is `(span.start, kind)`,
-/// byte-exact with v5's reconstructed `line_starts[row] + col`. Port of v5
-/// `push_node` (minus fn_sym/file/aux).
+/// The node carries its FULL syntactic extent: `FlatFact::Edge` carries endpoint
+/// spans only, so a start-only anchor merges distinct value nodes. `end` is
+/// exclusive (tree-sitter `end_byte()`); node STARTS are unchanged, so the v5
+/// parity golden stays byte-exact. Port of v5 `push_node` (minus
+/// fn_sym/file/aux).
 fn df_push(
     sink: &mut FamilyBundle<DfF>,
     strings: &mut Strings,
-    byte: u32,
+    start: u32,
+    end: u32,
     kind: DfNodeKind,
     name: Option<&str>,
 ) -> NodeRef {
     let node_ref = NodeRef(sink.nodes.len() as u32);
     let mut node = Node::new(
         Span {
-            start: byte,
-            len: 0,
+            start,
+            len: end.saturating_sub(start),
         },
         kind,
     );

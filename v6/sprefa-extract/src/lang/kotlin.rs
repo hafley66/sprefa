@@ -583,6 +583,7 @@ fn kt_flow_fn(
                     sink,
                     strings,
                     idn.start_byte() as u32,
+                    idn.end_byte() as u32,
                     DfNodeKind::Param,
                     Some(&v),
                 );
@@ -601,6 +602,7 @@ fn kt_flow_fn(
                 sink,
                 strings,
                 body.start_byte() as u32,
+                body.end_byte() as u32,
                 DfNodeKind::Ret,
                 None,
             );
@@ -633,7 +635,14 @@ fn flow_kt(
                 Some("variable_declaration") | Some("parameter") | Some("call_expression") => None,
                 _ => {
                     let v = kt_text(node, src).to_string();
-                    let id = df_push(sink, strings, start_byte, DfNodeKind::VarRead, Some(&v));
+                    let id = df_push(
+                        sink,
+                        strings,
+                        start_byte,
+                        node.end_byte() as u32,
+                        DfNodeKind::VarRead,
+                        Some(&v),
+                    );
                     if let Some(binding) = scope.get(&v) {
                         df_edge(sink, *binding, id);
                     }
@@ -714,7 +723,14 @@ fn flow_kt(
             } else {
                 (DfNodeKind::CallRes, None)
             };
-            let id = df_push(sink, strings, start_byte, kind, name);
+            let id = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                kind,
+                name,
+            );
             if let Some(r) = recv {
                 df_edge(sink, r, id);
                 sink.aux.args.push(DfArg {
@@ -747,7 +763,14 @@ fn flow_kt(
                 .and_then(|s| kt_first_child(s, "simple_identifier"))
                 .map(|n| kt_text(n, src).to_string())
                 .unwrap_or_default();
-            let id = df_push(sink, strings, start_byte, DfNodeKind::Member, Some(&name));
+            let id = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::Member,
+                Some(&name),
+            );
             if let Some(o) = obj {
                 df_edge(sink, o, id);
             }
@@ -767,6 +790,7 @@ fn flow_kt(
                                 sink,
                                 strings,
                                 si.start_byte() as u32,
+                                si.end_byte() as u32,
                                 DfNodeKind::LetBind,
                                 Some(&v),
                             );
@@ -818,6 +842,7 @@ fn flow_kt(
                             sink,
                             strings,
                             idn.start_byte() as u32,
+                            idn.end_byte() as u32,
                             DfNodeKind::Param,
                             Some(&v),
                         );
@@ -832,20 +857,35 @@ fn flow_kt(
                 }
             }
             if !seeded {
-                let id = df_push(sink, strings, start_byte, DfNodeKind::Param, Some("it"));
+                let id = df_push(
+                    sink,
+                    strings,
+                    start_byte,
+                    node.end_byte() as u32,
+                    DfNodeKind::Param,
+                    Some("it"),
+                );
                 sink.aux.params.push(DfParam { node: id, pos: 0 });
                 scope.insert("it".into(), id);
             }
             let tail = kt_first_child(node, "statements")
                 .and_then(|s| flow_kt(s, src, &lam_sym, strings, scope, sink));
             if let Some(t) = tail {
-                let ret = df_push(sink, strings, node.end_byte() as u32, DfNodeKind::Ret, None);
+                let ret = df_push(
+                    sink,
+                    strings,
+                    node.end_byte() as u32,
+                    node.end_byte() as u32,
+                    DfNodeKind::Ret,
+                    None,
+                );
                 df_edge(sink, t, ret);
             }
             Some(df_push(
                 sink,
                 strings,
                 start_byte,
+                node.end_byte() as u32,
                 DfNodeKind::Closure,
                 Some(&lam_sym),
             ))
@@ -861,7 +901,14 @@ fn flow_kt(
                     }
                 }
             }
-            let id = df_push(sink, strings, start_byte, DfNodeKind::Ret, None);
+            let id = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::Ret,
+                None,
+            );
             if let Some(v) = inner {
                 df_edge(sink, v, id);
             }
@@ -881,7 +928,14 @@ fn flow_kt(
             let r = kids
                 .last()
                 .and_then(|n| flow_kt(*n, src, fn_sym, strings, scope, sink));
-            let id = df_push(sink, strings, start_byte, DfNodeKind::Binop, None);
+            let id = df_push(
+                sink,
+                strings,
+                start_byte,
+                node.end_byte() as u32,
+                DfNodeKind::Binop,
+                None,
+            );
             if let Some(lid) = l {
                 df_edge(sink, lid, id);
             }
@@ -891,9 +945,14 @@ fn flow_kt(
             Some(id)
         }
         "string_literal" | "integer_literal" | "real_literal" | "boolean_literal"
-        | "character_literal" | "long_literal" => {
-            Some(df_push(sink, strings, start_byte, DfNodeKind::Lit, None))
-        }
+        | "character_literal" | "long_literal" => Some(df_push(
+            sink,
+            strings,
+            start_byte,
+            node.end_byte() as u32,
+            DfNodeKind::Lit,
+            None,
+        )),
         // Everything else (when-arms, if/for/while statements, elvis, index/
         // range expressions, ...): recurse conservatively, surfacing the last
         // value-bearing child. NOTE: v5 kotlin's for/while/do-while arms mint
@@ -924,21 +983,25 @@ fn kt_recurse_children(
 }
 
 /// Push one df node, returning its `NodeRef` (the dense index edges reference).
-/// The span is start-only (len 0): df node identity is `(span.start, kind)`,
-/// byte-exact with v5's reconstructed `line_starts[row] + col`. Port of v5
+/// The node carries its FULL syntactic extent: `FlatFact::Edge` carries endpoint
+/// spans only, so a start-only anchor merges distinct value nodes. `end` is
+/// exclusive (tree-sitter `end_byte()`); node STARTS are unchanged, so the v5
+/// parity golden stays byte-exact (the lambda-tail `ret` stays a zero-width
+/// anchor at the lambda's closing brace, where v5 puts it). Port of v5
 /// `push_node` (minus fn_sym/file/aux).
 fn df_push(
     sink: &mut FamilyBundle<DfF>,
     strings: &mut Strings,
-    byte: u32,
+    start: u32,
+    end: u32,
     kind: DfNodeKind,
     name: Option<&str>,
 ) -> NodeRef {
     let node_ref = NodeRef(sink.nodes.len() as u32);
     let mut node = Node::new(
         Span {
-            start: byte,
-            len: 0,
+            start,
+            len: end.saturating_sub(start),
         },
         kind,
     );
