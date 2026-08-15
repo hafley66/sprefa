@@ -16,7 +16,8 @@
 :- use_module(library(pcre)).
 :- use_module(lower, [ departure_frontier_table_name/2,
                        program_text_intern_plan/3,
-                       struct_type_plans/3 ]).
+                       struct_type_plans/3, fixpoint_round_cap/1 ]).
+:- use_module(strat, [cyclic_head_groups/2]).
 :- use_module('0_rel_record').
 :- use_module(analyze, [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
                          listened_departure_refs/2, program_uses_tick/2 ]).
@@ -60,9 +61,6 @@ add_pair(Name-Value, Acc, Out) :- Out = Acc.put(Name, Value).
 
 plan_intern_mode(plan(_, _, _, _, _, _, _, _, InternMode), InternMode).
 
-incremental_safe(true).
-
-% emit_ts's rules_have_supported_level_bodies is a vacuous walk; Safe is true.
 reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Reconcile) :-
     ( member(Rule, Rules),
       Rule = (_ <- Body),
@@ -234,10 +232,12 @@ ordered_fields(EdgeStatements, RelPlans, Rules, Ordered, Arms, PreNames,
     ;  Ordered = false, Arms = [], PreNames = [], RecursiveLevels = false
     ).
 
-level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
-                                RefCountSql, AggregateSql, DeltaInternSqls),
+level_dict(HeadTable, CyclicHeadGroups,
+           levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
+                     RefCountSql, AggregateSql, DeltaInternSqls),
            Dict) :-
     ref_name(HeadRef, HeadName),
+    recursion_group_field(CyclicHeadGroups, HeadRef, RecursionGroupField),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     memberchk(HeadName-[HeadColumns, RawHeadTypes], HeadTable),
     maplist(boundary_type_name, RawHeadTypes, HeadTypes),
@@ -262,15 +262,31 @@ level_dict(HeadTable, levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql,
               support_intern_sql: SupportInternField,
               expand_sql: ExpandField,
               dred_sql: DredField,
+              recursion_group: RecursionGroupField,
               aggregate_sql: AggregateField }.
+
+% The mirror of emit_ts.pl:recursion_group_field/3, spelled as the dict this
+% door serializes; `heads` is what a tripped cap names on BOTH doors.
+recursion_group_field(CyclicHeadGroups, HeadRef, null) :-
+    \+ memberchk(HeadRef-_, CyclicHeadGroups), !.
+recursion_group_field(CyclicHeadGroups, HeadRef, Dict) :-
+    memberchk(HeadRef-GroupIndex, CyclicHeadGroups),
+    fixpoint_round_cap(RoundCap),
+    findall(Name,
+            ( member(Ref-GroupIndex, CyclicHeadGroups), ref_name(Ref, Name) ),
+            Names),
+    atomic_list_concat(Names, ',', JoinedNames),
+    format(atom(Heads), '[~w]', [JoinedNames]),
+    Dict = _{ group: GroupIndex, round_cap: RoundCap, heads: Heads }.
+
 select_sql_text(HeadName, HeadColumns, SelectSql) :-
     maplist(quote_ident_local, HeadColumns, Quoted),
     atomic_list_concat(Quoted, ', ', HeadSql),
     format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadSql, HeadName]).
 quote_ident_local(Col, Quoted) :- format(atom(Quoted), '"~w"', [Col]).
 
-levels_list(LevelStatements, HeadTable, Dicts) :-
-    maplist(level_dict(HeadTable), LevelStatements, Dicts).
+levels_list(LevelStatements, HeadTable, CyclicHeadGroups, Dicts) :-
+    maplist(level_dict(HeadTable, CyclicHeadGroups), LevelStatements, Dicts).
 
 retention_dict(retentionstmt(Ref, _Limit, DeleteSql), Dict) :-
     ref_name(Ref, Name),
@@ -414,7 +430,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     relations_list(RelPlans, ArrivalStatements, DepartureRefs, DeltaStatements,
                    Relations),
     edges_list(RelPlans, EdgeStatements, Edges),
-    levels_list(RuleLevelStatements, HeadTable, Levels),
+    cyclic_head_groups(PlanRules, CyclicHeadGroups),
+    levels_list(RuleLevelStatements, HeadTable, CyclicHeadGroups, Levels),
     retentions_list(RetentionStatements, Retentions),
     program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
     text_intern_field(TextInternPlan, TextInternField),
@@ -454,6 +471,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        retentions: Retentions,
        uses_tick: UsesTick,
        reconcile_every_tick: ReconcileEveryTick,
+       % This door has no naive fallback to route to; emit_ts.pl's flag is
+       % likewise unconditionally true (incremental_program_safe/4).
        incremental_safe: true,
        host_plans: HostPlanDicts },
     json_write_string(ProgramDict, ProgramJson),
