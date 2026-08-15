@@ -124,7 +124,9 @@
             column_def/4, ir_column_class/4, uniform_text_encoding/1,
             compile_expr/7, compile_comparison/4,
             intern_write_sql/4,
-            canonical_column_expr/2, level_ref_count_sql/5, level_dred_plan/5,
+            canonical_column_expr/2, canonical_column_expr/3,
+            semantic_generic/4, semantic_generic_instance/4,
+            level_ref_count_sql/5, level_dred_plan/5,
             % The departure frontier's table name (TICK PHASE ALIGNMENT target
             % 2). emit_ts.pl renders both the relation-plan field and the
             % departure arm's SELECT, and the name has exactly one definition.
