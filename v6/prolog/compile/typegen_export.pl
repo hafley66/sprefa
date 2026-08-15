@@ -7,7 +7,8 @@
 % (Arity, Hash and the trailing pair are dropped). JSONL line shape:
 %   {"rel":"type_row","sign":"add","row":[<id>,<parent>,<ordinal>,"<name>","<kind>",<type_id>,<module_id>]}
 
-:- module(typegen_export, [ dump_type_rows/2, dump_fixture_rows/3 ]).
+:- module(typegen_export, [ dump_type_rows/2, dump_fixture_rows/3,
+                            write_prolog_types/2 ]).
 
 :- use_module(library(http/json)).
 :- use_module(library(lists)).
@@ -15,6 +16,7 @@
 :- use_module('../compile', [ program_plan/3 ]).
 :- use_module('../lower', [ catalog_decl_rows/6 ]).
 :- use_module('4_emit_jsonschema', [ option_rows/3 ]).
+:- use_module('7_emit_ts_types', [ ts_types_text/3 ]).
 
 %! dump_type_rows(+CompiledProgram, +JsonlPath) is det.
 %   CompiledProgram = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, _).
@@ -54,6 +56,34 @@ fixture_ops :-
     op(1150, xfx, '<-'),
     op(1150, xfx, '<+'),
     op(700,  xfx, ':=').
+
+%! write_prolog_types(+JsonlPath, +TextPath) is det.
+%   Renders the JSONL back through the prolog emitter: one golden, both doors.
+write_prolog_types(JsonlPath, TextPath) :-
+    read_row_lines(JsonlPath, Rows),
+    ts_types_text(rows, Rows, Text),
+    setup_call_cleanup(open(TextPath, write, Stream),
+                       format(Stream, '~s', [Text]),
+                       close(Stream)).
+
+read_row_lines(JsonlPath, Rows) :-
+    setup_call_cleanup(open(JsonlPath, read, Stream),
+                       read_row_lines_loop(Stream, Rows),
+                       close(Stream)).
+
+read_row_lines_loop(Stream, Rows) :-
+    json_read_dict(Stream, Dict, [value_string_as(atom), end_of_file(@(end))]),
+    (   Dict == @(end)
+    ->  Rows = []
+    ;   row_of_dict(Dict, Row),
+        Rows = [Row | Rest],
+        read_row_lines_loop(Stream, Rest)
+    ).
+
+% Arity, Hash and the trailing pair are not read by either type renderer.
+row_of_dict(Dict, row(Id, Parent, Ordinal, Name, Kind, TypeId, 0, ModuleId,
+                      '', '', '')) :-
+    _{ row: [Id, Parent, Ordinal, Name, Kind, TypeId, ModuleId] } :< Dict.
 
 write_row_line(Stream, row(Id, Parent, Ordinal, Name, Kind, TypeId, _Arity,
                            ModuleId, _Hash, _, _)) :-

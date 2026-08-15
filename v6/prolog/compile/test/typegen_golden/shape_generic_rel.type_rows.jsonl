@@ -1,0 +1,13 @@
+{"rel":"type_row","row": [1, 0, 0, "int", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [2, 0, 0, "text", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [3, 0, 0, "shape_generic_rel", "module", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [4, 0, 0, "json_encodable", "interface", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [5, 0, 0, "pair", "generic_rel", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [6, 5, 1, "T", "type_parameter", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [7, 6, 1, "json_encodable", "constraint", 4, 3 ],"sign":"add"}
+{"rel":"type_row","row": [8, 5, 1, "first", "generic_column", 6, 3 ],"sign":"add"}
+{"rel":"type_row","row": [9, 5, 2, "second", "generic_column", 6, 3 ],"sign":"add"}
+{"rel":"type_row","row": [10, 0, 0, "box", "generic_rel", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [11, 10, 1, "V", "type_parameter", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [12, 10, 1, "value", "generic_column", 11, 3 ],"sign":"add"}
+{"rel":"type_row","row": [13, 10, 2, "label", "generic_column", 2, 3 ],"sign":"add"}

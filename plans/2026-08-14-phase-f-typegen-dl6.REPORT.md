@@ -44,12 +44,30 @@ Each gap names the construct, not "unsupported":
 
 | construct | status |
 |---|---|
-| type-name collision via module prefix (`type_name/2` at `7_emit_ts_types.pl:61-64`) | not implemented; no collisions in the pinned set, so no row exercises it |
-| generic-rel emission (`ts_generic_text`, type parameters/constraints) | not implemented; no pinned fixture emits a generic_rel |
-| empty interface `export interface X {}` | not implemented; every pinned rel has at least one column |
-| list nesting deeper than 2 (`Array<Array<Array<...>>>`) | not implemented; dl6 refuses positive recursion in a stratum, so list_type unrolls to depth 2 |
-| option of a list (`Array<X> | null`) | not implemented; pinned option elements are primitives only |
+| type-name collision via module prefix (`type_name/2` at `7_emit_ts_types.pl:61-64`) | CLOSED round 2, `shape_module_prefix_collision` |
+| generic-rel emission (`ts_generic_text`, type parameters/constraints) | CLOSED round 2, `shape_generic_rel` |
+| empty interface `export interface X {}` | CLOSED round 2, `shape_interface_declaration` |
+| list nesting deeper than 2 (`Array<Array<Array<...>>>`) | CLOSED round 2 to depth 4, `shape_list_nesting_depth` |
+| option of a list (`Array<X> | null`) | CLOSED round 2, `shape_option_of_list` |
 | `not(contains(Name, '__'))` compiler-helper filter | expressed as `instr(Name, '__') > 0` via `minted_rel/1`; there is no `contains/2` builtin in this dl6 |
+
+Round 2 closed each gap against a checked-in row set under
+`compile/test/typegen_golden/shape_*.type_rows.jsonl`, because the type-plane
+door mints none of these rows for any conformance fixture today. One golden
+per shape is judged twice: the dl6 render and `7_emit_ts_types` reading the
+same JSONL back through `write_prolog_types/2`. Named and still open:
+
+| construct | status |
+|---|---|
+| list nesting past 4 | one stratum per level; a fifth needs a fifth rel |
+| option of option, list of (option of list) | the unrolled grammar covers leaf, list-of-leaf, option-of-leaf, option-of-list, list-of-option-of-leaf |
+| module name in camelCase or with a separator outside `_ . - /` | `module_type_stem` is initcap plus a fixed replace set; the prolog `module_type_name/2` maps every non-alnum |
+| a minted `__` rel readmitted by a `concrete_type` child row | prolog `renderable_rel/2` admits it, `minted_rel/1` does not |
+
+Measured, not assumed: a self-recursive `list_type` LOADS on tsv2 (`{"loaded":true}`)
+and derives one nesting level in the arrival tick, the rest on the next tick.
+The round-1 note "dl6 refuses positive recursion in a stratum" is wrong about
+the load; the reason to unroll is that a one-shot render must settle in one tick.
 
 ## Renderer notes
 
@@ -76,11 +94,16 @@ flowchart LR
 ## Validation
 
 ```
-bash v6/prolog/compile/test/typegen_golden.sh     # the new gate
+bash v6/prolog/compile/test/typegen_golden.sh     # the gate; round 2 = 9 PASS
   PASS  generic_expansion_end_to_end
   PASS  nested_list_of_text_round_trips
   PASS  list_of_json_documents_round_trips
   PASS  split_initcap_and_fold_render_pascal_case
+  PASS  shape_interface_declaration
+  PASS  shape_generic_rel
+  PASS  shape_module_prefix_collision
+  PASS  shape_list_nesting_depth
+  PASS  shape_option_of_list
   TYPEGEN GOLDEN: HOLDS
 ```
 

@@ -26,10 +26,11 @@ leaf_type(Id, 'string') <- type_row(Id, _, _, 'text', 'primitive', _, _).
 leaf_type(Id, 'number') <- type_row(Id, _, _, 'int', 'primitive', _, _).
 leaf_type(Id, 'boolean') <- type_row(Id, _, _, 'bool', 'primitive', _, _).
 leaf_type(Id, 'unknown') <- type_row(Id, _, _, 'json', 'primitive', _, _).
-leaf_type(Id, TypeName) <-
-  type_row(Id, _, _, RelName, 'rel', _, _),
-  not(minted_rel(RelName)),
-  TypeName := replace(initcap(RelName), '_', '').
+leaf_type(Id, TypeName) <- emitted_type_name(Id, TypeName).
+
+# A type parameter stands for itself inside its generic's body, uncased.
+leaf_type(Id, ParameterName) <-
+  type_row(Id, _, _, ParameterName, 'type_parameter', _, _).
 
 # @comment-ok: the __ namespace filter; no contains/2 builtin, so instr marks it.
 # The `__` namespace marks compiler-minted rels (list companions, option enums,
@@ -42,53 +43,206 @@ minted_rel(Name) <-
   Position := instr(Name, '__'),
   Position > 0.
 
-# @comment-ok: unrolled because dl6 refuses positive recursion in a stratum.
-# A json_list element type, unrolled to two nesting levels; the arms are
-# mutually exclusive per id (depth-1 element is a leaf, depth-2 is a list).
-rel list_type(id: int, text: text).
-list_type(Id, Text) <-
-  type_row(Id, _, _, _, 'json_list', ElemId, _),
+# The rels that reach the file, with the PascalCase name each one asks for.
+rel renderable_rel(rel_id: int, bare_type: text, module_id: int).
+renderable_rel(RelId, BareType, ModuleId) <-
+  type_row(RelId, _, _, RelName, 'rel', _, ModuleId),
+  not(minted_rel(RelName)),
+  BareType := replace(initcap(RelName), '_', '').
+
+# Two rels asking for one name collide; the id inequality names each pair once.
+rel colliding_type_name(bare_type: text).
+colliding_type_name(BareType) <-
+  renderable_rel(LeftRelId, BareType, _),
+  renderable_rel(RightRelId, BareType, _),
+  LeftRelId < RightRelId.
+
+# @comment-ok: the sanitizer bound; initcap plus a fixed separator set, no regex.
+# Separators the module plane can carry: '_', '.', '-', '/'. initcap uppercases
+# the character after each of them, and the replaces then delete them.
+rel module_type_stem(module_id: int, stem: text).
+module_type_stem(ModuleId, Stem) <-
+  type_row(ModuleId, _, _, ModuleName, 'module', _, _),
+  Stem := replace(replace(replace(replace(initcap(ModuleName), '_', ''),
+                                  '.', ''), '-', ''), '/', '').
+
+# A TS identifier cannot open on a digit, so a digit-leading stem takes an 'M'.
+rel module_prefix(module_id: int, prefix: text).
+module_prefix(ModuleId, Prefix) <-
+  module_type_stem(ModuleId, Stem),
+  DigitPosition := instr('0123456789', substr(Stem, 1, 1)),
+  DigitPosition > 0,
+  Prefix := concat(['M', Stem]).
+module_prefix(ModuleId, Stem) <-
+  module_type_stem(ModuleId, Stem),
+  DigitPosition := instr('0123456789', substr(Stem, 1, 1)),
+  DigitPosition < 1.
+
+# The name a rel actually emits: bare when unique, module-prefixed when not.
+rel emitted_type_name(rel_id: int, type_name: text).
+emitted_type_name(RelId, BareType) <-
+  renderable_rel(RelId, BareType, _),
+  not(colliding_type_name(BareType)).
+emitted_type_name(RelId, TypeName) <-
+  renderable_rel(RelId, BareType, ModuleId),
+  colliding_type_name(BareType),
+  module_prefix(ModuleId, Prefix),
+  TypeName := concat([Prefix, BareType]).
+
+# An option over a leaf, kept apart from option_type so a list can hold one
+# without the list strata reading the option stratum that reads them back.
+rel option_of_leaf(id: int, text: text).
+option_of_leaf(Id, Text) <-
+  type_row(Id, _, _, _, 'option', ElemId, _),
   leaf_type(ElemId, Element),
-  Text := concat(['Array<', Element, '>']).
-list_type(Id, Text) <-
+  Text := concat([Element, ' | null']).
+
+# The innermost thing a list holds: a leaf, or a nullable leaf.
+rel list_element(id: int, text: text).
+list_element(Id, Text) <- leaf_type(Id, Text).
+list_element(Id, Text) <- option_of_leaf(Id, Text).
+
+# @comment-ok: the nesting bound; a self-recursive stratum settles a tick late.
+# Nesting unrolls to four levels, one stratum per level. A recursive list_type
+# loads and derives one level per tick, so a single arrival batch renders short.
+rel list_depth_one(id: int, text: text).
+list_depth_one(Id, Text) <-
   type_row(Id, _, _, _, 'json_list', ElemId, _),
-  type_row(ElemId, _, _, _, 'json_list', ElemElemId, _),
-  leaf_type(ElemElemId, Element),
-  Text := concat(['Array<Array<', Element, '>>']).
+  list_element(ElemId, Element),
+  Text := concat(['Array<', Element, '>']).
+
+rel list_depth_two(id: int, text: text).
+list_depth_two(Id, Text) <-
+  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  list_depth_one(ElemId, Element),
+  Text := concat(['Array<', Element, '>']).
+
+rel list_depth_three(id: int, text: text).
+list_depth_three(Id, Text) <-
+  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  list_depth_two(ElemId, Element),
+  Text := concat(['Array<', Element, '>']).
+
+rel list_depth_four(id: int, text: text).
+list_depth_four(Id, Text) <-
+  type_row(Id, _, _, _, 'json_list', ElemId, _),
+  list_depth_three(ElemId, Element),
+  Text := concat(['Array<', Element, '>']).
+
+rel list_type(id: int, text: text).
+list_type(Id, Text) <- list_depth_one(Id, Text).
+list_type(Id, Text) <- list_depth_two(Id, Text).
+list_type(Id, Text) <- list_depth_three(Id, Text).
+list_type(Id, Text) <- list_depth_four(Id, Text).
+
+# What an option wraps: a leaf, or a list of any rendered depth.
+rel element_type(id: int, text: text).
+element_type(Id, Text) <- leaf_type(Id, Text).
+element_type(Id, Text) <- list_type(Id, Text).
 
 # An option column renders its element type suffixed with ' | null'.
 rel option_type(id: int, text: text).
 option_type(Id, Text) <-
   type_row(Id, _, _, _, 'option', ElemId, _),
-  leaf_type(ElemId, Element),
+  element_type(ElemId, Element),
   Text := concat([Element, ' | null']).
 
-# type_of is the union of the three kind arms; each type id is one kind.
+# type_of is the union of the kind arms; each type id is one kind.
 rel type_of(id: int, text: text).
-type_of(Id, Text) <- leaf_type(Id, Text).
-type_of(Id, Text) <- list_type(Id, Text).
+type_of(Id, Text) <- element_type(Id, Text).
 type_of(Id, Text) <- option_type(Id, Text).
 
-# @comment-ok: the renderable-rel filter; TypeName = PascalCase of the owner rel.
-# One field line per renderable column: "  Name: Type;". Compiler-minted `__`
-# rels are filtered; TypeName is the PascalCase of the owning rel's name.
-rel field_line(type_name: text, ordinal: int, line_text: text).
-field_line(TypeName, Ordinal, LineText) <-
+# Two rels can mint one PascalCase name, so the owner rel id is the key here
+# and the name is joined on only at the wrap.
+rel field_line(rel_id: int, ordinal: int, line_text: text).
+field_line(RelId, Ordinal, LineText) <-
   type_row(_ColumnId, RelId, Ordinal, ColumnName, 'column', TypeId, _),
-  type_row(RelId, _, _, RelName, 'rel', _, _),
-  not(minted_rel(RelName)),
-  TypeName := replace(initcap(RelName), '_', ''),
+  renderable_rel(RelId, _, _),
   type_of(TypeId, Type),
   LineText := concat(['  ', ColumnName, ': ', Type, ';']).
 
 # The interface body: field lines joined in ordinal order by newline.
-rel body_text(type_name: text, body: text).
-body_text(TypeName, group_concat(LineText, '\n', Ordinal)) <-
-  field_line(TypeName, Ordinal, LineText).
+rel body_text(rel_id: int, body: text).
+body_text(RelId, group_concat(LineText, '\n', Ordinal)) <-
+  field_line(RelId, Ordinal, LineText).
 
-# The wrapped interface text; Body carries no trailing newline, so the closing
-# brace lands on its own line, byte-matching the prolog emitter.
-rel rendered_type(type_name: text, file_text: text).
-rendered_type(TypeName, FileText) <-
-  body_text(TypeName, Body),
+# Body carries no trailing newline, so the closing brace lands on its own line.
+# Assembly order is (part_ordinal, source_id): interfaces 0, generic rels 1, rels 2.
+rel rendered_type(type_name: text, part_ordinal: int, source_id: int,
+                  file_text: text).
+rendered_type(TypeName, 2, RelId, FileText) <-
+  body_text(RelId, Body),
+  emitted_type_name(RelId, TypeName),
   FileText := concat(['export interface ', TypeName, ' {\n', Body, '\n}\n']).
+
+# An interface declaration names a capability and holds no columns, so its
+# whole text is the empty-brace pair on one line.
+rendered_type(TypeName, 0, InterfaceId, FileText) <-
+  type_row(InterfaceId, _, _, InterfaceName, 'interface', _, _),
+  TypeName := replace(initcap(InterfaceName), '_', ''),
+  FileText := concat(['export interface ', TypeName, ' {}\n']).
+
+# A constraint row hangs off the parameter it bounds; TS joins bounds with ' & '.
+rel constraint_type(parameter_id: int, ordinal: int, type_name: text).
+constraint_type(ParameterId, Ordinal, TypeName) <-
+  type_row(_ConstraintId, ParameterId, Ordinal, InterfaceName, 'constraint', _, _),
+  TypeName := replace(initcap(InterfaceName), '_', '').
+
+rel parameter_bound(parameter_id: int, bound: text).
+parameter_bound(ParameterId, group_concat(TypeName, ' & ', Ordinal)) <-
+  constraint_type(ParameterId, Ordinal, TypeName).
+
+rel bounded_parameter(parameter_id: int).
+bounded_parameter(ParameterId) <- constraint_type(ParameterId, _, _).
+
+# An unbounded parameter is its bare name; a bounded one carries `extends`.
+rel parameter_text(generic_id: int, ordinal: int, parameter_text: text).
+parameter_text(GenericId, Ordinal, ParameterText) <-
+  type_row(ParameterId, GenericId, Ordinal, ParameterName, 'type_parameter', _, _),
+  parameter_bound(ParameterId, Bound),
+  ParameterText := concat([ParameterName, ' extends ', Bound]).
+parameter_text(GenericId, Ordinal, ParameterName) <-
+  type_row(ParameterId, GenericId, Ordinal, ParameterName, 'type_parameter', _, _),
+  not(bounded_parameter(ParameterId)).
+
+rel parameters_text(generic_id: int, parameters: text).
+parameters_text(GenericId, group_concat(ParameterText, ', ', Ordinal)) <-
+  parameter_text(GenericId, Ordinal, ParameterText).
+
+rel parameterized_generic(generic_id: int).
+parameterized_generic(GenericId) <-
+  type_row(_ParameterId, GenericId, _, _, 'type_parameter', _, _).
+
+# The declaration head: PascalCase name, then the parameter list when there is one.
+rel generic_head(generic_id: int, type_name: text, head_text: text).
+generic_head(GenericId, TypeName, HeadText) <-
+  type_row(GenericId, _, _, GenericName, 'generic_rel', _, _),
+  parameters_text(GenericId, Parameters),
+  TypeName := replace(initcap(GenericName), '_', ''),
+  HeadText := concat([TypeName, '<', Parameters, '>']).
+generic_head(GenericId, TypeName, TypeName) <-
+  type_row(GenericId, _, _, GenericName, 'generic_rel', _, _),
+  not(parameterized_generic(GenericId)),
+  TypeName := replace(initcap(GenericName), '_', '').
+
+rel generic_field_line(generic_id: int, ordinal: int, line_text: text).
+generic_field_line(GenericId, Ordinal, LineText) <-
+  type_row(_ColumnId, GenericId, Ordinal, ColumnName, 'generic_column', TypeId, _),
+  type_of(TypeId, Type),
+  LineText := concat(['  ', ColumnName, ': ', Type, ';']).
+
+rel generic_body(generic_id: int, body: text).
+generic_body(GenericId, group_concat(LineText, '\n', Ordinal)) <-
+  generic_field_line(GenericId, Ordinal, LineText).
+
+rel columned_generic(generic_id: int).
+columned_generic(GenericId) <- generic_field_line(GenericId, _, _).
+
+rendered_type(TypeName, 1, GenericId, FileText) <-
+  generic_head(GenericId, TypeName, HeadText),
+  generic_body(GenericId, Body),
+  FileText := concat(['export interface ', HeadText, ' {\n', Body, '\n}\n']).
+rendered_type(TypeName, 1, GenericId, FileText) <-
+  generic_head(GenericId, TypeName, HeadText),
+  not(columned_generic(GenericId)),
+  FileText := concat(['export interface ', HeadText, ' {\n}\n']).
