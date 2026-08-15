@@ -1259,6 +1259,11 @@ fn flow_block(
                 }
             }
             syn::Stmt::Expr(expr, semi) => {
+                // A bare `;` is Expr::Verbatim(<empty>); its span is (0,0), so
+                // skip it. Non-empty Verbatim keeps its node in the `_ =>` arm.
+                if matches!(expr, syn::Expr::Verbatim(tokens) if tokens.is_empty()) {
+                    continue;
+                }
                 let stmt_span = expr.span();
                 let node = flow_expr(expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
                 if idx + 1 == statement_count && semi.is_none() {

@@ -118,6 +118,63 @@ fn wire_edge_graph_of_the_dispatch_shape_is_acyclic() {
     assert!(cycle.is_none(), "df edge cycle: {:?}", cycle.expect("some"));
 }
 
+/// FAIL-PRE-FIX: an empty Rust statement (bare `;`) parses as
+/// `Stmt::Expr(Expr::Verbatim(<empty>), Some(semi))`; the `_ =>` fallback in
+/// flow_expr mints an Expr node whose empty TokenStream span resolves to (0,0).
+/// The smallest offender from rust-analyzer (nocontentexpr.rs) emits 12 such
+/// nodes: 12 zero-width spans and 12 duplicate (span,kind) keys at (0,0,'expr').
+const EMPTY_STMT_SOURCE: &str = r#"fn foo(){ ;;;some_expr();;;;{;;;};;;;Ok(()) }"#;
+
+fn empty_stmt_df_facts() -> Vec<Value> {
+    let out = dispatch("nocontentexpr.rs", EMPTY_STMT_SOURCE.as_bytes(), DF_ONLY)
+        .expect("a Source matches .rs");
+    flatten_jsonl(&out)
+        .iter()
+        .map(|line| serde_json::from_str::<Value>(line).expect("a flat fact is JSON"))
+        .filter(|fact| fact["family"] == "df")
+        .collect()
+}
+
+/// Empty statements must not collapse to a shared zero-width placeholder node.
+#[test]
+fn empty_statements_mint_no_zero_width_nodes() {
+    let facts = empty_stmt_df_facts();
+    let zero_width: Vec<String> = facts
+        .iter()
+        .filter(|fact| fact["record"] == "node")
+        .filter(|fact| fact["span"]["start"] == fact["span"]["end"])
+        .map(|fact| fact.to_string())
+        .collect();
+    assert!(
+        zero_width.is_empty(),
+        "zero-width df node spans from empty statements: {zero_width:?}"
+    );
+}
+
+/// Every empty statement collapsing onto (0,0,'expr') must be gone: the node
+/// key set has no duplicate (span,kind) pairs.
+#[test]
+fn empty_statements_mint_no_duplicate_node_keys() {
+    let facts = empty_stmt_df_facts();
+    let nodes: Vec<(u64, u64, String)> = facts
+        .iter()
+        .filter(|fact| fact["record"] == "node")
+        .map(|fact| {
+            (
+                fact["span"]["start"].as_u64().expect("span start"),
+                fact["span"]["end"].as_u64().expect("span end"),
+                fact["kind"].as_str().expect("node kind").to_string(),
+            )
+        })
+        .collect();
+    let unique: HashSet<(u64, u64, String)> = nodes.iter().cloned().collect();
+    assert_eq!(
+        nodes.len(),
+        unique.len(),
+        "duplicate (span,kind) node keys from empty statements"
+    );
+}
+
 type Node = (u64, u64, String);
 
 fn walk(
