@@ -31,6 +31,10 @@ leaf_type(Id, TypeName) <-
   not(minted_rel(RelName)),
   TypeName := replace(initcap(RelName), '_', '').
 
+# A type parameter stands for itself inside its generic's body, uncased.
+leaf_type(Id, ParameterName) <-
+  type_row(Id, _, _, ParameterName, 'type_parameter', _, _).
+
 # @comment-ok: the __ namespace filter; no contains/2 builtin, so instr marks it.
 # The `__` namespace marks compiler-minted rels (list companions, option enums,
 # split refs); only author rels render. There is no contains/2 builtin, so a
@@ -100,3 +104,68 @@ rendered_type(TypeName, 0, InterfaceId, FileText) <-
   type_row(InterfaceId, _, _, InterfaceName, 'interface', _, _),
   TypeName := replace(initcap(InterfaceName), '_', ''),
   FileText := concat(['export interface ', TypeName, ' {}\n']).
+
+# A constraint row hangs off the parameter it bounds; TS joins bounds with ' & '.
+rel constraint_type(parameter_id: int, ordinal: int, type_name: text).
+constraint_type(ParameterId, Ordinal, TypeName) <-
+  type_row(_ConstraintId, ParameterId, Ordinal, InterfaceName, 'constraint', _, _),
+  TypeName := replace(initcap(InterfaceName), '_', '').
+
+rel parameter_bound(parameter_id: int, bound: text).
+parameter_bound(ParameterId, group_concat(TypeName, ' & ', Ordinal)) <-
+  constraint_type(ParameterId, Ordinal, TypeName).
+
+rel bounded_parameter(parameter_id: int).
+bounded_parameter(ParameterId) <- constraint_type(ParameterId, _, _).
+
+# An unbounded parameter is its bare name; a bounded one carries `extends`.
+rel parameter_text(generic_id: int, ordinal: int, parameter_text: text).
+parameter_text(GenericId, Ordinal, ParameterText) <-
+  type_row(ParameterId, GenericId, Ordinal, ParameterName, 'type_parameter', _, _),
+  parameter_bound(ParameterId, Bound),
+  ParameterText := concat([ParameterName, ' extends ', Bound]).
+parameter_text(GenericId, Ordinal, ParameterName) <-
+  type_row(ParameterId, GenericId, Ordinal, ParameterName, 'type_parameter', _, _),
+  not(bounded_parameter(ParameterId)).
+
+rel parameters_text(generic_id: int, parameters: text).
+parameters_text(GenericId, group_concat(ParameterText, ', ', Ordinal)) <-
+  parameter_text(GenericId, Ordinal, ParameterText).
+
+rel parameterized_generic(generic_id: int).
+parameterized_generic(GenericId) <-
+  type_row(_ParameterId, GenericId, _, _, 'type_parameter', _, _).
+
+# The declaration head: PascalCase name, then the parameter list when there is one.
+rel generic_head(generic_id: int, type_name: text, head_text: text).
+generic_head(GenericId, TypeName, HeadText) <-
+  type_row(GenericId, _, _, GenericName, 'generic_rel', _, _),
+  parameters_text(GenericId, Parameters),
+  TypeName := replace(initcap(GenericName), '_', ''),
+  HeadText := concat([TypeName, '<', Parameters, '>']).
+generic_head(GenericId, TypeName, TypeName) <-
+  type_row(GenericId, _, _, GenericName, 'generic_rel', _, _),
+  not(parameterized_generic(GenericId)),
+  TypeName := replace(initcap(GenericName), '_', '').
+
+rel generic_field_line(generic_id: int, ordinal: int, line_text: text).
+generic_field_line(GenericId, Ordinal, LineText) <-
+  type_row(_ColumnId, GenericId, Ordinal, ColumnName, 'generic_column', TypeId, _),
+  type_of(TypeId, Type),
+  LineText := concat(['  ', ColumnName, ': ', Type, ';']).
+
+rel generic_body(generic_id: int, body: text).
+generic_body(GenericId, group_concat(LineText, '\n', Ordinal)) <-
+  generic_field_line(GenericId, Ordinal, LineText).
+
+rel columned_generic(generic_id: int).
+columned_generic(GenericId) <- generic_field_line(GenericId, _, _).
+
+rendered_type(TypeName, 1, GenericId, FileText) <-
+  generic_head(GenericId, TypeName, HeadText),
+  generic_body(GenericId, Body),
+  FileText := concat(['export interface ', HeadText, ' {\n', Body, '\n}\n']).
+rendered_type(TypeName, 1, GenericId, FileText) <-
+  generic_head(GenericId, TypeName, HeadText),
+  not(columned_generic(GenericId)),
+  FileText := concat(['export interface ', HeadText, ' {\n}\n']).

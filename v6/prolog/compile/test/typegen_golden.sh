@@ -33,6 +33,7 @@ PINNED=(
 # at typegen_golden/<name>.type_rows.jsonl, one golden judged for both doors.
 SHAPES=(
   "shape_interface_declaration"
+  "shape_generic_rel"
 )
 
 swipl_run() { # goal ; runs from v6/prolog so conformance/... paths resolve
