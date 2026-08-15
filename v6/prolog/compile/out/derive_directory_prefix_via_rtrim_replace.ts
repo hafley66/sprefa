@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -232,8 +238,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    directory: select_rows(seam, `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' AND json_type("file", '$.fn') = 'text' AND json_type("file", '$.args') = 'array' THEN json_extract("file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file", '$.args')), '') || ')' ELSE "file" END AS "file", CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir" FROM "__txt_directory"`, rel_columns.directory!, rel_column_types.directory!),
-    file_path: select_rows(seam, `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' AND json_type("file", '$.fn') = 'text' AND json_type("file", '$.args') = 'array' THEN json_extract("file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file", '$.args')), '') || ')' ELSE "file" END AS "file" FROM "__txt_file_path"`, rel_columns.file_path!, rel_column_types.file_path!),
+    directory: select_rows(seam, `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file", CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir" FROM "__txt_directory" t`, rel_columns.directory!, rel_column_types.directory!),
+    file_path: select_rows(seam, `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file" FROM "__txt_file_path" t`, rel_columns.file_path!, rel_column_types.file_path!),
   });
 }
 
@@ -251,8 +257,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  directory: `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' AND json_type("file", '$.fn') = 'text' AND json_type("file", '$.args') = 'array' THEN json_extract("file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file", '$.args')), '') || ')' ELSE "file" END AS "file", CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir" FROM "__txt_directory"`,
-  file_path: `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' AND json_type("file", '$.fn') = 'text' AND json_type("file", '$.args') = 'array' THEN json_extract("file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file", '$.args')), '') || ')' ELSE "file" END AS "file" FROM "__txt_file_path"`,
+  directory: `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file", CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir" FROM "__txt_directory" t`,
+  file_path: `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file" FROM "__txt_file_path" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -282,8 +288,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "directory", kind: "set", table_name: "directory", delta_table_name: "__delta_directory", frontier_table_name: "__frontier_directory", next_frontier_table_name: "__next_frontier_directory", columns: ["file", "dir"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' AND json_type("file", '$.fn') = 'text' AND json_type("file", '$.args') = 'array' THEN json_extract("file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file", '$.args')), '') || ')' ELSE "file" END AS "file", CASE WHEN json_valid("dir") AND json_type("dir") = 'object' AND json_type("dir", '$.fn') = 'text' AND json_type("dir", '$.args') = 'array' THEN json_extract("dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("dir", '$.args')), '') || ')' ELSE "dir" END AS "dir", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_directory" WHERE "_sign" IN (-1, 1) GROUP BY "file", "dir", "_sign"`, rule_observers: [] },
-  { rel: "file_path", kind: "set", table_name: "file_path", delta_table_name: "__delta_file_path", frontier_table_name: "__frontier_file_path", next_frontier_table_name: "__next_frontier_file_path", columns: ["file"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "file_path" ("file") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "file"`, arrival_del_sql: `DELETE FROM "file_path" WHERE ("file") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "file"`, boundary_sql: `SELECT CASE WHEN json_valid("file") AND json_type("file") = 'object' AND json_type("file", '$.fn') = 'text' AND json_type("file", '$.args') = 'array' THEN json_extract("file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("file", '$.args')), '') || ')' ELSE "file" END AS "file", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_file_path" WHERE "_sign" IN (-1, 1) GROUP BY "file", "_sign"`, rule_observers: ["directory/2"] },
+  { rel: "directory", kind: "set", table_name: "directory", delta_table_name: "__delta_directory", frontier_table_name: "__frontier_directory", next_frontier_table_name: "__next_frontier_directory", columns: ["file", "dir"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file", CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_directory" t WHERE t."_sign" IN (-1, 1) GROUP BY t."file", t."dir", t."_sign"`, rule_observers: [] },
+  { rel: "file_path", kind: "set", table_name: "file_path", delta_table_name: "__delta_file_path", frontier_table_name: "__frontier_file_path", next_frontier_table_name: "__next_frontier_file_path", columns: ["file"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "file_path" ("file") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "file"`, arrival_del_sql: `DELETE FROM "file_path" WHERE ("file") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "file"`, boundary_sql: `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_file_path" t WHERE t."_sign" IN (-1, 1) GROUP BY t."file", t."_sign"`, rule_observers: ["directory/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

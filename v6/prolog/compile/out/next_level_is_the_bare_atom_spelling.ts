@@ -35,6 +35,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -43,13 +44,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -61,7 +62,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -204,14 +210,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    seen: select_rows(seam, `SELECT "value" FROM "seen"`, rel_columns.seen!, rel_column_types.seen!),
-    source: select_rows(seam, `SELECT "value" FROM "source"`, rel_columns.source!, rel_column_types.source!),
+    seen: select_rows(seam, `SELECT t."value" FROM "seen" t`, rel_columns.seen!, rel_column_types.seen!),
+    source: select_rows(seam, `SELECT t."value" FROM "source" t`, rel_columns.source!, rel_column_types.source!),
   });
 }
 
 const final_select: Record<string, string> = {
-  seen: `SELECT "value" FROM "seen"`,
-  source: `SELECT "value" FROM "source"`,
+  seen: `SELECT t."value" FROM "seen" t`,
+  source: `SELECT t."value" FROM "source" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -241,8 +247,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: [] },
-  { rel: "source", kind: "set", table_name: "source", delta_table_name: "__delta_source", frontier_table_name: "__frontier_source", next_frontier_table_name: "__next_frontier_source", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "source" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["seen/1"] },
+  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seen" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "source", kind: "set", table_name: "source", delta_table_name: "__delta_source", frontier_table_name: "__frontier_source", next_frontier_table_name: "__next_frontier_source", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "source" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["seen/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

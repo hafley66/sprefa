@@ -16,7 +16,7 @@
             % unit assertion, not something the byte diff alone can hold.
             json_scalar_value/3,
             % The content-interned list dictionary, shared with level_eval.pl.
-            list_mint_reset/0, list_mint_id/2 ]).
+            list_mint_reset/0, list_mint_id/3, list_mint_elements/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -429,21 +429,28 @@ json_decode_flip(Pattern, Value) :- json_decode(Value, Pattern).
 % Monotone by construction, so it is a NON-BACKTRACKABLE global: the findall
 % over rule solutions that mints a list must not unwind the ids it handed out.
 
-list_mint_reset :- nb_setval(list_mint, mint(0, [])).
+list_mint_reset :- nb_setval(list_mint, mint(0, [], [])).
 
 list_mint_state(State) :-
-    ( nb_current(list_mint, Current) -> State = Current ; State = mint(0, []) ).
+    ( nb_current(list_mint, Current) -> State = Current ; State = mint(0, [], []) ).
 
-%% list_mint_id(+ContentText, -Id) is det.
+%% list_mint_id(+ContentText, +Elements, -Id) is det.
 %  First appearance wins; the counter mirrors the emitted entity table's
 %  autoincrement "__id", which is what the final-state byte diff compares.
-list_mint_id(ContentText, Id) :-
-    list_mint_state(mint(Counter, ByContent)),
+list_mint_id(ContentText, Elements, Id) :-
+    list_mint_state(mint(Counter, ByContent, ById)),
     (   memberchk(ContentText-Known, ByContent)
     ->  Id = Known
     ;   Id is Counter + 1,
-        nb_setval(list_mint, mint(Id, [ContentText-Id | ByContent]))
+        nb_setval(list_mint,
+                  mint(Id, [ContentText-Id | ByContent], [Id-Elements | ById]))
     ).
+
+%% list_mint_elements(+Id, -Elements) is semidet.
+%  The pre-mint value, which is what the BOUNDARY prints: the id is storage.
+list_mint_elements(Id, Elements) :-
+    list_mint_state(mint(_, _, ById)),
+    memberchk(Id-Elements, ById).
 
 % The capture types, one clause per json1 `json_type` answer the emitted guard
 % tests for, so the two doors cannot drift apart on which values pass:

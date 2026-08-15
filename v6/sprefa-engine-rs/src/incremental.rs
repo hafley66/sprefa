@@ -39,6 +39,7 @@ fn value_to_json(value: &Value) -> String {
         Value::Real(v) => crate::ticklog::js_float_text(*v),
         Value::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
         Value::Text(v) => crate::ticklog::json_string(v),
+        Value::List(_) => panic!("a list value reached an arrival payload"),
     }
 }
 
@@ -469,6 +470,14 @@ fn normalize_boundary(value: Value, ty: Option<crate::types::RowColumnType>) -> 
                 panic!("float column crossed SQLite with non-finite value");
             }
             Value::Real(if v == 0.0 { 0.0 } else { v })
+        }
+        // F3 mirror of the SELECT boundary in sql.rs: a list column hands the
+        // consumer Vec<Value>, never the array text.
+        (Some(crate::types::RowColumnType::List), Value::Text(text)) => {
+            match serde_json::from_str::<Vec<serde_json::Value>>(&text) {
+                Ok(items) => Value::List(items),
+                Err(error) => panic!("list column crossed SQLite with non-array text {text}: {error}"),
+            }
         }
         (_, v) => v,
     }

@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -260,10 +266,10 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    clock: select_rows(seam, `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1" FROM "__txt_clock"`, rel_columns.clock!, rel_column_types.clock!),
-    even: select_rows(seam, `SELECT "value" FROM "even"`, rel_columns.even!, rel_column_types.even!),
-    odd: select_rows(seam, `SELECT "value" FROM "odd"`, rel_columns.odd!, rel_column_types.odd!),
-    seed: select_rows(seam, `SELECT "value" FROM "seed"`, rel_columns.seed!, rel_column_types.seed!),
+    clock: select_rows(seam, `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_clock" t`, rel_columns.clock!, rel_column_types.clock!),
+    even: select_rows(seam, `SELECT t."value" FROM "even" t`, rel_columns.even!, rel_column_types.even!),
+    odd: select_rows(seam, `SELECT t."value" FROM "odd" t`, rel_columns.odd!, rel_column_types.odd!),
+    seed: select_rows(seam, `SELECT t."value" FROM "seed" t`, rel_columns.seed!, rel_column_types.seed!),
   });
 }
 
@@ -283,10 +289,10 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  clock: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1" FROM "__txt_clock"`,
-  even: `SELECT "value" FROM "even"`,
-  odd: `SELECT "value" FROM "odd"`,
-  seed: `SELECT "value" FROM "seed"`,
+  clock: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_clock" t`,
+  even: `SELECT t."value" FROM "even" t`,
+  odd: `SELECT t."value" FROM "odd" t`,
+  seed: `SELECT t."value" FROM "seed" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -317,10 +323,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "clock", kind: "set", table_name: "clock", delta_table_name: "__delta_clock", frontier_table_name: "__frontier_clock", next_frontier_table_name: "__next_frontier_clock", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "clock" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: `DELETE FROM "clock" WHERE ("col1") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "col1"`, boundary_sql: `SELECT CASE WHEN json_valid("col1") AND json_type("col1") = 'object' AND json_type("col1", '$.fn') = 'text' AND json_type("col1", '$.args') = 'array' THEN json_extract("col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("col1", '$.args')), '') || ')' ELSE "col1" END AS "col1", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_clock" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "_sign"`, rule_observers: [] },
-  { rel: "even", kind: "set", table_name: "even", delta_table_name: "__delta_even", frontier_table_name: "__frontier_even", next_frontier_table_name: "__next_frontier_even", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_even" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["odd/1"] },
-  { rel: "odd", kind: "set", table_name: "odd", delta_table_name: "__delta_odd", frontier_table_name: "__frontier_odd", next_frontier_table_name: "__next_frontier_odd", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_odd" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["even/1"] },
-  { rel: "seed", kind: "set", table_name: "seed", delta_table_name: "__delta_seed", frontier_table_name: "__frontier_seed", next_frontier_table_name: "__next_frontier_seed", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seed" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "seed" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seed" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["even/1"] },
+  { rel: "clock", kind: "set", table_name: "clock", delta_table_name: "__delta_clock", frontier_table_name: "__frontier_clock", next_frontier_table_name: "__next_frontier_clock", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "clock" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: `DELETE FROM "clock" WHERE ("col1") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "col1"`, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_clock" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
+  { rel: "even", kind: "set", table_name: "even", delta_table_name: "__delta_even", frontier_table_name: "__frontier_even", next_frontier_table_name: "__next_frontier_even", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_even" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["odd/1"] },
+  { rel: "odd", kind: "set", table_name: "odd", delta_table_name: "__delta_odd", frontier_table_name: "__frontier_odd", next_frontier_table_name: "__next_frontier_odd", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_odd" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["even/1"] },
+  { rel: "seed", kind: "set", table_name: "seed", delta_table_name: "__delta_seed", frontier_table_name: "__frontier_seed", next_frontier_table_name: "__next_frontier_seed", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seed" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "seed" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_seed" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["even/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

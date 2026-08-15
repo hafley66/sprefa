@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -236,8 +242,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    text: select_rows(seam, `SELECT CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text" FROM "__txt_text"`, rel_columns.text!, rel_column_types.text!),
-    titled: select_rows(seam, `SELECT CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text", CASE WHEN json_valid("out") AND json_type("out") = 'object' AND json_type("out", '$.fn') = 'text' AND json_type("out", '$.args') = 'array' THEN json_extract("out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("out", '$.args')), '') || ')' ELSE "out" END AS "out" FROM "__txt_titled"`, rel_columns.titled!, rel_column_types.titled!),
+    text: select_rows(seam, `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_text" t`, rel_columns.text!, rel_column_types.text!),
+    titled: select_rows(seam, `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", CASE WHEN json_valid(t."out") AND json_type(t."out") = 'object' AND json_type(t."out", '$.fn') = 'text' AND json_type(t."out", '$.args') = 'array' THEN json_extract(t."out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."out", '$.args')), '') || ')' ELSE t."out" END AS "out" FROM "__txt_titled" t`, rel_columns.titled!, rel_column_types.titled!),
   });
 }
 
@@ -255,8 +261,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  text: `SELECT CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text" FROM "__txt_text"`,
-  titled: `SELECT CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text", CASE WHEN json_valid("out") AND json_type("out") = 'object' AND json_type("out", '$.fn') = 'text' AND json_type("out", '$.args') = 'array' THEN json_extract("out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("out", '$.args')), '') || ')' ELSE "out" END AS "out" FROM "__txt_titled"`,
+  text: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_text" t`,
+  titled: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", CASE WHEN json_valid(t."out") AND json_type(t."out") = 'object' AND json_type(t."out", '$.fn') = 'text' AND json_type(t."out", '$.args') = 'array' THEN json_extract(t."out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."out", '$.args')), '') || ')' ELSE t."out" END AS "out" FROM "__txt_titled" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -286,8 +292,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "text", kind: "set", table_name: "text", delta_table_name: "__delta_text", frontier_table_name: "__frontier_text", next_frontier_table_name: "__next_frontier_text", columns: ["text"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "text" ("text") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "text"`, arrival_del_sql: `DELETE FROM "text" WHERE ("text") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "text"`, boundary_sql: `SELECT CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_text" WHERE "_sign" IN (-1, 1) GROUP BY "text", "_sign"`, rule_observers: ["titled/2"] },
-  { rel: "titled", kind: "set", table_name: "titled", delta_table_name: "__delta_titled", frontier_table_name: "__frontier_titled", next_frontier_table_name: "__next_frontier_titled", columns: ["text", "out"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("text") AND json_type("text") = 'object' AND json_type("text", '$.fn') = 'text' AND json_type("text", '$.args') = 'array' THEN json_extract("text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("text", '$.args')), '') || ')' ELSE "text" END AS "text", CASE WHEN json_valid("out") AND json_type("out") = 'object' AND json_type("out", '$.fn') = 'text' AND json_type("out", '$.args') = 'array' THEN json_extract("out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("out", '$.args')), '') || ')' ELSE "out" END AS "out", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_titled" WHERE "_sign" IN (-1, 1) GROUP BY "text", "out", "_sign"`, rule_observers: [] },
+  { rel: "text", kind: "set", table_name: "text", delta_table_name: "__delta_text", frontier_table_name: "__frontier_text", next_frontier_table_name: "__next_frontier_text", columns: ["text"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "text" ("text") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "text"`, arrival_del_sql: `DELETE FROM "text" WHERE ("text") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "text"`, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_text" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."_sign"`, rule_observers: ["titled/2"] },
+  { rel: "titled", kind: "set", table_name: "titled", delta_table_name: "__delta_titled", frontier_table_name: "__frontier_titled", next_frontier_table_name: "__next_frontier_titled", columns: ["text", "out"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", CASE WHEN json_valid(t."out") AND json_type(t."out") = 'object' AND json_type(t."out", '$.fn') = 'text' AND json_type(t."out", '$.args') = 'array' THEN json_extract(t."out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."out", '$.args')), '') || ')' ELSE t."out" END AS "out", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_titled" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."out", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

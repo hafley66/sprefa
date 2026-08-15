@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -281,10 +287,10 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    tree_branch: select_rows(seam, `SELECT "id", "left", "right" FROM "tree_branch"`, rel_columns.tree_branch!, rel_column_types.tree_branch!),
-    tree_kind: select_rows(seam, `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "__txt_tree_kind"`, rel_columns.tree_kind!, rel_column_types.tree_kind!),
-    tree_leaf: select_rows(seam, `SELECT "id", "value" FROM "tree_leaf"`, rel_columns.tree_leaf!, rel_column_types.tree_leaf!),
-    tree_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_tree_tag"`, rel_columns.tree_tag!, rel_column_types.tree_tag!),
+    tree_branch: select_rows(seam, `SELECT t."id", t."left", t."right" FROM "tree_branch" t`, rel_columns.tree_branch!, rel_column_types.tree_branch!),
+    tree_kind: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_tree_kind" t`, rel_columns.tree_kind!, rel_column_types.tree_kind!),
+    tree_leaf: select_rows(seam, `SELECT t."id", t."value" FROM "tree_leaf" t`, rel_columns.tree_leaf!, rel_column_types.tree_leaf!),
+    tree_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_tree_tag" t`, rel_columns.tree_tag!, rel_column_types.tree_tag!),
   });
 }
 
@@ -304,10 +310,10 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  tree_branch: `SELECT "id", "left", "right" FROM "tree_branch"`,
-  tree_kind: `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind" FROM "__txt_tree_kind"`,
-  tree_leaf: `SELECT "id", "value" FROM "tree_leaf"`,
-  tree_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_tree_tag"`,
+  tree_branch: `SELECT t."id", t."left", t."right" FROM "tree_branch" t`,
+  tree_kind: `SELECT t."id", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_tree_kind" t`,
+  tree_leaf: `SELECT t."id", t."value" FROM "tree_leaf" t`,
+  tree_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_tree_tag" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -338,10 +344,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "tree_branch", kind: "set", table_name: "tree_branch", delta_table_name: "__delta_tree_branch", frontier_table_name: "__frontier_tree_branch", next_frontier_table_name: "__next_frontier_tree_branch", columns: ["id", "left", "right"], column_types: ["int", "int", "int"], key_indices: [1, 2], arrival_add_sql: `INSERT INTO "tree_branch" ("id", "left", "right") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("left", "right") DO UPDATE SET "id" = excluded."id" RETURNING "id", "left", "right"`, arrival_del_sql: `DELETE FROM "tree_branch" WHERE ("id", "left", "right") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "id", "left", "right"`, boundary_sql: `SELECT "id", "left", "right", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_branch" WHERE "_sign" IN (-1, 1) GROUP BY "id", "left", "right", "_sign"`, rule_observers: ["tree_tag/2"] },
-  { rel: "tree_kind", kind: "set", table_name: "tree_kind", delta_table_name: "__delta_tree_kind", frontier_table_name: "__frontier_tree_kind", next_frontier_table_name: "__next_frontier_tree_kind", columns: ["id", "kind"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("kind") AND json_type("kind") = 'object' AND json_type("kind", '$.fn') = 'text' AND json_type("kind", '$.args') = 'array' THEN json_extract("kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("kind", '$.args')), '') || ')' ELSE "kind" END AS "kind", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_tree_kind" WHERE "_sign" IN (-1, 1) GROUP BY "id", "kind", "_sign"`, rule_observers: [] },
-  { rel: "tree_leaf", kind: "set", table_name: "tree_leaf", delta_table_name: "__delta_tree_leaf", frontier_table_name: "__frontier_tree_leaf", next_frontier_table_name: "__next_frontier_tree_leaf", columns: ["id", "value"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "tree_leaf" ("id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id" RETURNING "id", "value"`, arrival_del_sql: `DELETE FROM "tree_leaf" WHERE ("id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "value"`, boundary_sql: `SELECT "id", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_leaf" WHERE "_sign" IN (-1, 1) GROUP BY "id", "value", "_sign"`, rule_observers: ["tree_tag/2"] },
-  { rel: "tree_tag", kind: "set", table_name: "tree_tag", delta_table_name: "__delta_tree_tag", frontier_table_name: "__frontier_tree_tag", next_frontier_table_name: "__next_frontier_tree_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_tree_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: ["tree_kind/2"] },
+  { rel: "tree_branch", kind: "set", table_name: "tree_branch", delta_table_name: "__delta_tree_branch", frontier_table_name: "__frontier_tree_branch", next_frontier_table_name: "__next_frontier_tree_branch", columns: ["id", "left", "right"], column_types: ["int", "int", "int"], key_indices: [1, 2], arrival_add_sql: `INSERT INTO "tree_branch" ("id", "left", "right") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("left", "right") DO UPDATE SET "id" = excluded."id" RETURNING "id", "left", "right"`, arrival_del_sql: `DELETE FROM "tree_branch" WHERE ("id", "left", "right") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "id", "left", "right"`, boundary_sql: `SELECT t."id", t."left", t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_branch" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."left", t."right", t."_sign"`, rule_observers: ["tree_tag/2"] },
+  { rel: "tree_kind", kind: "set", table_name: "tree_kind", delta_table_name: "__delta_tree_kind", frontier_table_name: "__frontier_tree_kind", next_frontier_table_name: "__next_frontier_tree_kind", columns: ["id", "kind"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_tree_kind" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."kind", t."_sign"`, rule_observers: [] },
+  { rel: "tree_leaf", kind: "set", table_name: "tree_leaf", delta_table_name: "__delta_tree_leaf", frontier_table_name: "__frontier_tree_leaf", next_frontier_table_name: "__next_frontier_tree_leaf", columns: ["id", "value"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "tree_leaf" ("id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id" RETURNING "id", "value"`, arrival_del_sql: `DELETE FROM "tree_leaf" WHERE ("id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "value"`, boundary_sql: `SELECT t."id", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_leaf" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."value", t."_sign"`, rule_observers: ["tree_tag/2"] },
+  { rel: "tree_tag", kind: "set", table_name: "tree_tag", delta_table_name: "__delta_tree_tag", frontier_table_name: "__frontier_tree_tag", next_frontier_table_name: "__next_frontier_tree_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_tree_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: ["tree_kind/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

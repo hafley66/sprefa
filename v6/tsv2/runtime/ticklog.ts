@@ -67,6 +67,9 @@ function encode_value(value: IRowValue, type?: IRowColumnType): string {
   // out. The struct-as-rows header's claim that intern-time text is already
   // canonical is therefore false; that is a named card, and until it moves,
   // canonicalizing here is what the byte contract actually rests on.
+  // A list column arrives here ALREADY parsed (rows.ts), so its elements
+  // canonicalize directly and never through a second text re-parse.
+  if (typeof value !== "string") return JSON.stringify(canonicalize_json(value));
   if (type === "json" || type === "ref") return canonical_json_text(value) ?? JSON.stringify(value);
   return JSON.stringify(value);
 }

@@ -2789,13 +2789,106 @@ dictionary_storage_kind(Types, DeclaredType, Storage) :-
 %
 % EXPLAIN receipt (v6/tsv2/tests/structPlane.test.ts): the inner query plans as
 % `SEARCH d USING INTEGER PRIMARY KEY (rowid=?)`, never a SCAN.
+% Bare, the outer column binds to the CHILD view whenever the two share a
+% column name, and the row renders null (docs/failure-modes.md entry 52).
 dictionary_render_expr(TypeName, Column, Expr) :-
     dictionary_table_name(TypeName, Table),
     quote_ident(Table, QuotedTable),
     quote_ident(Column, QuotedColumn),
     format(atom(Expr),
-           '(SELECT d."__rendered" FROM ~w d WHERE d."__id" = ~w) AS ~w',
+           '(SELECT d."__rendered" FROM ~w d WHERE d."__id" = t.~w) AS ~w',
            [QuotedTable, QuotedColumn, QuotedColumn]).
+
+% The member rel's UNIQUE (list_id, idx) carries BOTH the grouping and the
+% element order; in-aggregate ORDER BY is 3.44+ and system sqlite is 3.43.2.
+list_view_name(EntityName, ViewName) :-
+    atomic_list_concat(['__list_', EntityName], ViewName).
+
+list_member_ref(EntityName, MemberName/3) :-
+    atomic_list_concat([EntityName, member], '__', MemberName).
+
+list_column_alias(Column, Alias) :-
+    atomic_list_concat(['__l_', Column], Alias).
+
+list_element_types(RelPlans, Elements) :-
+    findall(Element,
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, _, _, _, _, ColumnTypes),
+              member(list(Element), ColumnTypes) ),
+            Elements0),
+    sort(Elements0, Elements).
+
+list_view_ddls(Mode, RelPlans, Ddls) :-
+    list_element_types(RelPlans, Elements),
+    findall(Ddl,
+            ( member(Element, Elements),
+              list_view_ddl(Mode, RelPlans, Element, Ddl) ),
+            Ddls).
+
+list_view_ddl(Mode, RelPlans, Element, Ddl) :-
+    canonical_type_name(list(Element), EntityName),
+    list_view_name(EntityName, ViewName),
+    quote_ident(ViewName, QuotedViewName),
+    list_member_ref(EntityName, MemberRef),
+    table_name(MemberRef, MemberTable),
+    quote_ident(MemberTable, QuotedMemberTable),
+    list_member_value_type(RelPlans, MemberRef, ValueType),
+    list_element_render(Mode, ValueType, ValueExpr, JoinSql),
+    format(atom(Ddl),
+           'CREATE TEMP VIEW ~w AS SELECT m."list_id" AS "list_id", json_group_array(~w) AS "value_text" FROM ~w m~w GROUP BY m."list_id"',
+           [QuotedViewName, ValueExpr, QuotedMemberTable, JoinSql]).
+
+list_member_value_type(RelPlans, MemberRef, ValueType) :-
+    member(RelPlan, RelPlans),
+    relplan_parts(RelPlan, MemberRef, _, Columns, _, ColumnTypes),
+    nth0(Index, Columns, value),
+    nth0(Index, ColumnTypes, ValueType),
+    !.
+
+% Every arm is a JOIN, never a correlated subquery: the aggregate reads one
+% row per member and the planner keeps the member index as the driving scan.
+list_element_render(_, ref(TypeName), 'json(r."__rendered")', JoinSql) :- !,
+    dictionary_table_name(TypeName, ReferenceView),
+    quote_ident(ReferenceView, QuotedReferenceView),
+    format(atom(JoinSql), ' LEFT JOIN ~w r ON r."__id" = m."value"',
+           [QuotedReferenceView]).
+list_element_render(_, list(Element), ValueExpr, JoinSql) :- !,
+    canonical_type_name(list(Element), NestedEntity),
+    list_view_name(NestedEntity, NestedView),
+    quote_ident(NestedView, QuotedNestedView),
+    ValueExpr = 'json(coalesce(n."value_text", \'[]\'))',
+    format(atom(JoinSql), ' LEFT JOIN ~w n ON n."list_id" = m."value"',
+           [QuotedNestedView]).
+list_element_render(_, json, 'json(m."value")', '') :- !.
+list_element_render(_, json_list(_), 'json(m."value")', '') :- !.
+list_element_render(Mode, ValueType, 's."content"', JoinSql) :-
+    interned_column(Mode, ValueType), !,
+    string_dictionary_table(Dictionary),
+    quote_ident(Dictionary, QuotedDictionary),
+    format(atom(JoinSql), ' LEFT JOIN ~w s ON s."__id" = m."value"',
+           [QuotedDictionary]).
+list_element_render(_, _, 'm."value"', '').
+
+% An entity with no member rows is the empty list, and a LEFT JOIN answers no
+% row for it, so the coalesce is the zero-element case and not a null guard.
+list_column_join(Column, ColumnType, Join) :-
+    ColumnType = list(Element),
+    canonical_type_name(list(Element), EntityName),
+    list_view_name(EntityName, ViewName),
+    quote_ident(ViewName, QuotedViewName),
+    list_column_alias(Column, Alias),
+    quote_ident(Alias, QuotedAlias),
+    quote_ident(Column, QuotedColumn),
+    format(atom(Join), ' LEFT JOIN ~w ~w ON ~w."list_id" = t.~w',
+           [QuotedViewName, QuotedAlias, QuotedAlias, QuotedColumn]).
+
+list_column_joins(Columns, ColumnTypes, JoinSql) :-
+    findall(Join,
+            ( nth0(Index, Columns, Column),
+              nth0(Index, ColumnTypes, ColumnType),
+              list_column_join(Column, ColumnType, Join) ),
+            Joins),
+    atomic_list_concat(Joins, JoinSql).
 
 % The per-type plan the emitter hands the runtime, in TOPOLOGICAL order:
 % children before parents, so the post-order intern is one pass down the list
@@ -5917,7 +6010,11 @@ delta_statement(Mode, RelPlan,
     quote_ident(ReadTable, QuotedTable),
     maplist(canonical_column_expr, Columns, ColumnTypes, ColumnExprs),
     atomic_list_concat(ColumnExprs, ', ', ColumnsSql),
-    format(atom(SelectSql), 'SELECT ~w FROM ~w', [ColumnsSql, QuotedTable]),
+    % Alias `t`: canonical_column_expr/3's render subqueries qualify the outer
+    % row with it, so both reads below must supply it.
+    list_column_joins(Columns, ColumnTypes, ListJoinSql),
+    format(atom(SelectSql), 'SELECT ~w FROM ~w t~w',
+           [ColumnsSql, QuotedTable, ListJoinSql]),
     delta_table_name(Ref, DeltaTable),
     text_read_table(Mode, DeltaTable, ColumnTypes, DeltaReadTable),
     quote_ident(DeltaReadTable, QuotedDeltaTable),
@@ -5926,9 +6023,17 @@ delta_statement(Mode, RelPlan,
     quote_ident(Table, QuotedStoredTable),
     format(atom(StoredSelectSql), 'SELECT ~w FROM ~w',
            [GroupColumnsSql, QuotedStoredTable]),
+    % The joined view carries its own "list_id", so the grouping columns and
+    % the sign name the outer row explicitly.
+    maplist(qualified_outer_column, Columns, QualifiedColumns),
+    atomic_list_concat(QualifiedColumns, ', ', QualifiedGroupSql),
     format(atom(BoundarySql),
-           'SELECT ~w, "_sign" AS "__sign", count(*) AS "__count" FROM ~w WHERE "_sign" IN (-1, 1) GROUP BY ~w, "_sign"',
-           [ColumnsSql, QuotedDeltaTable, GroupColumnsSql]).
+           'SELECT ~w, t."_sign" AS "__sign", count(*) AS "__count" FROM ~w t~w WHERE t."_sign" IN (-1, 1) GROUP BY ~w, t."_sign"',
+           [ColumnsSql, QuotedDeltaTable, ListJoinSql, QualifiedGroupSql]).
+
+qualified_outer_column(Column, Qualified) :-
+    quote_ident(Column, QuotedColumn),
+    format(atom(Qualified), 't.~w', [QuotedColumn]).
 
 retention_statement(RelPlans, keep(Ref, count(Limit)),
                     retentionstmt(Ref, Limit, DeleteSql)) :-
@@ -6123,15 +6228,15 @@ ref_count_head_ddl(Mode, RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]) :-
 % json_type/1 = 'object' gates the compound branch because a bare
 % numeric-looking atom like '123' is itself valid JSON. group_concat over
 % json_each's '$.args' array renders any number of arguments in original order.
-canonical_column_expr(Column, int, QuotedColumn) :-
+canonical_column_expr(Column, int, Expr) :-
     !,
-    quote_ident(Column, QuotedColumn).
-canonical_column_expr(Column, bool, QuotedColumn) :-
+    outer_column_expr(Column, Expr).
+canonical_column_expr(Column, bool, Expr) :-
     !,
-    quote_ident(Column, QuotedColumn).
-canonical_column_expr(Column, float, QuotedColumn) :-
+    outer_column_expr(Column, Expr).
+canonical_column_expr(Column, float, Expr) :-
     !,
-    quote_ident(Column, QuotedColumn).
+    outer_column_expr(Column, Expr).
 % STRUCT-AS-ROWS, arc header Edge 1: a ref column reads its VALUE, never its
 % id. The rendering was computed once at intern time, so this is one indexed
 % probe per row and no recursion regardless of nesting depth.
@@ -6146,19 +6251,23 @@ canonical_column_expr(Column, ref(TypeName), Expr) :-
 % canonical_json_text/2 already does it for the oracle and the TS arrival seam
 % does it for the emitter. Reading the column back through json() here would
 % be a second, weaker canonicalizer that disagrees with the first.
-canonical_column_expr(Column, json, QuotedColumn) :-
+canonical_column_expr(Column, json, Expr) :-
     !,
-    quote_ident(Column, QuotedColumn).
+    outer_column_expr(Column, Expr).
 % A list column's stored text is its own array text, rendered as-is like a
 % json column's.
-canonical_column_expr(Column, json_list(_), QuotedColumn) :-
+canonical_column_expr(Column, json_list(_), Expr) :-
     !,
-    quote_ident(Column, QuotedColumn).
-% The elements are the boundary value; until the read surface lands the id is
-% what crosses, exactly as the collapse to `int` made it cross.
-canonical_column_expr(Column, list(_), QuotedColumn) :-
+    outer_column_expr(Column, Expr).
+% The ELEMENTS are the boundary value; the entity id is storage, exactly as a
+% ref column's `__id` is. The join delta_statement/3 adds supplies the alias.
+canonical_column_expr(Column, list(_), Expr) :-
     !,
-    quote_ident(Column, QuotedColumn).
+    quote_ident(Column, QuotedColumn),
+    list_column_alias(Column, Alias),
+    quote_ident(Alias, QuotedAlias),
+    format(atom(Expr), 'coalesce(~w."value_text", \'[]\') AS ~w',
+           [QuotedAlias, QuotedColumn]).
 % THE GUARD TESTS FOR THE TAGGED TERM, not merely for an object. `json_valid`
 % plus `json_type = 'object'` is true of EVERY json object, including one a
 % program legitimately stores in a text column, and for those the THEN branch
@@ -6178,14 +6287,20 @@ canonical_column_expr(Column, list(_), QuotedColumn) :-
 % that genuinely IS `{"fn":"x","args":[]}` still renders as `x()`. The tagged
 % encoding has no reserved marker, so shape is all this expression can read.
 canonical_column_expr(Column, text, Expr) :-
+    outer_column_expr(Column, Outer),
     quote_ident(Column, QuotedColumn),
     format(atom(Expr),
            'CASE WHEN json_valid(~w) AND json_type(~w) = \'object\' AND json_type(~w, \'$.fn\') = \'text\' AND json_type(~w, \'$.args\') = \'array\' THEN json_extract(~w, \'$.fn\') || \'(\' || coalesce((SELECT group_concat(value, \',\') FROM json_each(~w, \'$.args\')), \'\') || \')\' ELSE ~w END AS ~w',
-           [QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn,
-            QuotedColumn, QuotedColumn, QuotedColumn, QuotedColumn]).
+           [Outer, Outer, Outer, Outer, Outer, Outer, Outer, QuotedColumn]).
 
 canonical_column_expr(Column, Expr) :-
     canonical_column_expr(Column, text, Expr).
+
+% Every boundary read is a JOIN once a list column is present, so an outer
+% column names its row; bare, `list_id` is ambiguous against the joined view.
+outer_column_expr(Column, Expr) :-
+    quote_ident(Column, QuotedColumn),
+    format(atom(Expr), 't.~w', [QuotedColumn]).
 
 % ═══ boot (initial seed only; round 2 drops __prev priming entirely, since
 % there is no __prev table anymore) ══════════════════════════════════════
@@ -6320,7 +6435,9 @@ lower_program(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans, ArrivalTar
             RelPlans, RelationDdlGroups),
     listened_departure_refs(Rules, DepartureRefs),
     maplist(delta_ddl(Mode, DepartureRefs), RelPlans, DeltaDdlGroups),
-    append(RelationDdlGroups, RelationDdl),
+    append(RelationDdlGroups, RelationDdl0),
+    list_view_ddls(Mode, RelPlans, ListViewDdl),
+    append(RelationDdl0, ListViewDdl, RelationDdl),
     append(DeltaDdlGroups, DeltaDdl),
     include(arrival_target_relplan(ArrivalTargets), RelPlans, ArrivalRelPlans),
     maplist(arrival_statement, ArrivalRelPlans, ArrivalStatements),

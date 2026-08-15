@@ -37,6 +37,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -48,13 +49,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -66,7 +67,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -268,9 +274,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    __gen__span_int_text_e5126de851365aff: select_rows(seam, `SELECT "start", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "__txt___gen__span_int_text_e5126de851365aff"`, rel_columns.__gen__span_int_text_e5126de851365aff!, rel_column_types.__gen__span_int_text_e5126de851365aff!),
-    carry: select_rows(seam, `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = "extent") AS "extent" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
-    marker: select_rows(seam, `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = "extent") AS "extent" FROM "marker"`, rel_columns.marker!, rel_column_types.marker!),
+    __gen__span_int_text_e5126de851365aff: select_rows(seam, `SELECT t."start", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label" FROM "__txt___gen__span_int_text_e5126de851365aff" t`, rel_columns.__gen__span_int_text_e5126de851365aff!, rel_column_types.__gen__span_int_text_e5126de851365aff!),
+    carry: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = t."extent") AS "extent" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
+    marker: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = t."extent") AS "extent" FROM "marker" t`, rel_columns.marker!, rel_column_types.marker!),
   });
 }
 
@@ -289,9 +295,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  __gen__span_int_text_e5126de851365aff: `SELECT "start", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label" FROM "__txt___gen__span_int_text_e5126de851365aff"`,
-  carry: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = "extent") AS "extent" FROM "carry"`,
-  marker: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = "extent") AS "extent" FROM "marker"`,
+  __gen__span_int_text_e5126de851365aff: `SELECT t."start", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label" FROM "__txt___gen__span_int_text_e5126de851365aff" t`,
+  carry: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = t."extent") AS "extent" FROM "carry" t`,
+  marker: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = t."extent") AS "extent" FROM "marker" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -322,9 +328,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "__gen__span_int_text_e5126de851365aff", kind: "set", table_name: "__gen__span_int_text_e5126de851365aff", delta_table_name: "__delta___gen__span_int_text_e5126de851365aff", frontier_table_name: "__frontier___gen__span_int_text_e5126de851365aff", next_frontier_table_name: "__next_frontier___gen__span_int_text_e5126de851365aff", columns: ["start", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "__gen__span_int_text_e5126de851365aff" ("start", "label") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "label"`, arrival_del_sql: `DELETE FROM "__gen__span_int_text_e5126de851365aff" WHERE ("start", "label") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "label"`, boundary_sql: `SELECT "start", CASE WHEN json_valid("label") AND json_type("label") = 'object' AND json_type("label", '$.fn') = 'text' AND json_type("label", '$.args') = 'array' THEN json_extract("label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("label", '$.args')), '') || ')' ELSE "label" END AS "label", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__span_int_text_e5126de851365aff" WHERE "_sign" IN (-1, 1) GROUP BY "start", "label", "_sign"`, rule_observers: [] },
-  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "extent"], column_types: ["int", "ref"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = "extent") AS "extent", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" WHERE "_sign" IN (-1, 1) GROUP BY "id", "extent", "_sign"`, rule_observers: [] },
-  { rel: "marker", kind: "set", table_name: "marker", delta_table_name: "__delta_marker", frontier_table_name: "__frontier_marker", next_frontier_table_name: "__next_frontier_marker", columns: ["id", "extent"], column_types: ["int", "ref"], key_indices: [0], arrival_add_sql: `INSERT INTO "marker" ("id", "extent") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "extent" = excluded."extent" RETURNING "id", "extent"`, arrival_del_sql: `DELETE FROM "marker" WHERE ("id", "extent") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "extent"`, boundary_sql: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = "extent") AS "extent", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_marker" WHERE "_sign" IN (-1, 1) GROUP BY "id", "extent", "_sign"`, rule_observers: ["carry/2"] },
+  { rel: "__gen__span_int_text_e5126de851365aff", kind: "set", table_name: "__gen__span_int_text_e5126de851365aff", delta_table_name: "__delta___gen__span_int_text_e5126de851365aff", frontier_table_name: "__frontier___gen__span_int_text_e5126de851365aff", next_frontier_table_name: "__next_frontier___gen__span_int_text_e5126de851365aff", columns: ["start", "label"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "__gen__span_int_text_e5126de851365aff" ("start", "label") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "label"`, arrival_del_sql: `DELETE FROM "__gen__span_int_text_e5126de851365aff" WHERE ("start", "label") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "label"`, boundary_sql: `SELECT t."start", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__span_int_text_e5126de851365aff" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."label", t."_sign"`, rule_observers: [] },
+  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "extent"], column_types: ["int", "ref"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = t."extent") AS "extent", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."extent", t."_sign"`, rule_observers: [] },
+  { rel: "marker", kind: "set", table_name: "marker", delta_table_name: "__delta_marker", frontier_table_name: "__frontier_marker", next_frontier_table_name: "__next_frontier_marker", columns: ["id", "extent"], column_types: ["int", "ref"], key_indices: [0], arrival_add_sql: `INSERT INTO "marker" ("id", "extent") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "extent" = excluded."extent" RETURNING "id", "extent"`, arrival_del_sql: `DELETE FROM "marker" WHERE ("id", "extent") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "extent"`, boundary_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__span_int_text_e5126de851365aff" d WHERE d."__id" = t."extent") AS "extent", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_marker" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."extent", t."_sign"`, rule_observers: ["carry/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

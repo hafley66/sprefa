@@ -609,6 +609,27 @@
     "final_detail": ""
   },
   {
+    "name": "colliding_ref_column_names_render_the_child_tree",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "disjoint_ref_column_names_render_the_child_tree",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "one_colliding_ref_column_beside_a_disjoint_sibling",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "extraction_fork_callgraph",
     "bucket": "identical",
     "detail": "",

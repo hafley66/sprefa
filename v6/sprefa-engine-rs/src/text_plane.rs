@@ -14,6 +14,7 @@ fn content_of(value: &Value) -> String {
         Value::Integer(number) => format!("{}", number),
         Value::Real(number) => crate::ticklog::js_float_text(*number),
         Value::Bool(flag) => (if *flag { "true" } else { "false" }).to_string(),
+        Value::List(_) => panic!("a list value reached the text intern plane"),
     }
 }
 

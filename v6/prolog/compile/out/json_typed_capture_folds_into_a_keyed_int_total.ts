@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -269,9 +275,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    event: select_rows(seam, `SELECT "payload" FROM "event"`, rel_columns.event!, rel_column_types.event!),
-    star_event: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "__txt_star_event"`, rel_columns.star_event!, rel_column_types.star_event!),
-    total: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum" FROM "__txt_total"`, rel_columns.total!, rel_column_types.total!),
+    event: select_rows(seam, `SELECT t."payload" FROM "event" t`, rel_columns.event!, rel_column_types.event!),
+    star_event: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars" FROM "__txt_star_event" t`, rel_columns.star_event!, rel_column_types.star_event!),
+    total: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."sum" FROM "__txt_total" t`, rel_columns.total!, rel_column_types.total!),
   });
 }
 
@@ -290,9 +296,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  event: `SELECT "payload" FROM "event"`,
-  star_event: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "__txt_star_event"`,
-  total: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum" FROM "__txt_total"`,
+  event: `SELECT t."payload" FROM "event" t`,
+  star_event: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars" FROM "__txt_star_event" t`,
+  total: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."sum" FROM "__txt_total" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -322,9 +328,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "event", kind: "log", table_name: "event", delta_table_name: "__delta_event", frontier_table_name: "__frontier_event", next_frontier_table_name: "__next_frontier_event", columns: ["payload"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT INTO "event" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: null, boundary_sql: `SELECT "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_event" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"`, rule_observers: ["star_event/2"] },
-  { rel: "star_event", kind: "set", table_name: "star_event", delta_table_name: "__delta_star_event", frontier_table_name: "__frontier_star_event", next_frontier_table_name: "__next_frontier_star_event", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_star_event" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "stars", "_sign"`, rule_observers: ["total/2"] },
-  { rel: "total", kind: "set", table_name: "total", delta_table_name: "__delta_total", frontier_table_name: "__frontier_total", next_frontier_table_name: "__next_frontier_total", columns: ["repo", "sum"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "sum", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_total" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "sum", "_sign"`, rule_observers: [] },
+  { rel: "event", kind: "log", table_name: "event", delta_table_name: "__delta_event", frontier_table_name: "__frontier_event", next_frontier_table_name: "__next_frontier_event", columns: ["payload"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT INTO "event" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: null, boundary_sql: `SELECT t."payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_event" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: ["star_event/2"] },
+  { rel: "star_event", kind: "set", table_name: "star_event", delta_table_name: "__delta_star_event", frontier_table_name: "__frontier_star_event", next_frontier_table_name: "__next_frontier_star_event", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_star_event" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo", t."stars", t."_sign"`, rule_observers: ["total/2"] },
+  { rel: "total", kind: "set", table_name: "total", delta_table_name: "__delta_total", frontier_table_name: "__frontier_total", next_frontier_table_name: "__next_frontier_total", columns: ["repo", "sum"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."sum", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_total" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo", t."sum", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

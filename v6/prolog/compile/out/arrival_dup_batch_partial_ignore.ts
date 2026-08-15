@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -226,8 +232,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    derived: select_rows(seam, `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value" FROM "__txt_derived"`, rel_columns.derived!, rel_column_types.derived!),
-    seen: select_rows(seam, `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_seen"`, rel_columns.seen!, rel_column_types.seen!),
+    derived: select_rows(seam, `SELECT CASE WHEN json_valid(t."seen_value") AND json_type(t."seen_value") = 'object' AND json_type(t."seen_value", '$.fn') = 'text' AND json_type(t."seen_value", '$.args') = 'array' THEN json_extract(t."seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."seen_value", '$.args')), '') || ')' ELSE t."seen_value" END AS "seen_value" FROM "__txt_derived" t`, rel_columns.derived!, rel_column_types.derived!),
+    seen: select_rows(seam, `SELECT CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_seen" t`, rel_columns.seen!, rel_column_types.seen!),
   });
 }
 
@@ -245,8 +251,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  derived: `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value" FROM "__txt_derived"`,
-  seen: `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "__txt_seen"`,
+  derived: `SELECT CASE WHEN json_valid(t."seen_value") AND json_type(t."seen_value") = 'object' AND json_type(t."seen_value", '$.fn') = 'text' AND json_type(t."seen_value", '$.args') = 'array' THEN json_extract(t."seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."seen_value", '$.args')), '') || ')' ELSE t."seen_value" END AS "seen_value" FROM "__txt_derived" t`,
+  seen: `SELECT CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_seen" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -276,8 +282,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "derived", kind: "set", table_name: "derived", delta_table_name: "__delta_derived", frontier_table_name: "__frontier_derived", next_frontier_table_name: "__next_frontier_derived", columns: ["seen_value"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("seen_value") AND json_type("seen_value") = 'object' AND json_type("seen_value", '$.fn') = 'text' AND json_type("seen_value", '$.args') = 'array' THEN json_extract("seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("seen_value", '$.args')), '') || ')' ELSE "seen_value" END AS "seen_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_derived" WHERE "_sign" IN (-1, 1) GROUP BY "seen_value", "_sign"`, rule_observers: [] },
-  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["value"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seen" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "seen" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seen" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["derived/1"] },
+  { rel: "derived", kind: "set", table_name: "derived", delta_table_name: "__delta_derived", frontier_table_name: "__frontier_derived", next_frontier_table_name: "__next_frontier_derived", columns: ["seen_value"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."seen_value") AND json_type(t."seen_value") = 'object' AND json_type(t."seen_value", '$.fn') = 'text' AND json_type(t."seen_value", '$.args') = 'array' THEN json_extract(t."seen_value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."seen_value", '$.args')), '') || ')' ELSE t."seen_value" END AS "seen_value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_derived" t WHERE t."_sign" IN (-1, 1) GROUP BY t."seen_value", t."_sign"`, rule_observers: [] },
+  { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["value"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seen" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "seen" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seen" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["derived/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

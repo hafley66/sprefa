@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -223,8 +229,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    repo_kv: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value" FROM "__txt_repo_kv"`, rel_columns.repo_kv!, rel_column_types.repo_kv!),
-    repo_meta: select_rows(seam, `SELECT "col1" FROM "repo_meta"`, rel_columns.repo_meta!, rel_column_types.repo_meta!),
+    repo_kv: select_rows(seam, `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt_repo_kv" t`, rel_columns.repo_kv!, rel_column_types.repo_kv!),
+    repo_meta: select_rows(seam, `SELECT t."col1" FROM "repo_meta" t`, rel_columns.repo_meta!, rel_column_types.repo_meta!),
   });
 }
 
@@ -242,8 +248,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  repo_kv: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value" FROM "__txt_repo_kv"`,
-  repo_meta: `SELECT "col1" FROM "repo_meta"`,
+  repo_kv: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt_repo_kv" t`,
+  repo_meta: `SELECT t."col1" FROM "repo_meta" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -273,8 +279,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "repo_kv", kind: "set", table_name: "repo_kv", delta_table_name: "__delta_repo_kv", frontier_table_name: "__frontier_repo_kv", next_frontier_table_name: "__next_frontier_repo_kv", columns: ["key", "value"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo_kv" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "repo_kv" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_kv" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: ["repo_meta/1"] },
-  { rel: "repo_meta", kind: "set", table_name: "repo_meta", delta_table_name: "__delta_repo_meta", frontier_table_name: "__frontier_repo_meta", next_frontier_table_name: "__next_frontier_repo_meta", columns: ["col1"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "col1", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_meta" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "_sign"`, rule_observers: [] },
+  { rel: "repo_kv", kind: "set", table_name: "repo_kv", delta_table_name: "__delta_repo_kv", frontier_table_name: "__frontier_repo_kv", next_frontier_table_name: "__next_frontier_repo_kv", columns: ["key", "value"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo_kv" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "repo_kv" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_kv" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["repo_meta/1"] },
+  { rel: "repo_meta", kind: "set", table_name: "repo_meta", delta_table_name: "__delta_repo_meta", frontier_table_name: "__frontier_repo_meta", next_frontier_table_name: "__next_frontier_repo_meta", columns: ["col1"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_meta" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -244,8 +250,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    breadcrumb: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("next") AND json_type("next") = 'object' AND json_type("next", '$.fn') = 'text' AND json_type("next", '$.args') = 'array' THEN json_extract("next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("next", '$.args')), '') || ')' ELSE "next" END AS "next" FROM "__txt_breadcrumb"`, rel_columns.breadcrumb!, rel_column_types.breadcrumb!),
-    step: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("piece") AND json_type("piece") = 'object' AND json_type("piece", '$.fn') = 'text' AND json_type("piece", '$.args') = 'array' THEN json_extract("piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("piece", '$.args')), '') || ')' ELSE "piece" END AS "piece" FROM "__txt_step"`, rel_columns.step!, rel_column_types.step!),
+    breadcrumb: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next" FROM "__txt_breadcrumb" t`, rel_columns.breadcrumb!, rel_column_types.breadcrumb!),
+    step: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_step" t`, rel_columns.step!, rel_column_types.step!),
   });
 }
 
@@ -263,8 +269,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  breadcrumb: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("next") AND json_type("next") = 'object' AND json_type("next", '$.fn') = 'text' AND json_type("next", '$.args') = 'array' THEN json_extract("next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("next", '$.args')), '') || ')' ELSE "next" END AS "next" FROM "__txt_breadcrumb"`,
-  step: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("piece") AND json_type("piece") = 'object' AND json_type("piece", '$.fn') = 'text' AND json_type("piece", '$.args') = 'array' THEN json_extract("piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("piece", '$.args')), '') || ')' ELSE "piece" END AS "piece" FROM "__txt_step"`,
+  breadcrumb: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next" FROM "__txt_breadcrumb" t`,
+  step: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_step" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -294,8 +300,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "breadcrumb", kind: "set", table_name: "breadcrumb", delta_table_name: "__delta_breadcrumb", frontier_table_name: "__frontier_breadcrumb", next_frontier_table_name: "__next_frontier_breadcrumb", columns: ["path", "next"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("next") AND json_type("next") = 'object' AND json_type("next", '$.fn') = 'text' AND json_type("next", '$.args') = 'array' THEN json_extract("next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("next", '$.args')), '') || ')' ELSE "next" END AS "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_breadcrumb" WHERE "_sign" IN (-1, 1) GROUP BY "path", "next", "_sign"`, rule_observers: [] },
-  { rel: "step", kind: "log", table_name: "step", delta_table_name: "__delta_step", frontier_table_name: "__frontier_step", next_frontier_table_name: "__next_frontier_step", columns: ["path", "piece"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "step" ("path", "piece") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "piece"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("piece") AND json_type("piece") = 'object' AND json_type("piece", '$.fn') = 'text' AND json_type("piece", '$.args') = 'array' THEN json_extract("piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("piece", '$.args')), '') || ')' ELSE "piece" END AS "piece", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_step" WHERE "_sign" IN (-1, 1) GROUP BY "path", "piece", "_sign"`, rule_observers: ["breadcrumb/2"] },
+  { rel: "breadcrumb", kind: "set", table_name: "breadcrumb", delta_table_name: "__delta_breadcrumb", frontier_table_name: "__frontier_breadcrumb", next_frontier_table_name: "__next_frontier_breadcrumb", columns: ["path", "next"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_breadcrumb" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."next", t."_sign"`, rule_observers: [] },
+  { rel: "step", kind: "log", table_name: "step", delta_table_name: "__delta_step", frontier_table_name: "__frontier_step", next_frontier_table_name: "__next_frontier_step", columns: ["path", "piece"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "step" ("path", "piece") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "piece"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_step" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."piece", t."_sign"`, rule_observers: ["breadcrumb/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

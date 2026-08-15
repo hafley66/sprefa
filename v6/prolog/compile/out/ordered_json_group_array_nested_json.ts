@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -231,8 +237,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    child: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload" FROM "__txt_child"`, rel_columns.child!, rel_column_types.child!),
-    nested: select_rows(seam, `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2" FROM "__txt_nested"`, rel_columns.nested!, rel_column_types.nested!),
+    child: select_rows(seam, `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."payload" FROM "__txt_child" t`, rel_columns.child!, rel_column_types.child!),
+    nested: select_rows(seam, `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."col2" FROM "__txt_nested" t`, rel_columns.nested!, rel_column_types.nested!),
   });
 }
 
@@ -250,8 +256,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  child: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload" FROM "__txt_child"`,
-  nested: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2" FROM "__txt_nested"`,
+  child: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."payload" FROM "__txt_child" t`,
+  nested: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."col2" FROM "__txt_nested" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -281,8 +287,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "child", kind: "set", table_name: "child", delta_table_name: "__delta_child", frontier_table_name: "__frontier_child", next_frontier_table_name: "__next_frontier_child", columns: ["group", "payload"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "child" ("group", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "payload"`, arrival_del_sql: `DELETE FROM "child" WHERE ("group", "payload") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "payload"`, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_child" WHERE "_sign" IN (-1, 1) GROUP BY "group", "payload", "_sign"`, rule_observers: ["nested/2"] },
-  { rel: "nested", kind: "set", table_name: "nested", delta_table_name: "__delta_nested", frontier_table_name: "__frontier_nested", next_frontier_table_name: "__next_frontier_nested", columns: ["group", "col2"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("group") AND json_type("group") = 'object' AND json_type("group", '$.fn') = 'text' AND json_type("group", '$.args') = 'array' THEN json_extract("group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("group", '$.args')), '') || ')' ELSE "group" END AS "group", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_nested" WHERE "_sign" IN (-1, 1) GROUP BY "group", "col2", "_sign"`, rule_observers: [] },
+  { rel: "child", kind: "set", table_name: "child", delta_table_name: "__delta_child", frontier_table_name: "__frontier_child", next_frontier_table_name: "__next_frontier_child", columns: ["group", "payload"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "child" ("group", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "payload"`, arrival_del_sql: `DELETE FROM "child" WHERE ("group", "payload") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "payload"`, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_child" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."payload", t."_sign"`, rule_observers: ["nested/2"] },
+  { rel: "nested", kind: "set", table_name: "nested", delta_table_name: "__delta_nested", frontier_table_name: "__frontier_nested", next_frontier_table_name: "__next_frontier_nested", columns: ["group", "col2"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_nested" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."col2", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

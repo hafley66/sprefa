@@ -35,6 +35,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -43,13 +44,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -61,7 +62,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -259,18 +265,18 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    heavy: select_rows(seam, `SELECT "tree_id", "kilos" FROM "heavy"`, rel_columns.heavy!, rel_column_types.heavy!),
-    pick: select_rows(seam, `SELECT "tree_id", "kilos" FROM "pick"`, rel_columns.pick!, rel_column_types.pick!),
-    report: select_rows(seam, `SELECT "tree_id", "kilos" FROM "report"`, rel_columns.report!, rel_column_types.report!),
-    tree: select_rows(seam, `SELECT "tree_id" FROM "tree"`, rel_columns.tree!, rel_column_types.tree!),
+    heavy: select_rows(seam, `SELECT t."tree_id", t."kilos" FROM "heavy" t`, rel_columns.heavy!, rel_column_types.heavy!),
+    pick: select_rows(seam, `SELECT t."tree_id", t."kilos" FROM "pick" t`, rel_columns.pick!, rel_column_types.pick!),
+    report: select_rows(seam, `SELECT t."tree_id", t."kilos" FROM "report" t`, rel_columns.report!, rel_column_types.report!),
+    tree: select_rows(seam, `SELECT t."tree_id" FROM "tree" t`, rel_columns.tree!, rel_column_types.tree!),
   });
 }
 
 const final_select: Record<string, string> = {
-  heavy: `SELECT "tree_id", "kilos" FROM "heavy"`,
-  pick: `SELECT "tree_id", "kilos" FROM "pick"`,
-  report: `SELECT "tree_id", "kilos" FROM "report"`,
-  tree: `SELECT "tree_id" FROM "tree"`,
+  heavy: `SELECT t."tree_id", t."kilos" FROM "heavy" t`,
+  pick: `SELECT t."tree_id", t."kilos" FROM "pick" t`,
+  report: `SELECT t."tree_id", t."kilos" FROM "report" t`,
+  tree: `SELECT t."tree_id" FROM "tree" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -301,10 +307,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "heavy", kind: "set", table_name: "heavy", delta_table_name: "__delta_heavy", frontier_table_name: "__frontier_heavy", next_frontier_table_name: "__next_frontier_heavy", columns: ["tree_id", "kilos"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_heavy" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"`, rule_observers: ["report/2"] },
-  { rel: "pick", kind: "set", table_name: "pick", delta_table_name: "__delta_pick", frontier_table_name: "__frontier_pick", next_frontier_table_name: "__next_frontier_pick", columns: ["tree_id", "kilos"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "pick" ("tree_id", "kilos") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "kilos"`, arrival_del_sql: `DELETE FROM "pick" WHERE ("tree_id", "kilos") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "kilos"`, boundary_sql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pick" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"`, rule_observers: ["heavy/2"] },
-  { rel: "report", kind: "set", table_name: "report", delta_table_name: "__delta_report", frontier_table_name: "__frontier_report", next_frontier_table_name: "__next_frontier_report", columns: ["tree_id", "kilos"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_report" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "kilos", "_sign"`, rule_observers: [] },
-  { rel: "tree", kind: "set", table_name: "tree", delta_table_name: "__delta_tree", frontier_table_name: "__frontier_tree", next_frontier_table_name: "__next_frontier_tree", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "tree" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: `DELETE FROM "tree" WHERE ("tree_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "tree_id"`, boundary_sql: `SELECT "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "_sign"`, rule_observers: ["report/2"] },
+  { rel: "heavy", kind: "set", table_name: "heavy", delta_table_name: "__delta_heavy", frontier_table_name: "__frontier_heavy", next_frontier_table_name: "__next_frontier_heavy", columns: ["tree_id", "kilos"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."kilos", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_heavy" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."kilos", t."_sign"`, rule_observers: ["report/2"] },
+  { rel: "pick", kind: "set", table_name: "pick", delta_table_name: "__delta_pick", frontier_table_name: "__frontier_pick", next_frontier_table_name: "__next_frontier_pick", columns: ["tree_id", "kilos"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "pick" ("tree_id", "kilos") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "kilos"`, arrival_del_sql: `DELETE FROM "pick" WHERE ("tree_id", "kilos") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "kilos"`, boundary_sql: `SELECT t."tree_id", t."kilos", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pick" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."kilos", t."_sign"`, rule_observers: ["heavy/2"] },
+  { rel: "report", kind: "set", table_name: "report", delta_table_name: "__delta_report", frontier_table_name: "__frontier_report", next_frontier_table_name: "__next_frontier_report", columns: ["tree_id", "kilos"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."kilos", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_report" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."kilos", t."_sign"`, rule_observers: [] },
+  { rel: "tree", kind: "set", table_name: "tree", delta_table_name: "__delta_tree", frontier_table_name: "__frontier_tree", next_frontier_table_name: "__next_frontier_tree", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "tree" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: `DELETE FROM "tree" WHERE ("tree_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "tree_id"`, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: ["report/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

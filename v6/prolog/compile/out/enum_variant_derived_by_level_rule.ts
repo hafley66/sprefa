@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -281,10 +287,10 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    review_done: select_rows(seam, `SELECT "id", CASE WHEN json_valid("verdict") AND json_type("verdict") = 'object' AND json_type("verdict", '$.fn') = 'text' AND json_type("verdict", '$.args') = 'array' THEN json_extract("verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("verdict", '$.args')), '') || ')' ELSE "verdict" END AS "verdict" FROM "__txt_review_done"`, rel_columns.review_done!, rel_column_types.review_done!),
-    review_pending: select_rows(seam, `SELECT "id" FROM "review_pending"`, rel_columns.review_pending!, rel_column_types.review_pending!),
-    review_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_review_tag"`, rel_columns.review_tag!, rel_column_types.review_tag!),
-    submission: select_rows(seam, `SELECT "id", CASE WHEN json_valid("verdict") AND json_type("verdict") = 'object' AND json_type("verdict", '$.fn') = 'text' AND json_type("verdict", '$.args') = 'array' THEN json_extract("verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("verdict", '$.args')), '') || ')' ELSE "verdict" END AS "verdict" FROM "__txt_submission"`, rel_columns.submission!, rel_column_types.submission!),
+    review_done: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."verdict") AND json_type(t."verdict") = 'object' AND json_type(t."verdict", '$.fn') = 'text' AND json_type(t."verdict", '$.args') = 'array' THEN json_extract(t."verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."verdict", '$.args')), '') || ')' ELSE t."verdict" END AS "verdict" FROM "__txt_review_done" t`, rel_columns.review_done!, rel_column_types.review_done!),
+    review_pending: select_rows(seam, `SELECT t."id" FROM "review_pending" t`, rel_columns.review_pending!, rel_column_types.review_pending!),
+    review_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_review_tag" t`, rel_columns.review_tag!, rel_column_types.review_tag!),
+    submission: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."verdict") AND json_type(t."verdict") = 'object' AND json_type(t."verdict", '$.fn') = 'text' AND json_type(t."verdict", '$.args') = 'array' THEN json_extract(t."verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."verdict", '$.args')), '') || ')' ELSE t."verdict" END AS "verdict" FROM "__txt_submission" t`, rel_columns.submission!, rel_column_types.submission!),
   });
 }
 
@@ -304,10 +310,10 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  review_done: `SELECT "id", CASE WHEN json_valid("verdict") AND json_type("verdict") = 'object' AND json_type("verdict", '$.fn') = 'text' AND json_type("verdict", '$.args') = 'array' THEN json_extract("verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("verdict", '$.args')), '') || ')' ELSE "verdict" END AS "verdict" FROM "__txt_review_done"`,
-  review_pending: `SELECT "id" FROM "review_pending"`,
-  review_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_review_tag"`,
-  submission: `SELECT "id", CASE WHEN json_valid("verdict") AND json_type("verdict") = 'object' AND json_type("verdict", '$.fn') = 'text' AND json_type("verdict", '$.args') = 'array' THEN json_extract("verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("verdict", '$.args')), '') || ')' ELSE "verdict" END AS "verdict" FROM "__txt_submission"`,
+  review_done: `SELECT t."id", CASE WHEN json_valid(t."verdict") AND json_type(t."verdict") = 'object' AND json_type(t."verdict", '$.fn') = 'text' AND json_type(t."verdict", '$.args') = 'array' THEN json_extract(t."verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."verdict", '$.args')), '') || ')' ELSE t."verdict" END AS "verdict" FROM "__txt_review_done" t`,
+  review_pending: `SELECT t."id" FROM "review_pending" t`,
+  review_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_review_tag" t`,
+  submission: `SELECT t."id", CASE WHEN json_valid(t."verdict") AND json_type(t."verdict") = 'object' AND json_type(t."verdict", '$.fn') = 'text' AND json_type(t."verdict", '$.args') = 'array' THEN json_extract(t."verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."verdict", '$.args')), '') || ')' ELSE t."verdict" END AS "verdict" FROM "__txt_submission" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -338,10 +344,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "review_done", kind: "set", table_name: "review_done", delta_table_name: "__delta_review_done", frontier_table_name: "__frontier_review_done", next_frontier_table_name: "__next_frontier_review_done", columns: ["id", "verdict"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("verdict") AND json_type("verdict") = 'object' AND json_type("verdict", '$.fn') = 'text' AND json_type("verdict", '$.args') = 'array' THEN json_extract("verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("verdict", '$.args')), '') || ')' ELSE "verdict" END AS "verdict", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_review_done" WHERE "_sign" IN (-1, 1) GROUP BY "id", "verdict", "_sign"`, rule_observers: ["review_tag/2"] },
-  { rel: "review_pending", kind: "set", table_name: "review_pending", delta_table_name: "__delta_review_pending", frontier_table_name: "__frontier_review_pending", next_frontier_table_name: "__next_frontier_review_pending", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "review_pending" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "review_pending" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_review_pending" WHERE "_sign" IN (-1, 1) GROUP BY "id", "_sign"`, rule_observers: ["review_tag/2"] },
-  { rel: "review_tag", kind: "set", table_name: "review_tag", delta_table_name: "__delta_review_tag", frontier_table_name: "__frontier_review_tag", next_frontier_table_name: "__next_frontier_review_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_review_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
-  { rel: "submission", kind: "set", table_name: "submission", delta_table_name: "__delta_submission", frontier_table_name: "__frontier_submission", next_frontier_table_name: "__next_frontier_submission", columns: ["id", "verdict"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "submission" ("id", "verdict") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "verdict" = excluded."verdict" RETURNING "id", "verdict"`, arrival_del_sql: `DELETE FROM "submission" WHERE ("id", "verdict") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "verdict"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("verdict") AND json_type("verdict") = 'object' AND json_type("verdict", '$.fn') = 'text' AND json_type("verdict", '$.args') = 'array' THEN json_extract("verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("verdict", '$.args')), '') || ')' ELSE "verdict" END AS "verdict", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_submission" WHERE "_sign" IN (-1, 1) GROUP BY "id", "verdict", "_sign"`, rule_observers: ["review_done/2"] },
+  { rel: "review_done", kind: "set", table_name: "review_done", delta_table_name: "__delta_review_done", frontier_table_name: "__frontier_review_done", next_frontier_table_name: "__next_frontier_review_done", columns: ["id", "verdict"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."verdict") AND json_type(t."verdict") = 'object' AND json_type(t."verdict", '$.fn') = 'text' AND json_type(t."verdict", '$.args') = 'array' THEN json_extract(t."verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."verdict", '$.args')), '') || ')' ELSE t."verdict" END AS "verdict", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_review_done" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."verdict", t."_sign"`, rule_observers: ["review_tag/2"] },
+  { rel: "review_pending", kind: "set", table_name: "review_pending", delta_table_name: "__delta_review_pending", frontier_table_name: "__frontier_review_pending", next_frontier_table_name: "__next_frontier_review_pending", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "review_pending" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "review_pending" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_review_pending" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: ["review_tag/2"] },
+  { rel: "review_tag", kind: "set", table_name: "review_tag", delta_table_name: "__delta_review_tag", frontier_table_name: "__frontier_review_tag", next_frontier_table_name: "__next_frontier_review_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_review_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: [] },
+  { rel: "submission", kind: "set", table_name: "submission", delta_table_name: "__delta_submission", frontier_table_name: "__frontier_submission", next_frontier_table_name: "__next_frontier_submission", columns: ["id", "verdict"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "submission" ("id", "verdict") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "verdict" = excluded."verdict" RETURNING "id", "verdict"`, arrival_del_sql: `DELETE FROM "submission" WHERE ("id", "verdict") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "verdict"`, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."verdict") AND json_type(t."verdict") = 'object' AND json_type(t."verdict", '$.fn') = 'text' AND json_type(t."verdict", '$.args') = 'array' THEN json_extract(t."verdict", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."verdict", '$.args')), '') || ')' ELSE t."verdict" END AS "verdict", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_submission" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."verdict", t."_sign"`, rule_observers: ["review_done/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

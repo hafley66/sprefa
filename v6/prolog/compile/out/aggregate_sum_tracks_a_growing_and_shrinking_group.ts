@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -234,8 +240,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    budget: select_rows(seam, `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2" FROM "__txt_budget"`, rel_columns.budget!, rel_column_types.budget!),
-    spend: select_rows(seam, `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost" FROM "__txt_spend"`, rel_columns.spend!, rel_column_types.spend!),
+    budget: select_rows(seam, `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", t."col2" FROM "__txt_budget" t`, rel_columns.budget!, rel_column_types.budget!),
+    spend: select_rows(seam, `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", CASE WHEN json_valid(t."_item") AND json_type(t."_item") = 'object' AND json_type(t."_item", '$.fn') = 'text' AND json_type(t."_item", '$.args') = 'array' THEN json_extract(t."_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_item", '$.args')), '') || ')' ELSE t."_item" END AS "_item", t."cost" FROM "__txt_spend" t`, rel_columns.spend!, rel_column_types.spend!),
   });
 }
 
@@ -253,8 +259,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  budget: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2" FROM "__txt_budget"`,
-  spend: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost" FROM "__txt_spend"`,
+  budget: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", t."col2" FROM "__txt_budget" t`,
+  spend: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", CASE WHEN json_valid(t."_item") AND json_type(t."_item") = 'object' AND json_type(t."_item", '$.fn') = 'text' AND json_type(t."_item", '$.args') = 'array' THEN json_extract(t."_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_item", '$.args')), '') || ')' ELSE t."_item" END AS "_item", t."cost" FROM "__txt_spend" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -284,8 +290,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "budget", kind: "set", table_name: "budget", delta_table_name: "__delta_budget", frontier_table_name: "__frontier_budget", next_frontier_table_name: "__next_frontier_budget", columns: ["team", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", "col2", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_budget" WHERE "_sign" IN (-1, 1) GROUP BY "team", "col2", "_sign"`, rule_observers: [] },
-  { rel: "spend", kind: "set", table_name: "spend", delta_table_name: "__delta_spend", frontier_table_name: "__frontier_spend", next_frontier_table_name: "__next_frontier_spend", columns: ["team", "_item", "cost"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "team", "_item", "cost"`, arrival_del_sql: `DELETE FROM "spend" WHERE ("team", "_item", "cost") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "team", "_item", "cost"`, boundary_sql: `SELECT CASE WHEN json_valid("team") AND json_type("team") = 'object' AND json_type("team", '$.fn') = 'text' AND json_type("team", '$.args') = 'array' THEN json_extract("team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("team", '$.args')), '') || ')' ELSE "team" END AS "team", CASE WHEN json_valid("_item") AND json_type("_item") = 'object' AND json_type("_item", '$.fn') = 'text' AND json_type("_item", '$.args') = 'array' THEN json_extract("_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_item", '$.args')), '') || ')' ELSE "_item" END AS "_item", "cost", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_spend" WHERE "_sign" IN (-1, 1) GROUP BY "team", "_item", "cost", "_sign"`, rule_observers: ["budget/2"] },
+  { rel: "budget", kind: "set", table_name: "budget", delta_table_name: "__delta_budget", frontier_table_name: "__frontier_budget", next_frontier_table_name: "__next_frontier_budget", columns: ["team", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", t."col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_budget" t WHERE t."_sign" IN (-1, 1) GROUP BY t."team", t."col2", t."_sign"`, rule_observers: [] },
+  { rel: "spend", kind: "set", table_name: "spend", delta_table_name: "__delta_spend", frontier_table_name: "__frontier_spend", next_frontier_table_name: "__next_frontier_spend", columns: ["team", "_item", "cost"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "team", "_item", "cost"`, arrival_del_sql: `DELETE FROM "spend" WHERE ("team", "_item", "cost") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "team", "_item", "cost"`, boundary_sql: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", CASE WHEN json_valid(t."_item") AND json_type(t."_item") = 'object' AND json_type(t."_item", '$.fn') = 'text' AND json_type(t."_item", '$.args') = 'array' THEN json_extract(t."_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_item", '$.args')), '') || ')' ELSE t."_item" END AS "_item", t."cost", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_spend" t WHERE t."_sign" IN (-1, 1) GROUP BY t."team", t."_item", t."cost", t."_sign"`, rule_observers: ["budget/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

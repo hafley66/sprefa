@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -252,9 +258,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    record_num: select_rows(seam, `SELECT "id", "n" FROM "record_num"`, rel_columns.record_num!, rel_column_types.record_num!),
-    record_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_record_tag"`, rel_columns.record_tag!, rel_column_types.record_tag!),
-    record_word: select_rows(seam, `SELECT "id", CASE WHEN json_valid("w") AND json_type("w") = 'object' AND json_type("w", '$.fn') = 'text' AND json_type("w", '$.args') = 'array' THEN json_extract("w", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("w", '$.args')), '') || ')' ELSE "w" END AS "w" FROM "__txt_record_word"`, rel_columns.record_word!, rel_column_types.record_word!),
+    record_num: select_rows(seam, `SELECT t."id", t."n" FROM "record_num" t`, rel_columns.record_num!, rel_column_types.record_num!),
+    record_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_record_tag" t`, rel_columns.record_tag!, rel_column_types.record_tag!),
+    record_word: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."w") AND json_type(t."w") = 'object' AND json_type(t."w", '$.fn') = 'text' AND json_type(t."w", '$.args') = 'array' THEN json_extract(t."w", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."w", '$.args')), '') || ')' ELSE t."w" END AS "w" FROM "__txt_record_word" t`, rel_columns.record_word!, rel_column_types.record_word!),
   });
 }
 
@@ -273,9 +279,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  record_num: `SELECT "id", "n" FROM "record_num"`,
-  record_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_record_tag"`,
-  record_word: `SELECT "id", CASE WHEN json_valid("w") AND json_type("w") = 'object' AND json_type("w", '$.fn') = 'text' AND json_type("w", '$.args') = 'array' THEN json_extract("w", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("w", '$.args')), '') || ')' ELSE "w" END AS "w" FROM "__txt_record_word"`,
+  record_num: `SELECT t."id", t."n" FROM "record_num" t`,
+  record_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_record_tag" t`,
+  record_word: `SELECT t."id", CASE WHEN json_valid(t."w") AND json_type(t."w") = 'object' AND json_type(t."w", '$.fn') = 'text' AND json_type(t."w", '$.args') = 'array' THEN json_extract(t."w", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."w", '$.args')), '') || ')' ELSE t."w" END AS "w" FROM "__txt_record_word" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -306,9 +312,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "record_num", kind: "set", table_name: "record_num", delta_table_name: "__delta_record_num", frontier_table_name: "__frontier_record_num", next_frontier_table_name: "__next_frontier_record_num", columns: ["id", "n"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "record_num" ("id", "n") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("n") DO UPDATE SET "id" = excluded."id" RETURNING "id", "n"`, arrival_del_sql: `DELETE FROM "record_num" WHERE ("id", "n") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "n"`, boundary_sql: `SELECT "id", "n", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_record_num" WHERE "_sign" IN (-1, 1) GROUP BY "id", "n", "_sign"`, rule_observers: ["record_tag/2"] },
-  { rel: "record_tag", kind: "set", table_name: "record_tag", delta_table_name: "__delta_record_tag", frontier_table_name: "__frontier_record_tag", next_frontier_table_name: "__next_frontier_record_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_record_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
-  { rel: "record_word", kind: "set", table_name: "record_word", delta_table_name: "__delta_record_word", frontier_table_name: "__frontier_record_word", next_frontier_table_name: "__next_frontier_record_word", columns: ["id", "w"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "record_word" ("id", "w") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("w") DO UPDATE SET "id" = excluded."id" RETURNING "id", "w"`, arrival_del_sql: `DELETE FROM "record_word" WHERE ("id", "w") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "w"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("w") AND json_type("w") = 'object' AND json_type("w", '$.fn') = 'text' AND json_type("w", '$.args') = 'array' THEN json_extract("w", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("w", '$.args')), '') || ')' ELSE "w" END AS "w", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_record_word" WHERE "_sign" IN (-1, 1) GROUP BY "id", "w", "_sign"`, rule_observers: ["record_tag/2"] },
+  { rel: "record_num", kind: "set", table_name: "record_num", delta_table_name: "__delta_record_num", frontier_table_name: "__frontier_record_num", next_frontier_table_name: "__next_frontier_record_num", columns: ["id", "n"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "record_num" ("id", "n") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("n") DO UPDATE SET "id" = excluded."id" RETURNING "id", "n"`, arrival_del_sql: `DELETE FROM "record_num" WHERE ("id", "n") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "n"`, boundary_sql: `SELECT t."id", t."n", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_record_num" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."n", t."_sign"`, rule_observers: ["record_tag/2"] },
+  { rel: "record_tag", kind: "set", table_name: "record_tag", delta_table_name: "__delta_record_tag", frontier_table_name: "__frontier_record_tag", next_frontier_table_name: "__next_frontier_record_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_record_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: [] },
+  { rel: "record_word", kind: "set", table_name: "record_word", delta_table_name: "__delta_record_word", frontier_table_name: "__frontier_record_word", next_frontier_table_name: "__next_frontier_record_word", columns: ["id", "w"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "record_word" ("id", "w") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("w") DO UPDATE SET "id" = excluded."id" RETURNING "id", "w"`, arrival_del_sql: `DELETE FROM "record_word" WHERE ("id", "w") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "w"`, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."w") AND json_type(t."w") = 'object' AND json_type(t."w", '$.fn') = 'text' AND json_type(t."w", '$.args') = 'array' THEN json_extract(t."w", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."w", '$.args')), '') || ')' ELSE t."w" END AS "w", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_record_word" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."w", t."_sign"`, rule_observers: ["record_tag/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

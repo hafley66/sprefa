@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -236,8 +242,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    star_row: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "__txt_star_row"`, rel_columns.star_row!, rel_column_types.star_row!),
-    stat: select_rows(seam, `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4" FROM "__txt_stat"`, rel_columns.stat!, rel_column_types.stat!),
+    star_row: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars" FROM "__txt_star_row" t`, rel_columns.star_row!, rel_column_types.star_row!),
+    stat: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."col2", t."col3", t."col4" FROM "__txt_stat" t`, rel_columns.stat!, rel_column_types.stat!),
   });
 }
 
@@ -255,8 +261,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  star_row: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars" FROM "__txt_star_row"`,
-  stat: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4" FROM "__txt_stat"`,
+  star_row: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars" FROM "__txt_star_row" t`,
+  stat: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."col2", t."col3", t."col4" FROM "__txt_stat" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -286,8 +292,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "star_row", kind: "set", table_name: "star_row", delta_table_name: "__delta_star_row", frontier_table_name: "__frontier_star_row", next_frontier_table_name: "__next_frontier_star_row", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo", "stars"`, arrival_del_sql: `DELETE FROM "star_row" WHERE ("repo", "stars") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "repo", "stars"`, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "stars", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_star_row" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "stars", "_sign"`, rule_observers: ["stat/4"] },
-  { rel: "stat", kind: "set", table_name: "stat", delta_table_name: "__delta_stat", frontier_table_name: "__frontier_stat", next_frontier_table_name: "__next_frontier_stat", columns: ["repo", "col2", "col3", "col4"], column_types: ["text", "int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("repo") AND json_type("repo") = 'object' AND json_type("repo", '$.fn') = 'text' AND json_type("repo", '$.args') = 'array' THEN json_extract("repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("repo", '$.args')), '') || ')' ELSE "repo" END AS "repo", "col2", "col3", "col4", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stat" WHERE "_sign" IN (-1, 1) GROUP BY "repo", "col2", "col3", "col4", "_sign"`, rule_observers: [] },
+  { rel: "star_row", kind: "set", table_name: "star_row", delta_table_name: "__delta_star_row", frontier_table_name: "__frontier_star_row", next_frontier_table_name: "__next_frontier_star_row", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo", "stars"`, arrival_del_sql: `DELETE FROM "star_row" WHERE ("repo", "stars") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "repo", "stars"`, boundary_sql: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_star_row" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo", t."stars", t."_sign"`, rule_observers: ["stat/4"] },
+  { rel: "stat", kind: "set", table_name: "stat", delta_table_name: "__delta_stat", frontier_table_name: "__frontier_stat", next_frontier_table_name: "__next_frontier_stat", columns: ["repo", "col2", "col3", "col4"], column_types: ["text", "int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."col2", t."col3", t."col4", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stat" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo", t."col2", t."col3", t."col4", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

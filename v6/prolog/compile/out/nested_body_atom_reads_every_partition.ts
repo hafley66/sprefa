@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -46,13 +47,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -64,7 +65,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -271,18 +277,18 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    any_tree: select_rows(seam, `SELECT "tree_id" FROM "any_tree"`, rel_columns.any_tree!, rel_column_types.any_tree!),
-    orchard: select_rows(seam, `SELECT "orchard_id" FROM "orchard"`, rel_columns.orchard!, rel_column_types.orchard!),
-    orchard__tree: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = "parent") AS "parent", "tree_id" FROM "orchard__tree"`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
-    planted: select_rows(seam, `SELECT "orchard_id", "tree_id" FROM "planted"`, rel_columns.planted!, rel_column_types.planted!),
+    any_tree: select_rows(seam, `SELECT t."tree_id" FROM "any_tree" t`, rel_columns.any_tree!, rel_column_types.any_tree!),
+    orchard: select_rows(seam, `SELECT t."orchard_id" FROM "orchard" t`, rel_columns.orchard!, rel_column_types.orchard!),
+    orchard__tree: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = t."parent") AS "parent", t."tree_id" FROM "orchard__tree" t`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
+    planted: select_rows(seam, `SELECT t."orchard_id", t."tree_id" FROM "planted" t`, rel_columns.planted!, rel_column_types.planted!),
   });
 }
 
 const final_select: Record<string, string> = {
-  any_tree: `SELECT "tree_id" FROM "any_tree"`,
-  orchard: `SELECT "orchard_id" FROM "orchard"`,
-  orchard__tree: `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = "parent") AS "parent", "tree_id" FROM "orchard__tree"`,
-  planted: `SELECT "orchard_id", "tree_id" FROM "planted"`,
+  any_tree: `SELECT t."tree_id" FROM "any_tree" t`,
+  orchard: `SELECT t."orchard_id" FROM "orchard" t`,
+  orchard__tree: `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = t."parent") AS "parent", t."tree_id" FROM "orchard__tree" t`,
+  planted: `SELECT t."orchard_id", t."tree_id" FROM "planted" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -312,10 +318,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "any_tree", kind: "set", table_name: "any_tree", delta_table_name: "__delta_any_tree", frontier_table_name: "__frontier_any_tree", next_frontier_table_name: "__next_frontier_any_tree", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_any_tree" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "_sign"`, rule_observers: [] },
-  { rel: "orchard", kind: "set", table_name: "orchard", delta_table_name: "__delta_orchard", frontier_table_name: "__frontier_orchard", next_frontier_table_name: "__next_frontier_orchard", columns: ["orchard_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "orchard_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard" WHERE "_sign" IN (-1, 1) GROUP BY "orchard_id", "_sign"`, rule_observers: ["orchard__tree/2"] },
-  { rel: "orchard__tree", kind: "set", table_name: "orchard__tree", delta_table_name: "__delta_orchard__tree", frontier_table_name: "__frontier_orchard__tree", next_frontier_table_name: "__next_frontier_orchard__tree", columns: ["parent", "tree_id"], column_types: ["ref", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = "parent") AS "parent", "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__tree" WHERE "_sign" IN (-1, 1) GROUP BY "parent", "tree_id", "_sign"`, rule_observers: ["any_tree/1"] },
-  { rel: "planted", kind: "set", table_name: "planted", delta_table_name: "__delta_planted", frontier_table_name: "__frontier_planted", next_frontier_table_name: "__next_frontier_planted", columns: ["orchard_id", "tree_id"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "planted" ("orchard_id", "tree_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "orchard_id", "tree_id"`, arrival_del_sql: `DELETE FROM "planted" WHERE ("orchard_id", "tree_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "orchard_id", "tree_id"`, boundary_sql: `SELECT "orchard_id", "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_planted" WHERE "_sign" IN (-1, 1) GROUP BY "orchard_id", "tree_id", "_sign"`, rule_observers: ["orchard/1", "orchard__tree/2"] },
+  { rel: "any_tree", kind: "set", table_name: "any_tree", delta_table_name: "__delta_any_tree", frontier_table_name: "__frontier_any_tree", next_frontier_table_name: "__next_frontier_any_tree", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_any_tree" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: [] },
+  { rel: "orchard", kind: "set", table_name: "orchard", delta_table_name: "__delta_orchard", frontier_table_name: "__frontier_orchard", next_frontier_table_name: "__next_frontier_orchard", columns: ["orchard_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."orchard_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard" t WHERE t."_sign" IN (-1, 1) GROUP BY t."orchard_id", t."_sign"`, rule_observers: ["orchard__tree/2"] },
+  { rel: "orchard__tree", kind: "set", table_name: "orchard__tree", delta_table_name: "__delta_orchard__tree", frontier_table_name: "__frontier_orchard__tree", next_frontier_table_name: "__next_frontier_orchard__tree", columns: ["parent", "tree_id"], column_types: ["ref", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = t."parent") AS "parent", t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__tree" t WHERE t."_sign" IN (-1, 1) GROUP BY t."parent", t."tree_id", t."_sign"`, rule_observers: ["any_tree/1"] },
+  { rel: "planted", kind: "set", table_name: "planted", delta_table_name: "__delta_planted", frontier_table_name: "__frontier_planted", next_frontier_table_name: "__next_frontier_planted", columns: ["orchard_id", "tree_id"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "planted" ("orchard_id", "tree_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "orchard_id", "tree_id"`, arrival_del_sql: `DELETE FROM "planted" WHERE ("orchard_id", "tree_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "orchard_id", "tree_id"`, boundary_sql: `SELECT t."orchard_id", t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_planted" t WHERE t."_sign" IN (-1, 1) GROUP BY t."orchard_id", t."tree_id", t."_sign"`, rule_observers: ["orchard/1", "orchard__tree/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

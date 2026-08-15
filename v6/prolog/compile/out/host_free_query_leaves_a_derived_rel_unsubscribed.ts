@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = ["reading/2", "watched/1"];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -279,10 +285,10 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    audit_trail: select_rows(seam, `SELECT "value" FROM "audit_trail"`, rel_columns.audit_trail!, rel_column_types.audit_trail!),
-    audited: select_rows(seam, `SELECT "value" FROM "audited"`, rel_columns.audited!, rel_column_types.audited!),
-    reading: select_rows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "value" FROM "__txt_reading"`, rel_columns.reading!, rel_column_types.reading!),
-    watched: select_rows(seam, `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor" FROM "__txt_watched"`, rel_columns.watched!, rel_column_types.watched!),
+    audit_trail: select_rows(seam, `SELECT t."value" FROM "audit_trail" t`, rel_columns.audit_trail!, rel_column_types.audit_trail!),
+    audited: select_rows(seam, `SELECT t."value" FROM "audited" t`, rel_columns.audited!, rel_column_types.audited!),
+    reading: select_rows(seam, `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor", t."value" FROM "__txt_reading" t`, rel_columns.reading!, rel_column_types.reading!),
+    watched: select_rows(seam, `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor" FROM "__txt_watched" t`, rel_columns.watched!, rel_column_types.watched!),
   });
 }
 
@@ -302,10 +308,10 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  audit_trail: `SELECT "value" FROM "audit_trail"`,
-  audited: `SELECT "value" FROM "audited"`,
-  reading: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "value" FROM "__txt_reading"`,
-  watched: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor" FROM "__txt_watched"`,
+  audit_trail: `SELECT t."value" FROM "audit_trail" t`,
+  audited: `SELECT t."value" FROM "audited" t`,
+  reading: `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor", t."value" FROM "__txt_reading" t`,
+  watched: `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor" FROM "__txt_watched" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -335,10 +341,10 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "audit_trail", kind: "set", table_name: "audit_trail", delta_table_name: "__delta_audit_trail", frontier_table_name: "__frontier_audit_trail", next_frontier_table_name: "__next_frontier_audit_trail", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audit_trail" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: [] },
-  { rel: "audited", kind: "set", table_name: "audited", delta_table_name: "__delta_audited", frontier_table_name: "__frontier_audited", next_frontier_table_name: "__next_frontier_audited", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audited" WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["audit_trail/1"] },
-  { rel: "reading", kind: "set", table_name: "reading", delta_table_name: "__delta_reading", frontier_table_name: "__frontier_reading", next_frontier_table_name: "__next_frontier_reading", columns: ["sensor", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "reading" ("sensor", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "sensor", "value"`, arrival_del_sql: `DELETE FROM "reading" WHERE ("sensor", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "sensor", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_reading" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "value", "_sign"`, rule_observers: ["audited/1", "watched/1"] },
-  { rel: "watched", kind: "set", table_name: "watched", delta_table_name: "__delta_watched", frontier_table_name: "__frontier_watched", next_frontier_table_name: "__next_frontier_watched", columns: ["sensor"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("sensor") AND json_type("sensor") = 'object' AND json_type("sensor", '$.fn') = 'text' AND json_type("sensor", '$.args') = 'array' THEN json_extract("sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("sensor", '$.args')), '') || ')' ELSE "sensor" END AS "sensor", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_watched" WHERE "_sign" IN (-1, 1) GROUP BY "sensor", "_sign"`, rule_observers: [] },
+  { rel: "audit_trail", kind: "set", table_name: "audit_trail", delta_table_name: "__delta_audit_trail", frontier_table_name: "__frontier_audit_trail", next_frontier_table_name: "__next_frontier_audit_trail", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audit_trail" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "audited", kind: "set", table_name: "audited", delta_table_name: "__delta_audited", frontier_table_name: "__frontier_audited", next_frontier_table_name: "__next_frontier_audited", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audited" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["audit_trail/1"] },
+  { rel: "reading", kind: "set", table_name: "reading", delta_table_name: "__delta_reading", frontier_table_name: "__frontier_reading", next_frontier_table_name: "__next_frontier_reading", columns: ["sensor", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "reading" ("sensor", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "sensor", "value"`, arrival_del_sql: `DELETE FROM "reading" WHERE ("sensor", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "sensor", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_reading" t WHERE t."_sign" IN (-1, 1) GROUP BY t."sensor", t."value", t."_sign"`, rule_observers: ["audited/1", "watched/1"] },
+  { rel: "watched", kind: "set", table_name: "watched", delta_table_name: "__delta_watched", frontier_table_name: "__frontier_watched", next_frontier_table_name: "__next_frontier_watched", columns: ["sensor"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_watched" t WHERE t."_sign" IN (-1, 1) GROUP BY t."sensor", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

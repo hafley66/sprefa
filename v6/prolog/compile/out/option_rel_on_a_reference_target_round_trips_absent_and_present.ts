@@ -37,6 +37,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -48,13 +49,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -66,7 +67,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -299,11 +305,11 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    audit: select_rows(seam, `SELECT "audit_id", (SELECT d."__rendered" FROM "__ref_commit" d WHERE d."__id" = "at_commit") AS "at_commit" FROM "audit"`, rel_columns.audit!, rel_column_types.audit!),
-    commit: select_rows(seam, `SELECT "id" FROM "commit"`, rel_columns.commit!, rel_column_types.commit!),
-    commit__reviewed_by: select_rows(seam, `SELECT "commit_id", "person_id" FROM "commit__reviewed_by"`, rel_columns.commit__reviewed_by!, rel_column_types.commit__reviewed_by!),
-    person: select_rows(seam, `SELECT "id", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_person"`, rel_columns.person!, rel_column_types.person!),
-    reviewed: select_rows(seam, `SELECT "commit_id", CASE WHEN json_valid("reviewer_name") AND json_type("reviewer_name") = 'object' AND json_type("reviewer_name", '$.fn') = 'text' AND json_type("reviewer_name", '$.args') = 'array' THEN json_extract("reviewer_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("reviewer_name", '$.args')), '') || ')' ELSE "reviewer_name" END AS "reviewer_name" FROM "__txt_reviewed"`, rel_columns.reviewed!, rel_column_types.reviewed!),
+    audit: select_rows(seam, `SELECT t."audit_id", (SELECT d."__rendered" FROM "__ref_commit" d WHERE d."__id" = t."at_commit") AS "at_commit" FROM "audit" t`, rel_columns.audit!, rel_column_types.audit!),
+    commit: select_rows(seam, `SELECT t."id" FROM "commit" t`, rel_columns.commit!, rel_column_types.commit!),
+    commit__reviewed_by: select_rows(seam, `SELECT t."commit_id", t."person_id" FROM "commit__reviewed_by" t`, rel_columns.commit__reviewed_by!, rel_column_types.commit__reviewed_by!),
+    person: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_person" t`, rel_columns.person!, rel_column_types.person!),
+    reviewed: select_rows(seam, `SELECT t."commit_id", CASE WHEN json_valid(t."reviewer_name") AND json_type(t."reviewer_name") = 'object' AND json_type(t."reviewer_name", '$.fn') = 'text' AND json_type(t."reviewer_name", '$.args') = 'array' THEN json_extract(t."reviewer_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reviewer_name", '$.args')), '') || ')' ELSE t."reviewer_name" END AS "reviewer_name" FROM "__txt_reviewed" t`, rel_columns.reviewed!, rel_column_types.reviewed!),
   });
 }
 
@@ -324,11 +330,11 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  audit: `SELECT "audit_id", (SELECT d."__rendered" FROM "__ref_commit" d WHERE d."__id" = "at_commit") AS "at_commit" FROM "audit"`,
-  commit: `SELECT "id" FROM "commit"`,
-  commit__reviewed_by: `SELECT "commit_id", "person_id" FROM "commit__reviewed_by"`,
-  person: `SELECT "id", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_person"`,
-  reviewed: `SELECT "commit_id", CASE WHEN json_valid("reviewer_name") AND json_type("reviewer_name") = 'object' AND json_type("reviewer_name", '$.fn') = 'text' AND json_type("reviewer_name", '$.args') = 'array' THEN json_extract("reviewer_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("reviewer_name", '$.args')), '') || ')' ELSE "reviewer_name" END AS "reviewer_name" FROM "__txt_reviewed"`,
+  audit: `SELECT t."audit_id", (SELECT d."__rendered" FROM "__ref_commit" d WHERE d."__id" = t."at_commit") AS "at_commit" FROM "audit" t`,
+  commit: `SELECT t."id" FROM "commit" t`,
+  commit__reviewed_by: `SELECT t."commit_id", t."person_id" FROM "commit__reviewed_by" t`,
+  person: `SELECT t."id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_person" t`,
+  reviewed: `SELECT t."commit_id", CASE WHEN json_valid(t."reviewer_name") AND json_type(t."reviewer_name") = 'object' AND json_type(t."reviewer_name", '$.fn') = 'text' AND json_type(t."reviewer_name", '$.args') = 'array' THEN json_extract(t."reviewer_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reviewer_name", '$.args')), '') || ')' ELSE t."reviewer_name" END AS "reviewer_name" FROM "__txt_reviewed" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -361,11 +367,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "audit", kind: "set", table_name: "audit", delta_table_name: "__delta_audit", frontier_table_name: "__frontier_audit", next_frontier_table_name: "__next_frontier_audit", columns: ["audit_id", "at_commit"], column_types: ["int", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "audit" ("audit_id", "at_commit") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "audit_id", "at_commit"`, arrival_del_sql: `DELETE FROM "audit" WHERE ("audit_id", "at_commit") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "audit_id", "at_commit"`, boundary_sql: `SELECT "audit_id", (SELECT d."__rendered" FROM "__ref_commit" d WHERE d."__id" = "at_commit") AS "at_commit", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audit" WHERE "_sign" IN (-1, 1) GROUP BY "audit_id", "at_commit", "_sign"`, rule_observers: [] },
-  { rel: "commit", kind: "set", table_name: "commit", delta_table_name: "__delta_commit", frontier_table_name: "__frontier_commit", next_frontier_table_name: "__next_frontier_commit", columns: ["id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "commit" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "id"`, arrival_del_sql: `DELETE FROM "commit" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_commit" WHERE "_sign" IN (-1, 1) GROUP BY "id", "_sign"`, rule_observers: [] },
-  { rel: "commit__reviewed_by", kind: "set", table_name: "commit__reviewed_by", delta_table_name: "__delta_commit__reviewed_by", frontier_table_name: "__frontier_commit__reviewed_by", next_frontier_table_name: "__next_frontier_commit__reviewed_by", columns: ["commit_id", "person_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "commit__reviewed_by" ("commit_id", "person_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("commit_id") DO UPDATE SET "person_id" = excluded."person_id" RETURNING "commit_id", "person_id"`, arrival_del_sql: `DELETE FROM "commit__reviewed_by" WHERE ("commit_id", "person_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "commit_id", "person_id"`, boundary_sql: `SELECT "commit_id", "person_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_commit__reviewed_by" WHERE "_sign" IN (-1, 1) GROUP BY "commit_id", "person_id", "_sign"`, rule_observers: ["reviewed/2"] },
-  { rel: "person", kind: "set", table_name: "person", delta_table_name: "__delta_person", frontier_table_name: "__frontier_person", next_frontier_table_name: "__next_frontier_person", columns: ["id", "name"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "person" ("id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "name" = excluded."name" RETURNING "id", "name"`, arrival_del_sql: `DELETE FROM "person" WHERE ("id", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "name"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_person" WHERE "_sign" IN (-1, 1) GROUP BY "id", "name", "_sign"`, rule_observers: ["reviewed/2"] },
-  { rel: "reviewed", kind: "set", table_name: "reviewed", delta_table_name: "__delta_reviewed", frontier_table_name: "__frontier_reviewed", next_frontier_table_name: "__next_frontier_reviewed", columns: ["commit_id", "reviewer_name"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "commit_id", CASE WHEN json_valid("reviewer_name") AND json_type("reviewer_name") = 'object' AND json_type("reviewer_name", '$.fn') = 'text' AND json_type("reviewer_name", '$.args') = 'array' THEN json_extract("reviewer_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("reviewer_name", '$.args')), '') || ')' ELSE "reviewer_name" END AS "reviewer_name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_reviewed" WHERE "_sign" IN (-1, 1) GROUP BY "commit_id", "reviewer_name", "_sign"`, rule_observers: [] },
+  { rel: "audit", kind: "set", table_name: "audit", delta_table_name: "__delta_audit", frontier_table_name: "__frontier_audit", next_frontier_table_name: "__next_frontier_audit", columns: ["audit_id", "at_commit"], column_types: ["int", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "audit" ("audit_id", "at_commit") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "audit_id", "at_commit"`, arrival_del_sql: `DELETE FROM "audit" WHERE ("audit_id", "at_commit") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "audit_id", "at_commit"`, boundary_sql: `SELECT t."audit_id", (SELECT d."__rendered" FROM "__ref_commit" d WHERE d."__id" = t."at_commit") AS "at_commit", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."audit_id", t."at_commit", t."_sign"`, rule_observers: [] },
+  { rel: "commit", kind: "set", table_name: "commit", delta_table_name: "__delta_commit", frontier_table_name: "__frontier_commit", next_frontier_table_name: "__next_frontier_commit", columns: ["id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "commit" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "id"`, arrival_del_sql: `DELETE FROM "commit" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_commit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: [] },
+  { rel: "commit__reviewed_by", kind: "set", table_name: "commit__reviewed_by", delta_table_name: "__delta_commit__reviewed_by", frontier_table_name: "__frontier_commit__reviewed_by", next_frontier_table_name: "__next_frontier_commit__reviewed_by", columns: ["commit_id", "person_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "commit__reviewed_by" ("commit_id", "person_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("commit_id") DO UPDATE SET "person_id" = excluded."person_id" RETURNING "commit_id", "person_id"`, arrival_del_sql: `DELETE FROM "commit__reviewed_by" WHERE ("commit_id", "person_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "commit_id", "person_id"`, boundary_sql: `SELECT t."commit_id", t."person_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_commit__reviewed_by" t WHERE t."_sign" IN (-1, 1) GROUP BY t."commit_id", t."person_id", t."_sign"`, rule_observers: ["reviewed/2"] },
+  { rel: "person", kind: "set", table_name: "person", delta_table_name: "__delta_person", frontier_table_name: "__frontier_person", next_frontier_table_name: "__next_frontier_person", columns: ["id", "name"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "person" ("id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "name" = excluded."name" RETURNING "id", "name"`, arrival_del_sql: `DELETE FROM "person" WHERE ("id", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "name"`, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_person" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."name", t."_sign"`, rule_observers: ["reviewed/2"] },
+  { rel: "reviewed", kind: "set", table_name: "reviewed", delta_table_name: "__delta_reviewed", frontier_table_name: "__frontier_reviewed", next_frontier_table_name: "__next_frontier_reviewed", columns: ["commit_id", "reviewer_name"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."commit_id", CASE WHEN json_valid(t."reviewer_name") AND json_type(t."reviewer_name") = 'object' AND json_type(t."reviewer_name", '$.fn') = 'text' AND json_type(t."reviewer_name", '$.args') = 'array' THEN json_extract(t."reviewer_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reviewer_name", '$.args')), '') || ')' ELSE t."reviewer_name" END AS "reviewer_name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_reviewed" t WHERE t."_sign" IN (-1, 1) GROUP BY t."commit_id", t."reviewer_name", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

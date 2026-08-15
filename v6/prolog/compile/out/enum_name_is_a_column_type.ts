@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -297,11 +303,11 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    grade_green: select_rows(seam, `SELECT "id", "days" FROM "grade_green"`, rel_columns.grade_green!, rel_column_types.grade_green!),
-    grade_ripe: select_rows(seam, `SELECT "id", "sugar" FROM "grade_ripe"`, rel_columns.grade_ripe!, rel_column_types.grade_ripe!),
-    grade_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_grade_tag"`, rel_columns.grade_tag!, rel_column_types.grade_tag!),
-    picked: select_rows(seam, `SELECT "id", "g" FROM "picked"`, rel_columns.picked!, rel_column_types.picked!),
-    picked_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_picked_tag"`, rel_columns.picked_tag!, rel_column_types.picked_tag!),
+    grade_green: select_rows(seam, `SELECT t."id", t."days" FROM "grade_green" t`, rel_columns.grade_green!, rel_column_types.grade_green!),
+    grade_ripe: select_rows(seam, `SELECT t."id", t."sugar" FROM "grade_ripe" t`, rel_columns.grade_ripe!, rel_column_types.grade_ripe!),
+    grade_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_grade_tag" t`, rel_columns.grade_tag!, rel_column_types.grade_tag!),
+    picked: select_rows(seam, `SELECT t."id", t."g" FROM "picked" t`, rel_columns.picked!, rel_column_types.picked!),
+    picked_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_picked_tag" t`, rel_columns.picked_tag!, rel_column_types.picked_tag!),
   });
 }
 
@@ -322,11 +328,11 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  grade_green: `SELECT "id", "days" FROM "grade_green"`,
-  grade_ripe: `SELECT "id", "sugar" FROM "grade_ripe"`,
-  grade_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_grade_tag"`,
-  picked: `SELECT "id", "g" FROM "picked"`,
-  picked_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_picked_tag"`,
+  grade_green: `SELECT t."id", t."days" FROM "grade_green" t`,
+  grade_ripe: `SELECT t."id", t."sugar" FROM "grade_ripe" t`,
+  grade_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_grade_tag" t`,
+  picked: `SELECT t."id", t."g" FROM "picked" t`,
+  picked_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_picked_tag" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -358,11 +364,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "grade_green", kind: "set", table_name: "grade_green", delta_table_name: "__delta_grade_green", frontier_table_name: "__frontier_grade_green", next_frontier_table_name: "__next_frontier_grade_green", columns: ["id", "days"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "grade_green" ("id", "days") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("days") DO UPDATE SET "id" = excluded."id" RETURNING "id", "days"`, arrival_del_sql: `DELETE FROM "grade_green" WHERE ("id", "days") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "days"`, boundary_sql: `SELECT "id", "days", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grade_green" WHERE "_sign" IN (-1, 1) GROUP BY "id", "days", "_sign"`, rule_observers: ["grade_tag/2"] },
-  { rel: "grade_ripe", kind: "set", table_name: "grade_ripe", delta_table_name: "__delta_grade_ripe", frontier_table_name: "__frontier_grade_ripe", next_frontier_table_name: "__next_frontier_grade_ripe", columns: ["id", "sugar"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "grade_ripe" ("id", "sugar") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("sugar") DO UPDATE SET "id" = excluded."id" RETURNING "id", "sugar"`, arrival_del_sql: `DELETE FROM "grade_ripe" WHERE ("id", "sugar") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "sugar"`, boundary_sql: `SELECT "id", "sugar", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grade_ripe" WHERE "_sign" IN (-1, 1) GROUP BY "id", "sugar", "_sign"`, rule_observers: ["grade_tag/2"] },
-  { rel: "grade_tag", kind: "set", table_name: "grade_tag", delta_table_name: "__delta_grade_tag", frontier_table_name: "__frontier_grade_tag", next_frontier_table_name: "__next_frontier_grade_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_grade_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: ["picked_tag/2"] },
-  { rel: "picked", kind: "set", table_name: "picked", delta_table_name: "__delta_picked", frontier_table_name: "__frontier_picked", next_frontier_table_name: "__next_frontier_picked", columns: ["id", "g"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "picked" ("id", "g") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "g"`, arrival_del_sql: `DELETE FROM "picked" WHERE ("id", "g") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "g"`, boundary_sql: `SELECT "id", "g", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_picked" WHERE "_sign" IN (-1, 1) GROUP BY "id", "g", "_sign"`, rule_observers: ["picked_tag/2"] },
-  { rel: "picked_tag", kind: "set", table_name: "picked_tag", delta_table_name: "__delta_picked_tag", frontier_table_name: "__frontier_picked_tag", next_frontier_table_name: "__next_frontier_picked_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_picked_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
+  { rel: "grade_green", kind: "set", table_name: "grade_green", delta_table_name: "__delta_grade_green", frontier_table_name: "__frontier_grade_green", next_frontier_table_name: "__next_frontier_grade_green", columns: ["id", "days"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "grade_green" ("id", "days") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("days") DO UPDATE SET "id" = excluded."id" RETURNING "id", "days"`, arrival_del_sql: `DELETE FROM "grade_green" WHERE ("id", "days") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "days"`, boundary_sql: `SELECT t."id", t."days", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grade_green" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."days", t."_sign"`, rule_observers: ["grade_tag/2"] },
+  { rel: "grade_ripe", kind: "set", table_name: "grade_ripe", delta_table_name: "__delta_grade_ripe", frontier_table_name: "__frontier_grade_ripe", next_frontier_table_name: "__next_frontier_grade_ripe", columns: ["id", "sugar"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "grade_ripe" ("id", "sugar") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("sugar") DO UPDATE SET "id" = excluded."id" RETURNING "id", "sugar"`, arrival_del_sql: `DELETE FROM "grade_ripe" WHERE ("id", "sugar") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "sugar"`, boundary_sql: `SELECT t."id", t."sugar", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grade_ripe" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."sugar", t."_sign"`, rule_observers: ["grade_tag/2"] },
+  { rel: "grade_tag", kind: "set", table_name: "grade_tag", delta_table_name: "__delta_grade_tag", frontier_table_name: "__frontier_grade_tag", next_frontier_table_name: "__next_frontier_grade_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_grade_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: ["picked_tag/2"] },
+  { rel: "picked", kind: "set", table_name: "picked", delta_table_name: "__delta_picked", frontier_table_name: "__frontier_picked", next_frontier_table_name: "__next_frontier_picked", columns: ["id", "g"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "picked" ("id", "g") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "g"`, arrival_del_sql: `DELETE FROM "picked" WHERE ("id", "g") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "g"`, boundary_sql: `SELECT t."id", t."g", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_picked" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."g", t."_sign"`, rule_observers: ["picked_tag/2"] },
+  { rel: "picked_tag", kind: "set", table_name: "picked_tag", delta_table_name: "__delta_picked_tag", frontier_table_name: "__frontier_picked_tag", next_frontier_table_name: "__next_frontier_picked_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_picked_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -252,9 +258,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    body_page: select_rows(seam, `SELECT "id", "view" FROM "body_page"`, rel_columns.body_page!, rel_column_types.body_page!),
-    body_redirect: select_rows(seam, `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "__txt_body_redirect"`, rel_columns.body_redirect!, rel_column_types.body_redirect!),
-    body_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_body_tag"`, rel_columns.body_tag!, rel_column_types.body_tag!),
+    body_page: select_rows(seam, `SELECT t."id", t."view" FROM "body_page" t`, rel_columns.body_page!, rel_column_types.body_page!),
+    body_redirect: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."to") AND json_type(t."to") = 'object' AND json_type(t."to", '$.fn') = 'text' AND json_type(t."to", '$.args') = 'array' THEN json_extract(t."to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to", '$.args')), '') || ')' ELSE t."to" END AS "to" FROM "__txt_body_redirect" t`, rel_columns.body_redirect!, rel_column_types.body_redirect!),
+    body_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_body_tag" t`, rel_columns.body_tag!, rel_column_types.body_tag!),
   });
 }
 
@@ -273,9 +279,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  body_page: `SELECT "id", "view" FROM "body_page"`,
-  body_redirect: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to" FROM "__txt_body_redirect"`,
-  body_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_body_tag"`,
+  body_page: `SELECT t."id", t."view" FROM "body_page" t`,
+  body_redirect: `SELECT t."id", CASE WHEN json_valid(t."to") AND json_type(t."to") = 'object' AND json_type(t."to", '$.fn') = 'text' AND json_type(t."to", '$.args') = 'array' THEN json_extract(t."to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to", '$.args')), '') || ')' ELSE t."to" END AS "to" FROM "__txt_body_redirect" t`,
+  body_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_body_tag" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -306,9 +312,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "body_page", kind: "set", table_name: "body_page", delta_table_name: "__delta_body_page", frontier_table_name: "__frontier_body_page", next_frontier_table_name: "__next_frontier_body_page", columns: ["id", "view"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id" RETURNING "id", "view"`, arrival_del_sql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundary_sql: `SELECT "id", "view", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" WHERE "_sign" IN (-1, 1) GROUP BY "id", "view", "_sign"`, rule_observers: ["body_tag/2"] },
-  { rel: "body_redirect", kind: "set", table_name: "body_redirect", delta_table_name: "__delta_body_redirect", frontier_table_name: "__frontier_body_redirect", next_frontier_table_name: "__next_frontier_body_redirect", columns: ["id", "to"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id" RETURNING "id", "to"`, arrival_del_sql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("to") AND json_type("to") = 'object' AND json_type("to", '$.fn') = 'text' AND json_type("to", '$.args') = 'array' THEN json_extract("to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("to", '$.args')), '') || ')' ELSE "to" END AS "to", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_body_redirect" WHERE "_sign" IN (-1, 1) GROUP BY "id", "to", "_sign"`, rule_observers: ["body_tag/2"] },
-  { rel: "body_tag", kind: "set", table_name: "body_tag", delta_table_name: "__delta_body_tag", frontier_table_name: "__frontier_body_tag", next_frontier_table_name: "__next_frontier_body_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_body_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
+  { rel: "body_page", kind: "set", table_name: "body_page", delta_table_name: "__delta_body_page", frontier_table_name: "__frontier_body_page", next_frontier_table_name: "__next_frontier_body_page", columns: ["id", "view"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id" RETURNING "id", "view"`, arrival_del_sql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundary_sql: `SELECT t."id", t."view", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."view", t."_sign"`, rule_observers: ["body_tag/2"] },
+  { rel: "body_redirect", kind: "set", table_name: "body_redirect", delta_table_name: "__delta_body_redirect", frontier_table_name: "__frontier_body_redirect", next_frontier_table_name: "__next_frontier_body_redirect", columns: ["id", "to"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "body_redirect" ("id", "to") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id" RETURNING "id", "to"`, arrival_del_sql: `DELETE FROM "body_redirect" WHERE ("id", "to") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "to"`, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."to") AND json_type(t."to") = 'object' AND json_type(t."to", '$.fn') = 'text' AND json_type(t."to", '$.args') = 'array' THEN json_extract(t."to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to", '$.args')), '') || ')' ELSE t."to" END AS "to", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_body_redirect" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."to", t."_sign"`, rule_observers: ["body_tag/2"] },
+  { rel: "body_tag", kind: "set", table_name: "body_tag", delta_table_name: "__delta_body_tag", frontier_table_name: "__frontier_body_tag", next_frontier_table_name: "__next_frontier_body_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_body_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -227,8 +233,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    operation: select_rows(seam, `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id" FROM "__txt_operation"`, rel_columns.operation!, rel_column_types.operation!),
-    spec: select_rows(seam, `SELECT "body" FROM "spec"`, rel_columns.spec!, rel_column_types.spec!),
+    operation: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."method") AND json_type(t."method") = 'object' AND json_type(t."method", '$.fn') = 'text' AND json_type(t."method", '$.args') = 'array' THEN json_extract(t."method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."method", '$.args')), '') || ')' ELSE t."method" END AS "method", CASE WHEN json_valid(t."id") AND json_type(t."id") = 'object' AND json_type(t."id", '$.fn') = 'text' AND json_type(t."id", '$.args') = 'array' THEN json_extract(t."id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."id", '$.args')), '') || ')' ELSE t."id" END AS "id" FROM "__txt_operation" t`, rel_columns.operation!, rel_column_types.operation!),
+    spec: select_rows(seam, `SELECT t."body" FROM "spec" t`, rel_columns.spec!, rel_column_types.spec!),
   });
 }
 
@@ -246,8 +252,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  operation: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id" FROM "__txt_operation"`,
-  spec: `SELECT "body" FROM "spec"`,
+  operation: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."method") AND json_type(t."method") = 'object' AND json_type(t."method", '$.fn') = 'text' AND json_type(t."method", '$.args') = 'array' THEN json_extract(t."method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."method", '$.args')), '') || ')' ELSE t."method" END AS "method", CASE WHEN json_valid(t."id") AND json_type(t."id") = 'object' AND json_type(t."id", '$.fn') = 'text' AND json_type(t."id", '$.args') = 'array' THEN json_extract(t."id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."id", '$.args')), '') || ')' ELSE t."id" END AS "id" FROM "__txt_operation" t`,
+  spec: `SELECT t."body" FROM "spec" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -277,8 +283,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "operation", kind: "set", table_name: "operation", delta_table_name: "__delta_operation", frontier_table_name: "__frontier_operation", next_frontier_table_name: "__next_frontier_operation", columns: ["path", "method", "id"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("path") AND json_type("path") = 'object' AND json_type("path", '$.fn') = 'text' AND json_type("path", '$.args') = 'array' THEN json_extract("path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("path", '$.args')), '') || ')' ELSE "path" END AS "path", CASE WHEN json_valid("method") AND json_type("method") = 'object' AND json_type("method", '$.fn') = 'text' AND json_type("method", '$.args') = 'array' THEN json_extract("method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("method", '$.args')), '') || ')' ELSE "method" END AS "method", CASE WHEN json_valid("id") AND json_type("id") = 'object' AND json_type("id", '$.fn') = 'text' AND json_type("id", '$.args') = 'array' THEN json_extract("id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("id", '$.args')), '') || ')' ELSE "id" END AS "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_operation" WHERE "_sign" IN (-1, 1) GROUP BY "path", "method", "id", "_sign"`, rule_observers: [] },
-  { rel: "spec", kind: "set", table_name: "spec", delta_table_name: "__delta_spec", frontier_table_name: "__frontier_spec", next_frontier_table_name: "__next_frontier_spec", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spec" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "spec" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_spec" WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["operation/3"] },
+  { rel: "operation", kind: "set", table_name: "operation", delta_table_name: "__delta_operation", frontier_table_name: "__frontier_operation", next_frontier_table_name: "__next_frontier_operation", columns: ["path", "method", "id"], column_types: ["text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."method") AND json_type(t."method") = 'object' AND json_type(t."method", '$.fn') = 'text' AND json_type(t."method", '$.args') = 'array' THEN json_extract(t."method", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."method", '$.args')), '') || ')' ELSE t."method" END AS "method", CASE WHEN json_valid(t."id") AND json_type(t."id") = 'object' AND json_type(t."id", '$.fn') = 'text' AND json_type(t."id", '$.args') = 'array' THEN json_extract(t."id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."id", '$.args')), '') || ')' ELSE t."id" END AS "id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_operation" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."method", t."id", t."_sign"`, rule_observers: [] },
+  { rel: "spec", kind: "set", table_name: "spec", delta_table_name: "__delta_spec", frontier_table_name: "__frontier_spec", next_frontier_table_name: "__next_frontier_spec", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spec" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "spec" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT t."body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_spec" t WHERE t."_sign" IN (-1, 1) GROUP BY t."body", t."_sign"`, rule_observers: ["operation/3"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

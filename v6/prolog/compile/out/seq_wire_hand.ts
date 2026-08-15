@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -268,9 +274,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrival: select_rows(seam, `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_arrival"`, rel_columns.arrival!, rel_column_types.arrival!),
-    numbered: select_rows(seam, `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_numbered"`, rel_columns.numbered!, rel_column_types.numbered!),
-    seq_numbered_1: select_rows(seam, `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "at" FROM "__txt_seq_numbered_1"`, rel_columns.seq_numbered_1!, rel_column_types.seq_numbered_1!),
+    arrival: select_rows(seam, `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_arrival" t`, rel_columns.arrival!, rel_column_types.arrival!),
+    numbered: select_rows(seam, `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_numbered" t`, rel_columns.numbered!, rel_column_types.numbered!),
+    seq_numbered_1: select_rows(seam, `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at" FROM "__txt_seq_numbered_1" t`, rel_columns.seq_numbered_1!, rel_column_types.seq_numbered_1!),
   });
 }
 
@@ -289,9 +295,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  arrival: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_arrival"`,
-  numbered: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload" FROM "__txt_numbered"`,
-  seq_numbered_1: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "at" FROM "__txt_seq_numbered_1"`,
+  arrival: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_arrival" t`,
+  numbered: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_numbered" t`,
+  seq_numbered_1: `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at" FROM "__txt_seq_numbered_1" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -321,9 +327,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "arrival", kind: "set", table_name: "arrival", delta_table_name: "__delta_arrival", frontier_table_name: "__frontier_arrival", next_frontier_table_name: "__next_frontier_arrival", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "arrival" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: `DELETE FROM "arrival" WHERE ("payload") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "payload"`, boundary_sql: `SELECT CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_arrival" WHERE "_sign" IN (-1, 1) GROUP BY "payload", "_sign"`, rule_observers: ["numbered/2", "seq_numbered_1/2"] },
-  { rel: "numbered", kind: "log", table_name: "numbered", delta_table_name: "__delta_numbered", frontier_table_name: "__frontier_numbered", next_frontier_table_name: "__next_frontier_numbered", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "ordinal", CASE WHEN json_valid("payload") AND json_type("payload") = 'object' AND json_type("payload", '$.fn') = 'text' AND json_type("payload", '$.args') = 'array' THEN json_extract("payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("payload", '$.args')), '') || ')' ELSE "payload" END AS "payload", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_numbered" WHERE "_sign" IN (-1, 1) GROUP BY "ordinal", "payload", "_sign"`, rule_observers: [] },
-  { rel: "seq_numbered_1", kind: "set", table_name: "seq_numbered_1", delta_table_name: "__delta_seq_numbered_1", frontier_table_name: "__frontier_seq_numbered_1", next_frontier_table_name: "__next_frontier_seq_numbered_1", columns: ["partition", "at"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("partition") AND json_type("partition") = 'object' AND json_type("partition", '$.fn') = 'text' AND json_type("partition", '$.args') = 'array' THEN json_extract("partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("partition", '$.args')), '') || ')' ELSE "partition" END AS "partition", "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_numbered_1" WHERE "_sign" IN (-1, 1) GROUP BY "partition", "at", "_sign"`, rule_observers: [] },
+  { rel: "arrival", kind: "set", table_name: "arrival", delta_table_name: "__delta_arrival", frontier_table_name: "__frontier_arrival", next_frontier_table_name: "__next_frontier_arrival", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "arrival" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: `DELETE FROM "arrival" WHERE ("payload") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "payload"`, boundary_sql: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_arrival" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: ["numbered/2", "seq_numbered_1/2"] },
+  { rel: "numbered", kind: "log", table_name: "numbered", delta_table_name: "__delta_numbered", frontier_table_name: "__frontier_numbered", next_frontier_table_name: "__next_frontier_numbered", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_numbered" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ordinal", t."payload", t."_sign"`, rule_observers: [] },
+  { rel: "seq_numbered_1", kind: "set", table_name: "seq_numbered_1", delta_table_name: "__delta_seq_numbered_1", frontier_table_name: "__frontier_seq_numbered_1", next_frontier_table_name: "__next_frontier_seq_numbered_1", columns: ["partition", "at"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_numbered_1" t WHERE t."_sign" IN (-1, 1) GROUP BY t."partition", t."at", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

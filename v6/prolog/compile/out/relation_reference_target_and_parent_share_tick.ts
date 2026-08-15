@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -46,13 +47,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -64,7 +65,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -240,16 +246,16 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    finding: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`, rel_columns.finding!, rel_column_types.finding!),
-    span: select_rows(seam, `SELECT "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
-    span_seen: select_rows(seam, `SELECT "start", "end" FROM "span_seen"`, rel_columns.span_seen!, rel_column_types.span_seen!),
+    finding: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "finding" t`, rel_columns.finding!, rel_column_types.finding!),
+    span: select_rows(seam, `SELECT t."start", t."end" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
+    span_seen: select_rows(seam, `SELECT t."start", t."end" FROM "span_seen" t`, rel_columns.span_seen!, rel_column_types.span_seen!),
   });
 }
 
 const final_select: Record<string, string> = {
-  finding: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`,
-  span: `SELECT "start", "end" FROM "span"`,
-  span_seen: `SELECT "start", "end" FROM "span_seen"`,
+  finding: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "finding" t`,
+  span: `SELECT t."start", t."end" FROM "span" t`,
+  span_seen: `SELECT t."start", t."end" FROM "span_seen" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -280,9 +286,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "finding", kind: "set", table_name: "finding", delta_table_name: "__delta_finding", frontier_table_name: "__frontier_finding", next_frontier_table_name: "__next_frontier_finding", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "finding" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "finding" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" WHERE "_sign" IN (-1, 1) GROUP BY "at", "_sign"`, rule_observers: [] },
-  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, rule_observers: ["span_seen/2"] },
-  { rel: "span_seen", kind: "set", table_name: "span_seen", delta_table_name: "__delta_span_seen", frontier_table_name: "__frontier_span_seen", next_frontier_table_name: "__next_frontier_span_seen", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span_seen" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, rule_observers: [] },
+  { rel: "finding", kind: "set", table_name: "finding", delta_table_name: "__delta_finding", frontier_table_name: "__frontier_finding", next_frontier_table_name: "__next_frontier_finding", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "finding" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "finding" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" t WHERE t."_sign" IN (-1, 1) GROUP BY t."at", t."_sign"`, rule_observers: [] },
+  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: ["span_seen/2"] },
+  { rel: "span_seen", kind: "set", table_name: "span_seen", delta_table_name: "__delta_span_seen", frontier_table_name: "__frontier_span_seen", next_frontier_table_name: "__next_frontier_span_seen", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span_seen" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

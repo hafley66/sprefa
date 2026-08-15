@@ -7,7 +7,9 @@
           [ split_rules/4, level_closure/6,
             % Its not/1 clause carries an ordering contract the shared walker
             % deliberately does not reproduce.
-            goal_rel_refs/3 ]).
+            goal_rel_refs/3,
+            % The boundary read of a list column, engine.pl's last pass.
+            list_boundary_rows/4, list_boundary_deltas/5 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -204,17 +206,19 @@ plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Known0, Level) :-
 % substitution walk, so walk order can never leak into which id lands where.
 
 mint_heads(Decls, Derived, Heads, Rows) :-
-    findall(ContentText, batch_list_content_text(Decls, Derived, ContentText),
+    findall(ContentText-Elements,
+            batch_list_content_text(Decls, Derived, ContentText, Elements),
             ContentTexts),
     sort(ContentTexts, DistinctContentTexts),
-    forall(member(ContentText, DistinctContentTexts), list_mint_id(ContentText, _)),
+    forall(member(ContentText-Elements, DistinctContentTexts),
+           list_mint_id(ContentText, Elements, _)),
     mint_heads_(Decls, Derived, Heads, Rows).
 
-batch_list_content_text(Decls, Derived, ContentText) :-
+batch_list_content_text(Decls, Derived, ContentText, Elements) :-
     member(Head, Derived),
-    head_list_content_text(Decls, Head, ContentText).
+    head_list_content_text(Decls, Head, ContentText, Elements).
 
-head_list_content_text(Decls, Head, ContentText) :-
+head_list_content_text(Decls, Head, ContentText, Value) :-
     Head =.. [Name | Values],
     length(Values, Arity),
     list_column_element_types(Decls, Name/Arity, ElementTypes),
@@ -262,7 +266,7 @@ mint_values([Element | Elements], [Value | Values], [Minted | Rest], Rows0, Rows
 
 mint_list_value(ElementType, Elements, Id, [EntityRow | MemberRows]) :-
     canonical_json_text(Elements, ContentText),
-    list_mint_id(ContentText, Id),
+    list_mint_id(ContentText, Elements, Id),
     canonical_type_name(list(ElementType), EntityName),
     atomic_list_concat([EntityName, member], '__', MemberName),
     EntityRow =.. [EntityName, ContentText],
@@ -270,6 +274,119 @@ mint_list_value(ElementType, Elements, Id, [EntityRow | MemberRows]) :-
             ( nth0(Index, Elements, Element),
               MemberRow =.. [MemberName, Id, Index, Element] ),
             MemberRows).
+
+% ── the boundary read of a list column ─────────────────────────────────────
+% Storage keeps the interned id, the same way a ref column stores an "__id";
+% what crosses is the ordered member values, which is what the emitted
+% `__list_<entity>` view aggregates out of the same member rel.
+
+list_boundary_rows(Decls, Rules, Rows0, Rows) :-
+    list_positions(Decls, Rules, Positions),
+    (   Positions == []
+    ->  Rows = Rows0
+    ;   maplist(list_boundary_row(Positions, Rows0), Rows0, Rows)
+    ).
+
+list_boundary_deltas(Decls, Rules, Visible, Deltas0, Deltas) :-
+    list_positions(Decls, Rules, Positions),
+    (   Positions == []
+    ->  Deltas = Deltas0
+    ;   maplist(list_boundary_delta(Positions, Visible), Deltas0, Deltas)
+    ).
+
+% A DERIVED rel carries no col_type decl, so its list-ness comes from the body
+% atom its head variable reads, the same propagation the relplan performs.
+list_positions(Decls, Rules, Positions) :-
+    declared_list_positions(Decls, Seed),
+    (   Seed == []
+    ->  Positions = []
+    ;   close_list_positions(Rules, Seed, Positions)
+    ).
+
+declared_list_positions(Decls, Positions) :-
+    findall(Ref-Index-Element,
+            ( member(list_column(Ref, Column, list(Element)), Decls),
+              findall(Declared, member(col_type(Ref, Declared, _), Decls),
+                      Columns),
+              nth0(Index, Columns, Column) ),
+            Positions0),
+    sort(Positions0, Positions).
+
+close_list_positions(Rules, Positions0, Positions) :-
+    findall(HeadRef-HeadIndex-Element,
+            ( member(Rule, Rules),
+              rule_head_body(Rule, Head, Body),
+              carried_list_position(Positions0, Head, Body, HeadRef, HeadIndex,
+                                    Element) ),
+            Carried),
+    append(Positions0, Carried, Merged0),
+    sort(Merged0, Merged),
+    (   Merged == Positions0
+    ->  Positions = Positions0
+    ;   close_list_positions(Rules, Merged, Positions)
+    ).
+
+rule_head_body((Head <- Body), Head, Body).
+rule_head_body((Head <+ Body), Head, Body).
+
+carried_list_position(Positions, Head, Body, HeadRef, HeadIndex, Element) :-
+    Head =.. [HeadName | HeadArgs],
+    length(HeadArgs, HeadArity),
+    HeadRef = HeadName/HeadArity,
+    nth0(HeadIndex, HeadArgs, HeadArg),
+    var(HeadArg),
+    body_conjunct(Body, Conjunct),
+    Conjunct =.. [BodyName | BodyArgs],
+    length(BodyArgs, BodyArity),
+    member(BodyName/BodyArity-BodyIndex-Element, Positions),
+    nth0(BodyIndex, BodyArgs, BodyArg),
+    BodyArg == HeadArg.
+
+body_conjunct((Left, Right), Conjunct) :- !,
+    ( body_conjunct(Left, Conjunct) ; body_conjunct(Right, Conjunct) ).
+body_conjunct(Goal, Goal) :- compound(Goal).
+
+list_boundary_delta(Positions, Visible, Signed0, Signed) :-
+    (   Signed0 = +Row0
+    ->  list_boundary_row(Positions, Visible, Row0, Row), Signed = +Row
+    ;   Signed0 = -Row0
+    ->  list_boundary_row(Positions, Visible, Row0, Row), Signed = -Row
+    ;   Signed = Signed0
+    ).
+
+list_boundary_row(Positions, Visible, Row0, Row) :-
+    Row0 =.. [Name | Values],
+    length(Values, Arity),
+    (   memberchk(Name/Arity-_-_, Positions)
+    ->  findall(Rendered,
+                ( nth0(Index, Values, Value),
+                  (   memberchk(Name/Arity-Index-Element, Positions)
+                  ->  list_boundary_value(Visible, Element, Value, Rendered)
+                  ;   Rendered = Value ) ),
+                RenderedValues),
+        Row =.. [Name | RenderedValues]
+    ;   Row = Row0
+    ).
+
+list_boundary_value(Visible, Element, Id, Elements) :-
+    integer(Id),
+    list_member_values(Visible, Element, Id, Raw),
+    !,
+    maplist(list_boundary_element(Visible, Element), Raw, Elements).
+list_boundary_value(_, _, Value, Value).
+
+list_member_values(Visible, Element, Id, Values) :-
+    canonical_type_name(list(Element), EntityName),
+    atomic_list_concat([EntityName, member], '__', MemberName),
+    findall(Index-Value,
+            ( member(Row, Visible), Row =.. [MemberName, Id, Index, Value] ),
+            Pairs),
+    keysort(Pairs, Sorted),
+    pairs_values(Sorted, Values).
+
+list_boundary_element(Visible, list(Inner), Value, Rendered) :- !,
+    list_boundary_value(Visible, Inner, Value, Rendered).
+list_boundary_element(_, _, Value, Value).
 
 agg_rule_rows((Head <- Body), Visible, Tick, Row) :-
     aggregate_head(Head, Template, Ref),

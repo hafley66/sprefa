@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -251,9 +257,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
-    dispatch_first: select_rows(seam, `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag" FROM "__txt_dispatch_first"`, rel_columns.dispatch_first!, rel_column_types.dispatch_first!),
-    dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
+    dispatch_ack: select_rows(seam, `SELECT t."dispatch_id" FROM "dispatch_ack" t`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
+    dispatch_first: select_rows(seam, `SELECT t."dispatch_id", CASE WHEN json_valid(t."_ack_tag") AND json_type(t."_ack_tag") = 'object' AND json_type(t."_ack_tag", '$.fn') = 'text' AND json_type(t."_ack_tag", '$.args') = 'array' THEN json_extract(t."_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_ack_tag", '$.args')), '') || ')' ELSE t."_ack_tag" END AS "_ack_tag" FROM "__txt_dispatch_first" t`, rel_columns.dispatch_first!, rel_column_types.dispatch_first!),
+    dispatch_seal: select_rows(seam, `SELECT t."sealed_id" FROM "dispatch_seal" t`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
   });
 }
 
@@ -272,9 +278,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  dispatch_ack: `SELECT "dispatch_id" FROM "dispatch_ack"`,
-  dispatch_first: `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag" FROM "__txt_dispatch_first"`,
-  dispatch_seal: `SELECT "sealed_id" FROM "dispatch_seal"`,
+  dispatch_ack: `SELECT t."dispatch_id" FROM "dispatch_ack" t`,
+  dispatch_first: `SELECT t."dispatch_id", CASE WHEN json_valid(t."_ack_tag") AND json_type(t."_ack_tag") = 'object' AND json_type(t."_ack_tag", '$.fn') = 'text' AND json_type(t."_ack_tag", '$.args') = 'array' THEN json_extract(t."_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_ack_tag", '$.args')), '') || ')' ELSE t."_ack_tag" END AS "_ack_tag" FROM "__txt_dispatch_first" t`,
+  dispatch_seal: `SELECT t."sealed_id" FROM "dispatch_seal" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -305,9 +311,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "dispatch_ack", kind: "set", table_name: "dispatch_ack", delta_table_name: "__delta_dispatch_ack", frontier_table_name: "__frontier_dispatch_ack", next_frontier_table_name: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrival_del_sql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundary_sql: `SELECT "dispatch_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_sign"`, rule_observers: ["dispatch_first/2"] },
-  { rel: "dispatch_first", kind: "log", table_name: "dispatch_first", delta_table_name: "__delta_dispatch_first", frontier_table_name: "__frontier_dispatch_first", next_frontier_table_name: "__next_frontier_dispatch_first", columns: ["dispatch_id", "_ack_tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "dispatch_id", CASE WHEN json_valid("_ack_tag") AND json_type("_ack_tag") = 'object' AND json_type("_ack_tag", '$.fn') = 'text' AND json_type("_ack_tag", '$.args') = 'array' THEN json_extract("_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("_ack_tag", '$.args')), '') || ')' ELSE "_ack_tag" END AS "_ack_tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_dispatch_first" WHERE "_sign" IN (-1, 1) GROUP BY "dispatch_id", "_ack_tag", "_sign"`, rule_observers: [] },
-  { rel: "dispatch_seal", kind: "set", table_name: "dispatch_seal", delta_table_name: "__delta_dispatch_seal", frontier_table_name: "__frontier_dispatch_seal", next_frontier_table_name: "__next_frontier_dispatch_seal", columns: ["sealed_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrival_del_sql: `DELETE FROM "dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundary_sql: `SELECT "sealed_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_seal" WHERE "_sign" IN (-1, 1) GROUP BY "sealed_id", "_sign"`, rule_observers: ["dispatch_first/2"] },
+  { rel: "dispatch_ack", kind: "set", table_name: "dispatch_ack", delta_table_name: "__delta_dispatch_ack", frontier_table_name: "__frontier_dispatch_ack", next_frontier_table_name: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrival_del_sql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundary_sql: `SELECT t."dispatch_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dispatch_id", t."_sign"`, rule_observers: ["dispatch_first/2"] },
+  { rel: "dispatch_first", kind: "log", table_name: "dispatch_first", delta_table_name: "__delta_dispatch_first", frontier_table_name: "__frontier_dispatch_first", next_frontier_table_name: "__next_frontier_dispatch_first", columns: ["dispatch_id", "_ack_tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."dispatch_id", CASE WHEN json_valid(t."_ack_tag") AND json_type(t."_ack_tag") = 'object' AND json_type(t."_ack_tag", '$.fn') = 'text' AND json_type(t."_ack_tag", '$.args') = 'array' THEN json_extract(t."_ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_ack_tag", '$.args')), '') || ')' ELSE t."_ack_tag" END AS "_ack_tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_dispatch_first" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dispatch_id", t."_ack_tag", t."_sign"`, rule_observers: [] },
+  { rel: "dispatch_seal", kind: "set", table_name: "dispatch_seal", delta_table_name: "__delta_dispatch_seal", frontier_table_name: "__frontier_dispatch_seal", next_frontier_table_name: "__next_frontier_dispatch_seal", columns: ["sealed_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrival_del_sql: `DELETE FROM "dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundary_sql: `SELECT t."sealed_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_seal" t WHERE t."_sign" IN (-1, 1) GROUP BY t."sealed_id", t."_sign"`, rule_observers: ["dispatch_first/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

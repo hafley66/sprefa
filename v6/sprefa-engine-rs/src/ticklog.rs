@@ -87,6 +87,15 @@ fn encode_value(value: &Value, ty: Option<RowColumnType>) -> String {
             js_float_text(*v)
         }
         Value::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
+        // Already parsed at the read seam, so the elements canonicalize
+        // directly and never through a second text re-parse.
+        Value::List(items) => {
+            let mut parts = Vec::with_capacity(items.len());
+            for item in items {
+                parts.push(canonical_json_value(item));
+            }
+            format!("[{}]", parts.join(","))
+        }
         Value::Text(text) => {
             if ty == Some(RowColumnType::Json) || ty == Some(RowColumnType::Ref) {
                 match canonical_json_text(text) {

@@ -37,6 +37,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -48,13 +49,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -66,7 +67,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -267,9 +273,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    __gen__entry_text_int_a6c3f6c7e60e6b95: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value" FROM "__txt___gen__entry_text_int_a6c3f6c7e60e6b95"`, rel_columns.__gen__entry_text_int_a6c3f6c7e60e6b95!, rel_column_types.__gen__entry_text_int_a6c3f6c7e60e6b95!),
-    carry: select_rows(seam, `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = "slot") AS "slot" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
-    cell: select_rows(seam, `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = "slot") AS "slot" FROM "cell"`, rel_columns.cell!, rel_column_types.cell!),
+    __gen__entry_text_int_a6c3f6c7e60e6b95: select_rows(seam, `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt___gen__entry_text_int_a6c3f6c7e60e6b95" t`, rel_columns.__gen__entry_text_int_a6c3f6c7e60e6b95!, rel_column_types.__gen__entry_text_int_a6c3f6c7e60e6b95!),
+    carry: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
+    cell: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot" FROM "cell" t`, rel_columns.cell!, rel_column_types.cell!),
   });
 }
 
@@ -288,9 +294,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  __gen__entry_text_int_a6c3f6c7e60e6b95: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value" FROM "__txt___gen__entry_text_int_a6c3f6c7e60e6b95"`,
-  carry: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = "slot") AS "slot" FROM "carry"`,
-  cell: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = "slot") AS "slot" FROM "cell"`,
+  __gen__entry_text_int_a6c3f6c7e60e6b95: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt___gen__entry_text_int_a6c3f6c7e60e6b95" t`,
+  carry: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot" FROM "carry" t`,
+  cell: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot" FROM "cell" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -321,9 +327,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "__gen__entry_text_int_a6c3f6c7e60e6b95", kind: "set", table_name: "__gen__entry_text_int_a6c3f6c7e60e6b95", delta_table_name: "__delta___gen__entry_text_int_a6c3f6c7e60e6b95", frontier_table_name: "__frontier___gen__entry_text_int_a6c3f6c7e60e6b95", next_frontier_table_name: "__next_frontier___gen__entry_text_int_a6c3f6c7e60e6b95", columns: ["key", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "__gen__entry_text_int_a6c3f6c7e60e6b95" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "__gen__entry_text_int_a6c3f6c7e60e6b95" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__entry_text_int_a6c3f6c7e60e6b95" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: [] },
-  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "slot"], column_types: ["int", "ref"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = "slot") AS "slot", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" WHERE "_sign" IN (-1, 1) GROUP BY "id", "slot", "_sign"`, rule_observers: [] },
-  { rel: "cell", kind: "set", table_name: "cell", delta_table_name: "__delta_cell", frontier_table_name: "__frontier_cell", next_frontier_table_name: "__next_frontier_cell", columns: ["id", "slot"], column_types: ["int", "ref"], key_indices: [0], arrival_add_sql: `INSERT INTO "cell" ("id", "slot") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "slot" = excluded."slot" RETURNING "id", "slot"`, arrival_del_sql: `DELETE FROM "cell" WHERE ("id", "slot") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "slot"`, boundary_sql: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = "slot") AS "slot", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_cell" WHERE "_sign" IN (-1, 1) GROUP BY "id", "slot", "_sign"`, rule_observers: ["carry/2"] },
+  { rel: "__gen__entry_text_int_a6c3f6c7e60e6b95", kind: "set", table_name: "__gen__entry_text_int_a6c3f6c7e60e6b95", delta_table_name: "__delta___gen__entry_text_int_a6c3f6c7e60e6b95", frontier_table_name: "__frontier___gen__entry_text_int_a6c3f6c7e60e6b95", next_frontier_table_name: "__next_frontier___gen__entry_text_int_a6c3f6c7e60e6b95", columns: ["key", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "__gen__entry_text_int_a6c3f6c7e60e6b95" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "__gen__entry_text_int_a6c3f6c7e60e6b95" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__entry_text_int_a6c3f6c7e60e6b95" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: [] },
+  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "slot"], column_types: ["int", "ref"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."slot", t."_sign"`, rule_observers: [] },
+  { rel: "cell", kind: "set", table_name: "cell", delta_table_name: "__delta_cell", frontier_table_name: "__frontier_cell", next_frontier_table_name: "__next_frontier_cell", columns: ["id", "slot"], column_types: ["int", "ref"], key_indices: [0], arrival_add_sql: `INSERT INTO "cell" ("id", "slot") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "slot" = excluded."slot" RETURNING "id", "slot"`, arrival_del_sql: `DELETE FROM "cell" WHERE ("id", "slot") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "slot"`, boundary_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_cell" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."slot", t."_sign"`, rule_observers: ["carry/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

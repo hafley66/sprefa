@@ -37,6 +37,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -48,13 +49,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -66,7 +67,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -302,11 +308,11 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    holder: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "item") AS "item" FROM "holder"`, rel_columns.holder!, rel_column_types.holder!),
-    loc_elsewhere: select_rows(seam, `SELECT "id", CASE WHEN json_valid("note") AND json_type("note") = 'object' AND json_type("note", '$.fn') = 'text' AND json_type("note", '$.args') = 'array' THEN json_extract("note", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("note", '$.args')), '') || ')' ELSE "note" END AS "note" FROM "__txt_loc_elsewhere"`, rel_columns.loc_elsewhere!, rel_column_types.loc_elsewhere!),
-    loc_here: select_rows(seam, `SELECT "id", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "loc_here"`, rel_columns.loc_here!, rel_column_types.loc_here!),
-    loc_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_loc_tag"`, rel_columns.loc_tag!, rel_column_types.loc_tag!),
-    span: select_rows(seam, `SELECT "lo", "hi" FROM "span"`, rel_columns.span!, rel_column_types.span!),
+    holder: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."item") AS "item" FROM "holder" t`, rel_columns.holder!, rel_column_types.holder!),
+    loc_elsewhere: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."note") AND json_type(t."note") = 'object' AND json_type(t."note", '$.fn') = 'text' AND json_type(t."note", '$.args') = 'array' THEN json_extract(t."note", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."note", '$.args')), '') || ')' ELSE t."note" END AS "note" FROM "__txt_loc_elsewhere" t`, rel_columns.loc_elsewhere!, rel_column_types.loc_elsewhere!),
+    loc_here: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "loc_here" t`, rel_columns.loc_here!, rel_column_types.loc_here!),
+    loc_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_loc_tag" t`, rel_columns.loc_tag!, rel_column_types.loc_tag!),
+    span: select_rows(seam, `SELECT t."lo", t."hi" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
   });
 }
 
@@ -327,11 +333,11 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  holder: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "item") AS "item" FROM "holder"`,
-  loc_elsewhere: `SELECT "id", CASE WHEN json_valid("note") AND json_type("note") = 'object' AND json_type("note", '$.fn') = 'text' AND json_type("note", '$.args') = 'array' THEN json_extract("note", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("note", '$.args')), '') || ')' ELSE "note" END AS "note" FROM "__txt_loc_elsewhere"`,
-  loc_here: `SELECT "id", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "loc_here"`,
-  loc_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_loc_tag"`,
-  span: `SELECT "lo", "hi" FROM "span"`,
+  holder: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."item") AS "item" FROM "holder" t`,
+  loc_elsewhere: `SELECT t."id", CASE WHEN json_valid(t."note") AND json_type(t."note") = 'object' AND json_type(t."note", '$.fn') = 'text' AND json_type(t."note", '$.args') = 'array' THEN json_extract(t."note", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."note", '$.args')), '') || ')' ELSE t."note" END AS "note" FROM "__txt_loc_elsewhere" t`,
+  loc_here: `SELECT t."id", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "loc_here" t`,
+  loc_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_loc_tag" t`,
+  span: `SELECT t."lo", t."hi" FROM "span" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -364,11 +370,11 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "holder", kind: "set", table_name: "holder", delta_table_name: "__delta_holder", frontier_table_name: "__frontier_holder", next_frontier_table_name: "__next_frontier_holder", columns: ["item"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "holder" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: `DELETE FROM "holder" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "item") AS "item", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_holder" WHERE "_sign" IN (-1, 1) GROUP BY "item", "_sign"`, rule_observers: [] },
-  { rel: "loc_elsewhere", kind: "set", table_name: "loc_elsewhere", delta_table_name: "__delta_loc_elsewhere", frontier_table_name: "__frontier_loc_elsewhere", next_frontier_table_name: "__next_frontier_loc_elsewhere", columns: ["id", "note"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "loc_elsewhere" ("id", "note") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("note") DO UPDATE SET "id" = excluded."id" RETURNING "id", "note"`, arrival_del_sql: `DELETE FROM "loc_elsewhere" WHERE ("id", "note") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "note"`, boundary_sql: `SELECT "id", CASE WHEN json_valid("note") AND json_type("note") = 'object' AND json_type("note", '$.fn') = 'text' AND json_type("note", '$.args') = 'array' THEN json_extract("note", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("note", '$.args')), '') || ')' ELSE "note" END AS "note", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_loc_elsewhere" WHERE "_sign" IN (-1, 1) GROUP BY "id", "note", "_sign"`, rule_observers: ["loc_tag/2"] },
-  { rel: "loc_here", kind: "set", table_name: "loc_here", delta_table_name: "__delta_loc_here", frontier_table_name: "__frontier_loc_here", next_frontier_table_name: "__next_frontier_loc_here", columns: ["id", "at"], column_types: ["int", "ref"], key_indices: [1], arrival_add_sql: `INSERT INTO "loc_here" ("id", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("at") DO UPDATE SET "id" = excluded."id" RETURNING "id", "at"`, arrival_del_sql: `DELETE FROM "loc_here" WHERE ("id", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "at"`, boundary_sql: `SELECT "id", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_loc_here" WHERE "_sign" IN (-1, 1) GROUP BY "id", "at", "_sign"`, rule_observers: ["loc_tag/2"] },
-  { rel: "loc_tag", kind: "set", table_name: "loc_tag", delta_table_name: "__delta_loc_tag", frontier_table_name: "__frontier_loc_tag", next_frontier_table_name: "__next_frontier_loc_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_loc_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
-  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["lo", "hi"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("lo", "hi") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "lo", "hi"`, arrival_del_sql: `DELETE FROM "span" WHERE ("lo", "hi") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "lo", "hi"`, boundary_sql: `SELECT "lo", "hi", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "lo", "hi", "_sign"`, rule_observers: [] },
+  { rel: "holder", kind: "set", table_name: "holder", delta_table_name: "__delta_holder", frontier_table_name: "__frontier_holder", next_frontier_table_name: "__next_frontier_holder", columns: ["item"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "holder" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: `DELETE FROM "holder" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."item") AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_holder" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
+  { rel: "loc_elsewhere", kind: "set", table_name: "loc_elsewhere", delta_table_name: "__delta_loc_elsewhere", frontier_table_name: "__frontier_loc_elsewhere", next_frontier_table_name: "__next_frontier_loc_elsewhere", columns: ["id", "note"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "loc_elsewhere" ("id", "note") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("note") DO UPDATE SET "id" = excluded."id" RETURNING "id", "note"`, arrival_del_sql: `DELETE FROM "loc_elsewhere" WHERE ("id", "note") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "note"`, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."note") AND json_type(t."note") = 'object' AND json_type(t."note", '$.fn') = 'text' AND json_type(t."note", '$.args') = 'array' THEN json_extract(t."note", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."note", '$.args')), '') || ')' ELSE t."note" END AS "note", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_loc_elsewhere" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."note", t."_sign"`, rule_observers: ["loc_tag/2"] },
+  { rel: "loc_here", kind: "set", table_name: "loc_here", delta_table_name: "__delta_loc_here", frontier_table_name: "__frontier_loc_here", next_frontier_table_name: "__next_frontier_loc_here", columns: ["id", "at"], column_types: ["int", "ref"], key_indices: [1], arrival_add_sql: `INSERT INTO "loc_here" ("id", "at") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("at") DO UPDATE SET "id" = excluded."id" RETURNING "id", "at"`, arrival_del_sql: `DELETE FROM "loc_here" WHERE ("id", "at") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "at"`, boundary_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_loc_here" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."at", t."_sign"`, rule_observers: ["loc_tag/2"] },
+  { rel: "loc_tag", kind: "set", table_name: "loc_tag", delta_table_name: "__delta_loc_tag", frontier_table_name: "__frontier_loc_tag", next_frontier_table_name: "__next_frontier_loc_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_loc_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: [] },
+  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["lo", "hi"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("lo", "hi") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "lo", "hi"`, arrival_del_sql: `DELETE FROM "span" WHERE ("lo", "hi") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "lo", "hi"`, boundary_sql: `SELECT t."lo", t."hi", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" t WHERE t."_sign" IN (-1, 1) GROUP BY t."lo", t."hi", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

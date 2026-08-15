@@ -35,6 +35,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITickDeltas,
@@ -43,13 +44,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -61,7 +62,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -211,14 +217,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    harvest: select_rows(seam, `SELECT "tree_id", "picked" FROM "harvest"`, rel_columns.harvest!, rel_column_types.harvest!),
-    orchard__tree: select_rows(seam, `SELECT "tree_id", "picked" FROM "orchard__tree"`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
+    harvest: select_rows(seam, `SELECT t."tree_id", t."picked" FROM "harvest" t`, rel_columns.harvest!, rel_column_types.harvest!),
+    orchard__tree: select_rows(seam, `SELECT t."tree_id", t."picked" FROM "orchard__tree" t`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
   });
 }
 
 const final_select: Record<string, string> = {
-  harvest: `SELECT "tree_id", "picked" FROM "harvest"`,
-  orchard__tree: `SELECT "tree_id", "picked" FROM "orchard__tree"`,
+  harvest: `SELECT t."tree_id", t."picked" FROM "harvest" t`,
+  orchard__tree: `SELECT t."tree_id", t."picked" FROM "orchard__tree" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -248,8 +254,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "harvest", kind: "set", table_name: "harvest", delta_table_name: "__delta_harvest", frontier_table_name: "__frontier_harvest", next_frontier_table_name: "__next_frontier_harvest", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "harvest" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "harvest" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT "tree_id", "picked", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_harvest" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "picked", "_sign"`, rule_observers: ["orchard__tree/2"] },
-  { rel: "orchard__tree", kind: "set", table_name: "orchard__tree", delta_table_name: "__delta_orchard__tree", frontier_table_name: "__frontier_orchard__tree", next_frontier_table_name: "__next_frontier_orchard__tree", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", "picked", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__tree" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "picked", "_sign"`, rule_observers: [] },
+  { rel: "harvest", kind: "set", table_name: "harvest", delta_table_name: "__delta_harvest", frontier_table_name: "__frontier_harvest", next_frontier_table_name: "__next_frontier_harvest", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "harvest" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "harvest" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT t."tree_id", t."picked", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_harvest" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."picked", t."_sign"`, rule_observers: ["orchard__tree/2"] },
+  { rel: "orchard__tree", kind: "set", table_name: "orchard__tree", delta_table_name: "__delta_orchard__tree", frontier_table_name: "__frontier_orchard__tree", next_frontier_table_name: "__next_frontier_orchard__tree", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."picked", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__tree" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."picked", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

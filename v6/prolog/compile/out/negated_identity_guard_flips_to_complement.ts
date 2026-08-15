@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -235,8 +241,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    distinct: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right" FROM "__txt_distinct"`, rel_columns.distinct!, rel_column_types.distinct!),
-    pair: select_rows(seam, `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right" FROM "__txt_pair"`, rel_columns.pair!, rel_column_types.pair!),
+    distinct: select_rows(seam, `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right" FROM "__txt_distinct" t`, rel_columns.distinct!, rel_column_types.distinct!),
+    pair: select_rows(seam, `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right" FROM "__txt_pair" t`, rel_columns.pair!, rel_column_types.pair!),
   });
 }
 
@@ -254,8 +260,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  distinct: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right" FROM "__txt_distinct"`,
-  pair: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right" FROM "__txt_pair"`,
+  distinct: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right" FROM "__txt_distinct" t`,
+  pair: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right" FROM "__txt_pair" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -285,8 +291,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "distinct", kind: "set", table_name: "distinct", delta_table_name: "__delta_distinct", frontier_table_name: "__frontier_distinct", next_frontier_table_name: "__next_frontier_distinct", columns: ["left", "right"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_distinct" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "_sign"`, rule_observers: [] },
-  { rel: "pair", kind: "set", table_name: "pair", delta_table_name: "__delta_pair", frontier_table_name: "__frontier_pair", next_frontier_table_name: "__next_frontier_pair", columns: ["left", "right"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "pair" ("left", "right") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "right"`, arrival_del_sql: `DELETE FROM "pair" WHERE ("left", "right") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "right"`, boundary_sql: `SELECT CASE WHEN json_valid("left") AND json_type("left") = 'object' AND json_type("left", '$.fn') = 'text' AND json_type("left", '$.args') = 'array' THEN json_extract("left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("left", '$.args')), '') || ')' ELSE "left" END AS "left", CASE WHEN json_valid("right") AND json_type("right") = 'object' AND json_type("right", '$.fn') = 'text' AND json_type("right", '$.args') = 'array' THEN json_extract("right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("right", '$.args')), '') || ')' ELSE "right" END AS "right", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_pair" WHERE "_sign" IN (-1, 1) GROUP BY "left", "right", "_sign"`, rule_observers: ["distinct/2"] },
+  { rel: "distinct", kind: "set", table_name: "distinct", delta_table_name: "__delta_distinct", frontier_table_name: "__frontier_distinct", next_frontier_table_name: "__next_frontier_distinct", columns: ["left", "right"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_distinct" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."right", t."_sign"`, rule_observers: [] },
+  { rel: "pair", kind: "set", table_name: "pair", delta_table_name: "__delta_pair", frontier_table_name: "__frontier_pair", next_frontier_table_name: "__next_frontier_pair", columns: ["left", "right"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "pair" ("left", "right") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "right"`, arrival_del_sql: `DELETE FROM "pair" WHERE ("left", "right") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "right"`, boundary_sql: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_pair" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."right", t."_sign"`, rule_observers: ["distinct/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -46,13 +47,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -64,7 +65,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -249,16 +255,16 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    __gen__pair_int_8b7ec0fa0e1f9d69: select_rows(seam, `SELECT "first", "second" FROM "__gen__pair_int_8b7ec0fa0e1f9d69"`, rel_columns.__gen__pair_int_8b7ec0fa0e1f9d69!, rel_column_types.__gen__pair_int_8b7ec0fa0e1f9d69!),
-    carry: select_rows(seam, `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = "endpoints") AS "endpoints" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
-    edge: select_rows(seam, `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = "endpoints") AS "endpoints" FROM "edge"`, rel_columns.edge!, rel_column_types.edge!),
+    __gen__pair_int_8b7ec0fa0e1f9d69: select_rows(seam, `SELECT t."first", t."second" FROM "__gen__pair_int_8b7ec0fa0e1f9d69" t`, rel_columns.__gen__pair_int_8b7ec0fa0e1f9d69!, rel_column_types.__gen__pair_int_8b7ec0fa0e1f9d69!),
+    carry: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = t."endpoints") AS "endpoints" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
+    edge: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = t."endpoints") AS "endpoints" FROM "edge" t`, rel_columns.edge!, rel_column_types.edge!),
   });
 }
 
 const final_select: Record<string, string> = {
-  __gen__pair_int_8b7ec0fa0e1f9d69: `SELECT "first", "second" FROM "__gen__pair_int_8b7ec0fa0e1f9d69"`,
-  carry: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = "endpoints") AS "endpoints" FROM "carry"`,
-  edge: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = "endpoints") AS "endpoints" FROM "edge"`,
+  __gen__pair_int_8b7ec0fa0e1f9d69: `SELECT t."first", t."second" FROM "__gen__pair_int_8b7ec0fa0e1f9d69" t`,
+  carry: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = t."endpoints") AS "endpoints" FROM "carry" t`,
+  edge: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = t."endpoints") AS "endpoints" FROM "edge" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -289,9 +295,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "__gen__pair_int_8b7ec0fa0e1f9d69", kind: "set", table_name: "__gen__pair_int_8b7ec0fa0e1f9d69", delta_table_name: "__delta___gen__pair_int_8b7ec0fa0e1f9d69", frontier_table_name: "__frontier___gen__pair_int_8b7ec0fa0e1f9d69", next_frontier_table_name: "__next_frontier___gen__pair_int_8b7ec0fa0e1f9d69", columns: ["first", "second"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "__gen__pair_int_8b7ec0fa0e1f9d69" ("first", "second") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "first", "second"`, arrival_del_sql: `DELETE FROM "__gen__pair_int_8b7ec0fa0e1f9d69" WHERE ("first", "second") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "first", "second"`, boundary_sql: `SELECT "first", "second", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__pair_int_8b7ec0fa0e1f9d69" WHERE "_sign" IN (-1, 1) GROUP BY "first", "second", "_sign"`, rule_observers: [] },
-  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "endpoints"], column_types: ["int", "ref"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = "endpoints") AS "endpoints", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" WHERE "_sign" IN (-1, 1) GROUP BY "id", "endpoints", "_sign"`, rule_observers: [] },
-  { rel: "edge", kind: "set", table_name: "edge", delta_table_name: "__delta_edge", frontier_table_name: "__frontier_edge", next_frontier_table_name: "__next_frontier_edge", columns: ["id", "endpoints"], column_types: ["int", "ref"], key_indices: [0], arrival_add_sql: `INSERT INTO "edge" ("id", "endpoints") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "endpoints" = excluded."endpoints" RETURNING "id", "endpoints"`, arrival_del_sql: `DELETE FROM "edge" WHERE ("id", "endpoints") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "endpoints"`, boundary_sql: `SELECT "id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = "endpoints") AS "endpoints", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_edge" WHERE "_sign" IN (-1, 1) GROUP BY "id", "endpoints", "_sign"`, rule_observers: ["carry/2"] },
+  { rel: "__gen__pair_int_8b7ec0fa0e1f9d69", kind: "set", table_name: "__gen__pair_int_8b7ec0fa0e1f9d69", delta_table_name: "__delta___gen__pair_int_8b7ec0fa0e1f9d69", frontier_table_name: "__frontier___gen__pair_int_8b7ec0fa0e1f9d69", next_frontier_table_name: "__next_frontier___gen__pair_int_8b7ec0fa0e1f9d69", columns: ["first", "second"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "__gen__pair_int_8b7ec0fa0e1f9d69" ("first", "second") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "first", "second"`, arrival_del_sql: `DELETE FROM "__gen__pair_int_8b7ec0fa0e1f9d69" WHERE ("first", "second") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "first", "second"`, boundary_sql: `SELECT t."first", t."second", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__pair_int_8b7ec0fa0e1f9d69" t WHERE t."_sign" IN (-1, 1) GROUP BY t."first", t."second", t."_sign"`, rule_observers: [] },
+  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "endpoints"], column_types: ["int", "ref"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = t."endpoints") AS "endpoints", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."endpoints", t."_sign"`, rule_observers: [] },
+  { rel: "edge", kind: "set", table_name: "edge", delta_table_name: "__delta_edge", frontier_table_name: "__frontier_edge", next_frontier_table_name: "__next_frontier_edge", columns: ["id", "endpoints"], column_types: ["int", "ref"], key_indices: [0], arrival_add_sql: `INSERT INTO "edge" ("id", "endpoints") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO UPDATE SET "endpoints" = excluded."endpoints" RETURNING "id", "endpoints"`, arrival_del_sql: `DELETE FROM "edge" WHERE ("id", "endpoints") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "endpoints"`, boundary_sql: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__pair_int_8b7ec0fa0e1f9d69" d WHERE d."__id" = t."endpoints") AS "endpoints", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_edge" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."endpoints", t."_sign"`, rule_observers: ["carry/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

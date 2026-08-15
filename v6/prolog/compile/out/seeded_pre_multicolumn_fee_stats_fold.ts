@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -243,8 +249,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    fee: select_rows(seam, `SELECT CASE WHEN json_valid("account") AND json_type("account") = 'object' AND json_type("account", '$.fn') = 'text' AND json_type("account", '$.args') = 'array' THEN json_extract("account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("account", '$.args')), '') || ')' ELSE "account" END AS "account", "amount" FROM "__txt_fee"`, rel_columns.fee!, rel_column_types.fee!),
-    fee_stats: select_rows(seam, `SELECT CASE WHEN json_valid("account") AND json_type("account") = 'object' AND json_type("account", '$.fn') = 'text' AND json_type("account", '$.args') = 'array' THEN json_extract("account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("account", '$.args')), '') || ')' ELSE "account" END AS "account", "next" FROM "__txt_fee_stats"`, rel_columns.fee_stats!, rel_column_types.fee_stats!),
+    fee: select_rows(seam, `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount" FROM "__txt_fee" t`, rel_columns.fee!, rel_column_types.fee!),
+    fee_stats: select_rows(seam, `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."next" FROM "__txt_fee_stats" t`, rel_columns.fee_stats!, rel_column_types.fee_stats!),
   });
 }
 
@@ -262,8 +268,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  fee: `SELECT CASE WHEN json_valid("account") AND json_type("account") = 'object' AND json_type("account", '$.fn') = 'text' AND json_type("account", '$.args') = 'array' THEN json_extract("account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("account", '$.args')), '') || ')' ELSE "account" END AS "account", "amount" FROM "__txt_fee"`,
-  fee_stats: `SELECT CASE WHEN json_valid("account") AND json_type("account") = 'object' AND json_type("account", '$.fn') = 'text' AND json_type("account", '$.args') = 'array' THEN json_extract("account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("account", '$.args')), '') || ')' ELSE "account" END AS "account", "next" FROM "__txt_fee_stats"`,
+  fee: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount" FROM "__txt_fee" t`,
+  fee_stats: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."next" FROM "__txt_fee_stats" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -293,8 +299,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "fee", kind: "log", table_name: "fee", delta_table_name: "__delta_fee", frontier_table_name: "__frontier_fee", next_frontier_table_name: "__next_frontier_fee", columns: ["account", "amount"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "fee" ("account", "amount") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "account", "amount"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("account") AND json_type("account") = 'object' AND json_type("account", '$.fn') = 'text' AND json_type("account", '$.args') = 'array' THEN json_extract("account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("account", '$.args')), '') || ')' ELSE "account" END AS "account", "amount", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fee" WHERE "_sign" IN (-1, 1) GROUP BY "account", "amount", "_sign"`, rule_observers: ["fee_stats/2"] },
-  { rel: "fee_stats", kind: "set", table_name: "fee_stats", delta_table_name: "__delta_fee_stats", frontier_table_name: "__frontier_fee_stats", next_frontier_table_name: "__next_frontier_fee_stats", columns: ["account", "next"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("account") AND json_type("account") = 'object' AND json_type("account", '$.fn') = 'text' AND json_type("account", '$.args') = 'array' THEN json_extract("account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("account", '$.args')), '') || ')' ELSE "account" END AS "account", "next", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fee_stats" WHERE "_sign" IN (-1, 1) GROUP BY "account", "next", "_sign"`, rule_observers: [] },
+  { rel: "fee", kind: "log", table_name: "fee", delta_table_name: "__delta_fee", frontier_table_name: "__frontier_fee", next_frontier_table_name: "__next_frontier_fee", columns: ["account", "amount"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "fee" ("account", "amount") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "account", "amount"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."amount", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fee" t WHERE t."_sign" IN (-1, 1) GROUP BY t."account", t."amount", t."_sign"`, rule_observers: ["fee_stats/2"] },
+  { rel: "fee_stats", kind: "set", table_name: "fee_stats", delta_table_name: "__delta_fee_stats", frontier_table_name: "__frontier_fee_stats", next_frontier_table_name: "__next_frontier_fee_stats", columns: ["account", "next"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."account") AND json_type(t."account") = 'object' AND json_type(t."account", '$.fn') = 'text' AND json_type(t."account", '$.args') = 'array' THEN json_extract(t."account", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."account", '$.args')), '') || ')' ELSE t."account" END AS "account", t."next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fee_stats" t WHERE t."_sign" IN (-1, 1) GROUP BY t."account", t."next", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -37,6 +37,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -48,13 +49,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -66,7 +67,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -268,9 +274,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    current_body: select_rows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body" FROM "__txt_current_body"`, rel_columns.current_body!, rel_column_types.current_body!),
-    repo_body: select_rows(seam, `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' AND json_type("full_name", '$.fn') = 'text' AND json_type("full_name", '$.args') = 'array' THEN json_extract("full_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')), '') || ')' ELSE "full_name" END AS "full_name", "stargazers_count" FROM "__txt_repo_body"`, rel_columns.repo_body!, rel_column_types.repo_body!),
-    stars: select_rows(seam, `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", "n" FROM "__txt_stars"`, rel_columns.stars!, rel_column_types.stars!),
+    current_body: select_rows(seam, `SELECT CASE WHEN json_valid(t."ep") AND json_type(t."ep") = 'object' AND json_type(t."ep", '$.fn') = 'text' AND json_type(t."ep", '$.args') = 'array' THEN json_extract(t."ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ep", '$.args')), '') || ')' ELSE t."ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = t."body") AS "body" FROM "__txt_current_body" t`, rel_columns.current_body!, rel_column_types.current_body!),
+    repo_body: select_rows(seam, `SELECT CASE WHEN json_valid(t."full_name") AND json_type(t."full_name") = 'object' AND json_type(t."full_name", '$.fn') = 'text' AND json_type(t."full_name", '$.args') = 'array' THEN json_extract(t."full_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."full_name", '$.args')), '') || ')' ELSE t."full_name" END AS "full_name", t."stargazers_count" FROM "__txt_repo_body" t`, rel_columns.repo_body!, rel_column_types.repo_body!),
+    stars: select_rows(seam, `SELECT CASE WHEN json_valid(t."ep") AND json_type(t."ep") = 'object' AND json_type(t."ep", '$.fn') = 'text' AND json_type(t."ep", '$.args') = 'array' THEN json_extract(t."ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ep", '$.args')), '') || ')' ELSE t."ep" END AS "ep", t."n" FROM "__txt_stars" t`, rel_columns.stars!, rel_column_types.stars!),
   });
 }
 
@@ -289,9 +295,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  current_body: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body" FROM "__txt_current_body"`,
-  repo_body: `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' AND json_type("full_name", '$.fn') = 'text' AND json_type("full_name", '$.args') = 'array' THEN json_extract("full_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')), '') || ')' ELSE "full_name" END AS "full_name", "stargazers_count" FROM "__txt_repo_body"`,
-  stars: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", "n" FROM "__txt_stars"`,
+  current_body: `SELECT CASE WHEN json_valid(t."ep") AND json_type(t."ep") = 'object' AND json_type(t."ep", '$.fn') = 'text' AND json_type(t."ep", '$.args') = 'array' THEN json_extract(t."ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ep", '$.args')), '') || ')' ELSE t."ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = t."body") AS "body" FROM "__txt_current_body" t`,
+  repo_body: `SELECT CASE WHEN json_valid(t."full_name") AND json_type(t."full_name") = 'object' AND json_type(t."full_name", '$.fn') = 'text' AND json_type(t."full_name", '$.args') = 'array' THEN json_extract(t."full_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."full_name", '$.args')), '') || ')' ELSE t."full_name" END AS "full_name", t."stargazers_count" FROM "__txt_repo_body" t`,
+  stars: `SELECT CASE WHEN json_valid(t."ep") AND json_type(t."ep") = 'object' AND json_type(t."ep", '$.fn') = 'text' AND json_type(t."ep", '$.args') = 'array' THEN json_extract(t."ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ep", '$.args')), '') || ')' ELSE t."ep" END AS "ep", t."n" FROM "__txt_stars" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -322,9 +328,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "current_body", kind: "set", table_name: "current_body", delta_table_name: "__delta_current_body", frontier_table_name: "__frontier_current_body", next_frontier_table_name: "__next_frontier_current_body", columns: ["ep", "body"], column_types: ["text", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ep", "body"`, arrival_del_sql: `DELETE FROM "current_body" WHERE ("ep", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "ep", "body"`, boundary_sql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = "body") AS "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_current_body" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "body", "_sign"`, rule_observers: ["stars/2"] },
-  { rel: "repo_body", kind: "set", table_name: "repo_body", delta_table_name: "__delta_repo_body", frontier_table_name: "__frontier_repo_body", next_frontier_table_name: "__next_frontier_repo_body", columns: ["full_name", "stargazers_count"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "full_name", "stargazers_count"`, arrival_del_sql: `DELETE FROM "repo_body" WHERE ("full_name", "stargazers_count") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "full_name", "stargazers_count"`, boundary_sql: `SELECT CASE WHEN json_valid("full_name") AND json_type("full_name") = 'object' AND json_type("full_name", '$.fn') = 'text' AND json_type("full_name", '$.args') = 'array' THEN json_extract("full_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("full_name", '$.args')), '') || ')' ELSE "full_name" END AS "full_name", "stargazers_count", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_body" WHERE "_sign" IN (-1, 1) GROUP BY "full_name", "stargazers_count", "_sign"`, rule_observers: [] },
-  { rel: "stars", kind: "set", table_name: "stars", delta_table_name: "__delta_stars", frontier_table_name: "__frontier_stars", next_frontier_table_name: "__next_frontier_stars", columns: ["ep", "n"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("ep") AND json_type("ep") = 'object' AND json_type("ep", '$.fn') = 'text' AND json_type("ep", '$.args') = 'array' THEN json_extract("ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("ep", '$.args')), '') || ')' ELSE "ep" END AS "ep", "n", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stars" WHERE "_sign" IN (-1, 1) GROUP BY "ep", "n", "_sign"`, rule_observers: [] },
+  { rel: "current_body", kind: "set", table_name: "current_body", delta_table_name: "__delta_current_body", frontier_table_name: "__frontier_current_body", next_frontier_table_name: "__next_frontier_current_body", columns: ["ep", "body"], column_types: ["text", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "current_body" ("ep", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "ep", "body"`, arrival_del_sql: `DELETE FROM "current_body" WHERE ("ep", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "ep", "body"`, boundary_sql: `SELECT CASE WHEN json_valid(t."ep") AND json_type(t."ep") = 'object' AND json_type(t."ep", '$.fn') = 'text' AND json_type(t."ep", '$.args') = 'array' THEN json_extract(t."ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ep", '$.args')), '') || ')' ELSE t."ep" END AS "ep", (SELECT d."__rendered" FROM "__ref_repo_body" d WHERE d."__id" = t."body") AS "body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_current_body" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ep", t."body", t."_sign"`, rule_observers: ["stars/2"] },
+  { rel: "repo_body", kind: "set", table_name: "repo_body", delta_table_name: "__delta_repo_body", frontier_table_name: "__frontier_repo_body", next_frontier_table_name: "__next_frontier_repo_body", columns: ["full_name", "stargazers_count"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo_body" ("full_name", "stargazers_count") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "full_name", "stargazers_count"`, arrival_del_sql: `DELETE FROM "repo_body" WHERE ("full_name", "stargazers_count") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "full_name", "stargazers_count"`, boundary_sql: `SELECT CASE WHEN json_valid(t."full_name") AND json_type(t."full_name") = 'object' AND json_type(t."full_name", '$.fn') = 'text' AND json_type(t."full_name", '$.args') = 'array' THEN json_extract(t."full_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."full_name", '$.args')), '') || ')' ELSE t."full_name" END AS "full_name", t."stargazers_count", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_body" t WHERE t."_sign" IN (-1, 1) GROUP BY t."full_name", t."stargazers_count", t."_sign"`, rule_observers: [] },
+  { rel: "stars", kind: "set", table_name: "stars", delta_table_name: "__delta_stars", frontier_table_name: "__frontier_stars", next_frontier_table_name: "__next_frontier_stars", columns: ["ep", "n"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."ep") AND json_type(t."ep") = 'object' AND json_type(t."ep", '$.fn') = 'text' AND json_type(t."ep", '$.args') = 'array' THEN json_extract(t."ep", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ep", '$.args')), '') || ')' ELSE t."ep" END AS "ep", t."n", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stars" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ep", t."n", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

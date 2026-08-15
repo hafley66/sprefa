@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -247,8 +253,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    metric_doc: select_rows(seam, `SELECT CASE WHEN json_valid("session") AND json_type("session") = 'object' AND json_type("session", '$.fn') = 'text' AND json_type("session", '$.args') = 'array' THEN json_extract("session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session", '$.args')), '') || ')' ELSE "session" END AS "session", "snapshot" FROM "__txt_metric_doc"`, rel_columns.metric_doc!, rel_column_types.metric_doc!),
-    metric_sample: select_rows(seam, `SELECT CASE WHEN json_valid("session") AND json_type("session") = 'object' AND json_type("session", '$.fn') = 'text' AND json_type("session", '$.args') = 'array' THEN json_extract("session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session", '$.args')), '') || ')' ELSE "session" END AS "session", "patch" FROM "__txt_metric_sample"`, rel_columns.metric_sample!, rel_column_types.metric_sample!),
+    metric_doc: select_rows(seam, `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."snapshot" FROM "__txt_metric_doc" t`, rel_columns.metric_doc!, rel_column_types.metric_doc!),
+    metric_sample: select_rows(seam, `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch" FROM "__txt_metric_sample" t`, rel_columns.metric_sample!, rel_column_types.metric_sample!),
   });
 }
 
@@ -266,8 +272,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  metric_doc: `SELECT CASE WHEN json_valid("session") AND json_type("session") = 'object' AND json_type("session", '$.fn') = 'text' AND json_type("session", '$.args') = 'array' THEN json_extract("session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session", '$.args')), '') || ')' ELSE "session" END AS "session", "snapshot" FROM "__txt_metric_doc"`,
-  metric_sample: `SELECT CASE WHEN json_valid("session") AND json_type("session") = 'object' AND json_type("session", '$.fn') = 'text' AND json_type("session", '$.args') = 'array' THEN json_extract("session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session", '$.args')), '') || ')' ELSE "session" END AS "session", "patch" FROM "__txt_metric_sample"`,
+  metric_doc: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."snapshot" FROM "__txt_metric_doc" t`,
+  metric_sample: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch" FROM "__txt_metric_sample" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -297,8 +303,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "metric_doc", kind: "set", table_name: "metric_doc", delta_table_name: "__delta_metric_doc", frontier_table_name: "__frontier_metric_doc", next_frontier_table_name: "__next_frontier_metric_doc", columns: ["session", "snapshot"], column_types: ["text", "json"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session") AND json_type("session") = 'object' AND json_type("session", '$.fn') = 'text' AND json_type("session", '$.args') = 'array' THEN json_extract("session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session", '$.args')), '') || ')' ELSE "session" END AS "session", "snapshot", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_metric_doc" WHERE "_sign" IN (-1, 1) GROUP BY "session", "snapshot", "_sign"`, rule_observers: [] },
-  { rel: "metric_sample", kind: "log", table_name: "metric_sample", delta_table_name: "__delta_metric_sample", frontier_table_name: "__frontier_metric_sample", next_frontier_table_name: "__next_frontier_metric_sample", columns: ["session", "patch"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT INTO "metric_sample" ("session", "patch") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session", "patch"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("session") AND json_type("session") = 'object' AND json_type("session", '$.fn') = 'text' AND json_type("session", '$.args') = 'array' THEN json_extract("session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("session", '$.args')), '') || ')' ELSE "session" END AS "session", "patch", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_metric_sample" WHERE "_sign" IN (-1, 1) GROUP BY "session", "patch", "_sign"`, rule_observers: ["metric_doc/2"] },
+  { rel: "metric_doc", kind: "set", table_name: "metric_doc", delta_table_name: "__delta_metric_doc", frontier_table_name: "__frontier_metric_doc", next_frontier_table_name: "__next_frontier_metric_doc", columns: ["session", "snapshot"], column_types: ["text", "json"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."snapshot", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_metric_doc" t WHERE t."_sign" IN (-1, 1) GROUP BY t."session", t."snapshot", t."_sign"`, rule_observers: [] },
+  { rel: "metric_sample", kind: "log", table_name: "metric_sample", delta_table_name: "__delta_metric_sample", frontier_table_name: "__frontier_metric_sample", next_frontier_table_name: "__next_frontier_metric_sample", columns: ["session", "patch"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT INTO "metric_sample" ("session", "patch") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session", "patch"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."session") AND json_type(t."session") = 'object' AND json_type(t."session", '$.fn') = 'text' AND json_type(t."session", '$.args') = 'array' THEN json_extract(t."session", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session", '$.args')), '') || ')' ELSE t."session" END AS "session", t."patch", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_metric_sample" t WHERE t."_sign" IN (-1, 1) GROUP BY t."session", t."patch", t."_sign"`, rule_observers: ["metric_doc/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -220,8 +226,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    node: select_rows(seam, `SELECT "node_id", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_node"`, rel_columns.node!, rel_column_types.node!),
-    node__parent: select_rows(seam, `SELECT "node_id", "parent_node_id" FROM "node__parent"`, rel_columns.node__parent!, rel_column_types.node__parent!),
+    node: select_rows(seam, `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_node" t`, rel_columns.node!, rel_column_types.node!),
+    node__parent: select_rows(seam, `SELECT t."node_id", t."parent_node_id" FROM "node__parent" t`, rel_columns.node__parent!, rel_column_types.node__parent!),
   });
 }
 
@@ -239,8 +245,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  node: `SELECT "node_id", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name" FROM "__txt_node"`,
-  node__parent: `SELECT "node_id", "parent_node_id" FROM "node__parent"`,
+  node: `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_node" t`,
+  node__parent: `SELECT t."node_id", t."parent_node_id" FROM "node__parent" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -271,8 +277,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "node", kind: "set", table_name: "node", delta_table_name: "__delta_node", frontier_table_name: "__frontier_node", next_frontier_table_name: "__next_frontier_node", columns: ["node_id", "name"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "node" ("node_id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "name" = excluded."name" RETURNING "node_id", "name"`, arrival_del_sql: `DELETE FROM "node" WHERE ("node_id", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "name"`, boundary_sql: `SELECT "node_id", CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_node" WHERE "_sign" IN (-1, 1) GROUP BY "node_id", "name", "_sign"`, rule_observers: [] },
-  { rel: "node__parent", kind: "set", table_name: "node__parent", delta_table_name: "__delta_node__parent", frontier_table_name: "__frontier_node__parent", next_frontier_table_name: "__next_frontier_node__parent", columns: ["node_id", "parent_node_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "node__parent" ("node_id", "parent_node_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "parent_node_id" = excluded."parent_node_id" RETURNING "node_id", "parent_node_id"`, arrival_del_sql: `DELETE FROM "node__parent" WHERE ("node_id", "parent_node_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "parent_node_id"`, boundary_sql: `SELECT "node_id", "parent_node_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node__parent" WHERE "_sign" IN (-1, 1) GROUP BY "node_id", "parent_node_id", "_sign"`, rule_observers: [] },
+  { rel: "node", kind: "set", table_name: "node", delta_table_name: "__delta_node", frontier_table_name: "__frontier_node", next_frontier_table_name: "__next_frontier_node", columns: ["node_id", "name"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "node" ("node_id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "name" = excluded."name" RETURNING "node_id", "name"`, arrival_del_sql: `DELETE FROM "node" WHERE ("node_id", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "name"`, boundary_sql: `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_node" t WHERE t."_sign" IN (-1, 1) GROUP BY t."node_id", t."name", t."_sign"`, rule_observers: [] },
+  { rel: "node__parent", kind: "set", table_name: "node__parent", delta_table_name: "__delta_node__parent", frontier_table_name: "__frontier_node__parent", next_frontier_table_name: "__next_frontier_node__parent", columns: ["node_id", "parent_node_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: `INSERT INTO "node__parent" ("node_id", "parent_node_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "parent_node_id" = excluded."parent_node_id" RETURNING "node_id", "parent_node_id"`, arrival_del_sql: `DELETE FROM "node__parent" WHERE ("node_id", "parent_node_id") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "parent_node_id"`, boundary_sql: `SELECT t."node_id", t."parent_node_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_node__parent" t WHERE t."_sign" IN (-1, 1) GROUP BY t."node_id", t."parent_node_id", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -245,9 +251,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    payload_blob: select_rows(seam, `SELECT "id", "data" FROM "payload_blob"`, rel_columns.payload_blob!, rel_column_types.payload_blob!),
-    payload_none: select_rows(seam, `SELECT "id" FROM "payload_none"`, rel_columns.payload_none!, rel_column_types.payload_none!),
-    payload_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_payload_tag"`, rel_columns.payload_tag!, rel_column_types.payload_tag!),
+    payload_blob: select_rows(seam, `SELECT t."id", t."data" FROM "payload_blob" t`, rel_columns.payload_blob!, rel_column_types.payload_blob!),
+    payload_none: select_rows(seam, `SELECT t."id" FROM "payload_none" t`, rel_columns.payload_none!, rel_column_types.payload_none!),
+    payload_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_payload_tag" t`, rel_columns.payload_tag!, rel_column_types.payload_tag!),
   });
 }
 
@@ -266,9 +272,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  payload_blob: `SELECT "id", "data" FROM "payload_blob"`,
-  payload_none: `SELECT "id" FROM "payload_none"`,
-  payload_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_payload_tag"`,
+  payload_blob: `SELECT t."id", t."data" FROM "payload_blob" t`,
+  payload_none: `SELECT t."id" FROM "payload_none" t`,
+  payload_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_payload_tag" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -299,9 +305,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "payload_blob", kind: "set", table_name: "payload_blob", delta_table_name: "__delta_payload_blob", frontier_table_name: "__frontier_payload_blob", next_frontier_table_name: "__next_frontier_payload_blob", columns: ["id", "data"], column_types: ["int", "json"], key_indices: [1], arrival_add_sql: `INSERT INTO "payload_blob" ("id", "data") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("data") DO UPDATE SET "id" = excluded."id" RETURNING "id", "data"`, arrival_del_sql: `DELETE FROM "payload_blob" WHERE ("id", "data") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "data"`, boundary_sql: `SELECT "id", "data", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload_blob" WHERE "_sign" IN (-1, 1) GROUP BY "id", "data", "_sign"`, rule_observers: ["payload_tag/2"] },
-  { rel: "payload_none", kind: "set", table_name: "payload_none", delta_table_name: "__delta_payload_none", frontier_table_name: "__frontier_payload_none", next_frontier_table_name: "__next_frontier_payload_none", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "payload_none" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "payload_none" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT "id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload_none" WHERE "_sign" IN (-1, 1) GROUP BY "id", "_sign"`, rule_observers: ["payload_tag/2"] },
-  { rel: "payload_tag", kind: "set", table_name: "payload_tag", delta_table_name: "__delta_payload_tag", frontier_table_name: "__frontier_payload_tag", next_frontier_table_name: "__next_frontier_payload_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_payload_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
+  { rel: "payload_blob", kind: "set", table_name: "payload_blob", delta_table_name: "__delta_payload_blob", frontier_table_name: "__frontier_payload_blob", next_frontier_table_name: "__next_frontier_payload_blob", columns: ["id", "data"], column_types: ["int", "json"], key_indices: [1], arrival_add_sql: `INSERT INTO "payload_blob" ("id", "data") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("data") DO UPDATE SET "id" = excluded."id" RETURNING "id", "data"`, arrival_del_sql: `DELETE FROM "payload_blob" WHERE ("id", "data") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "data"`, boundary_sql: `SELECT t."id", t."data", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload_blob" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."data", t."_sign"`, rule_observers: ["payload_tag/2"] },
+  { rel: "payload_none", kind: "set", table_name: "payload_none", delta_table_name: "__delta_payload_none", frontier_table_name: "__frontier_payload_none", next_frontier_table_name: "__next_frontier_payload_none", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "payload_none" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "payload_none" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_payload_none" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: ["payload_tag/2"] },
+  { rel: "payload_tag", kind: "set", table_name: "payload_tag", delta_table_name: "__delta_payload_tag", frontier_table_name: "__frontier_payload_tag", next_frontier_table_name: "__next_frontier_payload_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_payload_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

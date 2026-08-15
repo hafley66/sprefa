@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -247,9 +253,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    shape_circle: select_rows(seam, `SELECT "id", "radius" FROM "shape_circle"`, rel_columns.shape_circle!, rel_column_types.shape_circle!),
-    shape_square: select_rows(seam, `SELECT "id", "side" FROM "shape_square"`, rel_columns.shape_square!, rel_column_types.shape_square!),
-    shape_tag: select_rows(seam, `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_shape_tag"`, rel_columns.shape_tag!, rel_column_types.shape_tag!),
+    shape_circle: select_rows(seam, `SELECT t."id", t."radius" FROM "shape_circle" t`, rel_columns.shape_circle!, rel_column_types.shape_circle!),
+    shape_square: select_rows(seam, `SELECT t."id", t."side" FROM "shape_square" t`, rel_columns.shape_square!, rel_column_types.shape_square!),
+    shape_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_shape_tag" t`, rel_columns.shape_tag!, rel_column_types.shape_tag!),
   });
 }
 
@@ -268,9 +274,9 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  shape_circle: `SELECT "id", "radius" FROM "shape_circle"`,
-  shape_square: `SELECT "id", "side" FROM "shape_square"`,
-  shape_tag: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag" FROM "__txt_shape_tag"`,
+  shape_circle: `SELECT t."id", t."radius" FROM "shape_circle" t`,
+  shape_square: `SELECT t."id", t."side" FROM "shape_square" t`,
+  shape_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_shape_tag" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -301,9 +307,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "shape_circle", kind: "set", table_name: "shape_circle", delta_table_name: "__delta_shape_circle", frontier_table_name: "__frontier_shape_circle", next_frontier_table_name: "__next_frontier_shape_circle", columns: ["id", "radius"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "shape_circle" ("id", "radius") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("radius") DO UPDATE SET "id" = excluded."id" RETURNING "id", "radius"`, arrival_del_sql: `DELETE FROM "shape_circle" WHERE ("id", "radius") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "radius"`, boundary_sql: `SELECT "id", "radius", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shape_circle" WHERE "_sign" IN (-1, 1) GROUP BY "id", "radius", "_sign"`, rule_observers: ["shape_tag/2"] },
-  { rel: "shape_square", kind: "set", table_name: "shape_square", delta_table_name: "__delta_shape_square", frontier_table_name: "__frontier_shape_square", next_frontier_table_name: "__next_frontier_shape_square", columns: ["id", "side"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "shape_square" ("id", "side") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("side") DO UPDATE SET "id" = excluded."id" RETURNING "id", "side"`, arrival_del_sql: `DELETE FROM "shape_square" WHERE ("id", "side") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "side"`, boundary_sql: `SELECT "id", "side", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shape_square" WHERE "_sign" IN (-1, 1) GROUP BY "id", "side", "_sign"`, rule_observers: ["shape_tag/2"] },
-  { rel: "shape_tag", kind: "set", table_name: "shape_tag", delta_table_name: "__delta_shape_tag", frontier_table_name: "__frontier_shape_tag", next_frontier_table_name: "__next_frontier_shape_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", CASE WHEN json_valid("tag") AND json_type("tag") = 'object' AND json_type("tag", '$.fn') = 'text' AND json_type("tag", '$.args') = 'array' THEN json_extract("tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("tag", '$.args')), '') || ')' ELSE "tag" END AS "tag", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_shape_tag" WHERE "_sign" IN (-1, 1) GROUP BY "id", "tag", "_sign"`, rule_observers: [] },
+  { rel: "shape_circle", kind: "set", table_name: "shape_circle", delta_table_name: "__delta_shape_circle", frontier_table_name: "__frontier_shape_circle", next_frontier_table_name: "__next_frontier_shape_circle", columns: ["id", "radius"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "shape_circle" ("id", "radius") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("radius") DO UPDATE SET "id" = excluded."id" RETURNING "id", "radius"`, arrival_del_sql: `DELETE FROM "shape_circle" WHERE ("id", "radius") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "radius"`, boundary_sql: `SELECT t."id", t."radius", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shape_circle" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."radius", t."_sign"`, rule_observers: ["shape_tag/2"] },
+  { rel: "shape_square", kind: "set", table_name: "shape_square", delta_table_name: "__delta_shape_square", frontier_table_name: "__frontier_shape_square", next_frontier_table_name: "__next_frontier_shape_square", columns: ["id", "side"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "shape_square" ("id", "side") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("side") DO UPDATE SET "id" = excluded."id" RETURNING "id", "side"`, arrival_del_sql: `DELETE FROM "shape_square" WHERE ("id", "side") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "side"`, boundary_sql: `SELECT t."id", t."side", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shape_square" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."side", t."_sign"`, rule_observers: ["shape_tag/2"] },
+  { rel: "shape_tag", kind: "set", table_name: "shape_tag", delta_table_name: "__delta_shape_tag", frontier_table_name: "__frontier_shape_tag", next_frontier_table_name: "__next_frontier_shape_tag", columns: ["id", "tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_shape_tag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."tag", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -1,0 +1,30 @@
+{
+  "$defs": {
+    "kept": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "mixed_pair": {
+      "additionalProperties":false,
+      "properties": {"first": {"$ref":"#/$defs/point_pair"},"label": {"type":"string"}},
+      "required": ["first", "label" ],
+      "type":"object"
+    },
+    "point_pair": {
+      "additionalProperties":false,
+      "properties": {"depth": {"type":"integer"},"first": {"type":"integer"}},
+      "required": ["first", "depth" ],
+      "type":"object"
+    },
+    "record": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"nested": {"$ref":"#/$defs/mixed_pair"}},
+      "required": ["id", "nested" ],
+      "type":"object"
+    }
+  },
+  "$id":"one_colliding_ref_column_beside_a_disjoint_sibling#ae0dae6582a4c1eb",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
