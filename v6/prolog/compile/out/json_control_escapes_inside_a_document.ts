@@ -207,14 +207,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    echoed: select_rows(seam, `SELECT "body" FROM "echoed" t`, rel_columns.echoed!, rel_column_types.echoed!),
-    raw_doc: select_rows(seam, `SELECT "body" FROM "raw_doc" t`, rel_columns.raw_doc!, rel_column_types.raw_doc!),
+    echoed: select_rows(seam, `SELECT t."body" FROM "echoed" t`, rel_columns.echoed!, rel_column_types.echoed!),
+    raw_doc: select_rows(seam, `SELECT t."body" FROM "raw_doc" t`, rel_columns.raw_doc!, rel_column_types.raw_doc!),
   });
 }
 
 const final_select: Record<string, string> = {
-  echoed: `SELECT "body" FROM "echoed" t`,
-  raw_doc: `SELECT "body" FROM "raw_doc" t`,
+  echoed: `SELECT t."body" FROM "echoed" t`,
+  raw_doc: `SELECT t."body" FROM "raw_doc" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -244,8 +244,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "echoed", kind: "set", table_name: "echoed", delta_table_name: "__delta_echoed", frontier_table_name: "__frontier_echoed", next_frontier_table_name: "__next_frontier_echoed", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_echoed" t WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: [] },
-  { rel: "raw_doc", kind: "set", table_name: "raw_doc", delta_table_name: "__delta_raw_doc", frontier_table_name: "__frontier_raw_doc", next_frontier_table_name: "__next_frontier_raw_doc", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT "body", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw_doc" t WHERE "_sign" IN (-1, 1) GROUP BY "body", "_sign"`, rule_observers: ["echoed/1"] },
+  { rel: "echoed", kind: "set", table_name: "echoed", delta_table_name: "__delta_echoed", frontier_table_name: "__frontier_echoed", next_frontier_table_name: "__next_frontier_echoed", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_echoed" t WHERE t."_sign" IN (-1, 1) GROUP BY t."body", t."_sign"`, rule_observers: [] },
+  { rel: "raw_doc", kind: "set", table_name: "raw_doc", delta_table_name: "__delta_raw_doc", frontier_table_name: "__frontier_raw_doc", next_frontier_table_name: "__next_frontier_raw_doc", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "raw_doc" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "raw_doc" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT t."body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_raw_doc" t WHERE t."_sign" IN (-1, 1) GROUP BY t."body", t."_sign"`, rule_observers: ["echoed/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -207,14 +207,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    matched: select_rows(seam, `SELECT "value" FROM "matched" t`, rel_columns.matched!, rel_column_types.matched!),
-    row: select_rows(seam, `SELECT "value" FROM "row" t`, rel_columns.row!, rel_column_types.row!),
+    matched: select_rows(seam, `SELECT t."value" FROM "matched" t`, rel_columns.matched!, rel_column_types.matched!),
+    row: select_rows(seam, `SELECT t."value" FROM "row" t`, rel_columns.row!, rel_column_types.row!),
   });
 }
 
 const final_select: Record<string, string> = {
-  matched: `SELECT "value" FROM "matched" t`,
-  row: `SELECT "value" FROM "row" t`,
+  matched: `SELECT t."value" FROM "matched" t`,
+  row: `SELECT t."value" FROM "row" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -244,8 +244,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "matched", kind: "set", table_name: "matched", delta_table_name: "__delta_matched", frontier_table_name: "__frontier_matched", next_frontier_table_name: "__next_frontier_matched", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_matched" t WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: [] },
-  { rel: "row", kind: "set", table_name: "row", delta_table_name: "__delta_row", frontier_table_name: "__frontier_row", next_frontier_table_name: "__next_frontier_row", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "row" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "row" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_row" t WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: ["matched/1"] },
+  { rel: "matched", kind: "set", table_name: "matched", delta_table_name: "__delta_matched", frontier_table_name: "__frontier_matched", next_frontier_table_name: "__next_frontier_matched", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_matched" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "row", kind: "set", table_name: "row", delta_table_name: "__delta_row", frontier_table_name: "__frontier_row", next_frontier_table_name: "__next_frontier_row", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "row" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "row" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_row" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: ["matched/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -1,1 +1,1 @@
-{"tick":1,"deltas":{"__gen__list_node_4205b0871c875897":{"add":[["[{\"children\":200,\"name\":\"leaf\"}]"]],"del":[]},"__gen__list_node_4205b0871c875897__member":{"add":[[100,0,{"children":200,"name":"leaf"}]],"del":[]},"node":{"add":[["leaf",200],["root",100]],"del":[]}}}
+{"tick":1,"deltas":{"__gen__list_node_4205b0871c875897":{"add":[["[{\"children\":200,\"name\":\"leaf\"}]"]],"del":[]},"__gen__list_node_4205b0871c875897__member":{"add":[[100,0,{"children":200,"name":"leaf"}]],"del":[]},"node":{"add":[["leaf",[]],["root",[{"children":200,"name":"leaf"}]]],"del":[]}}}

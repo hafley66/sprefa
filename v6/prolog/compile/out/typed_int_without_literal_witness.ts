@@ -182,12 +182,12 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    typed_input: select_rows(seam, `SELECT "value" FROM "typed_input" t`, rel_columns.typed_input!, rel_column_types.typed_input!),
+    typed_input: select_rows(seam, `SELECT t."value" FROM "typed_input" t`, rel_columns.typed_input!, rel_column_types.typed_input!),
   });
 }
 
 const final_select: Record<string, string> = {
-  typed_input: `SELECT "value" FROM "typed_input" t`,
+  typed_input: `SELECT t."value" FROM "typed_input" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -217,7 +217,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "typed_input", kind: "set", table_name: "typed_input", delta_table_name: "__delta_typed_input", frontier_table_name: "__frontier_typed_input", next_frontier_table_name: "__next_frontier_typed_input", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "typed_input" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "typed_input" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_typed_input" t WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: [] },
+  { rel: "typed_input", kind: "set", table_name: "typed_input", delta_table_name: "__delta_typed_input", frontier_table_name: "__frontier_typed_input", next_frontier_table_name: "__next_frontier_typed_input", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "typed_input" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "typed_input" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_typed_input" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -211,14 +211,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    harvest: select_rows(seam, `SELECT "tree_id", "picked" FROM "harvest" t`, rel_columns.harvest!, rel_column_types.harvest!),
-    orchard__tree: select_rows(seam, `SELECT "tree_id", "picked" FROM "orchard__tree" t`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
+    harvest: select_rows(seam, `SELECT t."tree_id", t."picked" FROM "harvest" t`, rel_columns.harvest!, rel_column_types.harvest!),
+    orchard__tree: select_rows(seam, `SELECT t."tree_id", t."picked" FROM "orchard__tree" t`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
   });
 }
 
 const final_select: Record<string, string> = {
-  harvest: `SELECT "tree_id", "picked" FROM "harvest" t`,
-  orchard__tree: `SELECT "tree_id", "picked" FROM "orchard__tree" t`,
+  harvest: `SELECT t."tree_id", t."picked" FROM "harvest" t`,
+  orchard__tree: `SELECT t."tree_id", t."picked" FROM "orchard__tree" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -248,8 +248,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "harvest", kind: "set", table_name: "harvest", delta_table_name: "__delta_harvest", frontier_table_name: "__frontier_harvest", next_frontier_table_name: "__next_frontier_harvest", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "harvest" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "harvest" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT "tree_id", "picked", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_harvest" t WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "picked", "_sign"`, rule_observers: ["orchard__tree/2"] },
-  { rel: "orchard__tree", kind: "set", table_name: "orchard__tree", delta_table_name: "__delta_orchard__tree", frontier_table_name: "__frontier_orchard__tree", next_frontier_table_name: "__next_frontier_orchard__tree", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", "picked", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__tree" t WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "picked", "_sign"`, rule_observers: [] },
+  { rel: "harvest", kind: "set", table_name: "harvest", delta_table_name: "__delta_harvest", frontier_table_name: "__frontier_harvest", next_frontier_table_name: "__next_frontier_harvest", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "harvest" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "harvest" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT t."tree_id", t."picked", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_harvest" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."picked", t."_sign"`, rule_observers: ["orchard__tree/2"] },
+  { rel: "orchard__tree", kind: "set", table_name: "orchard__tree", delta_table_name: "__delta_orchard__tree", frontier_table_name: "__frontier_orchard__tree", next_frontier_table_name: "__next_frontier_orchard__tree", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."picked", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__tree" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."picked", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

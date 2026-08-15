@@ -1,2 +1,2 @@
-{"tick":1,"deltas":{"carry":{"add":[[1,400]],"del":[]},"grid":{"add":[[1,400]],"del":[]}}}
-{"tick":2,"deltas":{"carry":{"add":[],"del":[[1,400]]},"grid":{"add":[],"del":[[1,400]]}}}
+{"tick":1,"deltas":{"carry":{"add":[[1,[]]],"del":[]},"grid":{"add":[[1,[]]],"del":[]}}}
+{"tick":2,"deltas":{"carry":{"add":[],"del":[[1,[]]]},"grid":{"add":[],"del":[[1,[]]]}}}

@@ -539,7 +539,7 @@ test(level_derived_trigger_reads_same_tick_frontier) :-
 test(canonical_column_expr_shape) :-
     canonical_column_expr(target, Expr),
     Expr ==
-      'CASE WHEN json_valid("target") AND json_type("target") = \'object\' AND json_type("target", \'$.fn\') = \'text\' AND json_type("target", \'$.args\') = \'array\' THEN json_extract("target", \'$.fn\') || \'(\' || coalesce((SELECT group_concat(value, \',\') FROM json_each("target", \'$.args\')), \'\') || \')\' ELSE "target" END AS "target"'.
+      'CASE WHEN json_valid(t."target") AND json_type(t."target") = \'object\' AND json_type(t."target", \'$.fn\') = \'text\' AND json_type(t."target", \'$.args\') = \'array\' THEN json_extract(t."target", \'$.fn\') || \'(\' || coalesce((SELECT group_concat(value, \',\') FROM json_each(t."target", \'$.args\')), \'\') || \')\' ELSE t."target" END AS "target"'.
 
 % FAIL-PRE-FIX (docs/failure-modes.md entry 52): the outer column was written
 % BARE here, so `d."__id" = "first"` bound `"first"` to the child `__ref_` view
@@ -562,8 +562,8 @@ test(switch_as_keyed_replace_delta_sql_open_scope) :-
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
     memberchk(deltastmt(open_scope/2, SelectSql, __delta_open_scope, BoundarySql, _), DeltaStatements),
     once(sub_atom(SelectSql, _, _, _, 'FROM "open_scope"')),
-    once(sub_atom(SelectSql, _, _, _, 'json_valid("target")')),
-    once(sub_atom(SelectSql, _, _, _, 'json_valid("session_id")')),
+    once(sub_atom(SelectSql, _, _, _, 'json_valid(t."target")')),
+    once(sub_atom(SelectSql, _, _, _, 'json_valid(t."session_id")')),
     once(sub_atom(SelectSql, _, _, _, 'AS "session_id"')),
     once(sub_atom(SelectSql, _, _, _, 'AS "target"')),
     once(sub_atom(BoundarySql, _, _, _, 'FROM "__delta_open_scope"')),
@@ -574,7 +574,7 @@ test(switch_as_keyed_replace_delta_sql_route_change_log) :-
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
     memberchk(deltastmt(route_change/2, SelectSql, __delta_route_change, _, _), DeltaStatements),
     once(sub_atom(SelectSql, _, _, _, 'FROM "route_change"')),
-    once(sub_atom(SelectSql, _, _, _, 'json_valid("route_id")')),
+    once(sub_atom(SelectSql, _, _, _, 'json_valid(t."route_id")')),
     once(sub_atom(SelectSql, _, _, _, 'AS "route_id"')).
 
 test(latest_edge_sample_reads_base_table_in_both_sql_families) :-
@@ -9022,11 +9022,11 @@ test(the_emitted_table_ddl_does_not_move) :-
     lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
     memberchk('CREATE TABLE "row_parts" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "parts" INTEGER NOT NULL, UNIQUE ("name"))', Ddl).
 
-% The boundary still prints the id in this slice; the elements arrive with the
-% read surface, and this pin is what makes that move visible.
-test(the_boundary_expression_is_still_the_bare_column) :-
+% The ELEMENTS are the boundary value, read off the joined `__list_` view;
+% the entity id stays in storage exactly as a ref column's "__id" does.
+test(the_boundary_expression_reads_the_list_view) :-
     lower:canonical_column_expr('parts', list(text), Expr),
-    Expr == '"parts"'.
+    Expr == 'coalesce("__l_parts"."value_text", ''[]'') AS "parts"'.
 
 :- end_tests(list_column_spelling).
 
@@ -9321,7 +9321,14 @@ test(oracle_mints_list_ids_in_content_sorted_order) :-
     Initial = [ fruit_text(alpha, 'z/y'), fruit_text(bravo, 'a/b'),
                 fruit_text(charlie, 'm/n') ],
     once(run_program(Prog, Initial, [], FinalAll, _)),
-    findall(Id-Name, member(fruit_parts(Name, Id), FinalAll), ByName),
-    msort(ByName, [1-bravo, 2-charlie, 3-alpha]).
+    % The id left the boundary with the read surface; the member rel is where
+    % it still shows, and element 0 names which content took which id.
+    findall(Id-First,
+            member('__gen__list_text_df210f232c1299bd__member'(Id, 0, First),
+                   FinalAll),
+            ByFirst),
+    msort(ByFirst, [1-a, 2-m, 3-z]),
+    findall(Name-Parts, member(fruit_parts(Name, Parts), FinalAll), ByName),
+    msort(ByName, [alpha-[z, y], bravo-[a, b], charlie-[m, n]]).
 
 :- end_tests(list_mint_order).

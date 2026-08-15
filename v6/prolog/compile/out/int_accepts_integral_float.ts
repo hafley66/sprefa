@@ -183,12 +183,12 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    measure: select_rows(seam, `SELECT "value" FROM "measure" t`, rel_columns.measure!, rel_column_types.measure!),
+    measure: select_rows(seam, `SELECT t."value" FROM "measure" t`, rel_columns.measure!, rel_column_types.measure!),
   });
 }
 
 const final_select: Record<string, string> = {
-  measure: `SELECT "value" FROM "measure" t`,
+  measure: `SELECT t."value" FROM "measure" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -218,7 +218,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "measure", kind: "set", table_name: "measure", delta_table_name: "__delta_measure", frontier_table_name: "__frontier_measure", next_frontier_table_name: "__next_frontier_measure", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "measure" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "measure" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_measure" t WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: [] },
+  { rel: "measure", kind: "set", table_name: "measure", delta_table_name: "__delta_measure", frontier_table_name: "__frontier_measure", next_frontier_table_name: "__next_frontier_measure", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "measure" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "measure" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_measure" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

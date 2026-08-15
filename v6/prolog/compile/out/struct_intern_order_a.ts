@@ -215,13 +215,13 @@ type Snapshot = {
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
     mark: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "mark" t`, rel_columns.mark!, rel_column_types.mark!),
-    span: select_rows(seam, `SELECT "start", "end" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
+    span: select_rows(seam, `SELECT t."start", t."end" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
   });
 }
 
 const final_select: Record<string, string> = {
   mark: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "mark" t`,
-  span: `SELECT "start", "end" FROM "span" t`,
+  span: `SELECT t."start", t."end" FROM "span" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -252,8 +252,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "mark", kind: "set", table_name: "mark", delta_table_name: "__delta_mark", frontier_table_name: "__frontier_mark", next_frontier_table_name: "__next_frontier_mark", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "mark" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "mark" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mark" t WHERE "_sign" IN (-1, 1) GROUP BY "at", "_sign"`, rule_observers: [] },
-  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" t WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, rule_observers: [] },
+  { rel: "mark", kind: "set", table_name: "mark", delta_table_name: "__delta_mark", frontier_table_name: "__frontier_mark", next_frontier_table_name: "__next_frontier_mark", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "mark" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "mark" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mark" t WHERE t."_sign" IN (-1, 1) GROUP BY t."at", t."_sign"`, rule_observers: [] },
+  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" t WHERE t."_sign" IN (-1, 1) GROUP BY t."start", t."end", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

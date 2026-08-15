@@ -221,14 +221,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    head: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head" t`, rel_columns.head!, rel_column_types.head!),
-    head_move: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head_move" t`, rel_columns.head_move!, rel_column_types.head_move!),
+    head: select_rows(seam, `SELECT t."repo_id", t."rev_id" FROM "head" t`, rel_columns.head!, rel_column_types.head!),
+    head_move: select_rows(seam, `SELECT t."repo_id", t."rev_id" FROM "head_move" t`, rel_columns.head_move!, rel_column_types.head_move!),
   });
 }
 
 const final_select: Record<string, string> = {
-  head: `SELECT "repo_id", "rev_id" FROM "head" t`,
-  head_move: `SELECT "repo_id", "rev_id" FROM "head_move" t`,
+  head: `SELECT t."repo_id", t."rev_id" FROM "head" t`,
+  head_move: `SELECT t."repo_id", t."rev_id" FROM "head_move" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -258,8 +258,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "head", kind: "set", table_name: "head", delta_table_name: "__delta_head", frontier_table_name: "__frontier_head", next_frontier_table_name: "__next_frontier_head", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" t WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, rule_observers: [] },
-  { rel: "head_move", kind: "log", table_name: "head_move", delta_table_name: "__delta_head_move", frontier_table_name: "__frontier_head_move", next_frontier_table_name: "__next_frontier_head_move", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrival_del_sql: null, boundary_sql: `SELECT "repo_id", "rev_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move" t WHERE "_sign" IN (-1, 1) GROUP BY "repo_id", "rev_id", "_sign"`, rule_observers: ["head/2"] },
+  { rel: "head", kind: "set", table_name: "head", delta_table_name: "__delta_head", frontier_table_name: "__frontier_head", next_frontier_table_name: "__next_frontier_head", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."repo_id", t."rev_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo_id", t."rev_id", t."_sign"`, rule_observers: [] },
+  { rel: "head_move", kind: "log", table_name: "head_move", delta_table_name: "__delta_head_move", frontier_table_name: "__frontier_head_move", next_frontier_table_name: "__next_frontier_head_move", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT INTO "head_move" ("repo_id", "rev_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo_id", "rev_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."repo_id", t."rev_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head_move" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo_id", t."rev_id", t."_sign"`, rule_observers: ["head/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

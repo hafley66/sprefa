@@ -207,14 +207,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    scaled: select_rows(seam, `SELECT "value" FROM "scaled" t`, rel_columns.scaled!, rel_column_types.scaled!),
-    source: select_rows(seam, `SELECT "count" FROM "source" t`, rel_columns.source!, rel_column_types.source!),
+    scaled: select_rows(seam, `SELECT t."value" FROM "scaled" t`, rel_columns.scaled!, rel_column_types.scaled!),
+    source: select_rows(seam, `SELECT t."count" FROM "source" t`, rel_columns.source!, rel_column_types.source!),
   });
 }
 
 const final_select: Record<string, string> = {
-  scaled: `SELECT "value" FROM "scaled" t`,
-  source: `SELECT "count" FROM "source" t`,
+  scaled: `SELECT t."value" FROM "scaled" t`,
+  source: `SELECT t."count" FROM "source" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -244,8 +244,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "scaled", kind: "set", table_name: "scaled", delta_table_name: "__delta_scaled", frontier_table_name: "__frontier_scaled", next_frontier_table_name: "__next_frontier_scaled", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_scaled" t WHERE "_sign" IN (-1, 1) GROUP BY "value", "_sign"`, rule_observers: [] },
-  { rel: "source", kind: "set", table_name: "source", delta_table_name: "__delta_source", frontier_table_name: "__frontier_source", next_frontier_table_name: "__next_frontier_source", columns: ["count"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source" ("count") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "count"`, arrival_del_sql: `DELETE FROM "source" WHERE ("count") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "count"`, boundary_sql: `SELECT "count", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" t WHERE "_sign" IN (-1, 1) GROUP BY "count", "_sign"`, rule_observers: ["scaled/1"] },
+  { rel: "scaled", kind: "set", table_name: "scaled", delta_table_name: "__delta_scaled", frontier_table_name: "__frontier_scaled", next_frontier_table_name: "__next_frontier_scaled", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_scaled" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "source", kind: "set", table_name: "source", delta_table_name: "__delta_source", frontier_table_name: "__frontier_source", next_frontier_table_name: "__next_frontier_source", columns: ["count"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source" ("count") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "count"`, arrival_del_sql: `DELETE FROM "source" WHERE ("count") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "count"`, boundary_sql: `SELECT t."count", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."count", t."_sign"`, rule_observers: ["scaled/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

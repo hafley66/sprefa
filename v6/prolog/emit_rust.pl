@@ -91,8 +91,8 @@ rel_column_types_of(Rel, Types) :-
 boundary_type_name(ref(_), ref) :- !.
 boundary_type_name(json, json) :- !.
 boundary_type_name(json_list(_), json) :- !.
-% The entity id is what crosses until the list read surface lands.
-boundary_type_name(list(_), int) :- !.
+% The read surface hands the boundary the array TEXT; the mirror of emit_ts.pl.
+boundary_type_name(list(_), json) :- !.
 boundary_type_name(T, T).
 
 boot_dict(bootstmt(Rel, Sql, Params), _{rel: Rel, sql: Sql, params: JsonParams}) :-

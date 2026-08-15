@@ -208,14 +208,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    copied: select_rows(seam, `SELECT "items" FROM "copied" t`, rel_columns.copied!, rel_column_types.copied!),
-    source: select_rows(seam, `SELECT "items" FROM "source" t`, rel_columns.source!, rel_column_types.source!),
+    copied: select_rows(seam, `SELECT t."items" FROM "copied" t`, rel_columns.copied!, rel_column_types.copied!),
+    source: select_rows(seam, `SELECT t."items" FROM "source" t`, rel_columns.source!, rel_column_types.source!),
   });
 }
 
 const final_select: Record<string, string> = {
-  copied: `SELECT "items" FROM "copied" t`,
-  source: `SELECT "items" FROM "source" t`,
+  copied: `SELECT t."items" FROM "copied" t`,
+  source: `SELECT t."items" FROM "source" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -245,8 +245,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "copied", kind: "set", table_name: "copied", delta_table_name: "__delta_copied", frontier_table_name: "__frontier_copied", next_frontier_table_name: "__next_frontier_copied", columns: ["items"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "items", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_copied" t WHERE "_sign" IN (-1, 1) GROUP BY "items", "_sign"`, rule_observers: [] },
-  { rel: "source", kind: "set", table_name: "source", delta_table_name: "__delta_source", frontier_table_name: "__frontier_source", next_frontier_table_name: "__next_frontier_source", columns: ["items"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source" ("items") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "items"`, arrival_del_sql: `DELETE FROM "source" WHERE ("items") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "items"`, boundary_sql: `SELECT "items", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" t WHERE "_sign" IN (-1, 1) GROUP BY "items", "_sign"`, rule_observers: ["copied/1"] },
+  { rel: "copied", kind: "set", table_name: "copied", delta_table_name: "__delta_copied", frontier_table_name: "__frontier_copied", next_frontier_table_name: "__next_frontier_copied", columns: ["items"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."items", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_copied" t WHERE t."_sign" IN (-1, 1) GROUP BY t."items", t."_sign"`, rule_observers: [] },
+  { rel: "source", kind: "set", table_name: "source", delta_table_name: "__delta_source", frontier_table_name: "__frontier_source", next_frontier_table_name: "__next_frontier_source", columns: ["items"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source" ("items") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "items"`, arrival_del_sql: `DELETE FROM "source" WHERE ("items") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "items"`, boundary_sql: `SELECT t."items", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source" t WHERE t."_sign" IN (-1, 1) GROUP BY t."items", t."_sign"`, rule_observers: ["copied/1"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

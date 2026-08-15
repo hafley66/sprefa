@@ -845,8 +845,9 @@ boundary_column_type(ref(_), ref) :- !.
 % default text does); the seam that switches on it is ticklog.ts's encoder.
 boundary_column_type(json, json) :- !.
 boundary_column_type(json_list(_), json) :- !.
-% The entity id is what crosses until the list read surface lands.
-boundary_column_type(list(_), int) :- !.
+% The read surface hands the boundary the array TEXT, so the tick-log encoder
+% treats it exactly as a json column: a json value at any top level.
+boundary_column_type(list(_), json) :- !.
 boundary_column_type(Type, Type).
 
 arrival_targets_lines(ArrivalTargets, Lines) :-

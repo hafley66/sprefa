@@ -212,14 +212,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    carry: select_rows(seam, `SELECT "id", "rows" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
-    grid: select_rows(seam, `SELECT "id", "rows" FROM "grid" t`, rel_columns.grid!, rel_column_types.grid!),
+    carry: select_rows(seam, `SELECT t."id", t."rows" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
+    grid: select_rows(seam, `SELECT t."id", t."rows" FROM "grid" t`, rel_columns.grid!, rel_column_types.grid!),
   });
 }
 
 const final_select: Record<string, string> = {
-  carry: `SELECT "id", "rows" FROM "carry" t`,
-  grid: `SELECT "id", "rows" FROM "grid" t`,
+  carry: `SELECT t."id", t."rows" FROM "carry" t`,
+  grid: `SELECT t."id", t."rows" FROM "grid" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -249,8 +249,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", "rows", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" t WHERE "_sign" IN (-1, 1) GROUP BY "id", "rows", "_sign"`, rule_observers: [] },
-  { rel: "grid", kind: "set", table_name: "grid", delta_table_name: "__delta_grid", frontier_table_name: "__frontier_grid", next_frontier_table_name: "__next_frontier_grid", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "grid" ("id", "rows") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "rows"`, arrival_del_sql: `DELETE FROM "grid" WHERE ("id", "rows") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "rows"`, boundary_sql: `SELECT "id", "rows", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grid" t WHERE "_sign" IN (-1, 1) GROUP BY "id", "rows", "_sign"`, rule_observers: ["carry/2"] },
+  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", t."rows", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rows", t."_sign"`, rule_observers: [] },
+  { rel: "grid", kind: "set", table_name: "grid", delta_table_name: "__delta_grid", frontier_table_name: "__frontier_grid", next_frontier_table_name: "__next_frontier_grid", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "grid" ("id", "rows") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "rows"`, arrival_del_sql: `DELETE FROM "grid" WHERE ("id", "rows") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "rows"`, boundary_sql: `SELECT t."id", t."rows", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_grid" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rows", t."_sign"`, rule_observers: ["carry/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

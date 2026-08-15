@@ -628,19 +628,30 @@ seed_store(prog(Decls, _), Initial, Store) :-
               ;  Entry = srow(Row) ) ),
             Store).
 
-run_ticks(_, state(_, Store, Level, _), [], [], _, FinalAll, []) :- !,
+run_ticks(prog(Decls, Rules), state(_, Store, Level, _), [], [], _, FinalAll, []) :- !,
     store_rows(Store, Rows),
-    append(Rows, Level, FinalAll0), msort(FinalAll0, FinalAll).
-run_ticks(Prog, State, Carry, [Arrivals | Schedule], Drains, FinalAll, [Deltas | More]) :- !,
+    append(Rows, Level, FinalAll0), msort(FinalAll0, FinalAll1),
+    list_boundary_rows(Decls, Rules, FinalAll1, FinalAll).
+run_ticks(Prog, State, Carry, [Arrivals | Schedule], Drains, FinalAll, [Rendered | More]) :- !,
     tick(Prog, State, Carry, Arrivals, NextState, NextCarry, Deltas),
+    tick_boundary_deltas(Prog, NextState, Deltas, Rendered),
     run_ticks(Prog, NextState, NextCarry, Schedule, Drains, FinalAll, More).
-run_ticks(Prog, State, Carry, [], Drains, FinalAll, [Deltas | More]) :-
+run_ticks(Prog, State, Carry, [], Drains, FinalAll, [Rendered | More]) :-
     Carry \== [],
     drain_cap(Cap),
     ( Drains >= Cap -> throw(drain_overflow(Cap)) ; true ),
     NextDrains is Drains + 1,
     tick(Prog, State, Carry, [], NextState, NextCarry, Deltas),
+    tick_boundary_deltas(Prog, NextState, Deltas, Rendered),
     run_ticks(Prog, NextState, NextCarry, [], NextDrains, FinalAll, More).
+
+% Post-tick rows, because the emitted door's boundary read runs after every
+% write of the tick and reads the member rel as it then stands.
+tick_boundary_deltas(prog(Decls, Rules), state(_, Store, Level, _), Deltas,
+                     Rendered) :-
+    store_rows(Store, Rows),
+    append(Rows, Level, Visible),
+    list_boundary_deltas(Decls, Rules, Visible, Deltas, Rendered).
 
 dedupe_keep_order([], []).
 dedupe_keep_order([Item | Rest], [Item | Out]) :-
