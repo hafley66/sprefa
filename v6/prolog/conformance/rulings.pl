@@ -758,3 +758,10 @@ ruling(enum_variant_rel_payload, variant_fields_can_ref_relations, user,
 % parameter parens; angle brackets stay out of the grammar entirely.
 ruling(template_bound_spelling, bound_in_parameter_parens, user,
        'user 2026-08-14: "parens all the way, i dont want antisymmetry" — rel pair(T: json_encodable)(first: T, second: T). over <T: ...> and where-clauses; parens are the one grouping symbol').
+
+% 2026-08-14: acyclic surface spelling. Wrapper composition (spelling A in
+% plans/2026-08-14-acyclic-spelling.PLAN.md), default-on: a column typed
+% option(<the declaring rel>) carries the arrival-time chain walk with no
+% syntax; acyclic(option(node)) is the explicit synonym for the same guard.
+ruling(acyclic_guard_spelling, wrapper_composition_default_on, user,
+       'user 2026-08-14: "A for now then". acyclic(option(node)) wrapper composition wins over a rel-level clause or a stdlib template; earlier in the same session "no, detect it" set divergence detection over any hang.').
