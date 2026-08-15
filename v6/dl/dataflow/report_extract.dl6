@@ -1,0 +1,510 @@
+# @comment-ok: the rail contract, the single doc site for what this report means.
+# report_extract.dl6 -- sprefa-extract reading its OWN Rust source, in process.
+#
+# THE LOOP, in one read:
+#
+#   want(glob)                         one /arrivals row names the corpus
+#     -> files(glob, path, digest)     SoopyFilesExecutor, linked, no git child
+#     -> source_file(path, digest)
+#     -> df_node_at / df_edge_at / call_node_at / type_node_at
+#                                      SprefaExtractExecutor, LINKED: the
+#                                      extractor runs inside the engine process
+#                                      and $DL_EXTRACT_BIN is never spawned.
+#                                      Four named projections, identical
+#                                      templates, so the applicative fold
+#                                      serves all four from ONE run per file
+#                                      (hosts.rs is_applicative). `cst` is
+#                                      deliberately absent from the family
+#                                      list: this report needs the callable
+#                                      and type entity planes, and the cst
+#                                      plane is ~6x the row volume.
+#     -> df_node / df_edge / proc_def / type_def
+#     -> df_reach + df_hop             the in-tick MUTUAL closure (PR #266).
+#                                      Neither head reads ITSELF, so
+#                                      lower.pl's direct-self-read test leaves
+#                                      both with ExpandPlan=none and the
+#                                      closure comes entirely from the outer
+#                                      rounds. This is the path/reach shape of
+#                                      conformance/fixtures/24_mutual_recursion.pl
+#                                      on real extracted edges.
+#     -> chain_level + chain_step      the second mutual pair, depth-capped
+#     -> node_owner_start              innermost owner = the containing
+#                                      callable with the greatest start, one
+#                                      max aggregate over the containment
+#                                      pairs rather than the
+#                                      not(smaller_owner(...)) anti-join
+#                                      flagship-flow.dl6 spells, which is a
+#                                      third join over the same pairs
+#     -> report_markdown(...)          markdown TEXT, assembled by group_concat
+#
+# Its rx lowering, per the "every snippet carries its lowering" law. Every
+# fan-out is one more mergeMap over rows; there is no nested subscription and
+# no per-file lifetime:
+#
+#   wantRows$.pipe(map(mintIdentityAndWitness), distinct(r => r.witnessDigest),
+#                  mergeMap(runLinkedFiles), mergeMap(commitEdbArrival))
+#
+#   sourceFile$.pipe(map(mintIdentityAndWitness), distinct(r => r.witnessDigest),
+#                    mergeMap(runLinkedExtract), mergeMap(commitEdbArrival))
+#
+#   dfEdge$.pipe(expand(row => joinAgainstReach(row)), distinct(rowKey))
+#                                                     // = df_reach / df_hop
+#
+#   sectionLine$.pipe(groupBy(row => row.sectionOrdinal),
+#                     mergeMap(g => g.pipe(toArray(),
+#                                          map(lines => lines.sort().join('\n')))))
+#                                                     // = the group_concat wraps
+#
+# dl6 WRITES NO FILE. fs effects are unbuilt, so `report_markdown` is queried
+# and redirected by the wrapper (v6/dl/dataflow/report-extract.sh).
+#
+# ASSEMBLY follows the Phase F rendered_type precedent: a *_line rel per table,
+# a group_concat wrap per table, one wrap rule per section. group_concat with
+# TWO arguments orders by the VALUE (lower.pl aggregate_select_expr), so a line
+# whose leading field is the sort key needs no ordinal column; the two ranked
+# tables carry an int ordinal and take the three-argument spelling.
+#
+# EVERY per-file count carries a ZERO ARM. An aggregate over an empty group
+# produces no row, and a file with no callables must still appear in the
+# inventory.
+#
+# THREE MEASURED LIMITS THIS RAIL DEGRADES AROUND rather than faking:
+#
+#   1  INTERPROCEDURAL FLOW IS UNBUILT. types.rs `DfEdgeKind` carries only
+#      `Direct`; the `Flow` union (arg->param, ret->call_res, higher-order) is
+#      commented out and marked PENDING. So every edge here is
+#      intra-procedural and no chain crosses a callable. Section 6 states that
+#      as a TODO row instead of inventing a cross-proc hop.
+#   2  DF NODE IDENTITY DOES NOT SURVIVE THE WIRE. rust.rs:2067 declares df
+#      node identity to be `(span.start, kind)` and pushes every node with
+#      `len: 0`; `FlatFact::Edge` carries only `from`/`to` spans, no kind.
+#      Section 5 counts the spans that carry more than one kind; those are the
+#      nodes a span-keyed consumer cannot tell apart.
+#   3  THE ALIASING MANUFACTURES CYCLES, so a depth ladder over df_edge does
+#      not terminate on its own. 8 is the cap and it is a LITERAL in the
+#      `chain_step` guard and nowhere else. A proc whose depth reads 8 is
+#      reporting SATURATION, not a measured longest chain. `cyclic_value`
+#      reports how many nodes reach themselves; set semantics make THAT
+#      terminate where the ladder would not.
+
+rel span(start: int, end: int).
+
+# `files` is one of the four ruled names the Rust live runner delegates to
+# SoopyFilesExecutor (hosts.rs executor_for_plan); the template never runs.
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
+
+sh df_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text) =
+  `"$DL_EXTRACT_BIN" --family type,call,df {path}`.
+sh df_edge_at(path: text, digest: text) -> (record: text, family: text, kind: text, from: span, to: span) =
+  `"$DL_EXTRACT_BIN" --family type,call,df {path}`.
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family type,call,df {path}`.
+sh type_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family type,call,df {path}`.
+
+rel want(glob: text).
+
+rel source_file(path: text, digest: text).
+source_file(Path, Digest) <- want(Glob), files(Glob, Path, Digest).
+
+# A JSONL line missing a declared column contributes no row, so `name: text`
+# is itself the filter that keeps anonymous callables out.
+rel df_node(path: text, node_start: int, node_end: int, node_kind: text).
+df_node(Path, NodeStart, NodeEnd, NodeKind) <-
+  source_file(Path, Digest),
+  df_node_at(Path, Digest, 'node', 'df', NodeAt, NodeKind),
+  decode(NodeAt, {start: NodeStart, end: NodeEnd}).
+
+rel df_edge(path: text, from_start: int, from_end: int, to_start: int, to_end: int).
+df_edge(Path, FromStart, FromEnd, ToStart, ToEnd) <-
+  source_file(Path, Digest),
+  df_edge_at(Path, Digest, 'edge', 'df', 'direct', FromAt, ToAt),
+  decode(FromAt, {start: FromStart, end: FromEnd}),
+  decode(ToAt, {start: ToStart, end: ToEnd}).
+
+rel proc_def(path: text, proc_start: int, proc_end: int, proc_name: text).
+proc_def(Path, ProcStart, ProcEnd, ProcName) <-
+  source_file(Path, Digest),
+  call_node_at(Path, Digest, 'node', 'call', ProcAt, _ProcKind, ProcName),
+  decode(ProcAt, {start: ProcStart, end: ProcEnd}).
+
+rel type_def(path: text, type_start: int, type_end: int, type_kind: text, type_name: text).
+type_def(Path, TypeStart, TypeEnd, TypeKind, TypeName) <-
+  source_file(Path, Digest),
+  type_node_at(Path, Digest, 'node', 'type', TypeAt, TypeKind, TypeName),
+  decode(TypeAt, {start: TypeStart, end: TypeEnd}).
+
+rel df_reach(path: text, from_start: int, from_end: int, to_start: int, to_end: int).
+rel df_hop(path: text, from_start: int, from_end: int, to_start: int, to_end: int).
+
+df_reach(Path, FromStart, FromEnd, ToStart, ToEnd) <-
+  df_edge(Path, FromStart, FromEnd, ToStart, ToEnd).
+df_reach(Path, FromStart, FromEnd, ToStart, ToEnd) <-
+  df_hop(Path, FromStart, FromEnd, ToStart, ToEnd).
+df_hop(Path, FromStart, FromEnd, ToStart, ToEnd) <-
+  df_reach(Path, FromStart, FromEnd, MiddleStart, MiddleEnd),
+  df_edge(Path, MiddleStart, MiddleEnd, ToStart, ToEnd).
+
+rel cyclic_value(path: text, node_start: int, node_end: int).
+cyclic_value(Path, NodeStart, NodeEnd) <-
+  df_reach(Path, NodeStart, NodeEnd, NodeStart, NodeEnd).
+
+rel df_target(path: text, node_start: int, node_end: int).
+df_target(Path, ToStart, ToEnd) <- df_edge(Path, _, _, ToStart, ToEnd).
+
+rel chain_root(path: text, node_start: int, node_end: int).
+chain_root(Path, NodeStart, NodeEnd) <-
+  df_node(Path, NodeStart, NodeEnd, _),
+  not(df_target(Path, NodeStart, NodeEnd)).
+
+rel chain_level(path: text, node_start: int, node_end: int, level: int).
+rel chain_step(path: text, node_start: int, node_end: int, level: int).
+
+chain_level(Path, NodeStart, NodeEnd, 0) <- chain_root(Path, NodeStart, NodeEnd).
+chain_level(Path, NodeStart, NodeEnd, Level) <-
+  chain_step(Path, NodeStart, NodeEnd, Level).
+chain_step(Path, ToStart, ToEnd, NextLevel) <-
+  chain_level(Path, FromStart, FromEnd, Level),
+  Level < 8,
+  df_edge(Path, FromStart, FromEnd, ToStart, ToEnd),
+  NextLevel := Level + 1.
+
+# An aggregate's group columns must be bound by EACH positive body atom's own
+# delta (lower.pl:4312), so every join under one feeds a materialized rel first.
+rel node_proc_candidate(path: text, node_start: int, node_end: int, proc_start: int).
+node_proc_candidate(Path, NodeStart, NodeEnd, ProcStart) <-
+  df_node(Path, NodeStart, NodeEnd, _),
+  proc_def(Path, ProcStart, ProcEnd, _),
+  NodeStart >= ProcStart,
+  NodeEnd =< ProcEnd.
+
+rel node_owner_start(path: text, node_start: int, node_end: int, proc_start: int).
+node_owner_start(Path, NodeStart, NodeEnd, max(ProcStart)) <-
+  node_proc_candidate(Path, NodeStart, NodeEnd, ProcStart).
+
+rel node_proc(path: text, node_start: int, node_end: int, proc_start: int, proc_name: text).
+node_proc(Path, NodeStart, NodeEnd, ProcStart, ProcName) <-
+  node_owner_start(Path, NodeStart, NodeEnd, ProcStart),
+  proc_def(Path, ProcStart, _, ProcName).
+
+rel proc_node_count(path: text, proc_start: int, nodes: int).
+proc_node_count(Path, ProcStart, count(NodeStart)) <-
+  node_proc(Path, NodeStart, _, ProcStart, _).
+
+# The target columns are what make a row an EDGE: dropping them would make this
+# rel a set of source nodes and the count below would report those instead.
+rel proc_edge(path: text, proc_start: int, from_start: int, from_end: int,
+              to_start: int, to_end: int).
+proc_edge(Path, ProcStart, FromStart, FromEnd, ToStart, ToEnd) <-
+  df_edge(Path, FromStart, FromEnd, ToStart, ToEnd),
+  node_proc(Path, FromStart, FromEnd, ProcStart, _).
+
+rel proc_edge_count(path: text, proc_start: int, edges: int).
+proc_edge_count(Path, ProcStart, count(FromStart)) <-
+  proc_edge(Path, ProcStart, FromStart, _, _, _).
+
+rel proc_node_level(path: text, proc_start: int, node_start: int, level: int).
+proc_node_level(Path, ProcStart, NodeStart, Level) <-
+  chain_level(Path, NodeStart, NodeEnd, Level),
+  node_proc(Path, NodeStart, NodeEnd, ProcStart, _).
+
+rel proc_depth(path: text, proc_start: int, depth: int).
+proc_depth(Path, ProcStart, max(Level)) <-
+  proc_node_level(Path, ProcStart, _, Level).
+
+# One rel cannot carry both an aggregate head and a plain head (lower.pl:3891),
+# so each zero arm is its own rel: `*_seen` counts, `*_none` supplies the zero.
+rel has_proc(path: text).
+has_proc(Path) <- proc_def(Path, _, _, _).
+rel file_proc_seen(path: text, procs: int).
+file_proc_seen(Path, count(ProcStart)) <- proc_def(Path, ProcStart, _, _).
+rel file_proc_none(path: text, procs: int).
+file_proc_none(Path, 0) <- source_file(Path, _), not(has_proc(Path)).
+rel file_proc_count(path: text, procs: int).
+file_proc_count(Path, Procs) <- file_proc_seen(Path, Procs).
+file_proc_count(Path, Procs) <- file_proc_none(Path, Procs).
+
+rel has_type(path: text).
+has_type(Path) <- type_def(Path, _, _, _, _).
+rel file_type_seen(path: text, types: int).
+file_type_seen(Path, count(TypeStart)) <- type_def(Path, TypeStart, _, _, _).
+rel file_type_none(path: text, types: int).
+file_type_none(Path, 0) <- source_file(Path, _), not(has_type(Path)).
+rel file_type_count(path: text, types: int).
+file_type_count(Path, Types) <- file_type_seen(Path, Types).
+file_type_count(Path, Types) <- file_type_none(Path, Types).
+
+rel has_df_node(path: text).
+has_df_node(Path) <- df_node(Path, _, _, _).
+rel file_node_seen(path: text, df_nodes: int).
+file_node_seen(Path, count(NodeStart)) <- df_node(Path, NodeStart, _, _).
+rel file_node_none(path: text, df_nodes: int).
+file_node_none(Path, 0) <- source_file(Path, _), not(has_df_node(Path)).
+rel file_node_count(path: text, df_nodes: int).
+file_node_count(Path, Nodes) <- file_node_seen(Path, Nodes).
+file_node_count(Path, Nodes) <- file_node_none(Path, Nodes).
+
+rel has_df_edge(path: text).
+has_df_edge(Path) <- df_edge(Path, _, _, _, _).
+rel file_edge_seen(path: text, df_edges: int).
+file_edge_seen(Path, count(FromStart)) <- df_edge(Path, FromStart, _, _, _).
+rel file_edge_none(path: text, df_edges: int).
+file_edge_none(Path, 0) <- source_file(Path, _), not(has_df_edge(Path)).
+rel file_edge_count(path: text, df_edges: int).
+file_edge_count(Path, Edges) <- file_edge_seen(Path, Edges).
+file_edge_count(Path, Edges) <- file_edge_none(Path, Edges).
+
+rel has_reach(path: text).
+has_reach(Path) <- df_reach(Path, _, _, _, _).
+rel file_reach_seen(path: text, reachable_pairs: int).
+file_reach_seen(Path, count(FromStart)) <- df_reach(Path, FromStart, _, _, _).
+rel file_reach_none(path: text, reachable_pairs: int).
+file_reach_none(Path, 0) <- source_file(Path, _), not(has_reach(Path)).
+rel file_reach_count(path: text, reachable_pairs: int).
+file_reach_count(Path, Pairs) <- file_reach_seen(Path, Pairs).
+file_reach_count(Path, Pairs) <- file_reach_none(Path, Pairs).
+
+rel has_cyclic(path: text).
+has_cyclic(Path) <- cyclic_value(Path, _, _).
+rel file_cyclic_seen(path: text, cyclic_nodes: int).
+file_cyclic_seen(Path, count(NodeStart)) <- cyclic_value(Path, NodeStart, _).
+rel file_cyclic_none(path: text, cyclic_nodes: int).
+file_cyclic_none(Path, 0) <- source_file(Path, _), not(has_cyclic(Path)).
+rel file_cyclic_count(path: text, cyclic_nodes: int).
+file_cyclic_count(Path, Cyclic) <- file_cyclic_seen(Path, Cyclic).
+file_cyclic_count(Path, Cyclic) <- file_cyclic_none(Path, Cyclic).
+
+# df_node is a SET, so two facts at one span survive only when their kinds
+# differ; counting kinds at a start counts exactly what an edge endpoint loses.
+rel span_kind_count(path: text, node_start: int, kinds: int).
+span_kind_count(Path, NodeStart, count(NodeKind)) <-
+  df_node(Path, NodeStart, _, NodeKind).
+
+rel aliased_span(path: text, node_start: int).
+aliased_span(Path, NodeStart) <- span_kind_count(Path, NodeStart, Kinds), Kinds > 1.
+
+rel has_aliased_span(path: text).
+has_aliased_span(Path) <- aliased_span(Path, _).
+rel file_aliased_seen(path: text, aliased_spans: int).
+file_aliased_seen(Path, count(NodeStart)) <- aliased_span(Path, NodeStart).
+rel file_aliased_none(path: text, aliased_spans: int).
+file_aliased_none(Path, 0) <- source_file(Path, _), not(has_aliased_span(Path)).
+rel file_aliased_count(path: text, aliased_spans: int).
+file_aliased_count(Path, Aliased) <- file_aliased_seen(Path, Aliased).
+file_aliased_count(Path, Aliased) <- file_aliased_none(Path, Aliased).
+
+rel file_distinct_span_seen(path: text, distinct_spans: int).
+file_distinct_span_seen(Path, count(NodeStart)) <- span_kind_count(Path, NodeStart, _).
+rel file_distinct_span_none(path: text, distinct_spans: int).
+file_distinct_span_none(Path, 0) <- source_file(Path, _), not(has_df_node(Path)).
+rel file_distinct_span_count(path: text, distinct_spans: int).
+file_distinct_span_count(Path, Spans) <- file_distinct_span_seen(Path, Spans).
+file_distinct_span_count(Path, Spans) <- file_distinct_span_none(Path, Spans).
+
+rel total_files(files: int).
+total_files(count(Path)) <- source_file(Path, _).
+rel total_procs(procs: int).
+total_procs(count(ProcStart)) <- proc_def(_, ProcStart, _, _).
+rel total_types(types: int).
+total_types(count(TypeStart)) <- type_def(_, TypeStart, _, _, _).
+rel total_df_nodes(df_nodes: int).
+total_df_nodes(count(NodeStart)) <- df_node(_, NodeStart, _, _).
+rel total_df_edges(df_edges: int).
+total_df_edges(count(FromStart)) <- df_edge(_, FromStart, _, _, _).
+rel total_reach(reachable_pairs: int).
+total_reach(count(FromStart)) <- df_reach(_, FromStart, _, _, _).
+rel total_cyclic(cyclic_nodes: int).
+total_cyclic(count(NodeStart)) <- cyclic_value(_, NodeStart, _).
+rel total_aliased(aliased_spans: int).
+total_aliased(count(NodeStart)) <- aliased_span(_, NodeStart).
+
+# Competition ranking: rank = how many procs are strictly wider, so a tie
+# shares one rank and a cut at `Rank < N` never drops half a tied group.
+rel wider_pair(path: text, proc_start: int, other_path: text, other_start: int).
+wider_pair(Path, ProcStart, OtherPath, OtherStart) <-
+  proc_node_count(Path, ProcStart, Nodes),
+  proc_node_count(OtherPath, OtherStart, OtherNodes),
+  OtherNodes > Nodes.
+
+rel wider_proc(path: text, proc_start: int).
+wider_proc(Path, ProcStart) <- wider_pair(Path, ProcStart, _, _).
+
+rel proc_rank_widest(path: text, proc_start: int, rank: int).
+proc_rank_widest(Path, ProcStart, 0) <-
+  proc_node_count(Path, ProcStart, _), not(wider_proc(Path, ProcStart)).
+rel proc_rank_below(path: text, proc_start: int, rank: int).
+proc_rank_below(Path, ProcStart, count(OtherStart)) <-
+  wider_pair(Path, ProcStart, _, OtherStart).
+rel proc_rank(path: text, proc_start: int, rank: int).
+proc_rank(Path, ProcStart, Rank) <- proc_rank_widest(Path, ProcStart, Rank).
+proc_rank(Path, ProcStart, Rank) <- proc_rank_below(Path, ProcStart, Rank).
+
+rel depth_histogram(depth: int, procs: int).
+depth_histogram(Depth, count(ProcStart)) <- proc_depth(_, ProcStart, Depth).
+
+rel file_line(line_text: text).
+file_line(LineText) <-
+  source_file(Path, _),
+  file_proc_count(Path, Procs),
+  file_type_count(Path, Types),
+  file_node_count(Path, Nodes),
+  file_edge_count(Path, Edges),
+  LineText := concat(['| `', Path, '` | ', Procs, ' | ', Types, ' | ', Nodes, ' | ', Edges, ' |']).
+
+rel file_table(body: text).
+file_table(group_concat(LineText, '\n')) <- file_line(LineText).
+
+rel reach_line(line_text: text).
+reach_line(LineText) <-
+  source_file(Path, _),
+  file_edge_count(Path, Edges),
+  file_reach_count(Path, Pairs),
+  file_cyclic_count(Path, Cyclic),
+  LineText := concat(['| `', Path, '` | ', Edges, ' | ', Pairs, ' | ', Cyclic, ' |']).
+
+rel reach_table(body: text).
+reach_table(group_concat(LineText, '\n')) <- reach_line(LineText).
+
+rel proc_line(rank: int, line_text: text).
+proc_line(Rank, LineText) <-
+  proc_rank(Path, ProcStart, Rank),
+  Rank < 25,
+  proc_node_count(Path, ProcStart, Nodes),
+  proc_edge_count(Path, ProcStart, Edges),
+  proc_depth(Path, ProcStart, Depth),
+  proc_def(Path, ProcStart, _, ProcName),
+  LineText := concat(['| `', Path, '` | `', ProcName, '` | ', Nodes, ' | ', Edges, ' | ', Depth, ' |']).
+
+rel proc_table(body: text).
+proc_table(group_concat(LineText, '\n', Rank)) <- proc_line(Rank, LineText).
+
+rel depth_line(depth: int, line_text: text).
+depth_line(Depth, LineText) <-
+  depth_histogram(Depth, Procs),
+  LineText := concat(['| ', Depth, ' | ', Procs, ' |']).
+
+rel depth_table(body: text).
+depth_table(group_concat(LineText, '\n', Depth)) <- depth_line(Depth, LineText).
+
+rel alias_line(line_text: text).
+alias_line(LineText) <-
+  source_file(Path, _),
+  file_node_count(Path, Nodes),
+  file_distinct_span_count(Path, DistinctSpans),
+  file_aliased_count(Path, Aliased),
+  LineText := concat(['| `', Path, '` | ', Nodes, ' | ', DistinctSpans, ' | ', Aliased, ' |']).
+
+rel alias_table(body: text).
+alias_table(group_concat(LineText, '\n')) <- alias_line(LineText).
+
+# `section_ordinal` is what the wrapper sorts on; `section_name` is the handle
+# a shell selection uses to name one section.
+rel report_markdown(section_ordinal: int, section_name: text, section_text: text).
+
+report_markdown(0, 'header', SectionText) <-
+  total_files(Files),
+  total_procs(Procs),
+  total_types(Types),
+  total_df_nodes(Nodes),
+  total_df_edges(Edges),
+  SectionText := concat([
+    '# sprefa-extract dataflow, extracted by sprefa-extract\n',
+    '\n',
+    'Generated by `v6/dl/dataflow/report_extract.dl6` on the Rust door.\n',
+    'The extractor ran LINKED, inside the engine process: the `sprefa_extract`\n',
+    'execution tag routes to `SprefaExtractExecutor`, so no `extract` child was\n',
+    'spawned and `$DL_EXTRACT_BIN` was never resolved.\n',
+    '\n',
+    '| corpus | value |\n',
+    '|---|--:|\n',
+    '| files | ', Files, ' |\n',
+    '| callable definitions | ', Procs, ' |\n',
+    '| type entities | ', Types, ' |\n',
+    '| df value nodes | ', Nodes, ' |\n',
+    '| df Direct edges | ', Edges, ' |\n']).
+
+report_markdown(1, 'inventory', SectionText) <-
+  file_table(Body),
+  SectionText := concat([
+    '## Corpus inventory\n',
+    '\n',
+    '| file | procs | types | df nodes | df edges |\n',
+    '|---|--:|--:|--:|--:|\n',
+    Body, '\n']).
+
+report_markdown(2, 'reachability', SectionText) <-
+  reach_table(Body),
+  total_reach(Pairs),
+  total_cyclic(Cyclic),
+  SectionText := concat([
+    '## Value-flow reachability\n',
+    '\n',
+    'Transitive closure over `df_edge`, computed by the mutual `df_reach` /\n',
+    '`df_hop` pair. Every edge is intra-procedural, so a component never\n',
+    'crosses a callable. `self-reaching` counts nodes with a path back to\n',
+    'themselves: ', Cyclic, ' of them over ', Pairs, ' reachable pairs.\n',
+    '\n',
+    '| file | df edges | reachable pairs | self-reaching nodes |\n',
+    '|---|--:|--:|--:|\n',
+    Body, '\n']).
+
+report_markdown(3, 'procs', SectionText) <-
+  proc_table(Body),
+  SectionText := concat([
+    '## Widest callables\n',
+    '\n',
+    'Ranked by df value nodes owned, competition ranking, cut at rank 25.\n',
+    'A callable owns a value node when it is the innermost callable whose span\n',
+    'contains it. `chain depth` is the capped ladder; see the next section.\n',
+    '\n',
+    '| file | callable | df nodes | df edges | chain depth |\n',
+    '|---|---|--:|--:|--:|\n',
+    Body, '\n']).
+
+report_markdown(4, 'depth', SectionText) <-
+  depth_table(Body),
+  SectionText := concat([
+    '## Chain-depth histogram\n',
+    '\n',
+    'The ladder stops at 8. A callable reporting depth 8 is SATURATED, not\n',
+    'measured: its value chain either is at least that long or runs through a\n',
+    'cycle. The cycles are an artifact, and the next section prices them.\n',
+    '\n',
+    '| chain depth | callables |\n',
+    '|--:|--:|\n',
+    Body, '\n']).
+
+report_markdown(5, 'span-identity', SectionText) <-
+  alias_table(Body),
+  total_aliased(Aliased),
+  SectionText := concat([
+    '## Span identity lost at the wire\n',
+    '\n',
+    '`src/lang/rust.rs:2067` states df node identity as `(span.start, kind)`\n',
+    'and pushes every df node with `len: 0`. `FlatFact::Edge` carries only\n',
+    '`from` and `to` spans, with no kind, so a consumer keyed on the span\n',
+    'cannot separate two nodes that share a start. `aliased spans` counts the\n',
+    'starts carrying more than one kind: ', Aliased, ' over the corpus.\n',
+    'Those are the merges that manufacture the cycles above. Filed as\n',
+    '`issues/df-span-identity-aliasing`.\n',
+    '\n',
+    '`df node rows` is the `df_node` REL, which is a set, so two facts that agree\n',
+    'on span and kind are already one row here.\n',
+    '\n',
+    '| file | df node rows | distinct spans | aliased spans |\n',
+    '|---|--:|--:|--:|\n',
+    Body, '\n']).
+
+report_markdown(6, 'todo', SectionText) <-
+  total_df_edges(Edges),
+  SectionText := concat([
+    '## Not built yet\n',
+    '\n',
+    '| construct | where | state |\n',
+    '|---|---|---|\n',
+    '| interprocedural value flow | `sprefa-extract/src/types.rs` `DfEdgeKind` | TODO. Only `Direct` exists; the `Flow` union (arg to param, ret to call_res, higher-order) is commented out and marked PENDING. All ', Edges, ' edges in this report are intra-procedural. |\n',
+    '| df node kind on an edge endpoint | `types.rs` `FlatFact::Edge` | TODO. Carries spans only, so `(span.start, kind)` identity does not survive the wire. Filed as `issues/df-span-identity-aliasing`. |\n',
+    '| a file written from dl6 | fs effects | TODO. This document is written by `v6/dl/dataflow/report-extract.sh`, which queries `report_markdown` in section order. |\n']).
+
+? report_markdown(section_ordinal, section_name, section_text).
