@@ -4,7 +4,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path};
 
-use crate::types::{Arrival, ArrivalSign, HostColumnPlan, HostPlanData, TickDeltas, Value};
+use crate::types::{
+    Arrival, ArrivalSign, BoundaryError, HostColumnPlan, HostPlanData, ScalarSeam, ScalarValue,
+    TickDeltas, Value,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostError {
@@ -347,19 +350,16 @@ fn escape_for_shell(value: &str, context: QuoteContext) -> String {
     }
 }
 
-pub fn shell_text(value: &Value) -> String {
+pub fn shell_text(value: &ScalarValue) -> String {
     match value {
-        Value::Text(text) => text.clone(),
-        Value::Integer(number) => number.to_string(),
-        Value::Real(number) => crate::ticklog::js_float_text(*number),
-        Value::Bool(flag) => if *flag { "true" } else { "false" }.to_string(),
-        // The write side carries the interned entity id; only the READ seam
-        // parses a list, so a List here means a plan wired the wrong column.
-        Value::List(_) => panic!("a list value reached a host template argument"),
+        ScalarValue::Text(text) => text.clone(),
+        ScalarValue::Integer(number) => number.to_string(),
+        ScalarValue::Real(number) => crate::ticklog::js_float_text(*number),
+        ScalarValue::Bool(flag) => if *flag { "true" } else { "false" }.to_string(),
     }
 }
 
-pub fn fill_template(template: &str, inputs: &BTreeMap<String, Value>) -> String {
+pub fn fill_template(template: &str, inputs: &BTreeMap<String, ScalarValue>) -> String {
     let mut context = QuoteContext::Bare;
     let mut filled = String::new();
     let characters: Vec<char> = template.chars().collect();
@@ -410,7 +410,7 @@ pub fn fill_template(template: &str, inputs: &BTreeMap<String, Value>) -> String
     filled
 }
 
-fn env_for_inputs(inputs: &BTreeMap<String, Value>) -> BTreeMap<String, String> {
+fn env_for_inputs(inputs: &BTreeMap<String, ScalarValue>) -> BTreeMap<String, String> {
     inputs
         .iter()
         .map(|(name, value)| (name.clone(), shell_text(value)))
@@ -622,7 +622,7 @@ pub fn decode_output(
 struct HostDemand<'p> {
     plan: &'p HostPlanData,
     witness_digest: String,
-    inputs: BTreeMap<String, Value>,
+    inputs: BTreeMap<String, ScalarValue>,
 }
 
 pub struct HostLiveRunner<'p> {
@@ -657,12 +657,18 @@ impl<'p> HostLiveRunner<'p> {
         !self.plans.is_empty()
     }
 
-    fn demand_of(&self, plan: &'p HostPlanData, row: &[Value]) -> HostDemand<'p> {
+    // The one place a demand row's values become template arguments, so the
+    // one place a list column wired into a host input is named.
+    fn demand_of(&self, plan: &'p HostPlanData, row: &[Value]) -> Result<HostDemand<'p>, HostError> {
         let columns = self
             .rel_columns
             .get(&plan.demand_rel)
             .map(|columns| columns.as_slice())
             .unwrap_or(&[]);
+        let named = |error: BoundaryError| HostError {
+            host: plan.name.clone(),
+            message: error.to_string(),
+        };
         let mut inputs = BTreeMap::new();
         for input in &plan.inputs {
             let value = columns
@@ -670,19 +676,25 @@ impl<'p> HostLiveRunner<'p> {
                 .position(|column| *column == input.name)
                 .and_then(|index| row.get(index).cloned())
                 .unwrap_or(Value::Text(String::new()));
-            inputs.insert(input.name.clone(), value);
+            let scalar = ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument)
+                .map_err(&named)?;
+            inputs.insert(input.name.clone(), scalar);
         }
-        let witness_digest = columns
+        let witness = columns
             .iter()
             .position(|column| column == "witness_digest")
-            .and_then(|index| row.get(index).cloned())
-            .map(|value| shell_text(&value))
-            .unwrap_or_default();
-        HostDemand {
+            .and_then(|index| row.get(index).cloned());
+        let witness_digest = match witness {
+            None => String::new(),
+            Some(value) => shell_text(
+                &ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument).map_err(&named)?,
+            ),
+        };
+        Ok(HostDemand {
             plan,
             witness_digest,
             inputs,
-        }
+        })
     }
 
     fn claim_once(&mut self, plan_name: &str, witness_digest: &str) -> bool {
@@ -715,7 +727,7 @@ impl<'p> HostLiveRunner<'p> {
                             return Value::Integer(ordinal as i64);
                         }
                         if let Some(input) = demand.inputs.get(column) {
-                            return input.clone();
+                            return Value::from(input.clone());
                         }
                         demand
                             .plan
@@ -744,7 +756,7 @@ impl<'p> HostLiveRunner<'p> {
                 continue;
             };
             for row in &delta.add {
-                demands.push(self.demand_of(plan, row));
+                demands.push(self.demand_of(plan, row)?);
             }
         }
         let claimed: Vec<HostDemand<'p>> = demands
