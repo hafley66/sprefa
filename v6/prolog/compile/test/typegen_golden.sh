@@ -31,7 +31,9 @@ PINNED=(
 
 # Constructs the current type-plane door mints for no fixture; rows checked in
 # at typegen_golden/<name>.type_rows.jsonl, one golden judged for both doors.
-SHAPES=()
+SHAPES=(
+  "shape_interface_declaration"
+)
 
 swipl_run() { # goal ; runs from v6/prolog so conformance/... paths resolve
   ( cd "$PROLOG_DIR" && swipl -q -l "$COMPILE_DIR/typegen_export.pl" -g "$1" -g halt 2>/dev/null )

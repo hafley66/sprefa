@@ -93,3 +93,10 @@ rendered_type(TypeName, 2, RelId, FileText) <-
   type_row(RelId, _, _, RelName, 'rel', _, _),
   TypeName := replace(initcap(RelName), '_', ''),
   FileText := concat(['export interface ', TypeName, ' {\n', Body, '\n}\n']).
+
+# An interface declaration names a capability and holds no columns, so its
+# whole text is the empty-brace pair on one line.
+rendered_type(TypeName, 0, InterfaceId, FileText) <-
+  type_row(InterfaceId, _, _, InterfaceName, 'interface', _, _),
+  TypeName := replace(initcap(InterfaceName), '_', ''),
+  FileText := concat(['export interface ', TypeName, ' {}\n']).

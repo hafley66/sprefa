@@ -1,0 +1,7 @@
+{"rel":"type_row","row": [1, 0, 0, "text", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [2, 0, 0, "int", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [6, 0, 0, "shape_interface_declaration", "module", 0, 6 ],"sign":"add"}
+{"rel":"type_row","row": [7, 0, 0, "json_encodable", "interface", 0, 6 ],"sign":"add"}
+{"rel":"type_row","row": [8, 6, 0, "payload", "rel", 0, 6 ],"sign":"add"}
+{"rel":"type_row","row": [9, 8, 1, "id", "column", 2, 6 ],"sign":"add"}
+{"rel":"type_row","row": [10, 8, 2, "label", "column", 1, 6 ],"sign":"add"}
