@@ -236,6 +236,7 @@ module_path_in_head_resolves_and_contributes	clean	byte-clean
 module_path_local_name_binds_before_the_dotted_one	clean	byte-clean
 module_path_off_the_decl_tree_refuses	unsupported	unresolvable_path([orchard,north,tree])
 module_path_three_segments_resolve_through_the_rooms	clean	byte-clean
+mutual_closure_needs_outer_rounds	clean	byte-clean
 mutual_recursion_matches_oracle	clean	byte-clean
 native_ts_query_term	clean	byte-clean
 negated_identity_guard_flips_to_complement	clean	byte-clean
@@ -418,6 +419,7 @@ two_pins_dedup_to_one_demand_row	clean	byte-clean
 two_producers_share_one_interned_list_id	clean	byte-clean
 typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))
 typed_int_without_literal_witness	clean	byte-clean
+typegen_list_element_ladder	clean	byte-clean
 unknown_bound_interface_is_named	unsupported	interface_unknown(missing_capability)
 unmarked_chain_replays_to_late_subscriber	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 unmarked_edge_replays_backlog	clean	byte-clean

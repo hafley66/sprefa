@@ -240,6 +240,48 @@ test(self_recursive_level_rule_remains_in_p2_order) :-
     Rules = [(path(X, Y) <- path(X, Z), edge(Z, Y))],
     once(strat:sql_rule_order(Rules, Rules)).
 
+% FAIL-FIRST (pre-fix, this tree): mutual_closure_needs_outer_rounds replayed
+% WRONG on the ts door at tick 1, path 3 rows of 6 and reach 2 of 3, because
+% a cyclic group got no group id and its statements ran once.
+test(mutual_cycle_heads_carry_a_group_id) :-
+    Rules = [ (path(FromNode, ToNode) <- edge(FromNode, ToNode)),
+              (path(FromA, ToA) <- reach(FromA, ToA)),
+              (reach(FromB, ToB) <- (path(FromB, Middle), edge(Middle, ToB))) ],
+    strat:cyclic_head_groups(Rules, Groups),
+    Groups == [path/2-0, reach/2-0].
+
+% The expand wavefront closes a DIRECT self-read inside one statement, so the
+% outer-round loop must not also claim it.
+test(direct_self_recursion_is_not_a_cycle_group) :-
+    Rules = [ (path(FromNode, ToNode) <- edge(FromNode, ToNode)),
+              (path(FromA, ToA) <- (path(FromA, Middle), edge(Middle, ToA))) ],
+    strat:cyclic_head_groups(Rules, []).
+
+% THE COUNT RECEIPT for the outer-round loop: an acyclic program names ZERO
+% recursion groups, which is what makes every one of its statements run once.
+test(acyclic_program_names_no_cycle_group) :-
+    Rules = [ (b(Value) <- a(Value)),
+              (c(Other) <- b(Other)),
+              (d(Third) <- (b(Third), c(Third))) ],
+    strat:cyclic_head_groups(Rules, []).
+
+% FAIL-FIRST (pre-fix): typegen_list_element_ladder crashed the emitted module
+% with `table "__support_next_list_type" already exists`. The Kahn fallback was
+% program order, which split list_type's two clauses around element_type, and
+% level_statement_groups/4 folds only ADJACENT same-head rules.
+test(cyclic_group_keeps_one_head_s_clauses_adjacent) :-
+    Rules = [ (list_type(RootId, 0) <- root_type(RootId)),
+              (element_type(ElementId, NextLevel) <-
+                 (list_type(ListId, ListLevel), list_of(ListId, ElementId),
+                  NextLevel := ListLevel + 1)),
+              (list_type(TypeId, Level) <-
+                 (element_type(TypeId, Level), list_of(TypeId, _Any))) ],
+    strat:sql_rule_order(Rules, Ordered),
+    findall(Name,
+            ( member(Head <- _, Ordered), functor(Head, Name, _) ),
+            HeadNames),
+    HeadNames == [list_type, list_type, element_type].
+
 :- end_tests(stratum_order).
 
 :- begin_tests(column_naming).

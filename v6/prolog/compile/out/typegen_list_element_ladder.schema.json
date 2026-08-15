@@ -1,0 +1,33 @@
+{
+  "$defs": {
+    "element_type": {
+      "additionalProperties":false,
+      "properties": {"level": {"type":"integer"},"type_id": {"type":"integer"}},
+      "required": ["type_id", "level" ],
+      "type":"object"
+    },
+    "list_of": {
+      "additionalProperties":false,
+      "properties": {
+        "element_type_id": {"type":"integer"},
+        "list_type_id": {"type":"integer"}
+      },
+      "required": ["list_type_id", "element_type_id" ],
+      "type":"object"
+    },
+    "list_type": {
+      "additionalProperties":false,
+      "properties": {"level": {"type":"integer"},"type_id": {"type":"integer"}},
+      "required": ["type_id", "level" ],
+      "type":"object"
+    },
+    "root_type": {
+      "additionalProperties":false,
+      "properties": {"type_id": {"type":"integer"}},
+      "required": ["type_id" ],
+      "type":"object"
+    }
+  },
+  "$id":"typegen_list_element_ladder#ddc2536bd1e9d47f",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -538,6 +538,54 @@ function sequence_work<Item>(
   );
 }
 
+/** Maximal runs of consecutive statements sharing one `recursion_group.group`.
+ *  A statement off any cycle is its own run and pays exactly one pass. */
+function level_statement_runs(
+  statements: readonly IIncrementalLevelStatement[],
+): readonly (readonly IIncrementalLevelStatement[])[] {
+  const runs: IIncrementalLevelStatement[][] = [];
+  let current_group: number | null = null;
+  for (const statement of statements) {
+    const group = statement.recursion_group?.group ?? null;
+    if (group !== null && group === current_group) {
+      runs[runs.length - 1]!.push(statement);
+      continue;
+    }
+    runs.push([statement]);
+    current_group = group;
+  }
+  return runs;
+}
+
+/** OUTER ROUNDS: a mutual cycle has no statement order that reaches the least
+ *  fixpoint in one pass, so the group's pass repeats until no row moves. */
+function sequence_level_rounds(
+  statements: readonly IIncrementalLevelStatement[],
+  run: (statement: IIncrementalLevelStatement) => Observable<number>,
+): Observable<void> {
+  return sequence_work(level_statement_runs(statements), (group_statements) => {
+    const one_pass = (): Observable<number> =>
+      group_statements.reduce(
+        (work, statement) =>
+          work.pipe(concatMap((moved) => run(statement).pipe(map((rows) => moved + rows)))),
+        of(0) as Observable<number>,
+      );
+    const plan = group_statements[0]!.recursion_group ?? null;
+    if (plan === null) return one_pass().pipe(map(() => undefined));
+    return one_pass().pipe(
+      expand((moved, index) => {
+        if (moved === 0) return EMPTY;
+        if (index + 1 >= plan.round_cap) {
+          throw new Error(`diverging_measure_recursion(${plan.heads}, ${plan.round_cap})`);
+        }
+        return one_pass();
+      }),
+      last(),
+      map(() => undefined),
+    );
+  });
+}
+
 /** The wavefront driver both recursive walks share. A growing measure never
  *  derives nothing, so the round index is the only thing that can stop it. */
 function bounded_wave(
@@ -576,7 +624,7 @@ function reconcile_ref_count_statement(
     readonly table_name: (relation: IIncrementalRelationPlan) => string;
     readonly phase: number;
   }[],
-): Observable<void> {
+): Observable<number> {
   if (statement.support_sql === null) {
     throw new Error(
       `incremental level statement has neither support_sql nor aggregate_sql: ${statement.head_rel}`,
@@ -602,7 +650,11 @@ function reconcile_ref_count_statement(
   // `__new_` is the table the dropped copies read, so its row count is the
   // carry the dropped `__next_frontier_` rows would have signalled.
   const carries_next = skipped && stages_next_frontier(relation, frontier_copies);
+  // The resolved value: what `sequenceLevelRounds` reads to know the group
+  // stopped growing.
+  let moved = 0;
   const note_fill = (rows: number): void => {
+    moved += rows;
     if (carries_next && rows > 0) skipped_carry.add(seam);
   };
   const to_statements = (texts: readonly string[]): SqlStatement[] =>
@@ -611,6 +663,9 @@ function reconcile_ref_count_statement(
     ? [update!, collect_zero!, clear_new!, fill_new!]
     : [update!, stage_retract!, collect_zero!, clear_new!, fill_new!, stage_add!];
   const fill_new_index = tail_texts.length - (skipped ? 1 : 2);
+  // A round that only RETRACTS still has to run again, or the peers of a
+  // mutual cycle keep the rows this one just took the support out from under.
+  const collect_zero_index = skipped ? 1 : 2;
   const tail: SqlStatement[] = [
     ...to_statements(tail_texts),
     ...frontier_stages,
@@ -620,9 +675,13 @@ function reconcile_ref_count_statement(
   const support_interns = statement.support_intern_sql ?? [];
   const recompute = (): Observable<void> => {
     if (expand_plan === null) {
+      const offset = 2 + support_interns.length;
       return seam.runner
         .batch(seam.db, [...to_statements([clear!, ...support_interns, seed!]), ...tail])
-        .pipe(map((results) => note_fill(results[fill_new_index + 2 + support_interns.length]!.rowsAffected)));
+        .pipe(map((results) => {
+          note_fill(results[fill_new_index + offset]!.rowsAffected);
+          moved += results[collect_zero_index + offset]!.rowsAffected;
+        }));
     }
     // rx expand over the wavefront pair: hop fills the idle wave from the busy
     // one, absorb folds it into the refCount table, roles swap until a hop is 0.
@@ -647,11 +706,14 @@ function reconcile_ref_count_statement(
     return seam.runner.batch(seam.db, seed_wave).pipe(
       concatMap(() => bounded_wave(statement.head_rel, expand_plan.round_cap, round)),
       concatMap(() => seam.runner.batch(seam.db, tail)),
-      map((results) => note_fill(results[fill_new_index]!.rowsAffected)),
+      map((results) => {
+        note_fill(results[fill_new_index]!.rowsAffected);
+        moved += results[collect_zero_index]!.rowsAffected;
+      }),
     );
   };
   const dred_plan = statement.dred_sql ?? null;
-  if (dred_plan === null) return recompute();
+  if (dred_plan === null) return recompute().pipe(map(() => moved));
   // lower.pl:4450 mints both plans on the one recursive branch, so a dred plan
   // without the expand plan's cap is an emitter defect, never a runtime shape.
   if (expand_plan === null) {
@@ -675,7 +737,7 @@ function reconcile_ref_count_statement(
       round_cap: expand_plan.round_cap,
     },
     recompute,
-  );
+  ).pipe(map(() => moved));
 }
 
 /**
@@ -1136,7 +1198,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     const feeds_another_round = recursive_heads(statements, relations);
     const closes_in_one_pass = (statement: IIncrementalLevelStatement): boolean =>
       feeds_another_round.has(statement.head_rel) && statement.support_sql !== null;
-    return sequence_work(statements, (statement) =>
+    return sequence_level_rounds(statements, (statement) =>
       closes_in_one_pass(statement)
         ? reconcile_ref_count_statement(
             seam,
@@ -1144,9 +1206,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
             relations,
             level_frontier_copies(false),
           )
-        : apply_level_statement(seam, statement, relation_by_name, false, next_sequence).pipe(
-            map(() => undefined),
-          ),
+        : apply_level_statement(seam, statement, relation_by_name, false, next_sequence),
     );
   },
 
@@ -1189,14 +1249,8 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     if (arrivals.length === 0) return of(undefined);
     const ref_count_statements = statements.filter((statement) => statement.aggregate_sql !== null ? false : true);
     if (ref_count_statements.length === 0 || relations.length === 0) return of(undefined);
-    const reconcile = (): Observable<void> => {
-      let sequence = 0;
-      const next_sequence = (): number => {
-        const current = sequence;
-        sequence += 1;
-        return current;
-      };
-      return sequence_work(ref_count_statements, (statement) =>
+    const reconcile = (): Observable<void> =>
+      sequence_level_rounds(ref_count_statements, (statement) =>
         reconcile_ref_count_statement(
           seam,
           statement,
@@ -1204,7 +1258,6 @@ export const IncrementalRuntime: IIncrementalRuntime = {
           [{ table_name: (plan) => plan.frontier_table_name, phase: 2 }],
         ),
       );
-    };
     if (reconcile_every_tick) return reconcile();
     return seam.runner.execute(seam.db, retraction_guard_sql(relations, seam)).pipe(
       concatMap((result) =>
@@ -1242,12 +1295,8 @@ export const IncrementalRuntime: IIncrementalRuntime = {
       sequence += 1;
       return current;
     };
-    return sequence_work(
-      statements,
-      (statement) =>
-        apply_level_statement(seam, statement, relation_by_name, true, next_sequence).pipe(
-          map(() => undefined),
-        ),
+    return sequence_level_rounds(statements, (statement) =>
+      apply_level_statement(seam, statement, relation_by_name, true, next_sequence),
     );
   },
 
@@ -1294,13 +1343,13 @@ export const IncrementalRuntime: IIncrementalRuntime = {
         sequence += 1;
         return current;
       };
-      return sequence_work(statements, (statement) => {
+      return sequence_level_rounds(statements, (statement) => {
         const relation = relation_by_name.get(statement.head_rel);
         if (relation === undefined) {
           throw new Error(`incremental level head relation missing: ${statement.head_rel}`);
         }
         if (statement.aggregate_sql !== null) {
-          if (statement.aggregate_sql.delta_maintained === true) return of(undefined);
+          if (statement.aggregate_sql.delta_maintained === true) return of(0);
           // afterEdges=false HERE, unlike applyLevelsAfterEdges. engine.pl's
           // carry set is edge-written rows plus POST-WRITE level growth
           // (tick/7: `ord_subtract(Level, MidLevel, PostWriteLevelRows)` --
@@ -1322,7 +1371,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
             relation,
             false,
             next_sequence,
-          );
+          ).pipe(map(() => 0));
         }
         // No frontier copies HERE either, for the same reason as the
         // aggregate branch above: a reconcile row is a correction inside the

@@ -297,6 +297,17 @@ pub struct ExpandPlan {
     pub round_cap: u64,
 }
 
+// The stratum SCC a level head sits on, strat.pl:cyclic_head_groups/2. Same
+// `group` = one mutual cycle, closed by re-running the group's whole pass.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecursionGroupPlan {
+    pub group: u64,
+    // fixpoint_round_cap/1 again, counted in GROUP PASSES rather than hops.
+    pub round_cap: u64,
+    // The group's head rels, `[path,reach]`; what a tripped cap names.
+    pub heads: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalLevelStatement {
     pub head_rel: String,
@@ -314,6 +325,9 @@ pub struct IncrementalLevelStatement {
     pub support_intern_sql: Option<Vec<String>>,
     pub expand_sql: Option<ExpandPlan>,
     pub dred_sql: Option<DredPlan>,
+    // None on an acyclic head, and on every module emitted before outer rounds.
+    #[serde(default)]
+    pub recursion_group: Option<RecursionGroupPlan>,
     pub aggregate_sql: Option<AggregateLevelPlan>,
 }
 

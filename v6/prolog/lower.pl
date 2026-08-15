@@ -150,7 +150,10 @@
             catalog_decl_rows/6,
             % Reproduce the RuleLevelStatements input the producer needs, used
             % by the catalog rail to plan rows outside lower_program/2.
-            plan_rule_level_statements/2 ]).
+            plan_rule_level_statements/2,
+            % One number for every fixpoint walk on either door: the wavefront
+            % hop cap AND the stratum-group outer-round cap.
+            fixpoint_round_cap/1 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).

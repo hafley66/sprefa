@@ -13,13 +13,13 @@
 :- use_module(lower, [ departure_frontier_table_name/2,
                        departure_read_sql/3, struct_type_plans/3,
                        program_text_intern_plan/3,
-                       statement_rule_ids/3 ]).
+                       statement_rule_ids/3, fixpoint_round_cap/1 ]).
 :- use_module('0_rel_record').
 :- use_module(analyze,
               [ body_ref_uses/2, derived_refs/2, rule_head_ref/2,
                 program_uses_tick/2, listened_departure_refs/2,
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
-:- use_module(strat, [recursive_stratum_groups/2]).
+:- use_module(strat, [recursive_stratum_groups/2, cyclic_head_groups/2]).
 :- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
 
@@ -1158,10 +1158,11 @@ incremental_edge_statement_entry_line(RelPlans,
            [HeadName, RuleId, HeadKind, HeadName, DeltaTable, ColumnsText,
             KeyIndicesText, DeltaProjectTemplate, InternField]).
 
-incremental_level_statement_lines(Program, LevelStatements, RelPlans, Lines) :-
+incremental_level_statement_lines(Program, LevelStatements, RelPlans,
+                                  CyclicHeadGroups, Lines) :-
     maplist(level_statement_head_ref, LevelStatements, HeadRefs),
     statement_rule_ids(Program, HeadRefs, RuleIds),
-    maplist(incremental_level_statement_entry_line(RelPlans),
+    maplist(incremental_level_statement_entry_line(RelPlans, CyclicHeadGroups),
             LevelStatements, RuleIds, EntryLines),
     append(
         [ ['const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = ['],
@@ -1171,10 +1172,11 @@ incremental_level_statement_lines(Program, LevelStatements, RelPlans, Lines) :-
 
 level_statement_head_ref(levelstmt(HeadRef, _, _, _, _, _, _), HeadRef).
 
-incremental_level_statement_entry_line(RelPlans,
+incremental_level_statement_entry_line(RelPlans, CyclicHeadGroups,
         levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, RefCountSql,
                   AggregateSql, DeltaInternSqls), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
+    recursion_group_field(CyclicHeadGroups, HeadRef, RecursionGroupField),
     format(atom(DeltaTable), '__delta_~w', [HeadName]),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     quoted_string_array_text(HeadColumns, ColumnsText),
@@ -1196,11 +1198,26 @@ incremental_level_statement_entry_line(RelPlans,
     intern_sql_field(DeltaInternSqls, InternField),
     support_intern_sql_field(SupportInternSqls, SupportInternField),
     format(atom(Line),
-           '  { head_rel: "~w", rule_id: "~w", head_delta_table_name: "~w", head_columns: ~w, insert_sql: ~w, select_sql: ~w, recompute_sql: ~w, support_sql: ~w, expand_sql: ~w, dred_sql: ~w, fixpoint_ir: ~w, aggregate_sql: ~w~w~w },',
+           '  { head_rel: "~w", rule_id: "~w", head_delta_table_name: "~w", head_columns: ~w, insert_sql: ~w, select_sql: ~w, recompute_sql: ~w, support_sql: ~w, expand_sql: ~w, dred_sql: ~w, fixpoint_ir: ~w, aggregate_sql: ~w~w~w~w },',
            [HeadName, RuleId, DeltaTable, ColumnsText, DeltaInsertTemplate,
             SelectTemplate, RecomputeTemplate, RefCountText, ExpandText,
             DredText, FixpointIrText, AggregateText, InternField,
-            SupportInternField]).
+            SupportInternField, RecursionGroupField]).
+
+% Absent on an acyclic head, so every module of a program with no level cycle
+% renders byte-identically to one emitted before outer rounds existed.
+recursion_group_field(CyclicHeadGroups, HeadRef, '') :-
+    \+ memberchk(HeadRef-_, CyclicHeadGroups), !.
+recursion_group_field(CyclicHeadGroups, HeadRef, Field) :-
+    memberchk(HeadRef-GroupIndex, CyclicHeadGroups),
+    fixpoint_round_cap(RoundCap),
+    findall(Name,
+            ( member(Ref-GroupIndex, CyclicHeadGroups), ref_name(Ref, Name) ),
+            Names),
+    atomic_list_concat(Names, ',', JoinedNames),
+    format(atom(Field),
+           ', recursion_group: { group: ~w, round_cap: ~w, heads: "[~w]" }',
+           [GroupIndex, RoundCap, JoinedNames]).
 
 incremental_retention_statement_lines([], []) :- !.
 incremental_retention_statement_lines(RetentionStatements, Lines) :-
@@ -2050,12 +2067,8 @@ recompute_levels_fn_lines(_, [], Lines) :- !,
 % carry the ceiling -- run_ordered_tick, which any seq/1 or pre/1 program takes,
 % and run_naive_tick.
 %
-% So the DELETE runs ONCE and the INSERT set repeats until a round adds no
-% row. strat.pl:topo_order_group/2 refuses mutual recursion inside a stratum
-% (recursive_stratum) and exempts only the self-edge, so a DIRECT self-read is
-% the whole recursion surface, and a program with none of them still reaches
-% its answer in the single pass below -- which is why that clause stays and
-% keeps every non-recursive module's emitted text unchanged.
+% So the DELETE runs ONCE and the INSERT set repeats until a round adds no row.
+% The round set is recursive_level_refs/2: self-reads PLUS mutual-cycle heads.
 %
 % Every clause is INSERT OR IGNORE, so a round can only add rows and the count
 % is monotone; datalog closure over a finite store is what makes it stop.
@@ -2128,10 +2141,8 @@ level_row_count_sql(LevelStatements, Sql) :-
     atomic_list_concat(CountExprs, ' + ', SummedExpr),
     format(atom(Sql), 'SELECT ~w', [SummedExpr]).
 
-% A level head that reads ITSELF positively. strat.pl:topo_order_group/2 drops
-% exactly this edge from its Kahn order (`DependsOnRef \== HeadRef`) and
-% refuses every other cycle, so this is the complete set of heads whose SQL
-% needs more than one derivation round.
+% A level head that reads ITSELF positively: the edge
+% strat.pl:group_head_edges/3 drops (`DependsOnRef \== HeadRef`).
 self_referential_level_refs(Rules, Refs) :-
     findall(HeadRef,
             ( member(Rule, Rules), Rule = (_ <- Body),
@@ -2621,14 +2632,10 @@ derived_edge_carry_required(
     ;  Required = false
     ).
 
-incremental_program_safe(plan(_, prog(_, Rules), _, _, _, _, _, _, _),
-                         _EdgeStatements, _LevelStatements, Safe) :-
-    rules_have_supported_level_bodies(Rules),
-    Safe = true.
-
-rules_have_supported_level_bodies([]).
-rules_have_supported_level_bodies([_ | Rest]) :-
-    rules_have_supported_level_bodies(Rest).
+% Nothing is left to gate: self-reads close through level_expand_plan/5's
+% wavefront, mutual cycles through the runtime's outer rounds.
+incremental_program_safe(plan(_, prog(_, _), _, _, _, _, _, _, _),
+                         _EdgeStatements, _LevelStatements, true).
 
 reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Reconcile) :-
     ( member(Rule, Rules),
@@ -2639,14 +2646,12 @@ reconcile_every_tick(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Reconcile) :-
     ;  Reconcile = false
     ).
 
+% Any positive level cycle, direct or mutual: a plain count cannot tell which
+% derivations a retraction killed, so the head is reseeded instead.
 retraction_guard(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Guard) :-
-    ( member(Rule, Rules),
-      Rule = (_ <- Body),
-      rule_head_ref(Rule, HeadRef),
-      body_ref_uses(Body, Uses),
-      member(use(HeadRef, _, pos, _), Uses)
-    -> Guard = 'recursive-cte-reseed'
-    ;  Guard = 'plain-count-acyclic'
+    recursive_level_refs(Rules, RecursiveRefs),
+    ( RecursiveRefs == [] -> Guard = 'plain-count-acyclic'
+    ; Guard = 'recursive-cte-reseed'
     ).
 
 % Each arm's resolver call passes `before` (PHASE C2 RULING 2: a Set-kind
@@ -2751,7 +2756,10 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     arrival_statement_fn_lines(Name, ArrivalStatementFnLines),
     incremental_relation_lines(RelPlans, PlanRules, ArrivalStatements, DeltaStatements, DepartureRefs, IncrementalRelationLines),
     incremental_edge_statement_lines(Name, EdgeStatements, RelPlans, IncrementalEdgeStatementLines),
-    incremental_level_statement_lines(Name, RuleLevelStatements, RelPlans, IncrementalLevelStatementLines),
+    cyclic_head_groups(SelfRefScanRules, CyclicHeadGroups),
+    incremental_level_statement_lines(Name, RuleLevelStatements, RelPlans,
+                                      CyclicHeadGroups,
+                                      IncrementalLevelStatementLines),
     incremental_retention_statement_lines(RetentionStatements,
                                           IncrementalRetentionStatementLines),
     ( EdgeStatements == []

@@ -209,7 +209,22 @@ export interface IIncrementalLevelStatement {
   /** Backend-neutral spelling of the same walks, §2.4 of
    *  plans/2026-08-07-plan-ir-offload-contract.md. P1-B types it as IFixpointIr. */
   readonly fixpoint_ir?: unknown;
+  /** Absent on an acyclic head, so a program with no level cycle emits the
+   *  identical statement it emitted before outer rounds existed. */
+  readonly recursion_group?: IRecursionGroupPlan | null;
   readonly aggregate_sql: IAggregateLevelPlan | null;
+}
+
+/** The stratum SCC a level head sits on, strat.pl:cyclic_head_groups/2. Same
+ *  `group` = one mutual cycle, closed by re-running the group's whole pass. */
+export interface IRecursionGroupPlan {
+  readonly group: number;
+  /** lower.pl:fixpoint_round_cap/1, the same number `expand_sql` carries.
+   *  Counted in GROUP PASSES here, in wavefront hops there. */
+  readonly round_cap: number;
+  /** The group's head rels, `[path,reach]`. Emitted rather than rebuilt so a
+   *  tripped cap names the identical construct on the ts and rust doors. */
+  readonly heads: string;
 }
 
 export interface IExpandSeedPlan {

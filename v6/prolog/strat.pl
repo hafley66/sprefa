@@ -1,7 +1,8 @@
-% Compute reference stratum groups and the topological rule order required by
-% one-pass SQL emission. Positive cycles within a stratum are refused.
+% Reference stratum groups plus the topological rule order SQL emission runs.
+% A positive cycle inside a stratum has no such order: cyclic_head_groups/2.
 
-:- module(strat, [ stratum_groups/2, sql_rule_order/2, recursive_stratum_groups/2 ]).
+:- module(strat, [ stratum_groups/2, sql_rule_order/2, recursive_stratum_groups/2,
+                   cyclic_head_groups/2 ]).
 
 :- use_module(library(lists)).
 :- use_module(library(apply)).
@@ -84,21 +85,35 @@ sql_rule_order(Rules, Ordered) :-
     append(OrderedGroups, Ordered).
 
 topo_order_group(Group, Ordered) :-
-    findall(Ref, ( member(Rule, Group), rule_head_ref(Rule, Ref) ), HeadRefs0),
-    sort(HeadRefs0, HeadRefs),
+    findall(Ref, ( member(Rule, Group), rule_head_ref(Rule, Ref) ), HeadRefsInOrder),
+    sort(HeadRefsInOrder, HeadRefs),
+    group_head_edges(Group, HeadRefs, Edges),
+    kahn_order(HeadRefs, Edges, PlacedRefs),
+    % Kahn stops early on a cycle; ordering by HEAD keeps every rule of one
+    % head adjacent, which lower.pl:group_adjacent_by_head/2 reads.
+    append_unplaced(HeadRefsInOrder, PlacedRefs, RefOrder),
+    findall(Rule,
+            ( member(Ref, RefOrder), member(Rule, Group), rule_head_ref(Rule, Ref) ),
+            Ordered).
+
+group_head_edges(Group, HeadRefs, Edges) :-
     findall(HeadRef-DependsOnRef,
             ( member(Rule, Group), Rule = (_ <- Body), rule_head_ref(Rule, HeadRef),
               body_ref_uses(Body, Uses), member(use(DependsOnRef, _, pos, _), Uses),
               memberchk(DependsOnRef, HeadRefs), DependsOnRef \== HeadRef ),
             Edges0),
-    sort(Edges0, Edges),
-    kahn_order(HeadRefs, Edges, RefOrder),
-    ( length(RefOrder, N), length(HeadRefs, N)
-    -> findall(Rule,
-               ( member(Ref, RefOrder), member(Rule, Group), rule_head_ref(Rule, Ref) ),
-               Ordered)
-    ; Ordered = Group
-    ).
+    sort(Edges0, Edges).
+
+append_unplaced(HeadRefsInOrder, PlacedRefs, RefOrder) :-
+    findall(Ref, ( member(Ref, HeadRefsInOrder), \+ memberchk(Ref, PlacedRefs) ),
+            Unplaced0),
+    dedupe_keep_order(Unplaced0, Unplaced),
+    append(PlacedRefs, Unplaced, RefOrder).
+
+dedupe_keep_order([], []).
+dedupe_keep_order([Ref | Rest], [Ref | Out]) :-
+    exclude(==(Ref), Rest, Filtered),
+    dedupe_keep_order(Filtered, Out).
 
 recursive_stratum_groups(Rules, RecursiveGroups) :-
     stratum_groups(Rules, Groups),
@@ -107,16 +122,23 @@ recursive_stratum_groups(Rules, RecursiveGroups) :-
 recursive_stratum_group(Group) :-
     findall(Ref, ( member(Rule, Group), rule_head_ref(Rule, Ref) ), HeadRefs0),
     sort(HeadRefs0, HeadRefs),
-    findall(HeadRef-DependsOnRef,
-            ( member(Rule, Group), Rule = (_ <- Body), rule_head_ref(Rule, HeadRef),
-              body_ref_uses(Body, Uses), member(use(DependsOnRef, _, pos, _), Uses),
-              memberchk(DependsOnRef, HeadRefs), DependsOnRef \== HeadRef ),
-            Edges0),
-    sort(Edges0, Edges),
+    group_head_edges(Group, HeadRefs, Edges),
     kahn_order(HeadRefs, Edges, RefOrder),
     length(RefOrder, OrderedCount),
     length(HeadRefs, HeadCount),
     OrderedCount < HeadCount.
+
+% Head refs on a positive INDIRECT cycle, paired with their stratum group index.
+% Direct self-recursion is absent: group_head_edges/3 drops the self edge.
+cyclic_head_groups(Rules, HeadGroups) :-
+    stratum_groups(Rules, Groups),
+    findall(Ref-GroupIndex,
+            ( nth0(GroupIndex, Groups, Group),
+              recursive_stratum_group(Group),
+              member(Rule, Group),
+              rule_head_ref(Rule, Ref) ),
+            Pairs),
+    sort(Pairs, HeadGroups).
 
 % Kahn's algorithm: emit a ref once every ref it positively depends on
 % (within this group) has already been emitted.

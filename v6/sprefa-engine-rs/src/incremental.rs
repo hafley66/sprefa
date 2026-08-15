@@ -780,6 +780,57 @@ fn recursive_heads(
     heads
 }
 
+// Maximal runs of consecutive statements sharing one `recursion_group.group`.
+// A statement off any cycle is its own run and pays exactly one pass.
+fn level_statement_runs(
+    statements: &[&crate::types::IncrementalLevelStatement],
+) -> Vec<std::ops::Range<usize>> {
+    let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+    let mut current_group: Option<u64> = None;
+    for (index, statement) in statements.iter().enumerate() {
+        let group = statement.recursion_group.as_ref().map(|plan| plan.group);
+        if group.is_some() && group == current_group {
+            runs.last_mut().expect("run started").end = index + 1;
+            continue;
+        }
+        runs.push(index..index + 1);
+        current_group = group;
+    }
+    runs
+}
+
+// OUTER ROUNDS: a mutual cycle has no statement order that reaches the least
+// fixpoint in one pass, so the group's pass repeats until no row moves.
+fn sequence_level_rounds(
+    statements: &[&crate::types::IncrementalLevelStatement],
+    mut run: impl FnMut(&crate::types::IncrementalLevelStatement) -> BoundaryResult<usize>,
+) -> BoundaryResult<()> {
+    for range in level_statement_runs(statements) {
+        let group = &statements[range.clone()];
+        let plan = group[0].recursion_group.clone();
+        let Some(plan) = plan else {
+            run(group[0])?;
+            continue;
+        };
+        for round in 0..plan.round_cap {
+            let mut moved = 0usize;
+            for statement in group {
+                moved += run(statement)?;
+            }
+            if moved == 0 {
+                break;
+            }
+            if round + 1 >= plan.round_cap {
+                return Err(BoundaryError::DivergingMeasureRecursion {
+                    rel: plan.heads.clone(),
+                    round_cap: plan.round_cap,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 // The insert path: runs the level's insert_sql (with RETURNING) and stages the
 // produced rows as +1 events into the frontier for this pass.
 fn apply_level_statement(
@@ -971,7 +1022,8 @@ pub fn apply_levels_before_edges(
         sequence += 1;
         current
     };
-    for statement in statements {
+    let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
+    sequence_level_rounds(&ordered, |statement| {
         let closes_in_one_pass = feeds_another_round.iter().any(|h| h == &statement.head_rel)
             && statement.support_sql.is_some();
         if closes_in_one_pass {
@@ -980,12 +1032,11 @@ pub fn apply_levels_before_edges(
                 .filter(|r| r.rel == statement.head_rel)
                 .map(|r| (r.frontier_table_name.clone(), 2))
                 .collect();
-            reconcile_ref_count_statement(seam, statement, relations, &copies)?;
+            reconcile_ref_count_statement(seam, statement, relations, &copies)
         } else {
-            apply_level_statement(seam, statement, relations, false, &mut next_sequence)?;
+            apply_level_statement(seam, statement, relations, false, &mut next_sequence)
         }
-    }
-    Ok(())
+    })
 }
 
 // ═══ edge phases (port of 1_incremental.ts apply_edges + merge/after) ═══════
@@ -1253,10 +1304,10 @@ pub fn apply_levels_after_edges(
         sequence += 1;
         current
     };
-    for statement in statements {
-        apply_level_statement(seam, statement, relations, true, &mut next_sequence)?;
-    }
-    Ok(())
+    let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
+    sequence_level_rounds(&ordered, |statement| {
+        apply_level_statement(seam, statement, relations, true, &mut next_sequence)
+    })
 }
 
 // The frozen mid-tick level plane: a level row an arrival retracted this tick
@@ -1279,7 +1330,7 @@ pub fn recompute_levels_before_edges(
         return Ok(());
     }
     let reconcile = |seam: &SqliteSeam| -> BoundaryResult<()> {
-        for statement in &ref_count_statements {
+        sequence_level_rounds(&ref_count_statements, |statement| {
             let relation = relations
                 .iter()
                 .find(|r| r.rel == statement.head_rel)
@@ -1289,9 +1340,8 @@ pub fn recompute_levels_before_edges(
                 statement,
                 relations,
                 &[(relation.frontier_table_name.clone(), 2)],
-            )?;
-        }
-        Ok(())
+            )
+        })
     };
     if reconcile_every_tick {
         return reconcile(seam);
@@ -1331,7 +1381,7 @@ fn reconcile_ref_count_statement(
     statement: &crate::types::IncrementalLevelStatement,
     relations: &[IncrementalRelationPlan],
     frontier_copies: &[(String, i64)],
-) -> BoundaryResult<()> {
+) -> BoundaryResult<usize> {
     let support_sql = statement
         .support_sql
         .as_ref()
@@ -1360,6 +1410,10 @@ fn reconcile_ref_count_statement(
         stage_add.clone(),
     ];
     let support_interns = statement.support_intern_sql.clone().unwrap_or_default();
+    // Indices into tail_texts, summed into the returned moved count: a round
+    // that only RETRACTS still has to run again for the cycle's peers.
+    let collect_zero_index = 2usize;
+    let fill_new_index = 4usize;
     let mut tail = to_statements(&tail_texts);
     for (table_name, phase) in frontier_copies {
         let stage = if *table_name == relation.next_frontier_table_name {
@@ -1389,8 +1443,10 @@ fn reconcile_ref_count_statement(
             args: vec![],
         });
         head.extend(tail);
-        seam.batch(&head).expect("reconcile batch failed");
-        return Ok(());
+        let results = seam.batch(&head).expect("reconcile batch failed");
+        let offset = 2 + support_interns.len();
+        return Ok(moved_rows(&results, offset + fill_new_index)
+            + moved_rows(&results, offset + collect_zero_index));
     };
     // Port of the rx expand wavefront (1_incremental.ts:610). The CTE seed
     // reaches the same fixpoint inside SQLite, where no round is countable.
@@ -1442,8 +1498,15 @@ fn reconcile_ref_count_statement(
         sql: insert_new.clone(),
         args: vec![],
     });
-    seam.batch(&close).expect("expand close batch failed");
-    Ok(())
+    let results = seam.batch(&close).expect("expand close batch failed");
+    Ok(moved_rows(&results, fill_new_index) + moved_rows(&results, collect_zero_index))
+}
+
+fn moved_rows(results: &[crate::types::QueryResult], index: usize) -> usize {
+    results
+        .get(index)
+        .map(|result| result.rows_affected.max(0) as usize)
+        .unwrap_or(0)
 }
 
 // Port of recompute_levels_after_edges (1_incremental.ts:1243). Guarded by the
@@ -1466,14 +1529,15 @@ pub fn recompute_levels_after_edges(
             sequence += 1;
             current
         };
-        for statement in statements {
+        let ordered: Vec<&crate::types::IncrementalLevelStatement> = statements.iter().collect();
+        sequence_level_rounds(&ordered, |statement| {
             let relation = relations
                 .iter()
                 .find(|r| r.rel == statement.head_rel)
                 .expect("incremental level head relation missing");
             if let Some(aggregate) = &statement.aggregate_sql {
                 if aggregate.delta_maintained {
-                    continue;
+                    return Ok(0);
                 }
                 apply_aggregate_level_statement(
                     seam,
@@ -1483,11 +1547,10 @@ pub fn recompute_levels_after_edges(
                     false,
                     &mut next_sequence,
                 )?;
-                continue;
+                return Ok(0);
             }
-            reconcile_ref_count_statement(seam, statement, relations, &[])?;
-        }
-        Ok(())
+            reconcile_ref_count_statement(seam, statement, relations, &[])
+        })
     };
     if reconcile_every_tick {
         return reconcile(seam);
