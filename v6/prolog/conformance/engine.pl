@@ -181,8 +181,55 @@ check_program(Program) :-
         throw(Term)
     ;   clock_violation(Program, ClockViolation)
     ->  throw(ClockViolation)
+    ;   recursion_refusal(Program, Term)
+    ->  throw(Term)
     ;   true
     ).
+
+% Oracle twin of lower.pl's recursion throws (5205/5260/5264): both doors must
+% throw the same term on the same direct recursive spelling (PR #266 class).
+recursion_refusal(prog(_Decls, Rules), Term) :-
+    member(Rule, Rules),
+    Rule = (Head <- _Body),
+    rel_ref(Head, Ref),
+    self_read_count(Rule, Ref, Count),
+    Count >= 1,
+    (   Count =\= 1
+    ->  Term = unsupported_construct(
+                  recursive_cte_multiple_self_reads(Ref, Count))
+    ;   recursive_head_text_build(Head)
+    ->  Term = unsupported_construct(built_text_in_recursive_head(Ref))
+    ;   recursive_head_list_build(Head)
+    ->  Term = unsupported_construct(built_list_in_recursive_head(Ref))
+    ;   fail
+    ).
+
+self_read_count((_ <- Body), Ref, Count) :-
+    body_atoms(Body, Atoms),
+    include(reads_ref(Ref), Atoms, SelfAtoms),
+    length(SelfAtoms, Count).
+
+reads_ref(Ref, Atom) :- rel_ref(Atom, Ref).
+
+recursive_head_text_build(Head) :-
+    Head =.. [_ | Args],
+    member(Arg, Args),
+    compound(Arg),
+    text_build_expr(Arg).
+
+text_build_expr(concat(_)) :- !.
+text_build_expr(Expr) :-
+    functor(Expr, Functor, Arity),
+    memberchk(Functor/Arity,
+              [ norm/1, upper/1, lower/1, trim/1, trim/2,
+                ltrim/1, ltrim/2, rtrim/1, rtrim/2,
+                reverse/1, replace/3, initcap/1, substr/2, substr/3 ]).
+
+recursive_head_list_build(Head) :-
+    Head =.. [_ | Args],
+    member(Arg, Args),
+    compound(Arg),
+    functor(Arg, split, 2).
 
 engine_unsupported(type_cycle,              Names, type_cycle(Names)).
 engine_unsupported(relation_pattern_not_a_relation_value,
