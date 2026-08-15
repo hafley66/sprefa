@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+# @comment-ok: pre-existing gate contract + sabotage receipts; this change only
+# removes the incrementalSafe leg (the naive fallback it guarded is deleted).
 # 7_scale-floor.sh -- acceptance floor for tsv2 throughput at scale.
 #
 # The existing scale runners provide statement counts and wall-time samples.
 # Two existing runners do all the work, unmodified:
 #   scripts/1_p1-receipts.ts  statements per tick via stmt_counter, EXPLAIN
-#                             plans, incrementalSafe -- the deterministic half
+#                             plans -- the deterministic half
 #   scripts/scale-bench.ts    wall, ticks, arrivals, final row counts, RSS
 #                             -- the informational half
 # and the fixture comes from sprefa-store/bench/scale-gen.pl + compile_fixture/4,
@@ -22,12 +24,10 @@
 #     cell's set moves and the small cell's does not, and this goes red. This
 #     is the standing count-test law applied to a formerly-quadratic path.
 #   * tick count and final row counts are exact.
-#   * incrementalSafe must hold -- a silent fall back to the naive snapshot
-#     path is the most likely way throughput craters without anything erroring.
 # Wall time is gated with a deliberately loose 3x floor, because CI-machine
 # variance and a shared laptop are real and a tight wall gate gets loosened
-# until it catches nothing. 3x still catches a cratering (the naive path is
-# ~165x slower on this very cell), which is the failure this gate is for.
+# until it catches nothing. 3x still catches a cratering (the deleted snapshot
+# path measured ~165x slower on this very cell), the failure this gate is for.
 #
 # The wall leg takes the MINIMUM of SCALE_FLOOR_WALL_SAMPLES runs, not one
 # sample and not the mean. One sample against a fixed reference makes the
@@ -138,9 +138,8 @@ fi
 
 cd "$tsv2_dir"
 
-# 2. deterministic leg: statements per tick, plans, incrementalSafe.
-# The same emitted module serves both cells -- the program does not depend on
-# the row count, only the schedule does.
+# 2. deterministic leg: statements per tick, plans. One emitted module serves
+# both cells; only the schedule depends on the row count.
 run_receipts() {
   local cell_rows="$1" destination="$2"
   if ! node --experimental-transform-types "$here/1_p1-receipts.ts" \
@@ -159,7 +158,6 @@ run_receipts "$control_rows" "$control_receipt"
 statements_per_tick_set="$(jq -c '.statement_counts' "$receipt")"
 control_statements_set="$(jq -c '.statement_counts' "$control_receipt")"
 tick_count="$(jq -r '.tick_count' "$receipt")"
-incremental_safe="$(jq -r '.incremental_safe' "$receipt")"
 
 # 3. wall leg: wall, RSS, final row counts, best of N.
 # The whole record travels with the winning sample, so the RSS and row counts
@@ -242,7 +240,6 @@ check "same set @$control_rows" "$statements_per_tick_set" "$control_statements_
 check "ticks"                  "$expected_ticks"       "$tick_count"
 check "arrivals"               "$expected_arrivals"    "$arrivals"
 check "final rows"             "$expected_final_rows"  "$final_rows"
-check "incrementalSafe"        true                    "$incremental_safe"
 
 wall_verdict="$(awk -v got="$ms_per_1k" -v ceiling="$wall_ceiling" \
   'BEGIN { print (got > ceiling) ? "FAIL" : "OK" }')"

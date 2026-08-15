@@ -244,7 +244,6 @@ async function main(): Promise<void> {
     : { plan: incremental_plan, program };
   const selected_plan: IIncrementalProgramPlan = selected.plan;
   const selected_program: ProgramWithBoot = selected.program;
-  if (!selected_plan.safe) throw new Error(`p1-receipts: ${shape_arg} lowered as unsafe`);
 
   const explain_seam = ScratchStore.open(":memory:");
   await run_boot(explain_seam, selected_program);
@@ -309,7 +308,6 @@ async function main(): Promise<void> {
     edge_plans,
     boundary_plans,
     ref_count_plans,
-    incremental_safe: selected_plan.safe,
     reconcile_every_tick: selected_plan.reconcile_every_tick,
     retraction_guard: selected_plan.retraction_guard,
   };

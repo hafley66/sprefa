@@ -10,13 +10,9 @@
 #   2  TEXT DOOR    `bop check` -- the program compiles clean through the same
 #                   door a user's file would.
 #   3  CARDINALITY  0 rows / 1 row / 100 rows per input rel, plus a perturbed
-#                   schedule, each graded oracle vs BOTH emitter modes, on the
-#                   tick log AND the final state. Twelve byte comparisons.
-#   4  MODE PARITY  incremental vs naive, byte-identical to each other as well as
-#                   to the oracle (stated separately because a shared wrong
-#                   answer on both emitter paths would otherwise read as one
-#                   failure instead of two).
-#   5  E2E          the served HTTP engine: POST /program, POST /edb/events,
+#                   schedule, each graded oracle vs the emitter, on the
+#                   tick log AND the final state. Four byte comparisons.
+#   4  E2E          the served HTTP engine: POST /program, POST /edb/events,
 #                   GET /idb, live subprocess host, tick log diffed against the
 #                   oracle replayed on the run's own consumed schedule
 #                   (tests/goldenFlexServed.test.ts).
@@ -69,7 +65,7 @@ say "PASS  compiled to gen_emitted/$MODULE.ts"
 (cd "$TSV2" && "${NODE_RUN[@]}" scripts/golden-schedules.ts "$WORK" >/dev/null 2>"$WORK/sched.err") \
   || fail "schedule generation: $(cat "$WORK/sched.err")"
 
-# ── 3 + 4. cardinality and mode parity ──────────────────────────────────────
+# ── 3. cardinality ──────────────────────────────────────────────────────────
 # The oracles run concurrently: each reads the program and its own schedule and
 # writes only its own two files, so the legs share nothing. The loop below is
 # unaffected and still reads $WORK/oracle.$leg in order.
@@ -92,22 +88,17 @@ for leg in zero one many perturbed; do
   [ "$(cat "$WORK/oracle.$leg.rc" 2>/dev/null)" = "0" ] \
     || fail "oracle $leg: $(cat "$WORK/oracle.$leg.err")"
 
-  for mode in incremental naive; do
-    ( cd "$TSV2" && SPREFA_TSV2_EMITTER_MODE="$mode" \
-        "${NODE_RUN[@]}" scripts/golden-run.ts "$MODULE" "$schedule" --final \
-    ) >"$WORK/$mode.$leg" 2>"$WORK/$mode.$leg.err" || fail "$mode $leg: $(cat "$WORK/$mode.$leg.err")"
+  ( cd "$TSV2" && \
+      "${NODE_RUN[@]}" scripts/golden-run.ts "$MODULE" "$schedule" --final \
+  ) >"$WORK/emitted.$leg" 2>"$WORK/emitted.$leg.err" || fail "emitted $leg: $(cat "$WORK/emitted.$leg.err")"
 
-    diff -u "$WORK/oracle.$leg" "$WORK/$mode.$leg" >"$WORK/diff.$mode.$leg" \
-      || fail "$leg / $mode diverges from the oracle:$(printf '\n')$(head -20 "$WORK/diff.$mode.$leg")"
-  done
-
-  diff -q "$WORK/incremental.$leg" "$WORK/naive.$leg" >/dev/null \
-    || fail "$leg: the two emitter modes disagree with each other"
+  diff -u "$WORK/oracle.$leg" "$WORK/emitted.$leg" >"$WORK/diff.$leg" \
+    || fail "$leg diverges from the oracle:$(printf '\n')$(head -20 "$WORK/diff.$leg")"
 
   # Row width, so a leg cannot pass by being silently empty. The `zero` leg is
   # allowed to be empty; that IS its point.
   rows="$(tail -1 "$WORK/oracle.$leg" | tr -cd '[' | wc -c | tr -d ' ')"
-  say "PASS  $leg: oracle == incremental == naive (tick log + final state), ${rows} final row groups"
+  say "PASS  $leg: oracle == emitted (tick log + final state), ${rows} final row groups"
 done
 
 # ── 5. the served e2e leg ───────────────────────────────────────────────────
