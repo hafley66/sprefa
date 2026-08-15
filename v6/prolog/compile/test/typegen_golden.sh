@@ -34,6 +34,7 @@ PINNED=(
 SHAPES=(
   "shape_interface_declaration"
   "shape_generic_rel"
+  "shape_module_prefix_collision"
 )
 
 swipl_run() { # goal ; runs from v6/prolog so conformance/... paths resolve
