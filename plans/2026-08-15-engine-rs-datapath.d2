@@ -1,0 +1,52 @@
+vars: { d2-config: { layout-engine: dagre; theme-id: 0; pad: 20 } }
+direction: right
+
+r1: 1. one binary {
+  json: "PROGRAM_JSON\nserde -> GenProgram\n(args are ScalarValue)"
+  boot: "boot statements\n__str intern"
+}
+
+r2: 2. arrivals {
+  world: "world rows"
+  seam: "row_at_seam(ArrivalPayload)\nlist at scalar seam =\ntyped BoundaryError"
+}
+
+r3: 3. hosts (in-process) {
+  demand: "demand rels"
+  shell: "ShellExecutor\n(child spawn)"
+  soopy: "SoopyFilesExecutor\nfiles*/repo_files* -> soopy lib"
+  extract: "SprefaExtractExecutor\nsprefa-extract linked in"
+  response: "response rels"
+}
+
+r4: 4. tick engine {
+  pass: "stratum statement pass\nlevels before edges"
+  wave: "expand wavefront\n(direct self-recursion)"
+  rounds: "outer rounds while rows move\n(cyclic strata, PR #266)"
+  cap: "diverging_measure_recursion\nat 1000 rounds/hops"
+}
+
+r5: 5. boundary reads {
+  render: "canonical column exprs:\n__txt join, __dict __rendered,\n__list_ GROUP BY view"
+  ticklog: "tick log\n(byte-identical to TS door)"
+  final: "final select / serve"
+}
+
+r1.json -> r1.boot
+r1.boot -> r4.pass
+r2.world -> r2.seam
+r2.seam -> r4.pass: arrival tables
+r3.demand -> r3.shell
+r3.demand -> r3.soopy
+r3.demand -> r3.extract
+r3.shell -> r3.response
+r3.soopy -> r3.response
+r3.extract -> r3.response
+r3.response -> r2.world: EDB facts
+r4.pass -> r4.wave
+r4.pass -> r4.rounds
+r4.rounds -> r4.cap: trip = typed abort
+r4.pass -> r5.render
+r5.render -> r5.ticklog
+r5.render -> r5.final
+r4.pass -> r3.demand: new demand rows
