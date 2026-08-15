@@ -99,7 +99,7 @@ async fn external_consumer_drives_runtime_and_hosts() {
         row: vec![Value::Integer(200)],
     }];
 
-    let deltas = drive_tick(&program, &seam, arrivals).await;
+    let deltas = drive_tick(&program, &seam, arrivals).await.expect("tick");
     assert_eq!(deltas.rels.len(), 1);
     assert_eq!(deltas.rels[0].rel, "node");
     assert_eq!(deltas.rels[0].add, vec![vec![Value::Integer(200)]]);
@@ -109,6 +109,8 @@ async fn external_consumer_drives_runtime_and_hosts() {
         sign: ArrivalSign::Add,
         row: vec![Value::Integer(300)],
     }]];
-    let fold = run_schedule(&program, &seam, &schedule, 10).await;
+    let fold = run_schedule(&program, &seam, &schedule, 10)
+        .await
+        .expect("schedule fold");
     assert_eq!(fold.lines.len(), 1);
 }

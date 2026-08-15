@@ -4,8 +4,8 @@ use crate::incremental::{json_array_text, quote_identifier};
 use crate::program::GenProgram;
 use crate::sql::{column_index, result_rows, SqlRunner, SqliteSeam};
 use crate::types::{
-    Arrival, ArrivalSign, OrderedEdgeArm, OrderedTriggerKind, RelDelta, RelationKind, Row,
-    SqlStatement, TickDeltas,
+    Arrival, ArrivalSign, BoundaryResult, OrderedEdgeArm, OrderedTriggerKind, RelDelta,
+    RelationKind, Row, ScalarSeam, ScalarValue, SqlStatement, TickDeltas,
 };
 
 type Snapshot = HashMap<String, Vec<Row>>;
@@ -24,7 +24,11 @@ struct OrderedWrite {
     row: Row,
 }
 
-fn read_snapshot(program: &GenProgram, seam: &SqliteSeam, decoded: bool) -> Snapshot {
+fn read_snapshot(
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    decoded: bool,
+) -> BoundaryResult<Snapshot> {
     let mut snapshot = HashMap::new();
     for relation in &program.relations {
         let sql = if decoded {
@@ -51,10 +55,10 @@ fn read_snapshot(program: &GenProgram, seam: &SqliteSeam, decoded: bool) -> Snap
             .expect("ordered snapshot read failed");
         snapshot.insert(
             relation.rel.clone(),
-            result_rows(&result, &relation.columns, &relation.column_types),
+            result_rows(&result, &relation.columns, &relation.column_types)?,
         );
     }
-    snapshot
+    Ok(snapshot)
 }
 
 fn row_counts(rows: &[Row]) -> Vec<(Row, usize)> {
@@ -117,7 +121,11 @@ fn build_deltas(program: &GenProgram, before: &Snapshot, after: &Snapshot) -> Ve
         .collect()
 }
 
-fn apply_arrivals(program: &GenProgram, seam: &SqliteSeam, arrivals: &[Arrival]) {
+fn apply_arrivals(
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    arrivals: &[Arrival],
+) -> BoundaryResult<()> {
     let statements = arrivals
         .iter()
         .map(|arrival| {
@@ -135,15 +143,16 @@ fn apply_arrivals(program: &GenProgram, seam: &SqliteSeam, arrivals: &[Arrival])
                     .clone()
                     .unwrap_or_else(|| panic!("delete template missing for {}", arrival.rel)),
             };
-            SqlStatement {
+            Ok(SqlStatement {
                 sql,
-                args: arrival.row.clone(),
-            }
+                args: ScalarValue::row_at_seam(&arrival.row, ScalarSeam::SqlParameter)?,
+            })
         })
-        .collect::<Vec<_>>();
+        .collect::<BoundaryResult<Vec<_>>>()?;
     if !statements.is_empty() {
         seam.batch(&statements).expect("ordered arrivals failed");
     }
+    Ok(())
 }
 
 fn snapshot_pre(program: &GenProgram, seam: &SqliteSeam) {
@@ -292,7 +301,7 @@ fn read_carry(program: &GenProgram, seam: &SqliteSeam) -> Vec<Occurrence> {
     occurrences
 }
 
-fn read_departures(program: &GenProgram, seam: &SqliteSeam) -> Vec<Occurrence> {
+fn read_departures(program: &GenProgram, seam: &SqliteSeam) -> BoundaryResult<Vec<Occurrence>> {
     let mut occurrences = Vec::new();
     for name in trigger_relations(program, OrderedTriggerKind::Departure) {
         let relation = program
@@ -320,7 +329,7 @@ fn read_departures(program: &GenProgram, seam: &SqliteSeam) -> Vec<Occurrence> {
                 args: vec![],
             })
             .expect("ordered departure read failed");
-        for row in result_rows(&result, &relation.columns, &relation.column_types) {
+        for row in result_rows(&result, &relation.columns, &relation.column_types)? {
             occurrences.push(Occurrence {
                 rel: name.clone(),
                 kind: OrderedTriggerKind::Departure,
@@ -329,7 +338,7 @@ fn read_departures(program: &GenProgram, seam: &SqliteSeam) -> Vec<Occurrence> {
             });
         }
     }
-    occurrences
+    Ok(occurrences)
 }
 
 fn outside_occurrences(
@@ -406,7 +415,7 @@ fn level_occurrences(program: &GenProgram, before: &Snapshot, mid: &Snapshot) ->
     occurrences
 }
 
-fn pre_write_statement(arm: &OrderedEdgeArm, row: &Row) -> Option<SqlStatement> {
+fn pre_write_statement(arm: &OrderedEdgeArm, row: &[ScalarValue]) -> Option<SqlStatement> {
     if !arm.evolves_pre {
         return None;
     }
@@ -425,7 +434,7 @@ fn pre_write_statement(arm: &OrderedEdgeArm, row: &Row) -> Option<SqlStatement> 
                 columns.join(", "),
                 placeholders
             ),
-            args: row.clone(),
+            args: row.to_vec(),
         });
     }
     let key_columns = arm
@@ -460,7 +469,7 @@ fn pre_write_statement(arm: &OrderedEdgeArm, row: &Row) -> Option<SqlStatement> 
             placeholders,
             conflict
         ),
-        args: row.clone(),
+        args: row.to_vec(),
     })
 }
 
@@ -469,7 +478,8 @@ fn apply_occurrence(
     seam: &SqliteSeam,
     occurrence: &Occurrence,
     written: &mut Vec<OrderedWrite>,
-) {
+) -> BoundaryResult<()> {
+    let trigger_args = ScalarValue::row_at_seam(&occurrence.row, ScalarSeam::SqlParameter)?;
     let mut projected = Vec::new();
     for (arm_index, arm) in program.ordered_arms.iter().enumerate() {
         if arm.trigger_rel != occurrence.rel || arm.trigger_kind != occurrence.kind {
@@ -478,14 +488,14 @@ fn apply_occurrence(
         for sql in arm.intern_sql.as_deref().unwrap_or(&[]) {
             seam.execute(&SqlStatement {
                 sql: sql.clone(),
-                args: occurrence.row.clone(),
+                args: trigger_args.clone(),
             })
             .expect("ordered intern failed");
         }
         let result = seam
             .execute(&SqlStatement {
                 sql: arm.project_sql.clone(),
-                args: occurrence.row.clone(),
+                args: trigger_args.clone(),
             })
             .expect("ordered projection failed");
         for result_row in &result.rows {
@@ -518,7 +528,7 @@ fn apply_occurrence(
                         .iter()
                         .map(|index| write.row[*index].clone())
                         .collect::<Vec<_>>()
-                )
+                )?
             );
             if let Some((_, prior)) = keyed.iter().find(|(prior_key, _)| prior_key == &key) {
                 if prior != &write.row {
@@ -533,11 +543,12 @@ fn apply_occurrence(
     let mut statements = Vec::new();
     for write in &writes {
         let arm = &program.ordered_arms[write.arm_index];
+        let args = ScalarValue::row_at_seam(&write.row, ScalarSeam::SqlParameter)?;
         statements.push(SqlStatement {
             sql: arm.write_sql.clone(),
-            args: write.row.clone(),
+            args: args.clone(),
         });
-        if let Some(pre) = pre_write_statement(arm, &write.row) {
+        if let Some(pre) = pre_write_statement(arm, &args) {
             statements.push(pre);
         }
     }
@@ -545,6 +556,7 @@ fn apply_occurrence(
         seam.batch(&statements).expect("ordered writes failed");
         written.extend(writes);
     }
+    Ok(())
 }
 
 fn carry_additions(
@@ -624,14 +636,18 @@ fn base_carry_pending(program: &GenProgram, deltas: &[RelDelta]) -> bool {
         .any(|delta| departure_names.contains(&delta.rel) && !delta.del.is_empty())
 }
 
-pub fn run_tick(program: &GenProgram, seam: &SqliteSeam, arrivals: &[Arrival]) -> TickDeltas {
-    let before_decoded = read_snapshot(program, seam, true);
-    let before_stored = read_snapshot(program, seam, false);
+pub fn run_tick(
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    arrivals: &[Arrival],
+) -> BoundaryResult<TickDeltas> {
+    let before_decoded = read_snapshot(program, seam, true)?;
+    let before_stored = read_snapshot(program, seam, false)?;
     if program.uses_tick {
         crate::incremental::advance_tick(seam);
     }
     let interned = match &program.text_intern_plan {
-        Some(plan) => crate::text_plane::intern(seam, plan, arrivals),
+        Some(plan) => crate::text_plane::intern(seam, plan, arrivals)?,
         None => arrivals.to_vec(),
     };
     let normalized = crate::struct_plane::intern(
@@ -641,31 +657,31 @@ pub fn run_tick(program: &GenProgram, seam: &SqliteSeam, arrivals: &[Arrival]) -
         &interned,
         &program.relations,
         program.text_intern_plan.as_ref(),
-    );
-    apply_arrivals(program, seam, &normalized);
+    )?;
+    apply_arrivals(program, seam, &normalized)?;
     snapshot_pre(program, seam);
     recompute_levels(program, seam);
-    let mid = read_snapshot(program, seam, false);
+    let mid = read_snapshot(program, seam, false)?;
     let mut occurrences = read_carry(program, seam);
-    occurrences.extend(read_departures(program, seam));
+    occurrences.extend(read_departures(program, seam)?);
     occurrences.extend(outside_occurrences(program, &before_stored, &normalized));
     occurrences.extend(level_occurrences(program, &before_stored, &mid));
     let mut written = Vec::new();
     for occurrence in &occurrences {
-        apply_occurrence(program, seam, occurrence, &mut written);
+        apply_occurrence(program, seam, occurrence, &mut written)?;
     }
     recompute_levels(program, seam);
     apply_retention(program, seam);
-    let after_decoded = read_snapshot(program, seam, true);
-    let after_stored = read_snapshot(program, seam, false);
+    let after_decoded = read_snapshot(program, seam, true)?;
+    let after_stored = read_snapshot(program, seam, false)?;
     let deltas = build_deltas(program, &before_decoded, &after_decoded);
     let stored_deltas = build_deltas(program, &before_stored, &after_stored);
     let additions = carry_additions(program, &mid, &after_stored, &stored_deltas, &written);
     let ordered_carry =
-        crate::incremental::stage_ordered_frontiers(seam, &program.relations, &additions);
-    crate::incremental::stage_departures(seam, &program.relations, &deltas);
-    TickDeltas {
+        crate::incremental::stage_ordered_frontiers(seam, &program.relations, &additions)?;
+    crate::incremental::stage_departures(seam, &program.relations, &deltas)?;
+    Ok(TickDeltas {
         carry_pending: base_carry_pending(program, &deltas) || ordered_carry,
         rels: deltas,
-    }
+    })
 }

@@ -4,21 +4,22 @@
 use std::collections::HashMap;
 
 use crate::sql::{SqlRunner, SqliteSeam};
-use crate::types::{Arrival, Row, SqlStatement, TextInternPlan, Value};
+use crate::types::{
+    Arrival, BoundaryResult, Row, ScalarSeam, ScalarValue, SqlStatement, TextInternPlan, Value,
+};
 
 // A number reaching a text column interns as its rendering, the text the
 // column carried before the storage flip.
-fn content_of(value: &Value) -> String {
-    match value {
-        Value::Text(text) => text.clone(),
-        Value::Integer(number) => format!("{}", number),
-        Value::Real(number) => crate::ticklog::js_float_text(*number),
-        Value::Bool(flag) => (if *flag { "true" } else { "false" }).to_string(),
-        Value::List(_) => panic!("a list value reached the text intern plane"),
-    }
+fn content_of(value: &Value) -> BoundaryResult<String> {
+    Ok(match ScalarValue::at_seam(value, ScalarSeam::TextIntern)? {
+        ScalarValue::Text(text) => text,
+        ScalarValue::Integer(number) => format!("{}", number),
+        ScalarValue::Real(number) => crate::ticklog::js_float_text(number),
+        ScalarValue::Bool(flag) => (if flag { "true" } else { "false" }).to_string(),
+    })
 }
 
-fn collect_values(plan: &TextInternPlan, arrivals: &[Arrival]) -> Vec<String> {
+fn collect_values(plan: &TextInternPlan, arrivals: &[Arrival]) -> BoundaryResult<Vec<String>> {
     let mut values: Vec<String> = Vec::new();
     for arrival in arrivals {
         let Some(flags) = plan.rel_columns.get(&arrival.rel) else {
@@ -28,45 +29,49 @@ fn collect_values(plan: &TextInternPlan, arrivals: &[Arrival]) -> Vec<String> {
             if flags.get(index) != Some(&true) {
                 continue;
             }
-            let content = content_of(value);
+            let content = content_of(value)?;
             if !values.contains(&content) {
                 values.push(content);
             }
         }
     }
-    values
+    Ok(values)
 }
 
-fn rewrite_row(row: &Row, flags: &[bool], ids: &HashMap<String, i64>) -> Row {
+fn rewrite_row(row: &Row, flags: &[bool], ids: &HashMap<String, i64>) -> BoundaryResult<Row> {
     row.iter()
         .enumerate()
         .map(|(index, value)| {
             if flags.get(index) != Some(&true) {
-                return value.clone();
+                return Ok(value.clone());
             }
-            let content = content_of(value);
+            let content = content_of(value)?;
             let id = ids
                 .get(&content)
                 .unwrap_or_else(|| panic!("text intern lost the id for {:?}", content));
-            Value::Integer(*id)
+            Ok(Value::Integer(*id))
         })
         .collect()
 }
 
-pub fn intern(seam: &SqliteSeam, plan: &TextInternPlan, arrivals: &[Arrival]) -> Vec<Arrival> {
+pub fn intern(
+    seam: &SqliteSeam,
+    plan: &TextInternPlan,
+    arrivals: &[Arrival],
+) -> BoundaryResult<Vec<Arrival>> {
     if arrivals.is_empty() {
-        return arrivals.to_vec();
+        return Ok(arrivals.to_vec());
     }
-    let values = collect_values(plan, arrivals);
+    let values = collect_values(plan, arrivals)?;
     if values.is_empty() {
-        return arrivals.to_vec();
+        return Ok(arrivals.to_vec());
     }
-    let encoded = Value::Text(crate::incremental::json_array_text(
+    let encoded = ScalarValue::Text(crate::incremental::json_array_text(
         &values
             .iter()
             .map(|content| Value::Text(content.clone()))
             .collect::<Vec<_>>(),
-    ));
+    )?);
     seam.execute(&SqlStatement {
         sql: plan.intern_sql.clone(),
         args: vec![encoded.clone()],
@@ -86,18 +91,18 @@ pub fn intern(seam: &SqliteSeam, plan: &TextInternPlan, arrivals: &[Arrival]) ->
             let (Some(content), Some(id)) = (row.get(lookup_index), row.get(id_index)) else {
                 continue;
             };
-            ids.insert(content_of(content), id.as_i64().unwrap_or_default());
+            ids.insert(content_of(content)?, id.as_i64().unwrap_or_default());
         }
     }
     arrivals
         .iter()
         .map(|arrival| match plan.rel_columns.get(&arrival.rel) {
-            None => arrival.clone(),
-            Some(flags) => Arrival {
+            None => Ok(arrival.clone()),
+            Some(flags) => Ok(Arrival {
                 rel: arrival.rel.clone(),
                 sign: arrival.sign,
-                row: rewrite_row(&arrival.row, flags, &ids),
-            },
+                row: rewrite_row(&arrival.row, flags, &ids)?,
+            }),
         })
         .collect()
 }

@@ -43,6 +43,91 @@ impl Value {
     }
 }
 
+// What a binder can take, mirroring IRowScalar. A list column's stored value
+// is its interned entity id, an int, so the array arm has no spelling here.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ScalarValue {
+    Integer(i64),
+    Real(f64),
+    Bool(bool),
+    Text(String),
+}
+
+// The binder a list value was asked to cross.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalarSeam {
+    SqlParameter,
+    HostTemplateArgument,
+    ArrivalPayload,
+    TextIntern,
+}
+
+impl ScalarSeam {
+    pub fn name(self) -> &'static str {
+        match self {
+            ScalarSeam::SqlParameter => "a SQL parameter",
+            ScalarSeam::HostTemplateArgument => "a host template argument",
+            ScalarSeam::ArrivalPayload => "an arrival payload",
+            ScalarSeam::TextIntern => "the text intern plane",
+        }
+    }
+}
+
+// The two ways a `list` column's value can be wrong at a runtime boundary.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoundaryError {
+    ListAtScalarSeam(ScalarSeam),
+    ListColumnNotAnArray { text: String, detail: String },
+}
+
+impl std::fmt::Display for BoundaryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BoundaryError::ListAtScalarSeam(seam) => {
+                write!(f, "a list value reached {}", seam.name())
+            }
+            BoundaryError::ListColumnNotAnArray { text, detail } => write!(
+                f,
+                "list column crossed SQLite with non-array text {text}: {detail}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BoundaryError {}
+
+pub type BoundaryResult<T> = std::result::Result<T, BoundaryError>;
+
+impl ScalarValue {
+    pub fn at_seam(value: &Value, seam: ScalarSeam) -> BoundaryResult<ScalarValue> {
+        match value {
+            Value::Integer(v) => Ok(ScalarValue::Integer(*v)),
+            Value::Real(v) => Ok(ScalarValue::Real(*v)),
+            Value::Bool(b) => Ok(ScalarValue::Bool(*b)),
+            Value::Text(text) => Ok(ScalarValue::Text(text.clone())),
+            Value::List(_) => Err(BoundaryError::ListAtScalarSeam(seam)),
+        }
+    }
+
+    pub fn row_at_seam(row: &[Value], seam: ScalarSeam) -> BoundaryResult<Vec<ScalarValue>> {
+        row.iter()
+            .map(|value| ScalarValue::at_seam(value, seam))
+            .collect()
+    }
+}
+
+impl From<ScalarValue> for Value {
+    fn from(scalar: ScalarValue) -> Value {
+        match scalar {
+            ScalarValue::Integer(v) => Value::Integer(v),
+            ScalarValue::Real(v) => Value::Real(v),
+            ScalarValue::Bool(b) => Value::Bool(b),
+            ScalarValue::Text(text) => Value::Text(text),
+        }
+    }
+}
+
 pub type Row = Vec<Value>;
 
 #[derive(Debug, Clone)]
@@ -75,7 +160,7 @@ pub struct TickDeltas {
 pub struct BootStatement {
     pub rel: String,
     pub sql: String,
-    pub params: Vec<Value>,
+    pub params: Vec<ScalarValue>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,7 +183,7 @@ impl InternMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SqlStatement {
     pub sql: String,
-    pub args: Vec<Value>,
+    pub args: Vec<ScalarValue>,
 }
 
 #[derive(Debug, Clone)]

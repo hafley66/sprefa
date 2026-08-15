@@ -4,8 +4,8 @@ use serde_json::Value as JsonValue;
 
 use crate::sql::{column_index, SqlRunner, SqliteSeam};
 use crate::types::{
-    Arrival, ArrivalSign, IncrementalRelationPlan, Row, SqlStatement, StructTypePlan,
-    TextInternPlan, Value,
+    Arrival, ArrivalSign, BoundaryResult, IncrementalRelationPlan, Row, ScalarValue, SqlStatement,
+    StructTypePlan, TextInternPlan, Value,
 };
 
 #[derive(Clone)]
@@ -119,13 +119,13 @@ fn resolve_fields(collected: &Collected, ids: &HashMap<String, i64>) -> Row {
         .collect()
 }
 
-fn encoded_rows(rows: &[Row]) -> Value {
+fn encoded_rows(rows: &[Row]) -> BoundaryResult<ScalarValue> {
     let encoded = rows
         .iter()
         .map(|row| crate::incremental::json_array_text(row))
-        .collect::<Vec<_>>()
+        .collect::<BoundaryResult<Vec<_>>>()?
         .join(",");
-    Value::Text(format!("[{}]", encoded))
+    Ok(ScalarValue::Text(format!("[{}]", encoded)))
 }
 
 fn intern_type(
@@ -135,7 +135,7 @@ fn intern_type(
     ids: &mut HashMap<String, i64>,
     relations: &[IncrementalRelationPlan],
     text_plan: Option<&TextInternPlan>,
-) {
+) -> BoundaryResult<()> {
     let rows: Vec<Row> = collected
         .iter()
         .map(|entry| resolve_fields(entry, ids))
@@ -149,11 +149,11 @@ fn intern_type(
         })
         .collect();
     let staged = match text_plan {
-        Some(text_plan) => crate::text_plane::intern(seam, text_plan, &arrivals),
+        Some(text_plan) => crate::text_plane::intern(seam, text_plan, &arrivals)?,
         None => arrivals,
     };
     let staged_rows: Vec<Row> = staged.iter().map(|arrival| arrival.row.clone()).collect();
-    let encoded = encoded_rows(&staged_rows);
+    let encoded = encoded_rows(&staged_rows)?;
     let conflict = seam
         .execute(&SqlStatement {
             sql: plan.conflict_sql.clone(),
@@ -163,7 +163,7 @@ fn intern_type(
     if !conflict.rows.is_empty() {
         panic!("relation_reference_conflict({})", plan.name);
     }
-    crate::incremental::apply_arrivals(seam, &staged, relations);
+    crate::incremental::apply_arrivals(seam, &staged, relations)?;
     let lookup = seam
         .execute(&SqlStatement {
             sql: plan.lookup_sql.clone(),
@@ -174,7 +174,7 @@ fn intern_type(
     let id_index = column_index(&lookup, "__id").expect("struct id column missing");
     let mut semantics_by_tuple: HashMap<String, &str> = HashMap::new();
     for (entry, row) in collected.iter().zip(staged_rows.iter()) {
-        semantics_by_tuple.insert(crate::incremental::json_array_text(row), &entry.semantic);
+        semantics_by_tuple.insert(crate::incremental::json_array_text(row)?, &entry.semantic);
     }
     for row in &lookup.rows {
         let tuple = match row.get(lookup_index) {
@@ -190,6 +190,7 @@ fn intern_type(
             .unwrap_or_else(|| panic!("relation reference lookup returned an unknown row {tuple}"));
         ids.insert((*semantic).to_string(), id);
     }
+    Ok(())
 }
 
 fn rewrite_row(row: &Row, refs: &[Option<String>], ids: &HashMap<String, i64>) -> Row {
@@ -218,9 +219,9 @@ pub fn intern(
     arrivals: &[Arrival],
     relations: &[IncrementalRelationPlan],
     text_plan: Option<&TextInternPlan>,
-) -> Vec<Arrival> {
+) -> BoundaryResult<Vec<Arrival>> {
     if types.is_empty() || arrivals.is_empty() {
-        return arrivals.to_vec();
+        return Ok(arrivals.to_vec());
     }
     let by_name: HashMap<&str, &StructTypePlan> = types
         .iter()
@@ -243,15 +244,15 @@ pub fn intern(
         }
     }
     if per_type.is_empty() {
-        return arrivals.to_vec();
+        return Ok(arrivals.to_vec());
     }
     let mut ids = HashMap::new();
     for plan in types {
         if let Some(collected) = per_type.get(&plan.name) {
-            intern_type(seam, plan, collected, &mut ids, relations, text_plan);
+            intern_type(seam, plan, collected, &mut ids, relations, text_plan)?;
         }
     }
-    arrivals
+    Ok(arrivals
         .iter()
         .map(|arrival| match ref_columns.get(&arrival.rel) {
             None => arrival.clone(),
@@ -261,5 +262,5 @@ pub fn intern(
                 row: rewrite_row(&arrival.row, refs, &ids),
             },
         })
-        .collect()
+        .collect())
 }

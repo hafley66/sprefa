@@ -130,7 +130,9 @@ async fn scripted_replay_still_runs_without_executing_hosts() {
     let program = fixture_program("live_shell_probe");
     let seam = SqliteSeam::in_memory().expect("seam");
     let schedule = vec![vec![add("source_file", vec![text("nope.rs")])]];
-    let fold = run_schedule(&program, &seam, &schedule, 100).await;
+    let fold = run_schedule(&program, &seam, &schedule, 100)
+        .await
+        .expect("schedule fold");
     assert_eq!(fold.lines.len(), 1);
     assert_eq!(
         table_rows(&program, &seam, "spanned"),
@@ -160,7 +162,10 @@ fn live_flag_rejects_a_scripted_response_row() {
 #[test]
 fn template_fill_escapes_for_the_landing_quote_context() {
     let mut inputs = BTreeMap::new();
-    inputs.insert("path".to_string(), text("a'b c.rs"));
+    inputs.insert(
+        "path".to_string(),
+        sprefa_engine_rs::types::ScalarValue::Text("a'b c.rs".to_string()),
+    );
     let filled =
         sprefa_engine_rs::hosts::fill_template("head -1 {path} '{path}' \"{path}\"", &inputs);
     assert_eq!(filled, "head -1 'a'\\''b c.rs' 'a'\\''b c.rs' \"a'b c.rs\"");

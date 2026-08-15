@@ -144,7 +144,7 @@ impl SourceBind {
     ) -> anyhow::Result<SourceBindTickFrame> {
         self.validate_program(program)?;
         let source = self.execute(request)?;
-        let deltas = program.run_tick(seam, &source.arrivals);
+        let deltas = program.run_tick(seam, &source.arrivals)?;
         Ok(SourceBindTickFrame { source, deltas })
     }
 
