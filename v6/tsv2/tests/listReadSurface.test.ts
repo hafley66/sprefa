@@ -41,7 +41,9 @@ import { test } from "node:test";
 import { concatMap, firstValueFrom, map } from "rxjs";
 
 import { BootRunner } from "../runtime/2_boot.ts";
+import { row_value_from_sql } from "../runtime/rows.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
+import { TickLogEmitter } from "../runtime/ticklog.ts";
 import type { IBootStatement, IGenProgram, ISqlSeam } from "../runtime/types.ts";
 
 import * as scalar_list from "../gen_emitted/split_value_is_the_interned_list_id.ts";
@@ -168,4 +170,28 @@ test("a rel element aggregates the target view's __rendered, not its id", () => 
   assert.ok(view, `no __list_ view for a rel-element list: ${ddl.join(" | ")}`);
   assert.match(view, /json\(r\."__rendered"\)/, `the element is the target's value, got: ${view}`);
   assert.match(view, /LEFT JOIN "__ref_node" r ON r\."__id" = m\."value"/, `a join, not a probe: ${view}`);
+});
+
+// F3: the reader hands the consumer Array<T>, never the array text.
+
+test("the row reader parses a list column into an array at the seam", () => {
+  assert.deepEqual(row_value_from_sql("list", '["usr","local","bin"]'), ["usr", "local", "bin"]);
+  assert.deepEqual(row_value_from_sql("list", "[]"), []);
+  assert.deepEqual(row_value_from_sql("list", '[{"name":"ada"}]'), [{ name: "ada" }]);
+});
+
+// FAIL-PRE-FIX: with the array text crossing as a plain string, a consumer
+// reading the `Array<string>` typegen promises got a string, and `.length`
+// counted CHARACTERS.
+test("the row reader names a list column whose text is not an array", () => {
+  assert.throws(() => row_value_from_sql("list", '{"a":1}'), /non-array text/);
+  assert.throws(() => row_value_from_sql("list", 7), /crossed SQLite/);
+});
+
+test("the tick-log encoder canonicalizes an already-parsed list, keys sorted", () => {
+  assert.equal(TickLogEmitter.value_text(["usr", "local"], "list"), '["usr","local"]');
+  assert.equal(
+    TickLogEmitter.value_text([{ url: "ada.io", name: "ada" } as never], "list"),
+    '[{"name":"ada","url":"ada.io"}]',
+  );
 });

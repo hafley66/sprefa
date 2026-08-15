@@ -8,7 +8,7 @@
 
 import { concatMap, from, map, of, toArray, type Observable } from "rxjs";
 
-import type { IBootStatement, IBootRunner, IRowValue, ISqlSeam } from "./types.ts";
+import type { IBootStatement, IBootRunner, IRowScalar, ISqlSeam } from "./types.ts";
 
 /** Integer params cross as bigint. `@libsql/client` binds a JS number as
  *  SQLite REAL, so a bound `1` lands in a TEXT-affinity column as "1.0" while
@@ -16,14 +16,13 @@ import type { IBootStatement, IBootRunner, IRowValue, ISqlSeam } from "./types.t
  *  emit_ts.pl's emitted `bindArgs` helper and 1_incremental.ts's own; the boot
  *  path was the one seam still binding raw. Harmless against an INTEGER
  *  column, which round-trips either form. */
-function boot_args(params: readonly IRowValue[]): (string | number | bigint)[] {
-  return params.map((param) =>
-    typeof param === "boolean"
-      ? BigInt(param ? 1 : 0)
-      : typeof param === "number" && Number.isSafeInteger(param)
-        ? BigInt(param)
-        : param,
-  );
+function boot_args(params: readonly IRowScalar[]): (string | number | bigint)[] {
+  return params.map((param) => {
+    if (typeof param === "boolean") return BigInt(param ? 1 : 0);
+    if (typeof param === "number") return Number.isSafeInteger(param) ? BigInt(param) : param;
+    if (typeof param === "string") return param;
+    throw new Error("a list param reached a SQL parameter");
+  });
 }
 
 export const BootRunner: IBootRunner = {

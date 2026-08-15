@@ -152,6 +152,9 @@ function read_oracle_final_line(name: string): string | null {
  *  the same bytes wrapped in quotes. */
 function final_value_json(value: unknown, type?: IRowColumnType): string {
   if (typeof value === "bigint") return value.toString();
+  // A list column arrives here already parsed by row_value_from_sql; String()
+  // would flatten it to comma-joined elements.
+  if (Array.isArray(value)) return TickLogEmitter.value_text(value as IRowValue, type);
   if (typeof value === "number" || typeof value === "boolean") {
     return TickLogEmitter.value_text(value as IRowValue, type);
   }

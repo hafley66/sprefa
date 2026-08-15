@@ -25,6 +25,14 @@ import type {
  *  bigint | ArrayBuffer`) and would need widening only if a future column
  *  type introduces `null` into this seam. */
 export const row_value_from_sql: IRowValueFromSql = (type: IRowColumnType | undefined, value: unknown): IRowValue => {
+  // F3: a list column hands the consumer `Array<T>`, never the array TEXT the
+  // `__list_` view aggregated, and never the interned entity id.
+  if (type === "list") {
+    if (typeof value !== "string") throw new Error(`list column crossed SQLite with ${JSON.stringify(value)}`);
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error(`list column crossed SQLite with non-array text ${value}`);
+    return parsed as IRowValue;
+  }
   if (type === "bool") {
     if (value === 0 || value === 0n) return false;
     if (value === 1 || value === 1n) return true;

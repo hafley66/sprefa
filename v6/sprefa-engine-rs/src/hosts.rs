@@ -353,6 +353,9 @@ pub fn shell_text(value: &Value) -> String {
         Value::Integer(number) => number.to_string(),
         Value::Real(number) => crate::ticklog::js_float_text(*number),
         Value::Bool(flag) => if *flag { "true" } else { "false" }.to_string(),
+        // The write side carries the interned entity id; only the READ seam
+        // parses a list, so a List here means a plan wired the wrong column.
+        Value::List(_) => panic!("a list value reached a host template argument"),
     }
 }
 

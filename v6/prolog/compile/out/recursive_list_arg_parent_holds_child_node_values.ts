@@ -37,6 +37,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   IStructRefColumns,
@@ -48,13 +49,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -66,7 +67,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -196,7 +202,7 @@ const rel_columns: Record<string, readonly string[]> = {
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   __gen__list_node_4205b0871c875897: ["text"],
   __gen__list_node_4205b0871c875897__member: ["int", "int", "ref"],
-  node: ["text", "json"],
+  node: ["text", "list"],
 };
 
 const rel_catalog: readonly IRelCatalogRow[] = [
@@ -315,7 +321,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_node_4205b0871c875897", kind: "set", table_name: "__gen__list_node_4205b0871c875897", delta_table_name: "__delta___gen__list_node_4205b0871c875897", frontier_table_name: "__frontier___gen__list_node_4205b0871c875897", next_frontier_table_name: "__next_frontier___gen__list_node_4205b0871c875897", columns: ["content"], column_types: ["text"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_node_4205b0871c875897" ("content") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("content") DO NOTHING RETURNING "content"`, arrival_del_sql: `DELETE FROM "__gen__list_node_4205b0871c875897" WHERE ("content") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "content"`, boundary_sql: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_node_4205b0871c875897" t WHERE t."_sign" IN (-1, 1) GROUP BY t."content", t."_sign"`, rule_observers: [] },
   { rel: "__gen__list_node_4205b0871c875897__member", kind: "set", table_name: "__gen__list_node_4205b0871c875897__member", delta_table_name: "__delta___gen__list_node_4205b0871c875897__member", frontier_table_name: "__frontier___gen__list_node_4205b0871c875897__member", next_frontier_table_name: "__next_frontier___gen__list_node_4205b0871c875897__member", columns: ["list_id", "idx", "value"], column_types: ["int", "int", "ref"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "__gen__list_node_4205b0871c875897__member" ("list_id", "idx", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value" RETURNING "list_id", "idx", "value"`, arrival_del_sql: `DELETE FROM "__gen__list_node_4205b0871c875897__member" WHERE ("list_id", "idx", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "list_id", "idx", "value"`, boundary_sql: `SELECT t."list_id", t."idx", (SELECT d."__rendered" FROM "__ref_node" d WHERE d."__id" = t."value") AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__list_node_4205b0871c875897__member" t WHERE t."_sign" IN (-1, 1) GROUP BY t."list_id", t."idx", t."value", t."_sign"`, rule_observers: [] },
-  { rel: "node", kind: "set", table_name: "node", delta_table_name: "__delta_node", frontier_table_name: "__frontier_node", next_frontier_table_name: "__next_frontier_node", columns: ["name", "children"], column_types: ["text", "json"], key_indices: [0], arrival_add_sql: `INSERT INTO "node" ("name", "children") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("name") DO UPDATE SET "children" = excluded."children" RETURNING "name", "children"`, arrival_del_sql: `DELETE FROM "node" WHERE ("name", "children") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "children"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", coalesce("__l_children"."value_text", '[]') AS "children", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_node" t LEFT JOIN "__list___gen__list_node_4205b0871c875897" "__l_children" ON "__l_children"."list_id" = t."children" WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."children", t."_sign"`, rule_observers: [] },
+  { rel: "node", kind: "set", table_name: "node", delta_table_name: "__delta_node", frontier_table_name: "__frontier_node", next_frontier_table_name: "__next_frontier_node", columns: ["name", "children"], column_types: ["text", "list"], key_indices: [0], arrival_add_sql: `INSERT INTO "node" ("name", "children") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("name") DO UPDATE SET "children" = excluded."children" RETURNING "name", "children"`, arrival_del_sql: `DELETE FROM "node" WHERE ("name", "children") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "children"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", coalesce("__l_children"."value_text", '[]') AS "children", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_node" t LEFT JOIN "__list___gen__list_node_4205b0871c875897" "__l_children" ON "__l_children"."list_id" = t."children" WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."children", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

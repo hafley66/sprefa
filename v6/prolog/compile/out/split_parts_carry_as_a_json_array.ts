@@ -36,6 +36,7 @@ import type {
   IRelDelta,
   IRow,
   IRowColumnType,
+  IRowScalar,
   IRowValue,
   ISqlSeam,
   ITextInternPlan,
@@ -45,13 +46,13 @@ import type {
 
 interface IHostColumnPlan { readonly name: string; readonly type: string }
 interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }
-interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }
-interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
+interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }
+interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }
 
 interface IBootStatement {
   rel: string;
   sql: string;
-  params: readonly IRowValue[];
+  params: readonly IRowScalar[];
 }
 
 type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };
@@ -63,7 +64,12 @@ export const subscribed_rels: readonly string[] = [];
 export const unsupported_execution: readonly string[] = [];
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
@@ -202,7 +208,7 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   __gen__list_text_df210f232c1299bd: ["text"],
   __gen__list_text_df210f232c1299bd__member: ["int", "int", "text"],
   line: ["text", "text"],
-  line_parts: ["text", "json"],
+  line_parts: ["text", "list"],
 };
 
 const rel_catalog: readonly IRelCatalogRow[] = [
@@ -352,7 +358,7 @@ const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_text_df210f232c1299bd", kind: "set", table_name: "__gen__list_text_df210f232c1299bd", delta_table_name: "__delta___gen__list_text_df210f232c1299bd", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd", columns: ["content"], column_types: ["text"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("content") DO NOTHING RETURNING "content"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE ("content") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "content"`, boundary_sql: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_text_df210f232c1299bd" t WHERE t."_sign" IN (-1, 1) GROUP BY t."content", t."_sign"`, rule_observers: [] },
   { rel: "__gen__list_text_df210f232c1299bd__member", kind: "set", table_name: "__gen__list_text_df210f232c1299bd__member", delta_table_name: "__delta___gen__list_text_df210f232c1299bd__member", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd__member", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd__member", columns: ["list_id", "idx", "value"], column_types: ["int", "int", "text"], key_indices: [0, 1], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value" RETURNING "list_id", "idx", "value"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE ("list_id", "idx", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "list_id", "idx", "value"`, boundary_sql: `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_text_df210f232c1299bd__member" t WHERE t."_sign" IN (-1, 1) GROUP BY t."list_id", t."idx", t."value", t."_sign"`, rule_observers: [] },
   { rel: "line", kind: "set", table_name: "line", delta_table_name: "__delta_line", frontier_table_name: "__frontier_line", next_frontier_table_name: "__next_frontier_line", columns: ["name", "body"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "line" ("name", "body") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "body"`, arrival_del_sql: `DELETE FROM "line" WHERE ("name", "body") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "body"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_line" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."body", t."_sign"`, rule_observers: ["line_parts/2"] },
-  { rel: "line_parts", kind: "set", table_name: "line_parts", delta_table_name: "__delta_line_parts", frontier_table_name: "__frontier_line_parts", next_frontier_table_name: "__next_frontier_line_parts", columns: ["name", "parts"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", coalesce("__l_parts"."value_text", '[]') AS "parts", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_line_parts" t LEFT JOIN "__list___gen__list_text_df210f232c1299bd" "__l_parts" ON "__l_parts"."list_id" = t."parts" WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."parts", t."_sign"`, rule_observers: [] },
+  { rel: "line_parts", kind: "set", table_name: "line_parts", delta_table_name: "__delta_line_parts", frontier_table_name: "__frontier_line_parts", next_frontier_table_name: "__next_frontier_line_parts", columns: ["name", "parts"], column_types: ["text", "list"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", coalesce("__l_parts"."value_text", '[]') AS "parts", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_line_parts" t LEFT JOIN "__list___gen__list_text_df210f232c1299bd" "__l_parts" ON "__l_parts"."list_id" = t."parts" WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."parts", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

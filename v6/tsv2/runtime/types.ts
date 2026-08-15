@@ -14,7 +14,16 @@ export type { QueryResult, SqliteDb, SqlStatement, TraceStatement };
  * header, item 9: atoms and compound-term text both serialize as JSON
  * strings.
  */
-export type IRowValue = string | number | boolean;
+export type IRowValue = IRowScalar | IRowValueArray;
+
+/** What a SQL PARAMETER, a pinned query literal and a bind literal can be. A
+ *  list column's parameter is the interned entity id, an int, so the array
+ *  side of `IRowValue` never reaches a statement's args. */
+export type IRowScalar = string | number | boolean;
+
+/** A `list` column's boundary value: the ELEMENTS, parsed once at the read
+ *  seam. The interned entity id never leaves storage. */
+export interface IRowValueArray extends ReadonlyArray<IRowValue> {}
 
 /** Storage type emitted for each public relation column. Relation references
  * still cross the boundary as their canonical text value.
@@ -25,7 +34,7 @@ export type IRowValue = string | number | boolean;
  * value at any top level, a `text` column's value is a string even when its
  * bytes happen to parse. Before this member existed the encoder guessed by
  * looking at the first character and got both cases wrong (json_flex lab). */
-export type IRowColumnType = "text" | "int" | "bool" | "float" | "ref" | "json";
+export type IRowColumnType = "text" | "int" | "bool" | "float" | "ref" | "json" | "list";
 
 /** One relation row, columns in the rel's declared order (rel_columns). */
 export type IRow = readonly IRowValue[];
@@ -493,7 +502,7 @@ export interface IBootStatement {
    *  filter reads it; nothing else does. */
   readonly rel: string;
   readonly sql: string;
-  readonly params: readonly IRowValue[];
+  readonly params: readonly IRowScalar[];
 }
 
 export interface IBootRunner {
@@ -623,7 +632,7 @@ export interface IHostPlan {
 export interface IBindPlan {
   readonly name: string;
   readonly columns: readonly IHostColumnPlan[];
-  readonly literals: readonly IRowValue[];
+  readonly literals: readonly IRowScalar[];
   readonly execution: string;
 }
 
@@ -632,7 +641,7 @@ export interface IQueryPlan {
   readonly arity: number;
   /** One entry per position of the query atom: the pinned literal, or null
    *  where the position is free. */
-  readonly columns: readonly (IRowValue | null)[];
+  readonly columns: readonly (IRowScalar | null)[];
   /** The pinned positions, 0-based. These are the demand keys. */
   readonly bound: readonly number[];
   readonly snapshot: "current";

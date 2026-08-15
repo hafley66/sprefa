@@ -71,13 +71,12 @@ function quote_identifier(identifier: string): string {
 }
 
 function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) =>
-    typeof value === "boolean"
-      ? BigInt(value ? 1 : 0)
-      : typeof value === "number" && Number.isSafeInteger(value)
-        ? BigInt(value)
-        : value,
-  );
+  return values.map((value) => {
+    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
+    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
+    if (typeof value === "string") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
 }
 
 function result_rows(result: QueryResult, columns: readonly string[]): readonly IRow[] {
@@ -890,6 +889,18 @@ function boundary_delta(
     const row = relation.columns.map((column, index) => {
       const value = result_row[column];
       const type = relation.column_types?.[index];
+      // F3: the delta boundary hydrates a list column the same way the SELECT
+      // boundary does (rows.ts), so both reads hand the consumer Array<T>.
+      if (type === "list") {
+        if (typeof value !== "string") {
+          throw new Error(`list column '${relation.rel}.${column}' crossed SQLite with ${JSON.stringify(value)}`);
+        }
+        const parsed: unknown = JSON.parse(value);
+        if (!Array.isArray(parsed)) {
+          throw new Error(`list column '${relation.rel}.${column}' crossed SQLite with non-array text ${value}`);
+        }
+        return parsed as IRowValue;
+      }
       if (type === "bool") {
         if (value === 0 || value === 0n) return false;
         if (value === 1 || value === 1n) return true;

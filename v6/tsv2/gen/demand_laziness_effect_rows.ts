@@ -37,6 +37,15 @@ import type { IArrivalBatch, IGenProgram, IRow, ISqlSeam, ITickDeltas, SqlStatem
 // open_feed's PRIMARY KEY covers the whole row, not just the keyed column —
 // see the FINDING above.
 
+
+// A list column's boundary value is an array; a SQL parameter is never one.
+function scalar_args(values: IRow): (string | number | boolean)[] {
+  return values.map((value) => {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
+}
+
 const DDL: readonly string[] = [
   "CREATE TABLE open_feed (session_id TEXT NOT NULL, target TEXT NOT NULL, PRIMARY KEY (session_id, target))",
   "CREATE TABLE demanded (target TEXT NOT NULL, session_id TEXT NOT NULL, PRIMARY KEY (target, session_id))",
@@ -72,8 +81,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
     .filter((arrival) => arrival.rel === "open_feed")
     .map((arrival): SqlStatement =>
       arrival.sign === "add"
-        ? { sql: "INSERT OR IGNORE INTO open_feed (session_id, target) VALUES (?, ?)", args: [...arrival.row] }
-        : { sql: "DELETE FROM open_feed WHERE session_id = ? AND target = ?", args: [...arrival.row] },
+        ? { sql: "INSERT OR IGNORE INTO open_feed (session_id, target) VALUES (?, ?)", args: scalar_args(arrival.row) }
+        : { sql: "DELETE FROM open_feed WHERE session_id = ? AND target = ?", args: scalar_args(arrival.row) },
     );
   return seam.runner.batch(seam.db, statements);
 }

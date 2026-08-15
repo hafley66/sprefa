@@ -67,6 +67,15 @@ import type { IArrivalBatch, IGenProgram, IRow, ISqlSeam, ITickDeltas, SqlStatem
 const ROUTE_DATA_PREFIX = "route_data(";
 const ROUTE_DATA_PREFIX_LEN = ROUTE_DATA_PREFIX.length; // 11, a compile-time constant of the functor name
 
+
+// A list column's boundary value is an array; a SQL parameter is never one.
+function scalar_args(values: IRow): (string | number | boolean)[] {
+  return values.map((value) => {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
+    throw new Error("a list value reached a SQL parameter");
+  });
+}
+
 const DDL: readonly string[] = [
   "CREATE TABLE route_change (session_id TEXT NOT NULL, route_id TEXT NOT NULL)",
   "CREATE TABLE route_row (route_id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY (route_id))",
@@ -113,7 +122,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
     .filter((arrival) => arrival.rel === "route_change")
     .map((arrival): SqlStatement => {
       if (arrival.sign === "del") throw new Error("retract_from_log(route_change/2)");
-      return { sql: "INSERT INTO route_change (session_id, route_id) VALUES (?, ?)", args: [...arrival.row] };
+      return { sql: "INSERT INTO route_change (session_id, route_id) VALUES (?, ?)", args: scalar_args(arrival.row) };
     });
   return seam.runner.batch(seam.db, statements);
 }
@@ -144,7 +153,7 @@ function scope_writes(
     if (existing !== undefined && existing[1] === candidate_row[1]) continue; // equal-row write = no-op
     statements.push({
       sql: "INSERT INTO open_scope (session_id, target) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET target = excluded.target",
-      args: [...candidate_row],
+      args: scalar_args(candidate_row),
     });
     written_rows.push(candidate_row);
   }

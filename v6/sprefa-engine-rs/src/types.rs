@@ -12,20 +12,7 @@ pub enum RowColumnType {
     Bool,
     Json,
     Ref,
-}
-
-impl RowColumnType {
-    pub fn parse(name: &str) -> Self {
-        match name {
-            "text" => RowColumnType::Text,
-            "int" => RowColumnType::Int,
-            "float" => RowColumnType::Float,
-            "bool" => RowColumnType::Bool,
-            "json" => RowColumnType::Json,
-            "ref" => RowColumnType::Ref,
-            _ => RowColumnType::Text,
-        }
-    }
+    List,
 }
 
 // A row value as it crosses a runtime boundary. Mirrors the values IRowValue
@@ -39,6 +26,11 @@ pub enum Value {
     Real(f64),
     Bool(bool),
     Text(String),
+    // A `list` column's boundary value: the ELEMENTS, parsed once at the read
+    // seam (sql.rs). Elements are json values because a rel-typed element is
+    // the target's rendered object. Last, so untagged deserialization tries
+    // every scalar first.
+    List(Vec<serde_json::Value>),
 }
 
 impl Value {

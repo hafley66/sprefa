@@ -76,6 +76,7 @@ fn to_param(value: &Value) -> rusqlite::types::Value {
         Value::Real(v) => rusqlite::types::Value::Real(*v),
         Value::Bool(b) => rusqlite::types::Value::Integer(if *b { 1 } else { 0 }),
         Value::Text(v) => rusqlite::types::Value::Text(v.clone()),
+        Value::List(_) => panic!("a list value reached a SQL parameter"),
     }
 }
 
@@ -185,6 +186,14 @@ fn normalize_boundary_value(value: Value, ty: Option<crate::types::RowColumnType
             }
         }
         (Some(crate::types::RowColumnType::Float), Value::Integer(v)) => Value::Real(v as f64),
+        // F3: the consumer gets Vec<T>, never the array TEXT the `__list_`
+        // view aggregated and never the interned entity id.
+        (Some(crate::types::RowColumnType::List), Value::Text(text)) => {
+            match serde_json::from_str::<Vec<serde_json::Value>>(&text) {
+                Ok(items) => Value::List(items),
+                Err(error) => panic!("list column crossed SQLite with non-array text {text}: {error}"),
+            }
+        }
         (_, value) => value,
     }
 }

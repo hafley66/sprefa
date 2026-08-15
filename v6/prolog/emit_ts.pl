@@ -231,6 +231,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
       '  IRelDelta,',
       '  IRow,',
       '  IRowColumnType,',
+      '  IRowScalar,',
       '  IRowValue,',
       '  ISqlSeam,'
       ],
@@ -379,13 +380,13 @@ incremental_reference_normalize_lines(true, HasTextIntern,
 local_types_lines(
     [ 'interface IHostColumnPlan { readonly name: string; readonly type: string }',
       'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }',
-      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowValue[]; readonly execution: string }',
-      'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowValue | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }',
+      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }',
+      'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }',
       '',
       'interface IBootStatement {',
       '  rel: string;',
       '  sql: string;',
-      '  params: readonly IRowValue[];',
+      '  params: readonly IRowScalar[];',
       '}',
       '',
       'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };'
@@ -590,7 +591,12 @@ host_column_json(col(Name, Type), Json) :-
 % narrow).
 bind_args_helper_lines(
     [ 'function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {',
-      '  return values.map((value) => typeof value === "boolean" ? BigInt(value ? 1 : 0) : (typeof value === "number" && Number.isSafeInteger(value) ? BigInt(value) : value));',
+      '  return values.map((value) => {',
+      '    if (typeof value === "boolean") return BigInt(value ? 1 : 0);',
+      '    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;',
+      '    if (typeof value === "string") return value;',
+      '    throw new Error("a list value reached a SQL parameter");',
+      '  });',
       '}'
     ]).
 
@@ -845,9 +851,9 @@ boundary_column_type(ref(_), ref) :- !.
 % default text does); the seam that switches on it is ticklog.ts's encoder.
 boundary_column_type(json, json) :- !.
 boundary_column_type(json_list(_), json) :- !.
-% The read surface hands the boundary the array TEXT, so the tick-log encoder
-% treats it exactly as a json column: a json value at any top level.
-boundary_column_type(list(_), json) :- !.
+% F3: the runtime parses the read surface's array text into Array<T> at the
+% row seam, so the boundary type names the list rather than borrowing json's.
+boundary_column_type(list(_), list) :- !.
 boundary_column_type(Type, Type).
 
 arrival_targets_lines(ArrivalTargets, Lines) :-
