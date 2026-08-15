@@ -392,6 +392,7 @@ export interface IRelCatalogRow {
   readonly local_name: string;
   readonly kind:
     | "primitive"
+    | "list"
     | "json_list"
     | "module"
     | "use"
@@ -413,7 +414,14 @@ export interface IRelCatalogRow {
     | "avg_accumulator"
     | "port"
     | "port_response"
-    | "storage";
+    | "storage"
+    | "interface"
+    | "generic_rel"
+    | "generic_column"
+    | "type_parameter"
+    | "constraint"
+    | "concrete_type"
+    | "type_argument";
   readonly type_id: number;
   readonly arity: number;
   readonly module_id: number;
