@@ -89,13 +89,26 @@ emitted_type_name(RelId, TypeName) <-
   module_prefix(ModuleId, Prefix),
   TypeName := concat([Prefix, BareType]).
 
+# An option over a leaf, kept apart from option_type so a list can hold one
+# without the list strata reading the option stratum that reads them back.
+rel option_of_leaf(id: int, text: text).
+option_of_leaf(Id, Text) <-
+  type_row(Id, _, _, _, 'option', ElemId, _),
+  leaf_type(ElemId, Element),
+  Text := concat([Element, ' | null']).
+
+# The innermost thing a list holds: a leaf, or a nullable leaf.
+rel list_element(id: int, text: text).
+list_element(Id, Text) <- leaf_type(Id, Text).
+list_element(Id, Text) <- option_of_leaf(Id, Text).
+
 # @comment-ok: the nesting bound; a self-recursive stratum settles a tick late.
 # Nesting unrolls to four levels, one stratum per level. A recursive list_type
 # loads and derives one level per tick, so a single arrival batch renders short.
 rel list_depth_one(id: int, text: text).
 list_depth_one(Id, Text) <-
   type_row(Id, _, _, _, 'json_list', ElemId, _),
-  leaf_type(ElemId, Element),
+  list_element(ElemId, Element),
   Text := concat(['Array<', Element, '>']).
 
 rel list_depth_two(id: int, text: text).
@@ -122,17 +135,21 @@ list_type(Id, Text) <- list_depth_two(Id, Text).
 list_type(Id, Text) <- list_depth_three(Id, Text).
 list_type(Id, Text) <- list_depth_four(Id, Text).
 
+# What an option wraps: a leaf, or a list of any rendered depth.
+rel element_type(id: int, text: text).
+element_type(Id, Text) <- leaf_type(Id, Text).
+element_type(Id, Text) <- list_type(Id, Text).
+
 # An option column renders its element type suffixed with ' | null'.
 rel option_type(id: int, text: text).
 option_type(Id, Text) <-
   type_row(Id, _, _, _, 'option', ElemId, _),
-  leaf_type(ElemId, Element),
+  element_type(ElemId, Element),
   Text := concat([Element, ' | null']).
 
-# type_of is the union of the three kind arms; each type id is one kind.
+# type_of is the union of the kind arms; each type id is one kind.
 rel type_of(id: int, text: text).
-type_of(Id, Text) <- leaf_type(Id, Text).
-type_of(Id, Text) <- list_type(Id, Text).
+type_of(Id, Text) <- element_type(Id, Text).
 type_of(Id, Text) <- option_type(Id, Text).
 
 # Two rels can mint one PascalCase name, so the owner rel id is the key here
