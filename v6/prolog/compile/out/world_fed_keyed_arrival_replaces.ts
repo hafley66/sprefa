@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -200,57 +199,9 @@ const arrival_targets: readonly string[] = ["world_mode"];
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly world_mode: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    world_mode: select_rows(seam, `SELECT t."col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_world_mode" t`, rel_columns.world_mode!, rel_column_types.world_mode!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    world_mode: select_rows(seam, `SELECT "col1", "col2" FROM "world_mode"`, rel_columns.world_mode!, rel_column_types.world_mode!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   world_mode: `SELECT t."col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_world_mode" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  world_mode: { kind: "set", add_sql: `INSERT INTO "world_mode" ("col1", "col2") VALUES (?, ?) ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2"`, del_sql: `DELETE FROM "world_mode" WHERE "col1" = ? AND "col2" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`world_fed_keyed_arrival_replaces: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`world_fed_keyed_arrival_replaces: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`world_fed_keyed_arrival_replaces: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "world_mode", kind: "set", table_name: "world_mode", delta_table_name: "__delta_world_mode", frontier_table_name: "__frontier_world_mode", next_frontier_table_name: "__next_frontier_world_mode", columns: ["col1", "col2"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "world_mode" ("col1", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2" RETURNING "col1", "col2"`, arrival_del_sql: `DELETE FROM "world_mode" WHERE ("col1", "col2") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "col1", "col2"`, boundary_sql: `SELECT t."col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_world_mode" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."col2", t."_sign"`, rule_observers: [] },
@@ -262,39 +213,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const world_mode = multiset_diff(before.world_mode, after.world_mode);
-  return {
-    rels: [
-      { rel: "world_mode", add: world_mode.add, del: world_mode.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // world_fed_keyed_arrival_replaces: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -323,14 +245,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

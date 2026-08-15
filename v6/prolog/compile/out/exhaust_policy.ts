@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
     });
     return { ...arrival, row };
   });
-}
-
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
 }
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -402,49 +382,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "tab_view", sql: `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]')), b1."body" FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'))`, params: [] },
 ];
 
-type Snapshot = {
-  readonly close_request: readonly IRow[];
-  readonly closed: readonly IRow[];
-  readonly demanded: readonly IRow[];
-  readonly live_tab: readonly IRow[];
-  readonly open_request: readonly IRow[];
-  readonly open_tab: readonly IRow[];
-  readonly tab_row: readonly IRow[];
-  readonly tab_view: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    close_request: select_rows(seam, `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id" FROM "__txt_close_request" t`, rel_columns.close_request!, rel_column_types.close_request!),
-    closed: select_rows(seam, `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id" FROM "__txt_closed" t`, rel_columns.closed!, rel_column_types.closed!),
-    demanded: select_rows(seam, `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id" FROM "__txt_demanded" t`, rel_columns.demanded!, rel_column_types.demanded!),
-    live_tab: select_rows(seam, `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id" FROM "__txt_live_tab" t`, rel_columns.live_tab!, rel_column_types.live_tab!),
-    open_request: select_rows(seam, `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id" FROM "__txt_open_request" t`, rel_columns.open_request!, rel_column_types.open_request!),
-    open_tab: select_rows(seam, `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id" FROM "__txt_open_tab" t`, rel_columns.open_tab!, rel_column_types.open_tab!),
-    tab_row: select_rows(seam, `SELECT CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_tab_row" t`, rel_columns.tab_row!, rel_column_types.tab_row!),
-    tab_view: select_rows(seam, `SELECT CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_tab_view" t`, rel_columns.tab_view!, rel_column_types.tab_view!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    close_request: select_rows(seam, `SELECT "session_id", "tab_id" FROM "close_request"`, rel_columns.close_request!, rel_column_types.close_request!),
-    closed: select_rows(seam, `SELECT "session_id", "tab_id" FROM "closed"`, rel_columns.closed!, rel_column_types.closed!),
-    demanded: select_rows(seam, `SELECT "col1", "session_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
-    live_tab: select_rows(seam, `SELECT "session_id", "tab_id" FROM "live_tab"`, rel_columns.live_tab!, rel_column_types.live_tab!),
-    open_request: select_rows(seam, `SELECT "session_id", "tab_id" FROM "open_request"`, rel_columns.open_request!, rel_column_types.open_request!),
-    open_tab: select_rows(seam, `SELECT "session_id", "tab_id" FROM "open_tab"`, rel_columns.open_tab!, rel_column_types.open_tab!),
-    tab_row: select_rows(seam, `SELECT "tab_id", "body" FROM "tab_row"`, rel_columns.tab_row!, rel_column_types.tab_row!),
-    tab_view: select_rows(seam, `SELECT "tab_id", "body" FROM "tab_view"`, rel_columns.tab_view!, rel_column_types.tab_view!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   close_request: `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id" FROM "__txt_close_request" t`,
   closed: `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id" FROM "__txt_closed" t`,
@@ -455,34 +392,6 @@ const final_select: Record<string, string> = {
   tab_row: `SELECT CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_tab_row" t`,
   tab_view: `SELECT CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_tab_view" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  close_request: { kind: "log", add_sql: `INSERT INTO "close_request" ("session_id", "tab_id") VALUES (?, ?)`, del_sql: null },
-  open_request: { kind: "log", add_sql: `INSERT INTO "open_request" ("session_id", "tab_id") VALUES (?, ?)`, del_sql: null },
-  tab_row: { kind: "set", add_sql: `INSERT OR IGNORE INTO "tab_row" ("tab_id", "body") VALUES (?, ?)`, del_sql: `DELETE FROM "tab_row" WHERE "tab_id" = ? AND "body" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`exhaust_policy: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`exhaust_policy: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`exhaust_policy: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "close_request", kind: "log", table_name: "close_request", delta_table_name: "__delta_close_request", frontier_table_name: "__frontier_close_request", next_frontier_table_name: "__next_frontier_close_request", columns: ["session_id", "tab_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "close_request" ("session_id", "tab_id") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "session_id", "tab_id"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."tab_id") AND json_type(t."tab_id") = 'object' AND json_type(t."tab_id", '$.fn') = 'text' AND json_type(t."tab_id", '$.args') = 'array' THEN json_extract(t."tab_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tab_id", '$.args')), '') || ')' ELSE t."tab_id" END AS "tab_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_close_request" t WHERE t."_sign" IN (-1, 1) GROUP BY t."session_id", t."tab_id", t."_sign"`, rule_observers: ["closed/2"] },
@@ -511,111 +420,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s
 INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]')), b1."body" FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'))`, support_sql: [`DELETE FROM "__support_next_tab_view"`, `INSERT INTO "__support_next_tab_view" ("tab_id", "body", "__refcount") SELECT "tab_id", "body", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]')) AS "tab_id", b1."body" AS "body", count(*) AS "__refcount" FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]')) GROUP BY json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'), b1."body") GROUP BY "tab_id", "body"`, `UPDATE "tab_view" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_tab_view" n WHERE n."tab_id" = h."tab_id" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_tab_view" ("_sign", "_sequence", "tab_id", "body") SELECT -1, row_number() OVER () - 1, "tab_id", "body" FROM "tab_view" WHERE "__refcount" <= 0`, `DELETE FROM "tab_view" WHERE "__refcount" <= 0`, `DELETE FROM "__new_tab_view"`, `INSERT INTO "__new_tab_view" ("tab_id", "body", "__refcount") SELECT n."tab_id", n."body", n."__refcount" FROM "__support_next_tab_view" n LEFT JOIN "tab_view" h ON n."tab_id" = h."tab_id" AND n."body" = h."body" WHERE h."tab_id" IS NULL`, `INSERT INTO "__delta_tab_view" ("_sign", "_sequence", "tab_id", "body") SELECT 1, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT INTO "__frontier_tab_view" ("_phase", "_sequence", "tab_id", "body") SELECT ?, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT INTO "__next_frontier_tab_view" ("_phase", "_sequence", "tab_id", "body") SELECT ?, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body", "__refcount") SELECT n."tab_id", n."body", n."__refcount" FROM "__support_next_tab_view" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."col1"), '$.args[0]') FROM "__frontier_demanded" d0, "tab_row" b0 WHERE d0."_phase" >= 0 AND json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."col1"), '$.fn') = 'tab' AND b0."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."col1"), '$.args[0]'))`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]') FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'))`] },
 ];
 
-const EDGE_OPEN_TAB_0_PROJECT_SQL = `SELECT ?1 AS "session_id", ?2 AS "tab_id" WHERE NOT EXISTS (SELECT 1 FROM "live_tab" n0 WHERE n0."session_id" = ?1)`;
-const EDGE_OPEN_TAB_0_WRITE_SQL = `INSERT INTO "open_tab" ("session_id", "tab_id") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "tab_id" = excluded."tab_id"`;
-const EDGE_OPEN_TAB_0_HEAD_COLUMNS: readonly string[] = ["session_id", "tab_id"];
-const EDGE_OPEN_TAB_0_KEY_INDICES: readonly number[] = [0];
-
-const EDGE_CLOSED_1_PROJECT_SQL = `SELECT ?1 AS "session_id", ?2 AS "tab_id"`;
-const EDGE_CLOSED_1_WRITE_SQL = `INSERT INTO "closed" ("session_id", "tab_id") VALUES (?, ?)`;
-const EDGE_CLOSED_1_HEAD_COLUMNS: readonly string[] = ["session_id", "tab_id"];
-
-function resolveOpenTab_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "open_request", before.open_request, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_TAB_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_OPEN_TAB_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_OPEN_TAB_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_TAB_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolveClosed_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "close_request", before.close_request, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_CLOSED_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_CLOSED_1_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "live_tab";
-INSERT OR IGNORE INTO "live_tab" ("session_id", "tab_id") SELECT b0."session_id", b0."tab_id" FROM "open_tab" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed" n0 WHERE n0."session_id" = b0."session_id" AND n0."tab_id" = b0."tab_id");
-DELETE FROM "demanded";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_object('fn', 'tab', 'args', json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."tab_id"))) FROM "live_tab" b0;
-INSERT OR IGNORE INTO "demanded" ("col1", "session_id") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_object('fn', 'tab', 'args', json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."tab_id")))), b0."session_id" FROM "live_tab" b0;
-DELETE FROM "tab_view";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]') FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'));
-INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]')), b1."body" FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'))`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const close_request = multiset_diff(before.close_request, after.close_request);
-  const closed = multiset_diff(before.closed, after.closed);
-  const demanded = multiset_diff(before.demanded, after.demanded);
-  const live_tab = multiset_diff(before.live_tab, after.live_tab);
-  const open_request = multiset_diff(before.open_request, after.open_request);
-  const open_tab = multiset_diff(before.open_tab, after.open_tab);
-  const tab_row = multiset_diff(before.tab_row, after.tab_row);
-  const tab_view = multiset_diff(before.tab_view, after.tab_view);
-  return {
-    rels: [
-      { rel: "close_request", add: close_request.add, del: close_request.del },
-      { rel: "closed", add: closed.add, del: closed.del },
-      { rel: "demanded", add: demanded.add, del: demanded.del },
-      { rel: "live_tab", add: live_tab.add, del: live_tab.del },
-      { rel: "open_request", add: open_request.add, del: open_request.del },
-      { rel: "open_tab", add: open_tab.add, del: open_tab.del },
-      { rel: "tab_row", add: tab_row.add, del: tab_row.del },
-      { rel: "tab_view", add: tab_view.add, del: tab_view.del },
-    ],
-    carry_pending: closed.add.length > 0 || closed.del.length > 0 || open_tab.add.length > 0 || open_tab.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolveOpenTab_0Writes(seam, before.stored, arrivals), resolveClosed_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // exhaust_policy: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -645,14 +453,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

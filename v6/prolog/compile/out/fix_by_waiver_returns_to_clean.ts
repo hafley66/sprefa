@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -670,76 +669,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "gate_exit", sql: `INSERT OR IGNORE INTO "gate_exit" ("stage", "col2") SELECT b0."stage", 0 FROM "gate_threshold" b0 WHERE NOT EXISTS (SELECT 1 FROM "gate_blocked" n0 WHERE n0."stage" = b0."stage")`, params: [] },
 ];
 
-type Snapshot = {
-  readonly any_diag: readonly IRow[];
-  readonly check_exit: readonly IRow[];
-  readonly diag: readonly IRow[];
-  readonly diag_stage: readonly IRow[];
-  readonly eprintln_baseline: readonly IRow[];
-  readonly eprintln_count: readonly IRow[];
-  readonly eprintln_counted: readonly IRow[];
-  readonly eprintln_hit: readonly IRow[];
-  readonly eprintln_waived: readonly IRow[];
-  readonly eprintln_waiver_line: readonly IRow[];
-  readonly gate_blocked: readonly IRow[];
-  readonly gate_exit: readonly IRow[];
-  readonly gate_threshold: readonly IRow[];
-  readonly program: readonly IRow[];
-  readonly severity_rank: readonly IRow[];
-  readonly waiver_block_comment: readonly IRow[];
-  readonly waiver_trailing_comment: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    any_diag: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_any_diag" t`, rel_columns.any_diag!, rel_column_types.any_diag!),
-    check_exit: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."col2" FROM "__txt_check_exit" t`, rel_columns.check_exit!, rel_column_types.check_exit!),
-    diag: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_no", CASE WHEN json_valid(t."severity") AND json_type(t."severity") = 'object' AND json_type(t."severity", '$.fn') = 'text' AND json_type(t."severity", '$.args') = 'array' THEN json_extract(t."severity", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."severity", '$.args')), '') || ')' ELSE t."severity" END AS "severity", CASE WHEN json_valid(t."code") AND json_type(t."code") = 'object' AND json_type(t."code", '$.fn') = 'text' AND json_type(t."code", '$.args') = 'array' THEN json_extract(t."code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."code", '$.args')), '') || ')' ELSE t."code" END AS "code", CASE WHEN json_valid(t."col5") AND json_type(t."col5") = 'object' AND json_type(t."col5", '$.fn') = 'text' AND json_type(t."col5", '$.args') = 'array' THEN json_extract(t."col5", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col5", '$.args')), '') || ')' ELSE t."col5" END AS "col5", CASE WHEN json_valid(t."col6") AND json_type(t."col6") = 'object' AND json_type(t."col6", '$.fn') = 'text' AND json_type(t."col6", '$.args') = 'array' THEN json_extract(t."col6", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col6", '$.args')), '') || ')' ELSE t."col6" END AS "col6", CASE WHEN json_valid(t."col7") AND json_type(t."col7") = 'object' AND json_type(t."col7", '$.fn') = 'text' AND json_type(t."col7", '$.args') = 'array' THEN json_extract(t."col7", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col7", '$.args')), '') || ')' ELSE t."col7" END AS "col7" FROM "__txt_diag" t`, rel_columns.diag!, rel_column_types.diag!),
-    diag_stage: select_rows(seam, `SELECT CASE WHEN json_valid(t."code") AND json_type(t."code") = 'object' AND json_type(t."code", '$.fn') = 'text' AND json_type(t."code", '$.args') = 'array' THEN json_extract(t."code", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."code", '$.args')), '') || ')' ELSE t."code" END AS "code", CASE WHEN json_valid(t."stage") AND json_type(t."stage") = 'object' AND json_type(t."stage", '$.fn') = 'text' AND json_type(t."stage", '$.args') = 'array' THEN json_extract(t."stage", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."stage", '$.args')), '') || ')' ELSE t."stage" END AS "stage" FROM "__txt_diag_stage" t`, rel_columns.diag_stage!, rel_column_types.diag_stage!),
-    eprintln_baseline: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."allowed" FROM "__txt_eprintln_baseline" t`, rel_columns.eprintln_baseline!, rel_column_types.eprintln_baseline!),
-    eprintln_count: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."hits" FROM "__txt_eprintln_count" t`, rel_columns.eprintln_count!, rel_column_types.eprintln_count!),
-    eprintln_counted: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_no" FROM "__txt_eprintln_counted" t`, rel_columns.eprintln_counted!, rel_column_types.eprintln_counted!),
-    eprintln_hit: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_no" FROM "__txt_eprintln_hit" t`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
-    eprintln_waived: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_no" FROM "__txt_eprintln_waived" t`, rel_columns.eprintln_waived!, rel_column_types.eprintln_waived!),
-    eprintln_waiver_line: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."waiver_line" FROM "__txt_eprintln_waiver_line" t`, rel_columns.eprintln_waiver_line!, rel_column_types.eprintln_waiver_line!),
-    gate_blocked: select_rows(seam, `SELECT CASE WHEN json_valid(t."stage") AND json_type(t."stage") = 'object' AND json_type(t."stage", '$.fn') = 'text' AND json_type(t."stage", '$.args') = 'array' THEN json_extract(t."stage", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."stage", '$.args')), '') || ')' ELSE t."stage" END AS "stage" FROM "__txt_gate_blocked" t`, rel_columns.gate_blocked!, rel_column_types.gate_blocked!),
-    gate_exit: select_rows(seam, `SELECT CASE WHEN json_valid(t."stage") AND json_type(t."stage") = 'object' AND json_type(t."stage", '$.fn') = 'text' AND json_type(t."stage", '$.args') = 'array' THEN json_extract(t."stage", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."stage", '$.args')), '') || ')' ELSE t."stage" END AS "stage", t."col2" FROM "__txt_gate_exit" t`, rel_columns.gate_exit!, rel_column_types.gate_exit!),
-    gate_threshold: select_rows(seam, `SELECT CASE WHEN json_valid(t."stage") AND json_type(t."stage") = 'object' AND json_type(t."stage", '$.fn') = 'text' AND json_type(t."stage", '$.args') = 'array' THEN json_extract(t."stage", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."stage", '$.args')), '') || ')' ELSE t."stage" END AS "stage", t."min_rank" FROM "__txt_gate_threshold" t`, rel_columns.gate_threshold!, rel_column_types.gate_threshold!),
-    program: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_program" t`, rel_columns.program!, rel_column_types.program!),
-    severity_rank: select_rows(seam, `SELECT CASE WHEN json_valid(t."severity") AND json_type(t."severity") = 'object' AND json_type(t."severity", '$.fn') = 'text' AND json_type(t."severity", '$.args') = 'array' THEN json_extract(t."severity", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."severity", '$.args')), '') || ')' ELSE t."severity" END AS "severity", t."rank" FROM "__txt_severity_rank" t`, rel_columns.severity_rank!, rel_column_types.severity_rank!),
-    waiver_block_comment: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."waiver_line" FROM "__txt_waiver_block_comment" t`, rel_columns.waiver_block_comment!, rel_column_types.waiver_block_comment!),
-    waiver_trailing_comment: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."waiver_line" FROM "__txt_waiver_trailing_comment" t`, rel_columns.waiver_trailing_comment!, rel_column_types.waiver_trailing_comment!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    any_diag: select_rows(seam, `SELECT "name" FROM "any_diag"`, rel_columns.any_diag!, rel_column_types.any_diag!),
-    check_exit: select_rows(seam, `SELECT "name", "col2" FROM "check_exit"`, rel_columns.check_exit!, rel_column_types.check_exit!),
-    diag: select_rows(seam, `SELECT "path", "line_no", "severity", "code", "col5", "col6", "col7" FROM "diag"`, rel_columns.diag!, rel_column_types.diag!),
-    diag_stage: select_rows(seam, `SELECT "code", "stage" FROM "diag_stage"`, rel_columns.diag_stage!, rel_column_types.diag_stage!),
-    eprintln_baseline: select_rows(seam, `SELECT "path", "allowed" FROM "eprintln_baseline"`, rel_columns.eprintln_baseline!, rel_column_types.eprintln_baseline!),
-    eprintln_count: select_rows(seam, `SELECT "path", "hits" FROM "eprintln_count"`, rel_columns.eprintln_count!, rel_column_types.eprintln_count!),
-    eprintln_counted: select_rows(seam, `SELECT "path", "line_no" FROM "eprintln_counted"`, rel_columns.eprintln_counted!, rel_column_types.eprintln_counted!),
-    eprintln_hit: select_rows(seam, `SELECT "path", "line_no" FROM "eprintln_hit"`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
-    eprintln_waived: select_rows(seam, `SELECT "path", "line_no" FROM "eprintln_waived"`, rel_columns.eprintln_waived!, rel_column_types.eprintln_waived!),
-    eprintln_waiver_line: select_rows(seam, `SELECT "path", "waiver_line" FROM "eprintln_waiver_line"`, rel_columns.eprintln_waiver_line!, rel_column_types.eprintln_waiver_line!),
-    gate_blocked: select_rows(seam, `SELECT "stage" FROM "gate_blocked"`, rel_columns.gate_blocked!, rel_column_types.gate_blocked!),
-    gate_exit: select_rows(seam, `SELECT "stage", "col2" FROM "gate_exit"`, rel_columns.gate_exit!, rel_column_types.gate_exit!),
-    gate_threshold: select_rows(seam, `SELECT "stage", "min_rank" FROM "gate_threshold"`, rel_columns.gate_threshold!, rel_column_types.gate_threshold!),
-    program: select_rows(seam, `SELECT "name" FROM "program"`, rel_columns.program!, rel_column_types.program!),
-    severity_rank: select_rows(seam, `SELECT "severity", "rank" FROM "severity_rank"`, rel_columns.severity_rank!, rel_column_types.severity_rank!),
-    waiver_block_comment: select_rows(seam, `SELECT "path", "waiver_line" FROM "waiver_block_comment"`, rel_columns.waiver_block_comment!, rel_column_types.waiver_block_comment!),
-    waiver_trailing_comment: select_rows(seam, `SELECT "path", "waiver_line" FROM "waiver_trailing_comment"`, rel_columns.waiver_trailing_comment!, rel_column_types.waiver_trailing_comment!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   any_diag: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_any_diag" t`,
   check_exit: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."col2" FROM "__txt_check_exit" t`,
@@ -759,39 +688,6 @@ const final_select: Record<string, string> = {
   waiver_block_comment: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."waiver_line" FROM "__txt_waiver_block_comment" t`,
   waiver_trailing_comment: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."waiver_line" FROM "__txt_waiver_trailing_comment" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  diag_stage: { kind: "set", add_sql: `INSERT OR IGNORE INTO "diag_stage" ("code", "stage") VALUES (?, ?)`, del_sql: `DELETE FROM "diag_stage" WHERE "code" = ? AND "stage" = ?` },
-  eprintln_baseline: { kind: "set", add_sql: `INSERT OR IGNORE INTO "eprintln_baseline" ("path", "allowed") VALUES (?, ?)`, del_sql: `DELETE FROM "eprintln_baseline" WHERE "path" = ? AND "allowed" = ?` },
-  eprintln_hit: { kind: "set", add_sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_no") VALUES (?, ?)`, del_sql: `DELETE FROM "eprintln_hit" WHERE "path" = ? AND "line_no" = ?` },
-  gate_threshold: { kind: "set", add_sql: `INSERT OR IGNORE INTO "gate_threshold" ("stage", "min_rank") VALUES (?, ?)`, del_sql: `DELETE FROM "gate_threshold" WHERE "stage" = ? AND "min_rank" = ?` },
-  program: { kind: "set", add_sql: `INSERT OR IGNORE INTO "program" ("name") VALUES (?)`, del_sql: `DELETE FROM "program" WHERE "name" = ?` },
-  severity_rank: { kind: "set", add_sql: `INSERT OR IGNORE INTO "severity_rank" ("severity", "rank") VALUES (?, ?)`, del_sql: `DELETE FROM "severity_rank" WHERE "severity" = ? AND "rank" = ?` },
-  waiver_block_comment: { kind: "set", add_sql: `INSERT OR IGNORE INTO "waiver_block_comment" ("path", "waiver_line") VALUES (?, ?)`, del_sql: `DELETE FROM "waiver_block_comment" WHERE "path" = ? AND "waiver_line" = ?` },
-  waiver_trailing_comment: { kind: "set", add_sql: `INSERT OR IGNORE INTO "waiver_trailing_comment" ("path", "waiver_line") VALUES (?, ?)`, del_sql: `DELETE FROM "waiver_trailing_comment" WHERE "path" = ? AND "waiver_line" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`fix_by_waiver_returns_to_clean: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`fix_by_waiver_returns_to_clean: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`fix_by_waiver_returns_to_clean: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "any_diag", kind: "set", table_name: "any_diag", delta_table_name: "__delta_any_diag", frontier_table_name: "__frontier_any_diag", next_frontier_table_name: "__next_frontier_any_diag", columns: ["name"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_any_diag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."_sign"`, rule_observers: ["check_exit/2"] },
@@ -842,93 +738,10 @@ INSERT OR IGNORE INTO "gate_exit" ("stage", "col2") SELECT b0."stage", 2 FROM "g
 INSERT OR IGNORE INTO "gate_exit" ("stage", "col2") SELECT b0."stage", 0 FROM "gate_threshold" b0 WHERE NOT EXISTS (SELECT 1 FROM "gate_blocked" n0 WHERE n0."stage" = b0."stage")`, support_sql: [`DELETE FROM "__support_next_gate_exit"`, `INSERT INTO "__support_next_gate_exit" ("stage", "col2", "__refcount") SELECT "stage", "col2", sum("__refcount") FROM (SELECT b0."stage" AS "stage", 2 AS "col2", count(*) AS "__refcount" FROM "gate_blocked" b0 GROUP BY b0."stage", (2 + 0) UNION ALL SELECT b0."stage" AS "stage", 0 AS "col2", count(*) AS "__refcount" FROM "gate_threshold" b0 WHERE NOT EXISTS (SELECT 1 FROM "gate_blocked" n0 WHERE n0."stage" = b0."stage") GROUP BY b0."stage", (0 + 0)) GROUP BY "stage", "col2"`, `UPDATE "gate_exit" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_gate_exit" n WHERE n."stage" = h."stage" AND n."col2" = h."col2"), 0)`, `INSERT INTO "__delta_gate_exit" ("_sign", "_sequence", "stage", "col2") SELECT -1, row_number() OVER () - 1, "stage", "col2" FROM "gate_exit" WHERE "__refcount" <= 0`, `DELETE FROM "gate_exit" WHERE "__refcount" <= 0`, `DELETE FROM "__new_gate_exit"`, `INSERT INTO "__new_gate_exit" ("stage", "col2", "__refcount") SELECT n."stage", n."col2", n."__refcount" FROM "__support_next_gate_exit" n LEFT JOIN "gate_exit" h ON n."stage" = h."stage" AND n."col2" = h."col2" WHERE h."stage" IS NULL`, `INSERT INTO "__delta_gate_exit" ("_sign", "_sequence", "stage", "col2") SELECT 1, "rowid" - 1, "stage", "col2" FROM "__new_gate_exit"`, `INSERT INTO "__frontier_gate_exit" ("_phase", "_sequence", "stage", "col2") SELECT ?, "rowid" - 1, "stage", "col2" FROM "__new_gate_exit"`, `INSERT INTO "__next_frontier_gate_exit" ("_phase", "_sequence", "stage", "col2") SELECT ?, "rowid" - 1, "stage", "col2" FROM "__new_gate_exit"`, `INSERT OR IGNORE INTO "gate_exit" ("stage", "col2", "__refcount") SELECT n."stage", n."col2", n."__refcount" FROM "__support_next_gate_exit" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "eprintln_waiver_line";
-INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT b0."path", b0."waiver_line" FROM "waiver_block_comment" b0;
-INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") SELECT b0."path", b0."waiver_line" FROM "waiver_trailing_comment" b0;
-DELETE FROM "eprintln_waived";
-INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_no") SELECT b0."path", b1."line_no" FROM "eprintln_waiver_line" b0, "eprintln_hit" b1 WHERE b1."path" = b0."path" AND (b0."waiver_line" >= (b1."line_no" - 1)) AND (b0."waiver_line" <= b1."line_no");
-DELETE FROM "eprintln_counted";
-INSERT OR IGNORE INTO "eprintln_counted" ("path", "line_no") SELECT b0."path", b0."line_no" FROM "eprintln_hit" b0 WHERE NOT EXISTS (SELECT 1 FROM "eprintln_waived" n0 WHERE n0."path" = b0."path" AND n0."line_no" = b0."line_no");
-DELETE FROM "eprintln_count";
-INSERT OR IGNORE INTO "eprintln_count" ("path", "hits") SELECT b0."path", count(*) FROM "eprintln_counted" b0 GROUP BY b0."path" HAVING count(*) > 0;
-DELETE FROM "diag";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b0."hits" || ' counted eprintln! hits; the grandfathered baseline allows ' || b1."allowed" || '. Convert to tracing, or waive the line with @eprintln-ok: <reason>') FROM "eprintln_count" b0, "eprintln_baseline" b1 WHERE b1."path" = b0."path" AND (b0."hits" > b1."allowed");
-INSERT OR IGNORE INTO "diag" ("path", "line_no", "severity", "code", "col5", "col6", "col7") SELECT b0."path", 1, (SELECT s."__id" FROM "__str" s WHERE s."content" = 'warning'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'eprintln-exceeded'), (SELECT s."__id" FROM "__str" s WHERE s."content" = (b0."hits" || ' counted eprintln! hits; the grandfathered baseline allows ' || b1."allowed" || '. Convert to tracing, or waive the line with @eprintln-ok: <reason>')), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "eprintln_count" b0, "eprintln_baseline" b1 WHERE b1."path" = b0."path" AND (b0."hits" > b1."allowed");
-INSERT OR IGNORE INTO "diag" ("path", "line_no", "severity", "code", "col5", "col6", "col7") SELECT b0."path", b0."line_no", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'warning'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'eprintln-new-file'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'new eprintln! outside the grandfathered baseline; convert to tracing, or waive with @eprintln-ok: <reason>'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "eprintln_counted" b0 WHERE NOT EXISTS (SELECT 1 FROM "eprintln_baseline" n0 WHERE n0."path" = b0."path");
-DELETE FROM "any_diag";
-INSERT OR IGNORE INTO "any_diag" ("name") SELECT b0."name" FROM "program" b0, "diag" b1;
-DELETE FROM "gate_blocked";
-INSERT OR IGNORE INTO "gate_blocked" ("stage") SELECT b1."stage" FROM "diag" b0, "diag_stage" b1, "gate_threshold" b2, "severity_rank" b3 WHERE b1."code" = b0."code" AND b2."stage" = b1."stage" AND b3."severity" = b0."severity" AND (b3."rank" >= b2."min_rank");
-DELETE FROM "check_exit";
-INSERT OR IGNORE INTO "check_exit" ("name", "col2") SELECT b0."name", 2 FROM "any_diag" b0;
-INSERT OR IGNORE INTO "check_exit" ("name", "col2") SELECT b0."name", 0 FROM "program" b0 WHERE NOT EXISTS (SELECT 1 FROM "any_diag" n0 WHERE n0."name" = b0."name");
-DELETE FROM "gate_exit";
-INSERT OR IGNORE INTO "gate_exit" ("stage", "col2") SELECT b0."stage", 2 FROM "gate_blocked" b0;
-INSERT OR IGNORE INTO "gate_exit" ("stage", "col2") SELECT b0."stage", 0 FROM "gate_threshold" b0 WHERE NOT EXISTS (SELECT 1 FROM "gate_blocked" n0 WHERE n0."stage" = b0."stage")`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const any_diag = multiset_diff(before.any_diag, after.any_diag);
-  const check_exit = multiset_diff(before.check_exit, after.check_exit);
-  const diag = multiset_diff(before.diag, after.diag);
-  const diag_stage = multiset_diff(before.diag_stage, after.diag_stage);
-  const eprintln_baseline = multiset_diff(before.eprintln_baseline, after.eprintln_baseline);
-  const eprintln_count = multiset_diff(before.eprintln_count, after.eprintln_count);
-  const eprintln_counted = multiset_diff(before.eprintln_counted, after.eprintln_counted);
-  const eprintln_hit = multiset_diff(before.eprintln_hit, after.eprintln_hit);
-  const eprintln_waived = multiset_diff(before.eprintln_waived, after.eprintln_waived);
-  const eprintln_waiver_line = multiset_diff(before.eprintln_waiver_line, after.eprintln_waiver_line);
-  const gate_blocked = multiset_diff(before.gate_blocked, after.gate_blocked);
-  const gate_exit = multiset_diff(before.gate_exit, after.gate_exit);
-  const gate_threshold = multiset_diff(before.gate_threshold, after.gate_threshold);
-  const program = multiset_diff(before.program, after.program);
-  const severity_rank = multiset_diff(before.severity_rank, after.severity_rank);
-  const waiver_block_comment = multiset_diff(before.waiver_block_comment, after.waiver_block_comment);
-  const waiver_trailing_comment = multiset_diff(before.waiver_trailing_comment, after.waiver_trailing_comment);
-  return {
-    rels: [
-      { rel: "any_diag", add: any_diag.add, del: any_diag.del },
-      { rel: "check_exit", add: check_exit.add, del: check_exit.del },
-      { rel: "diag", add: diag.add, del: diag.del },
-      { rel: "diag_stage", add: diag_stage.add, del: diag_stage.del },
-      { rel: "eprintln_baseline", add: eprintln_baseline.add, del: eprintln_baseline.del },
-      { rel: "eprintln_count", add: eprintln_count.add, del: eprintln_count.del },
-      { rel: "eprintln_counted", add: eprintln_counted.add, del: eprintln_counted.del },
-      { rel: "eprintln_hit", add: eprintln_hit.add, del: eprintln_hit.del },
-      { rel: "eprintln_waived", add: eprintln_waived.add, del: eprintln_waived.del },
-      { rel: "eprintln_waiver_line", add: eprintln_waiver_line.add, del: eprintln_waiver_line.del },
-      { rel: "gate_blocked", add: gate_blocked.add, del: gate_blocked.del },
-      { rel: "gate_exit", add: gate_exit.add, del: gate_exit.del },
-      { rel: "gate_threshold", add: gate_threshold.add, del: gate_threshold.del },
-      { rel: "program", add: program.add, del: program.del },
-      { rel: "severity_rank", add: severity_rank.add, del: severity_rank.del },
-      { rel: "waiver_block_comment", add: waiver_block_comment.add, del: waiver_block_comment.del },
-      { rel: "waiver_trailing_comment", add: waiver_trailing_comment.add, del: waiver_trailing_comment.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // fix_by_waiver_returns_to_clean: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -957,14 +770,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -357,46 +356,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "tree_label", sql: `INSERT OR IGNORE INTO "tree_label" ("tree_id", "label") SELECT b0."tree_id", b1."label" FROM "tree" b0, "__ref_patch" b1 WHERE b1."__id" = b0."site"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __gen__list_text_df210f232c1299bd: readonly IRow[];
-  readonly __gen__list_text_df210f232c1299bd__member: readonly IRow[];
-  readonly box_list: readonly IRow[];
-  readonly patch: readonly IRow[];
-  readonly plot: readonly IRow[];
-  readonly tree: readonly IRow[];
-  readonly tree_label: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content" FROM "__txt___gen__list_text_df210f232c1299bd" t`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member" t`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
-    box_list: select_rows(seam, `SELECT t."tree_id", coalesce("__l_items"."value_text", '[]') AS "items" FROM "box_list" t LEFT JOIN "__list___gen__list_text_df210f232c1299bd" "__l_items" ON "__l_items"."list_id" = t."items"`, rel_columns.box_list!, rel_column_types.box_list!),
-    patch: select_rows(seam, `SELECT CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", (SELECT d."__rendered" FROM "__ref_plot" d WHERE d."__id" = t."at") AS "at" FROM "__txt_patch" t`, rel_columns.patch!, rel_column_types.patch!),
-    plot: select_rows(seam, `SELECT t."row", t."col" FROM "plot" t`, rel_columns.plot!, rel_column_types.plot!),
-    tree: select_rows(seam, `SELECT t."tree_id", CASE WHEN json_valid(t."species") AND json_type(t."species") = 'object' AND json_type(t."species", '$.fn') = 'text' AND json_type(t."species", '$.args') = 'array' THEN json_extract(t."species", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."species", '$.args')), '') || ')' ELSE t."species" END AS "species", (SELECT d."__rendered" FROM "__ref_patch" d WHERE d."__id" = t."site") AS "site" FROM "__txt_tree" t`, rel_columns.tree!, rel_column_types.tree!),
-    tree_label: select_rows(seam, `SELECT t."tree_id", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label" FROM "__txt_tree_label" t`, rel_columns.tree_label!, rel_column_types.tree_label!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT "content" FROM "__gen__list_text_df210f232c1299bd"`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT "list_id", "idx", "value" FROM "__gen__list_text_df210f232c1299bd__member"`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
-    box_list: select_rows(seam, `SELECT "tree_id", "items" FROM "box_list"`, rel_columns.box_list!, rel_column_types.box_list!),
-    patch: select_rows(seam, `SELECT "label", "at" FROM "patch"`, rel_columns.patch!, rel_column_types.patch!),
-    plot: select_rows(seam, `SELECT "row", "col" FROM "plot"`, rel_columns.plot!, rel_column_types.plot!),
-    tree: select_rows(seam, `SELECT "tree_id", "species", "site" FROM "tree"`, rel_columns.tree!, rel_column_types.tree!),
-    tree_label: select_rows(seam, `SELECT "tree_id", "label" FROM "tree_label"`, rel_columns.tree_label!, rel_column_types.tree_label!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__list_text_df210f232c1299bd: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content" FROM "__txt___gen__list_text_df210f232c1299bd" t`,
   __gen__list_text_df210f232c1299bd__member: `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member" t`,
@@ -406,37 +365,6 @@ const final_select: Record<string, string> = {
   tree: `SELECT t."tree_id", CASE WHEN json_valid(t."species") AND json_type(t."species") = 'object' AND json_type(t."species", '$.fn') = 'text' AND json_type(t."species", '$.args') = 'array' THEN json_extract(t."species", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."species", '$.args')), '') || ')' ELSE t."species" END AS "species", (SELECT d."__rendered" FROM "__ref_patch" d WHERE d."__id" = t."site") AS "site" FROM "__txt_tree" t`,
   tree_label: `SELECT t."tree_id", CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label" FROM "__txt_tree_label" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_text_df210f232c1299bd: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") VALUES (?) ON CONFLICT ("content") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE "content" = ?` },
-  __gen__list_text_df210f232c1299bd__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") VALUES (?, ?, ?) ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE "list_id" = ? AND "idx" = ? AND "value" = ?` },
-  box_list: { kind: "set", add_sql: `INSERT OR IGNORE INTO "box_list" ("tree_id", "items") VALUES (?, ?)`, del_sql: `DELETE FROM "box_list" WHERE "tree_id" = ? AND "items" = ?` },
-  patch: { kind: "set", add_sql: `INSERT OR IGNORE INTO "patch" ("label", "at") VALUES (?, ?)`, del_sql: `DELETE FROM "patch" WHERE "label" = ? AND "at" = ?` },
-  plot: { kind: "set", add_sql: `INSERT OR IGNORE INTO "plot" ("row", "col") VALUES (?, ?)`, del_sql: `DELETE FROM "plot" WHERE "row" = ? AND "col" = ?` },
-  tree: { kind: "set", add_sql: `INSERT OR IGNORE INTO "tree" ("tree_id", "species", "site") VALUES (?, ?, ?)`, del_sql: `DELETE FROM "tree" WHERE "tree_id" = ? AND "species" = ? AND "site" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`declaration_order_preserves_struct_refs: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`declaration_order_preserves_struct_refs: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`declaration_order_preserves_struct_refs: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_text_df210f232c1299bd", kind: "set", table_name: "__gen__list_text_df210f232c1299bd", delta_table_name: "__delta___gen__list_text_df210f232c1299bd", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd", columns: ["content"], column_types: ["text"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("content") DO NOTHING RETURNING "content"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE ("content") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "content"`, boundary_sql: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_text_df210f232c1299bd" t WHERE t."_sign" IN (-1, 1) GROUP BY t."content", t."_sign"`, rule_observers: [] },
@@ -456,55 +384,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "tree_label" ("tree_id", "label") SELECT b0."tree_id", b1."label" FROM "tree" b0, "__ref_patch" b1 WHERE b1."__id" = b0."site"`, support_sql: [`DELETE FROM "__support_next_tree_label"`, `INSERT INTO "__support_next_tree_label" ("tree_id", "label", "__refcount") SELECT "tree_id", "label", sum("__refcount") FROM (SELECT b0."tree_id" AS "tree_id", b1."label" AS "label", count(*) AS "__refcount" FROM "tree" b0, "__ref_patch" b1 WHERE b1."__id" = b0."site" GROUP BY b0."tree_id", b1."label") GROUP BY "tree_id", "label"`, `UPDATE "tree_label" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_tree_label" n WHERE n."tree_id" = h."tree_id" AND n."label" = h."label"), 0)`, `INSERT INTO "__delta_tree_label" ("_sign", "_sequence", "tree_id", "label") SELECT -1, row_number() OVER () - 1, "tree_id", "label" FROM "tree_label" WHERE "__refcount" <= 0`, `DELETE FROM "tree_label" WHERE "__refcount" <= 0`, `DELETE FROM "__new_tree_label"`, `INSERT INTO "__new_tree_label" ("tree_id", "label", "__refcount") SELECT n."tree_id", n."label", n."__refcount" FROM "__support_next_tree_label" n LEFT JOIN "tree_label" h ON n."tree_id" = h."tree_id" AND n."label" = h."label" WHERE h."tree_id" IS NULL`, `INSERT INTO "__delta_tree_label" ("_sign", "_sequence", "tree_id", "label") SELECT 1, "rowid" - 1, "tree_id", "label" FROM "__new_tree_label"`, `INSERT INTO "__frontier_tree_label" ("_phase", "_sequence", "tree_id", "label") SELECT ?, "rowid" - 1, "tree_id", "label" FROM "__new_tree_label"`, `INSERT INTO "__next_frontier_tree_label" ("_phase", "_sequence", "tree_id", "label") SELECT ?, "rowid" - 1, "tree_id", "label" FROM "__new_tree_label"`, `INSERT OR IGNORE INTO "tree_label" ("tree_id", "label", "__refcount") SELECT n."tree_id", n."label", n."__refcount" FROM "__support_next_tree_label" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "tree_label";
-INSERT OR IGNORE INTO "tree_label" ("tree_id", "label") SELECT b0."tree_id", b1."label" FROM "tree" b0, "__ref_patch" b1 WHERE b1."__id" = b0."site"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__list_text_df210f232c1299bd = multiset_diff(before.__gen__list_text_df210f232c1299bd, after.__gen__list_text_df210f232c1299bd);
-  const __gen__list_text_df210f232c1299bd__member = multiset_diff(before.__gen__list_text_df210f232c1299bd__member, after.__gen__list_text_df210f232c1299bd__member);
-  const box_list = multiset_diff(before.box_list, after.box_list);
-  const patch = multiset_diff(before.patch, after.patch);
-  const plot = multiset_diff(before.plot, after.plot);
-  const tree = multiset_diff(before.tree, after.tree);
-  const tree_label = multiset_diff(before.tree_label, after.tree_label);
-  return {
-    rels: [
-      { rel: "__gen__list_text_df210f232c1299bd", add: __gen__list_text_df210f232c1299bd.add, del: __gen__list_text_df210f232c1299bd.del },
-      { rel: "__gen__list_text_df210f232c1299bd__member", add: __gen__list_text_df210f232c1299bd__member.add, del: __gen__list_text_df210f232c1299bd__member.del },
-      { rel: "box_list", add: box_list.add, del: box_list.del },
-      { rel: "patch", add: patch.add, del: patch.del },
-      { rel: "plot", add: plot.add, del: plot.del },
-      { rel: "tree", add: tree.add, del: tree.del },
-      { rel: "tree_label", add: tree_label.add, del: tree_label.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // declaration_order_preserves_struct_refs: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -536,14 +419,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

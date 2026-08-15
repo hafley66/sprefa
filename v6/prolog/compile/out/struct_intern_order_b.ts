@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -214,49 +213,10 @@ const arrival_targets: readonly string[] = ["mark", "span"];
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly mark: readonly IRow[];
-  readonly span: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    mark: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "mark" t`, rel_columns.mark!, rel_column_types.mark!),
-    span: select_rows(seam, `SELECT t."start", t."end" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
-  });
-}
-
 const final_select: Record<string, string> = {
   mark: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "mark" t`,
   span: `SELECT t."start", t."end" FROM "span" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  mark: { kind: "set", add_sql: `INSERT OR IGNORE INTO "mark" ("at") VALUES (?)`, del_sql: `DELETE FROM "mark" WHERE "at" = ?` },
-  span: { kind: "set", add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") VALUES (?, ?)`, del_sql: `DELETE FROM "span" WHERE "start" = ? AND "end" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`struct_intern_order_b: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`struct_intern_order_b: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`struct_intern_order_b: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "mark", kind: "set", table_name: "mark", delta_table_name: "__delta_mark", frontier_table_name: "__frontier_mark", next_frontier_table_name: "__next_frontier_mark", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "mark" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "mark" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_mark" t WHERE t."_sign" IN (-1, 1) GROUP BY t."at", t."_sign"`, rule_observers: [] },
@@ -269,42 +229,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const mark = multiset_diff(before.mark, after.mark);
-  const span = multiset_diff(before.span, after.span);
-  return {
-    rels: [
-      { rel: "mark", add: mark.add, del: mark.del },
-      { rel: "span", add: span.add, del: span.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets),
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // struct_intern_order_b: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -333,14 +261,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

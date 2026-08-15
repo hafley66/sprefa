@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -298,70 +297,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "jaccard", sql: `INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3") SELECT b0."left", b0."right", ((b0."shared" * 100) / b1."union") FROM "shared_count" b0, "union_size" b1 WHERE b1."left" = b0."left" AND b1."right" = b0."right" AND (b1."union" > 0) AND (((b0."shared" * 100) / b1."union") >= 40)`, params: [] },
 ];
 
-type Snapshot = {
-  readonly callee_set_size: readonly IRow[];
-  readonly jaccard: readonly IRow[];
-  readonly shared_count: readonly IRow[];
-  readonly union_size: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    callee_set_size: select_rows(seam, `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", t."left_size" FROM "__txt_callee_set_size" t`, rel_columns.callee_set_size!, rel_column_types.callee_set_size!),
-    jaccard: select_rows(seam, `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right", t."col3" FROM "__txt_jaccard" t`, rel_columns.jaccard!, rel_column_types.jaccard!),
-    shared_count: select_rows(seam, `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right", t."shared" FROM "__txt_shared_count" t`, rel_columns.shared_count!, rel_column_types.shared_count!),
-    union_size: select_rows(seam, `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right", t."union" FROM "__txt_union_size" t`, rel_columns.union_size!, rel_column_types.union_size!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    callee_set_size: select_rows(seam, `SELECT "left", "left_size" FROM "callee_set_size"`, rel_columns.callee_set_size!, rel_column_types.callee_set_size!),
-    jaccard: select_rows(seam, `SELECT "left", "right", "col3" FROM "jaccard"`, rel_columns.jaccard!, rel_column_types.jaccard!),
-    shared_count: select_rows(seam, `SELECT "left", "right", "shared" FROM "shared_count"`, rel_columns.shared_count!, rel_column_types.shared_count!),
-    union_size: select_rows(seam, `SELECT "left", "right", "union" FROM "union_size"`, rel_columns.union_size!, rel_column_types.union_size!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   callee_set_size: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", t."left_size" FROM "__txt_callee_set_size" t`,
   jaccard: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right", t."col3" FROM "__txt_jaccard" t`,
   shared_count: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right", t."shared" FROM "__txt_shared_count" t`,
   union_size: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", CASE WHEN json_valid(t."right") AND json_type(t."right") = 'object' AND json_type(t."right", '$.fn') = 'text' AND json_type(t."right", '$.args') = 'array' THEN json_extract(t."right", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."right", '$.args')), '') || ')' ELSE t."right" END AS "right", t."union" FROM "__txt_union_size" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  callee_set_size: { kind: "set", add_sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") VALUES (?, ?)`, del_sql: `DELETE FROM "callee_set_size" WHERE "left" = ? AND "left_size" = ?` },
-  shared_count: { kind: "set", add_sql: `INSERT OR IGNORE INTO "shared_count" ("left", "right", "shared") VALUES (?, ?, ?)`, del_sql: `DELETE FROM "shared_count" WHERE "left" = ? AND "right" = ? AND "shared" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`comparison_filters_rows: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`comparison_filters_rows: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`comparison_filters_rows: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "callee_set_size", kind: "set", table_name: "callee_set_size", delta_table_name: "__delta_callee_set_size", frontier_table_name: "__frontier_callee_set_size", next_frontier_table_name: "__next_frontier_callee_set_size", columns: ["left", "left_size"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "callee_set_size" ("left", "left_size") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "left", "left_size"`, arrival_del_sql: `DELETE FROM "callee_set_size" WHERE ("left", "left_size") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "left", "left_size"`, boundary_sql: `SELECT CASE WHEN json_valid(t."left") AND json_type(t."left") = 'object' AND json_type(t."left", '$.fn') = 'text' AND json_type(t."left", '$.args') = 'array' THEN json_extract(t."left", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."left", '$.args')), '') || ')' ELSE t."left" END AS "left", t."left_size", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_callee_set_size" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."left_size", t."_sign"`, rule_observers: ["union_size/3"] },
@@ -380,48 +321,10 @@ INSERT OR IGNORE INTO "union_size" ("left", "right", "union") SELECT b0."left", 
 INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3") SELECT b0."left", b0."right", ((b0."shared" * 100) / b1."union") FROM "shared_count" b0, "union_size" b1 WHERE b1."left" = b0."left" AND b1."right" = b0."right" AND (b1."union" > 0) AND (((b0."shared" * 100) / b1."union") >= 40)`, support_sql: [`DELETE FROM "__support_next_jaccard"`, `INSERT INTO "__support_next_jaccard" ("left", "right", "col3", "__refcount") SELECT "left", "right", "col3", sum("__refcount") FROM (SELECT b0."left" AS "left", b0."right" AS "right", ((b0."shared" * 100) / b1."union") AS "col3", count(*) AS "__refcount" FROM "shared_count" b0, "union_size" b1 WHERE b1."left" = b0."left" AND b1."right" = b0."right" AND (b1."union" > 0) AND (((b0."shared" * 100) / b1."union") >= 40) GROUP BY b0."left", b0."right", ((b0."shared" * 100) / b1."union")) GROUP BY "left", "right", "col3"`, `UPDATE "jaccard" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_jaccard" n WHERE n."left" = h."left" AND n."right" = h."right" AND n."col3" = h."col3"), 0)`, `INSERT INTO "__delta_jaccard" ("_sign", "_sequence", "left", "right", "col3") SELECT -1, row_number() OVER () - 1, "left", "right", "col3" FROM "jaccard" WHERE "__refcount" <= 0`, `DELETE FROM "jaccard" WHERE "__refcount" <= 0`, `DELETE FROM "__new_jaccard"`, `INSERT INTO "__new_jaccard" ("left", "right", "col3", "__refcount") SELECT n."left", n."right", n."col3", n."__refcount" FROM "__support_next_jaccard" n LEFT JOIN "jaccard" h ON n."left" = h."left" AND n."right" = h."right" AND n."col3" = h."col3" WHERE h."left" IS NULL`, `INSERT INTO "__delta_jaccard" ("_sign", "_sequence", "left", "right", "col3") SELECT 1, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT INTO "__frontier_jaccard" ("_phase", "_sequence", "left", "right", "col3") SELECT ?, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT INTO "__next_frontier_jaccard" ("_phase", "_sequence", "left", "right", "col3") SELECT ?, "rowid" - 1, "left", "right", "col3" FROM "__new_jaccard"`, `INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3", "__refcount") SELECT n."left", n."right", n."col3", n."__refcount" FROM "__support_next_jaccard" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "union_size";
-INSERT OR IGNORE INTO "union_size" ("left", "right", "union") SELECT b0."left", b1."left", ((b0."left_size" + b1."left_size") - b2."shared") FROM "callee_set_size" b0, "callee_set_size" b1, "shared_count" b2 WHERE b2."left" = b0."left" AND b2."right" = b1."left";
-DELETE FROM "jaccard";
-INSERT OR IGNORE INTO "jaccard" ("left", "right", "col3") SELECT b0."left", b0."right", ((b0."shared" * 100) / b1."union") FROM "shared_count" b0, "union_size" b1 WHERE b1."left" = b0."left" AND b1."right" = b0."right" AND (b1."union" > 0) AND (((b0."shared" * 100) / b1."union") >= 40)`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const callee_set_size = multiset_diff(before.callee_set_size, after.callee_set_size);
-  const jaccard = multiset_diff(before.jaccard, after.jaccard);
-  const shared_count = multiset_diff(before.shared_count, after.shared_count);
-  const union_size = multiset_diff(before.union_size, after.union_size);
-  return {
-    rels: [
-      { rel: "callee_set_size", add: callee_set_size.add, del: callee_set_size.del },
-      { rel: "jaccard", add: jaccard.add, del: jaccard.del },
-      { rel: "shared_count", add: shared_count.add, del: shared_count.del },
-      { rel: "union_size", add: union_size.add, del: union_size.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // comparison_filters_rows: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -450,14 +353,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

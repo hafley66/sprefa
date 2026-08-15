@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -143,25 +142,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
-}
-
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
   internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
   lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
@@ -250,66 +230,11 @@ const arrival_targets: readonly string[] = ["dispatch_ack", "dispatch_seal"];
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly dispatch_ack: readonly IRow[];
-  readonly dispatch_note: readonly IRow[];
-  readonly dispatch_seal: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    dispatch_ack: select_rows(seam, `SELECT t."dispatch_id" FROM "dispatch_ack" t`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
-    dispatch_note: select_rows(seam, `SELECT t."dispatch_id", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_dispatch_note" t`, rel_columns.dispatch_note!, rel_column_types.dispatch_note!),
-    dispatch_seal: select_rows(seam, `SELECT t."sealed_id" FROM "dispatch_seal" t`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
-    dispatch_note: select_rows(seam, `SELECT "dispatch_id", "col2" FROM "dispatch_note"`, rel_columns.dispatch_note!, rel_column_types.dispatch_note!),
-    dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   dispatch_ack: `SELECT t."dispatch_id" FROM "dispatch_ack" t`,
   dispatch_note: `SELECT t."dispatch_id", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_dispatch_note" t`,
   dispatch_seal: `SELECT t."sealed_id" FROM "dispatch_seal" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  dispatch_ack: { kind: "set", add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") VALUES (?)`, del_sql: `DELETE FROM "dispatch_ack" WHERE "dispatch_id" = ?` },
-  dispatch_seal: { kind: "set", add_sql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") VALUES (?)`, del_sql: `DELETE FROM "dispatch_seal" WHERE "sealed_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`any_two_tagged_arms_land_on_one_tick: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`any_two_tagged_arms_land_on_one_tick: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`any_two_tagged_arms_land_on_one_tick: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "dispatch_ack", kind: "set", table_name: "dispatch_ack", delta_table_name: "__delta_dispatch_ack", frontier_table_name: "__frontier_dispatch_ack", next_frontier_table_name: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrival_del_sql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundary_sql: `SELECT t."dispatch_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dispatch_id", t."_sign"`, rule_observers: ["dispatch_note/2"] },
@@ -325,92 +250,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_DISPATCH_NOTE_0_PROJECT_SQL = `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acked') AS "col2"`;
-const EDGE_DISPATCH_NOTE_0_WRITE_SQL = `INSERT INTO "dispatch_note" ("dispatch_id", "col2") VALUES (?, ?)`;
-const EDGE_DISPATCH_NOTE_0_HEAD_COLUMNS: readonly string[] = ["dispatch_id", "col2"];
-
-const EDGE_DISPATCH_NOTE_1_PROJECT_SQL = `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'sealed') AS "col2"`;
-const EDGE_DISPATCH_NOTE_1_WRITE_SQL = `INSERT INTO "dispatch_note" ("dispatch_id", "col2") VALUES (?, ?)`;
-const EDGE_DISPATCH_NOTE_1_HEAD_COLUMNS: readonly string[] = ["dispatch_id", "col2"];
-
-function resolveDispatchNote_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("set", "dispatch_ack", before.dispatch_ack, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DISPATCH_NOTE_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_DISPATCH_NOTE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_DISPATCH_NOTE_0_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function resolveDispatchNote_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("set", "dispatch_seal", before.dispatch_seal, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DISPATCH_NOTE_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_DISPATCH_NOTE_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_DISPATCH_NOTE_1_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const dispatch_ack = multiset_diff(before.dispatch_ack, after.dispatch_ack);
-  const dispatch_note = multiset_diff(before.dispatch_note, after.dispatch_note);
-  const dispatch_seal = multiset_diff(before.dispatch_seal, after.dispatch_seal);
-  return {
-    rels: [
-      { rel: "dispatch_ack", add: dispatch_ack.add, del: dispatch_ack.del },
-      { rel: "dispatch_note", add: dispatch_note.add, del: dispatch_note.del },
-      { rel: "dispatch_seal", add: dispatch_seal.add, del: dispatch_seal.del },
-    ],
-    carry_pending: dispatch_note.add.length > 0 || dispatch_note.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolveDispatchNote_0Writes(seam, before.stored, arrivals), resolveDispatchNote_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // any_two_tagged_arms_land_on_one_tick: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -440,14 +283,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -217,48 +216,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "counter", sql: `INSERT OR IGNORE INTO "counter" ("value") SELECT (b0."value" + 1) FROM "counter" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly counter: readonly IRow[];
-  readonly seed_number: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    counter: select_rows(seam, `SELECT t."value" FROM "counter" t`, rel_columns.counter!, rel_column_types.counter!),
-    seed_number: select_rows(seam, `SELECT t."value" FROM "seed_number" t`, rel_columns.seed_number!, rel_column_types.seed_number!),
-  });
-}
-
 const final_select: Record<string, string> = {
   counter: `SELECT t."value" FROM "counter" t`,
   seed_number: `SELECT t."value" FROM "seed_number" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  seed_number: { kind: "set", add_sql: `INSERT OR IGNORE INTO "seed_number" ("value") VALUES (?)`, del_sql: `DELETE FROM "seed_number" WHERE "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`diverging_measure_recursion_is_bounded_and_loud: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`diverging_measure_recursion_is_bounded_and_loud: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`diverging_measure_recursion_is_bounded_and_loud: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "counter", kind: "set", table_name: "counter", delta_table_name: "__delta_counter", frontier_table_name: "__frontier_counter", next_frontier_table_name: "__next_frontier_counter", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_counter" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
@@ -274,50 +235,10 @@ INSERT OR IGNORE INTO "counter" ("value") SELECT b0."value" FROM "seed_number" b
 INSERT OR IGNORE INTO "counter" ("value") SELECT (b0."value" + 1) FROM "counter" b0`, support_sql: [`DELETE FROM "__support_next_counter"`, `INSERT INTO "__support_next_counter" ("value", "__refcount") WITH RECURSIVE "counter" ("value") AS (SELECT b0."value" AS "value" FROM "seed_number" b0 UNION SELECT (b0."value" + 1) AS "value" FROM "counter" b0) SELECT "value", 1 FROM "counter"`, `UPDATE "counter" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_counter" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_counter" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "counter" WHERE "__refcount" <= 0`, `DELETE FROM "counter" WHERE "__refcount" <= 0`, `DELETE FROM "__new_counter"`, `INSERT INTO "__new_counter" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_counter" n LEFT JOIN "counter" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_counter" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_counter"`, `INSERT INTO "__frontier_counter" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_counter"`, `INSERT INTO "__next_frontier_counter" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_counter"`, `INSERT OR IGNORE INTO "counter" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_counter" n`], expand_sql: { clear_a_sql: `DELETE FROM "__expand_a_counter"`, clear_b_sql: `DELETE FROM "__expand_b_counter"`, seed_sqls: [`INSERT OR IGNORE INTO "__expand_a_counter" ("value") SELECT "value" FROM (SELECT b0."value" AS "value" FROM "seed_number" b0)`], hop_ab_sql: `WITH "counter" ("value") AS (SELECT "value" FROM "__expand_a_counter") INSERT OR IGNORE INTO "__expand_b_counter" ("value") SELECT "value" FROM (SELECT (b0."value" + 1) AS "value" FROM "counter" b0) x WHERE NOT EXISTS (SELECT 1 FROM "__support_next_counter" n WHERE x."value" = n."value")`, hop_ba_sql: `WITH "counter" ("value") AS (SELECT "value" FROM "__expand_b_counter") INSERT OR IGNORE INTO "__expand_a_counter" ("value") SELECT "value" FROM (SELECT (b0."value" + 1) AS "value" FROM "counter" b0) x WHERE NOT EXISTS (SELECT 1 FROM "__support_next_counter" n WHERE x."value" = n."value")`, absorb_a_sql: `INSERT OR IGNORE INTO "__support_next_counter" ("value", "__refcount") SELECT "value", 1 FROM "__expand_a_counter"`, absorb_b_sql: `INSERT OR IGNORE INTO "__support_next_counter" ("value", "__refcount") SELECT "value", 1 FROM "__expand_b_counter"`, round_cap: 1000 }, dred_sql: { clear_ping_sql: `DELETE FROM "__ping_counter"`, clear_pong_sql: `DELETE FROM "__pong_counter"`, clear_cone_sql: `DELETE FROM "__cone_counter"`, assert_seed_sqls: [`INSERT OR IGNORE INTO "__ping_counter" ("value") SELECT "value" FROM (SELECT b0."value" AS "value" FROM (SELECT d."value" FROM "__delta_seed_number" d WHERE d."_sign" = 1 AND EXISTS (SELECT 1 FROM "seed_number" t WHERE t."value" = d."value")) b0) x WHERE NOT EXISTS (SELECT 1 FROM "counter" p WHERE x."value" = p."value")`], assert_hop_ab_sql: `INSERT OR IGNORE INTO "__pong_counter" ("value") SELECT "value" FROM (SELECT (b0."value" + 1) AS "value" FROM "__ping_counter" b0) x WHERE NOT EXISTS (SELECT 1 FROM "counter" p WHERE x."value" = p."value")`, assert_hop_ba_sql: `INSERT OR IGNORE INTO "__ping_counter" ("value") SELECT "value" FROM (SELECT (b0."value" + 1) AS "value" FROM "__pong_counter" b0) x WHERE NOT EXISTS (SELECT 1 FROM "counter" p WHERE x."value" = p."value")`, commit_a_sql: `INSERT OR IGNORE INTO "counter" ("value") SELECT "value" FROM "__ping_counter"`, commit_b_sql: `INSERT OR IGNORE INTO "counter" ("value") SELECT "value" FROM "__pong_counter"`, arrival_a_sql: `INSERT INTO "__new_counter" ("value", "__refcount") SELECT "value", 1 FROM "__ping_counter"`, arrival_b_sql: `INSERT INTO "__new_counter" ("value", "__refcount") SELECT "value", 1 FROM "__pong_counter"`, dred_seed_sqls: [`INSERT OR IGNORE INTO "__ping_counter" ("value") SELECT "value" FROM (SELECT b0."value" AS "value" FROM (SELECT d."value" FROM "__delta_seed_number" d WHERE d."_sign" = -1 AND NOT EXISTS (SELECT 1 FROM "seed_number" t WHERE t."value" = d."value")) b0) x WHERE EXISTS (SELECT 1 FROM "counter" p WHERE x."value" = p."value")`], dred_hop_ab_sql: `INSERT OR IGNORE INTO "__pong_counter" ("value") SELECT "value" FROM (SELECT (b0."value" + 1) AS "value" FROM "__ping_counter" b0) x WHERE NOT EXISTS (SELECT 1 FROM "__cone_counter" p WHERE x."value" = p."value")`, dred_hop_ba_sql: `INSERT OR IGNORE INTO "__ping_counter" ("value") SELECT "value" FROM (SELECT (b0."value" + 1) AS "value" FROM "__pong_counter" b0) x WHERE NOT EXISTS (SELECT 1 FROM "__cone_counter" p WHERE x."value" = p."value")`, cone_absorb_a_sql: `INSERT OR IGNORE INTO "__cone_counter" ("value") SELECT "value" FROM "__ping_counter"`, cone_absorb_b_sql: `INSERT OR IGNORE INTO "__cone_counter" ("value") SELECT "value" FROM "__pong_counter"`, cone_trim_sql: `DELETE FROM "__cone_counter" WHERE NOT EXISTS (SELECT 1 FROM "counter" h WHERE h."value" = "__cone_counter"."value")`, head_delete_sql: `DELETE FROM "counter" WHERE ("value") IN (SELECT "value" FROM "__cone_counter")`, rederive_seed_sqls: [`INSERT OR IGNORE INTO "__ping_counter" ("value") SELECT b0."value" AS "value" FROM "__cone_counter" c, "seed_number" b0 WHERE b0."value" = c."value"`, `INSERT OR IGNORE INTO "__ping_counter" ("value") SELECT (b0."value" + 1) AS "value" FROM "__cone_counter" c, "counter" b0 WHERE (b0."value" + 1) = c."value"`], revive_hop_ab_sql: `INSERT OR IGNORE INTO "__pong_counter" ("value") SELECT "value" FROM (SELECT (b0."value" + 1) AS "value" FROM "__ping_counter" b0) x WHERE EXISTS (SELECT 1 FROM "__cone_counter" p WHERE x."value" = p."value")`, revive_hop_ba_sql: `INSERT OR IGNORE INTO "__ping_counter" ("value") SELECT "value" FROM (SELECT (b0."value" + 1) AS "value" FROM "__pong_counter" b0) x WHERE EXISTS (SELECT 1 FROM "__cone_counter" p WHERE x."value" = p."value")`, cone_drop_a_sql: `DELETE FROM "__cone_counter" WHERE ("value") IN (SELECT "value" FROM "__ping_counter")`, cone_drop_b_sql: `DELETE FROM "__cone_counter" WHERE ("value") IN (SELECT "value" FROM "__pong_counter")`, stage_retract_sql: `INSERT INTO "__delta_counter" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "__cone_counter"`, head_count_sql: `SELECT count(*) AS "n" FROM "counter"` }, fixpoint_ir: { head: { rel: "counter", columns: ["value"], types: ["int"] }, storage: [{ rel: "counter", arity: 1, columns: [{ name: "value", type: "int", storage: "integer", collation: null, encoding: { kind: "direct" } }] }, { rel: "seed_number", arity: 1, columns: [{ name: "value", type: "int", storage: "integer", collation: null, encoding: { kind: "direct" } }] }], assert: { seeds: [{ sources: [{ index: 0, source: { kind: "delta", rel: "seed_number", arity: 1, sign: 1, liveness: "present" } }], equalities: [], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }], selfIndex: null }], hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }], equalities: [], filters: [], project: [{ kind: "arith", op: "+", type: "int", left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "lit", type: "int", value: 1 } }], selfIndex: 0 }], stop: { seed: { kind: "absent", target: "head" }, hop: { kind: "absent", target: "head" } }, emit: "round_major" }, dred: { seeds: [{ sources: [{ index: 0, source: { kind: "delta", rel: "seed_number", arity: 1, sign: -1, liveness: "absent" } }], equalities: [], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }], selfIndex: null }], hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }], equalities: [], filters: [], project: [{ kind: "arith", op: "+", type: "int", left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "lit", type: "int", value: 1 } }], selfIndex: 0 }], stop: { seed: { kind: "present", target: "head" }, hop: { kind: "absent", target: "cone" } }, emit: null }, revive: { seeds: [{ sources: [{ index: 0, source: { kind: "rel", rel: "seed_number", arity: 1 } }, { index: 1, source: { kind: "cone" } }], equalities: [{ left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "col", index: 1, ordinal: 0 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }], selfIndex: null }, { sources: [{ index: 0, source: { kind: "rel", rel: "counter", arity: 1 } }, { index: 1, source: { kind: "cone" } }], equalities: [{ left: { kind: "arith", op: "+", type: "int", left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "lit", type: "int", value: 1 } }, right: { kind: "col", index: 1, ordinal: 0 } }], filters: [], project: [{ kind: "arith", op: "+", type: "int", left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "lit", type: "int", value: 1 } }], selfIndex: null }], hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }], equalities: [], filters: [], project: [{ kind: "arith", op: "+", type: "int", left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "lit", type: "int", value: 1 } }], selfIndex: 0 }], stop: { seed: null, hop: { kind: "present", target: "cone" } }, emit: null }, expand: { seeds: [{ sources: [{ index: 0, source: { kind: "rel", rel: "seed_number", arity: 1 } }], equalities: [], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }], selfIndex: null }], hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }], equalities: [], filters: [], project: [{ kind: "arith", op: "+", type: "int", left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "lit", type: "int", value: 1 } }], selfIndex: 0 }], stop: { seed: null, hop: { kind: "absent", target: "refCount" } }, emit: "key_major" } }, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const delete_sql = `DELETE FROM "counter"`;
-  const insert_sql = `INSERT OR IGNORE INTO "counter" ("value") SELECT b0."value" FROM "seed_number" b0;
-INSERT OR IGNORE INTO "counter" ("value") SELECT (b0."value" + 1) FROM "counter" b0`;
-  const count_sql = `SELECT (SELECT count(*) FROM "counter")`;
-  return seam.runner.executeMultiple(seam.db, delete_sql).pipe(
-    map(() => -1),
-    expand((prior_rows) => seam.runner.executeMultiple(seam.db, insert_sql).pipe(
-      concatMap(() => seam.runner.scalar(seam.db, count_sql)),
-      concatMap((rows) => (rows === prior_rows ? EMPTY : of(rows))),
-    )),
-    last(),
-    map(() => undefined),
-  );
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const counter = multiset_diff(before.counter, after.counter);
-  const seed_number = multiset_diff(before.seed_number, after.seed_number);
-  return {
-    rels: [
-      { rel: "counter", add: counter.add, del: counter.del },
-      { rel: "seed_number", add: seed_number.add, del: seed_number.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // diverging_measure_recursion_is_bounded_and_loud: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -343,14 +264,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "recursive-cte-reseed",
   relations: INCREMENTAL_RELATIONS,

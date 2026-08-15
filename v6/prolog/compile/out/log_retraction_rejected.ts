@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -198,57 +197,9 @@ const arrival_targets: readonly string[] = ["event"];
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly event: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    event: select_rows(seam, `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_event" t`, rel_columns.event!, rel_column_types.event!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    event: select_rows(seam, `SELECT "col1" FROM "event"`, rel_columns.event!, rel_column_types.event!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   event: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_event" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  event: { kind: "log", add_sql: `INSERT INTO "event" ("col1") VALUES (?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`log_retraction_rejected: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`log_retraction_rejected: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`log_retraction_rejected: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "event", kind: "log", table_name: "event", delta_table_name: "__delta_event", frontier_table_name: "__frontier_event", next_frontier_table_name: "__next_frontier_event", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "event" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_event" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
@@ -260,39 +211,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const event = multiset_diff(before.event, after.event);
-  return {
-    rels: [
-      { rel: "event", add: event.add, del: event.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // log_retraction_rejected: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -321,14 +243,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

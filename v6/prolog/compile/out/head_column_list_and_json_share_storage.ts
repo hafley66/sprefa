@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -208,48 +207,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "copied", sql: `INSERT OR IGNORE INTO "copied" ("items") SELECT b0."items" FROM "source" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly copied: readonly IRow[];
-  readonly source: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    copied: select_rows(seam, `SELECT t."items" FROM "copied" t`, rel_columns.copied!, rel_column_types.copied!),
-    source: select_rows(seam, `SELECT t."items" FROM "source" t`, rel_columns.source!, rel_column_types.source!),
-  });
-}
-
 const final_select: Record<string, string> = {
   copied: `SELECT t."items" FROM "copied" t`,
   source: `SELECT t."items" FROM "source" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  source: { kind: "set", add_sql: `INSERT OR IGNORE INTO "source" ("items") VALUES (?)`, del_sql: `DELETE FROM "source" WHERE "items" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`head_column_list_and_json_share_storage: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`head_column_list_and_json_share_storage: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`head_column_list_and_json_share_storage: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "copied", kind: "set", table_name: "copied", delta_table_name: "__delta_copied", frontier_table_name: "__frontier_copied", next_frontier_table_name: "__next_frontier_copied", columns: ["items"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."items", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_copied" t WHERE t."_sign" IN (-1, 1) GROUP BY t."items", t."_sign"`, rule_observers: [] },
@@ -264,40 +225,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "copied" ("items") SELECT b0."items" FROM "source" b0`, support_sql: [`DELETE FROM "__support_next_copied"`, `INSERT INTO "__support_next_copied" ("items", "__refcount") SELECT "items", sum("__refcount") FROM (SELECT b0."items" AS "items", count(*) AS "__refcount" FROM "source" b0 GROUP BY b0."items") GROUP BY "items"`, `UPDATE "copied" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_copied" n WHERE n."items" = h."items"), 0)`, `INSERT INTO "__delta_copied" ("_sign", "_sequence", "items") SELECT -1, row_number() OVER () - 1, "items" FROM "copied" WHERE "__refcount" <= 0`, `DELETE FROM "copied" WHERE "__refcount" <= 0`, `DELETE FROM "__new_copied"`, `INSERT INTO "__new_copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_copied" n LEFT JOIN "copied" h ON n."items" = h."items" WHERE h."items" IS NULL`, `INSERT INTO "__delta_copied" ("_sign", "_sequence", "items") SELECT 1, "rowid" - 1, "items" FROM "__new_copied"`, `INSERT INTO "__frontier_copied" ("_phase", "_sequence", "items") SELECT ?, "rowid" - 1, "items" FROM "__new_copied"`, `INSERT INTO "__next_frontier_copied" ("_phase", "_sequence", "items") SELECT ?, "rowid" - 1, "items" FROM "__new_copied"`, `INSERT OR IGNORE INTO "copied" ("items", "__refcount") SELECT n."items", n."__refcount" FROM "__support_next_copied" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "copied";
-INSERT OR IGNORE INTO "copied" ("items") SELECT b0."items" FROM "source" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const copied = multiset_diff(before.copied, after.copied);
-  const source = multiset_diff(before.source, after.source);
-  return {
-    rels: [
-      { rel: "copied", add: copied.add, del: copied.del },
-      { rel: "source", add: source.add, del: source.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // head_column_list_and_json_share_storage: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -323,14 +254,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

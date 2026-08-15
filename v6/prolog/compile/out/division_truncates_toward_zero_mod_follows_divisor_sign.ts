@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -241,61 +240,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "probe", sql: `INSERT OR IGNORE INTO "probe" ("label", "quotient", "remainder") SELECT b0."label", (b0."numerator" / b0."denominator"), (((b0."numerator" % b0."denominator") + b0."denominator") % b0."denominator") FROM "division_input" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly division_input: readonly IRow[];
-  readonly probe: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    division_input: select_rows(seam, `SELECT CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."numerator", t."denominator" FROM "__txt_division_input" t`, rel_columns.division_input!, rel_column_types.division_input!),
-    probe: select_rows(seam, `SELECT CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."quotient", t."remainder" FROM "__txt_probe" t`, rel_columns.probe!, rel_column_types.probe!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    division_input: select_rows(seam, `SELECT "label", "numerator", "denominator" FROM "division_input"`, rel_columns.division_input!, rel_column_types.division_input!),
-    probe: select_rows(seam, `SELECT "label", "quotient", "remainder" FROM "probe"`, rel_columns.probe!, rel_column_types.probe!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   division_input: `SELECT CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."numerator", t."denominator" FROM "__txt_division_input" t`,
   probe: `SELECT CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."quotient", t."remainder" FROM "__txt_probe" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  division_input: { kind: "set", add_sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") VALUES (?, ?, ?)`, del_sql: `DELETE FROM "division_input" WHERE "label" = ? AND "numerator" = ? AND "denominator" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`division_truncates_toward_zero_mod_follows_divisor_sign: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`division_truncates_toward_zero_mod_follows_divisor_sign: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`division_truncates_toward_zero_mod_follows_divisor_sign: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "division_input", kind: "set", table_name: "division_input", delta_table_name: "__delta_division_input", frontier_table_name: "__frontier_division_input", next_frontier_table_name: "__next_frontier_division_input", columns: ["label", "numerator", "denominator"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "division_input" ("label", "numerator", "denominator") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "label", "numerator", "denominator"`, arrival_del_sql: `DELETE FROM "division_input" WHERE ("label", "numerator", "denominator") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "label", "numerator", "denominator"`, boundary_sql: `SELECT CASE WHEN json_valid(t."label") AND json_type(t."label") = 'object' AND json_type(t."label", '$.fn') = 'text' AND json_type(t."label", '$.args') = 'array' THEN json_extract(t."label", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."label", '$.args')), '') || ')' ELSE t."label" END AS "label", t."numerator", t."denominator", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_division_input" t WHERE t."_sign" IN (-1, 1) GROUP BY t."label", t."numerator", t."denominator", t."_sign"`, rule_observers: ["probe/3"] },
@@ -310,42 +258,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "probe" ("label", "quotient", "remainder") SELECT b0."label", (b0."numerator" / b0."denominator"), (((b0."numerator" % b0."denominator") + b0."denominator") % b0."denominator") FROM "division_input" b0`, support_sql: [`DELETE FROM "__support_next_probe"`, `INSERT INTO "__support_next_probe" ("label", "quotient", "remainder", "__refcount") SELECT "label", "quotient", "remainder", sum("__refcount") FROM (SELECT b0."label" AS "label", (b0."numerator" / b0."denominator") AS "quotient", (((b0."numerator" % b0."denominator") + b0."denominator") % b0."denominator") AS "remainder", count(*) AS "__refcount" FROM "division_input" b0 GROUP BY b0."label", (b0."numerator" / b0."denominator"), (((b0."numerator" % b0."denominator") + b0."denominator") % b0."denominator")) GROUP BY "label", "quotient", "remainder"`, `UPDATE "probe" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_probe" n WHERE n."label" = h."label" AND n."quotient" = h."quotient" AND n."remainder" = h."remainder"), 0)`, `INSERT INTO "__delta_probe" ("_sign", "_sequence", "label", "quotient", "remainder") SELECT -1, row_number() OVER () - 1, "label", "quotient", "remainder" FROM "probe" WHERE "__refcount" <= 0`, `DELETE FROM "probe" WHERE "__refcount" <= 0`, `DELETE FROM "__new_probe"`, `INSERT INTO "__new_probe" ("label", "quotient", "remainder", "__refcount") SELECT n."label", n."quotient", n."remainder", n."__refcount" FROM "__support_next_probe" n LEFT JOIN "probe" h ON n."label" = h."label" AND n."quotient" = h."quotient" AND n."remainder" = h."remainder" WHERE h."label" IS NULL`, `INSERT INTO "__delta_probe" ("_sign", "_sequence", "label", "quotient", "remainder") SELECT 1, "rowid" - 1, "label", "quotient", "remainder" FROM "__new_probe"`, `INSERT INTO "__frontier_probe" ("_phase", "_sequence", "label", "quotient", "remainder") SELECT ?, "rowid" - 1, "label", "quotient", "remainder" FROM "__new_probe"`, `INSERT INTO "__next_frontier_probe" ("_phase", "_sequence", "label", "quotient", "remainder") SELECT ?, "rowid" - 1, "label", "quotient", "remainder" FROM "__new_probe"`, `INSERT OR IGNORE INTO "probe" ("label", "quotient", "remainder", "__refcount") SELECT n."label", n."quotient", n."remainder", n."__refcount" FROM "__support_next_probe" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "probe";
-INSERT OR IGNORE INTO "probe" ("label", "quotient", "remainder") SELECT b0."label", (b0."numerator" / b0."denominator"), (((b0."numerator" % b0."denominator") + b0."denominator") % b0."denominator") FROM "division_input" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const division_input = multiset_diff(before.division_input, after.division_input);
-  const probe = multiset_diff(before.probe, after.probe);
-  return {
-    rels: [
-      { rel: "division_input", add: division_input.add, del: division_input.del },
-      { rel: "probe", add: probe.add, del: probe.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // division_truncates_toward_zero_mod_follows_divisor_sign: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -374,14 +290,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

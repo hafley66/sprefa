@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -286,71 +285,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "line_parts", sql: `INSERT OR IGNORE INTO "line_parts" ("name", "parts") SELECT b0."name", (SELECT e."__id" FROM "__gen__list_text_df210f232c1299bd" e WHERE e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END))) FROM "line" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __gen__list_text_df210f232c1299bd: readonly IRow[];
-  readonly __gen__list_text_df210f232c1299bd__member: readonly IRow[];
-  readonly line: readonly IRow[];
-  readonly line_parts: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content" FROM "__txt___gen__list_text_df210f232c1299bd" t`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member" t`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
-    line: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_line" t`, rel_columns.line!, rel_column_types.line!),
-    line_parts: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", coalesce("__l_parts"."value_text", '[]') AS "parts" FROM "__txt_line_parts" t LEFT JOIN "__list___gen__list_text_df210f232c1299bd" "__l_parts" ON "__l_parts"."list_id" = t."parts"`, rel_columns.line_parts!, rel_column_types.line_parts!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT "content" FROM "__gen__list_text_df210f232c1299bd"`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT "list_id", "idx", "value" FROM "__gen__list_text_df210f232c1299bd__member"`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
-    line: select_rows(seam, `SELECT "name", "body" FROM "line"`, rel_columns.line!, rel_column_types.line!),
-    line_parts: select_rows(seam, `SELECT "name", "parts" FROM "line_parts"`, rel_columns.line_parts!, rel_column_types.line_parts!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__list_text_df210f232c1299bd: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content" FROM "__txt___gen__list_text_df210f232c1299bd" t`,
   __gen__list_text_df210f232c1299bd__member: `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member" t`,
   line: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_line" t`,
   line_parts: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", coalesce("__l_parts"."value_text", '[]') AS "parts" FROM "__txt_line_parts" t LEFT JOIN "__list___gen__list_text_df210f232c1299bd" "__l_parts" ON "__l_parts"."list_id" = t."parts"`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_text_df210f232c1299bd: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") VALUES (?) ON CONFLICT ("content") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE "content" = ?` },
-  __gen__list_text_df210f232c1299bd__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") VALUES (?, ?, ?) ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE "list_id" = ? AND "idx" = ? AND "value" = ?` },
-  line: { kind: "set", add_sql: `INSERT OR IGNORE INTO "line" ("name", "body") VALUES (?, ?)`, del_sql: `DELETE FROM "line" WHERE "name" = ? AND "body" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`empty_separator_interns_a_one_element_list: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`empty_separator_interns_a_one_element_list: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`empty_separator_interns_a_one_element_list: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_text_df210f232c1299bd", kind: "set", table_name: "__gen__list_text_df210f232c1299bd", delta_table_name: "__delta___gen__list_text_df210f232c1299bd", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd", columns: ["content"], column_types: ["text"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("content") DO NOTHING RETURNING "content"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE ("content") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "content"`, boundary_sql: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_text_df210f232c1299bd" t WHERE t."_sign" IN (-1, 1) GROUP BY t."content", t."_sign"`, rule_observers: [] },
@@ -371,50 +311,10 @@ INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "i
 INSERT OR IGNORE INTO "line_parts" ("name", "parts") SELECT b0."name", (SELECT e."__id" FROM "__gen__list_text_df210f232c1299bd" e WHERE e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END))) FROM "line" b0`, support_sql: [`DELETE FROM "__support_next_line_parts"`, `INSERT INTO "__support_next_line_parts" ("name", "parts", "__refcount") SELECT "name", "parts", sum("__refcount") FROM (SELECT b0."name" AS "name", (SELECT e."__id" FROM "__gen__list_text_df210f232c1299bd" e WHERE e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END))) AS "parts", count(*) AS "__refcount" FROM "line" b0 GROUP BY b0."name", (SELECT e."__id" FROM "__gen__list_text_df210f232c1299bd" e WHERE e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)))) GROUP BY "name", "parts"`, `UPDATE "line_parts" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_line_parts" n WHERE n."name" = h."name" AND n."parts" = h."parts"), 0)`, `INSERT INTO "__delta_line_parts" ("_sign", "_sequence", "name", "parts") SELECT -1, row_number() OVER () - 1, "name", "parts" FROM "line_parts" WHERE "__refcount" <= 0`, `DELETE FROM "line_parts" WHERE "__refcount" <= 0`, `DELETE FROM "__new_line_parts"`, `INSERT INTO "__new_line_parts" ("name", "parts", "__refcount") SELECT n."name", n."parts", n."__refcount" FROM "__support_next_line_parts" n LEFT JOIN "line_parts" h ON n."name" = h."name" AND n."parts" = h."parts" WHERE h."name" IS NULL`, `INSERT INTO "__delta_line_parts" ("_sign", "_sequence", "name", "parts") SELECT 1, "rowid" - 1, "name", "parts" FROM "__new_line_parts"`, `INSERT INTO "__frontier_line_parts" ("_phase", "_sequence", "name", "parts") SELECT ?, "rowid" - 1, "name", "parts" FROM "__new_line_parts"`, `INSERT INTO "__next_frontier_line_parts" ("_phase", "_sequence", "name", "parts") SELECT ?, "rowid" - 1, "name", "parts" FROM "__new_line_parts"`, `INSERT OR IGNORE INTO "line_parts" ("name", "parts", "__refcount") SELECT n."name", n."parts", n."__refcount" FROM "__support_next_line_parts" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END) FROM "__frontier_line" d0 WHERE d0."_phase" >= 0`, `INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) FROM "__frontier_line" d0 WHERE d0."_phase" >= 0 ORDER BY (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)`, `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT i.value FROM "__frontier_line" d0, json_each((CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) i WHERE d0."_phase" >= 0`, `INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") SELECT e."__id", i.key, s."__id" FROM "__frontier_line" d0, json_each((CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) i JOIN "__gen__list_text_df210f232c1299bd" e ON e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) JOIN "__str" s ON s."content" = i.value WHERE d0."_phase" >= 0 ON CONFLICT ("list_id", "idx") DO NOTHING`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END) FROM "line" b0`, `INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) FROM "line" b0 ORDER BY (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)`, `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT i.value FROM "line" b0, json_each((CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) i`, `INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") SELECT e."__id", i.key, s."__id" FROM "line" b0, json_each((CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) i JOIN "__gen__list_text_df210f232c1299bd" e ON e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) JOIN "__str" s ON s."content" = i.value ON CONFLICT ("list_id", "idx") DO NOTHING`] },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "line_parts";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END) FROM "line" b0;
-INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) FROM "line" b0 ORDER BY (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END);
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT i.value FROM "line" b0, json_each((CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) i;
-INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") SELECT e."__id", i.key, s."__id" FROM "line" b0, json_each((CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) i JOIN "__gen__list_text_df210f232c1299bd" e ON e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) JOIN "__str" s ON s."content" = i.value ON CONFLICT ("list_id", "idx") DO NOTHING;
-INSERT OR IGNORE INTO "line_parts" ("name", "parts") SELECT b0."name", (SELECT e."__id" FROM "__gen__list_text_df210f232c1299bd" e WHERE e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."body") || '', NULL UNION ALL SELECT substr("rest", instr("rest", '') + length('')), substr("rest", 1, instr("rest", '') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END))) FROM "line" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__list_text_df210f232c1299bd = multiset_diff(before.__gen__list_text_df210f232c1299bd, after.__gen__list_text_df210f232c1299bd);
-  const __gen__list_text_df210f232c1299bd__member = multiset_diff(before.__gen__list_text_df210f232c1299bd__member, after.__gen__list_text_df210f232c1299bd__member);
-  const line = multiset_diff(before.line, after.line);
-  const line_parts = multiset_diff(before.line_parts, after.line_parts);
-  return {
-    rels: [
-      { rel: "__gen__list_text_df210f232c1299bd", add: __gen__list_text_df210f232c1299bd.add, del: __gen__list_text_df210f232c1299bd.del },
-      { rel: "__gen__list_text_df210f232c1299bd__member", add: __gen__list_text_df210f232c1299bd__member.add, del: __gen__list_text_df210f232c1299bd__member.del },
-      { rel: "line", add: line.add, del: line.del },
-      { rel: "line_parts", add: line_parts.add, del: line_parts.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // empty_separator_interns_a_one_element_list: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -443,14 +343,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

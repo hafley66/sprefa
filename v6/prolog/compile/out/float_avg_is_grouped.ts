@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -238,61 +237,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "mean", sql: `INSERT OR IGNORE INTO "mean" ("group", "value") SELECT a."__group_1", a."__sum" / a."__count" FROM "__avg_acc_mean" a WHERE a."__count" > 0 RETURNING "group", "value"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly mean: readonly IRow[];
-  readonly score: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    mean: select_rows(seam, `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value" FROM "__txt_mean" t`, rel_columns.mean!, rel_column_types.mean!),
-    score: select_rows(seam, `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value" FROM "__txt_score" t`, rel_columns.score!, rel_column_types.score!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    mean: select_rows(seam, `SELECT "group", "value" FROM "mean"`, rel_columns.mean!, rel_column_types.mean!),
-    score: select_rows(seam, `SELECT "group", "value" FROM "score"`, rel_columns.score!, rel_column_types.score!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   mean: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value" FROM "__txt_mean" t`,
   score: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value" FROM "__txt_score" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  score: { kind: "set", add_sql: `INSERT OR IGNORE INTO "score" ("group", "value") VALUES (?, ?)`, del_sql: `DELETE FROM "score" WHERE "group" = ? AND "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`float_avg_is_grouped: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`float_avg_is_grouped: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`float_avg_is_grouped: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "mean", kind: "set", table_name: "mean", delta_table_name: "__delta_mean", frontier_table_name: "__frontier_mean", next_frontier_table_name: "__next_frontier_mean", columns: ["group", "value"], column_types: ["text", "float"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_mean" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."value", t."_sign"`, rule_observers: [] },
@@ -307,42 +255,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_mean"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_mean" ("group") SELECT DISTINCT d0."group" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)`, `INSERT OR IGNORE INTO "__avg_acc_mean" ("__group_1", "__sum", "__count") SELECT "group", 0.0, 0 FROM "__agg_scope_mean"`, `UPDATE "__avg_acc_mean" AS a SET "__sum" = "__sum" + COALESCE((SELECT sum(contributions."__sign" * contributions."__value") FROM (SELECT d0."group" AS "__group_1", d0."value" AS "__value", d0."_sign" AS "__sign" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)) contributions WHERE contributions."__group_1" = a."__group_1" AND ("__group_1") IN (SELECT "group" FROM "__agg_scope_mean")), 0.0), "__count" = "__count" + COALESCE((SELECT sum(contributions."__sign") FROM (SELECT d0."group" AS "__group_1", d0."value" AS "__value", d0."_sign" AS "__sign" FROM "__delta_score" d0 WHERE d0."_sign" IN (-1, 1)) contributions WHERE contributions."__group_1" = a."__group_1" AND ("__group_1") IN (SELECT "group" FROM "__agg_scope_mean")), 0) WHERE ("__group_1") IN (SELECT "group" FROM "__agg_scope_mean")`], delete_scoped_sql: `DELETE FROM "mean" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_mean") RETURNING "group", "value"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "mean" ("group", "value") SELECT a."__group_1", a."__sum" / a."__count" FROM "__avg_acc_mean" a WHERE a."__count" > 0 AND ("__group_1") IN (SELECT "group" FROM "__agg_scope_mean") RETURNING "group", "value"`], delta_maintained: true } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "mean";
-INSERT OR IGNORE INTO "mean" ("group", "value") SELECT b0."group", avg(b0."value") FROM "score" b0 GROUP BY b0."group" HAVING count(*) > 0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const mean = multiset_diff(before.mean, after.mean);
-  const score = multiset_diff(before.score, after.score);
-  return {
-    rels: [
-      { rel: "mean", add: mean.add, del: mean.del },
-      { rel: "score", add: score.add, del: score.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // float_avg_is_grouped: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -371,14 +287,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

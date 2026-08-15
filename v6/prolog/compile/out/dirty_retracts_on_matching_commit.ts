@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
     });
     return { ...arrival, row };
   });
-}
-
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
 }
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -357,46 +337,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "dirty", sql: `INSERT OR IGNORE INTO "dirty" ("path") SELECT b0."path" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" IS NOT b2."digest")`, params: [] },
 ];
 
-type Snapshot = {
-  readonly commit_arrival: readonly IRow[];
-  readonly dirty: readonly IRow[];
-  readonly head: readonly IRow[];
-  readonly head_move: readonly IRow[];
-  readonly tree_file: readonly IRow[];
-  readonly worktree_edit: readonly IRow[];
-  readonly worktree_file: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    commit_arrival: select_rows(seam, `SELECT t."rev_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_commit_arrival" t`, rel_columns.commit_arrival!, rel_column_types.commit_arrival!),
-    dirty: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path" FROM "__txt_dirty" t`, rel_columns.dirty!, rel_column_types.dirty!),
-    head: select_rows(seam, `SELECT t."repo_id", t."rev_id" FROM "head" t`, rel_columns.head!, rel_column_types.head!),
-    head_move: select_rows(seam, `SELECT t."repo_id", t."rev_id" FROM "head_move" t`, rel_columns.head_move!, rel_column_types.head_move!),
-    tree_file: select_rows(seam, `SELECT t."rev_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_tree_file" t`, rel_columns.tree_file!, rel_column_types.tree_file!),
-    worktree_edit: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_worktree_edit" t`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
-    worktree_file: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_worktree_file" t`, rel_columns.worktree_file!, rel_column_types.worktree_file!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    commit_arrival: select_rows(seam, `SELECT "rev_id", "path", "digest" FROM "commit_arrival"`, rel_columns.commit_arrival!, rel_column_types.commit_arrival!),
-    dirty: select_rows(seam, `SELECT "path" FROM "dirty"`, rel_columns.dirty!, rel_column_types.dirty!),
-    head: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head"`, rel_columns.head!, rel_column_types.head!),
-    head_move: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head_move"`, rel_columns.head_move!, rel_column_types.head_move!),
-    tree_file: select_rows(seam, `SELECT "rev_id", "path", "digest" FROM "tree_file"`, rel_columns.tree_file!, rel_column_types.tree_file!),
-    worktree_edit: select_rows(seam, `SELECT "path", "digest" FROM "worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
-    worktree_file: select_rows(seam, `SELECT "path", "digest" FROM "worktree_file"`, rel_columns.worktree_file!, rel_column_types.worktree_file!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   commit_arrival: `SELECT t."rev_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_commit_arrival" t`,
   dirty: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path" FROM "__txt_dirty" t`,
@@ -406,34 +346,6 @@ const final_select: Record<string, string> = {
   worktree_edit: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_worktree_edit" t`,
   worktree_file: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_worktree_file" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  commit_arrival: { kind: "log", add_sql: `INSERT INTO "commit_arrival" ("rev_id", "path", "digest") VALUES (?, ?, ?)`, del_sql: null },
-  head_move: { kind: "log", add_sql: `INSERT INTO "head_move" ("repo_id", "rev_id") VALUES (?, ?)`, del_sql: null },
-  worktree_edit: { kind: "log", add_sql: `INSERT INTO "worktree_edit" ("path", "digest") VALUES (?, ?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`dirty_retracts_on_matching_commit: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`dirty_retracts_on_matching_commit: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`dirty_retracts_on_matching_commit: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "commit_arrival", kind: "log", table_name: "commit_arrival", delta_table_name: "__delta_commit_arrival", frontier_table_name: "__frontier_commit_arrival", next_frontier_table_name: "__next_frontier_commit_arrival", columns: ["rev_id", "path", "digest"], column_types: ["int", "text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "commit_arrival" ("rev_id", "path", "digest") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "rev_id", "path", "digest"`, arrival_del_sql: null, boundary_sql: `SELECT t."rev_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_commit_arrival" t WHERE t."_sign" IN (-1, 1) GROUP BY t."rev_id", t."path", t."digest", t."_sign"`, rule_observers: ["tree_file/3"] },
@@ -456,128 +368,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "dirty" ("path") SELECT b0."path" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" IS NOT b2."digest")`, support_sql: [`DELETE FROM "__support_next_dirty"`, `INSERT INTO "__support_next_dirty" ("path", "__refcount") SELECT "path", sum("__refcount") FROM (SELECT b0."path" AS "path", count(*) AS "__refcount" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" IS NOT b2."digest") GROUP BY b0."path") GROUP BY "path"`, `UPDATE "dirty" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_dirty" n WHERE n."path" = h."path"), 0)`, `INSERT INTO "__delta_dirty" ("_sign", "_sequence", "path") SELECT -1, row_number() OVER () - 1, "path" FROM "dirty" WHERE "__refcount" <= 0`, `DELETE FROM "dirty" WHERE "__refcount" <= 0`, `DELETE FROM "__new_dirty"`, `INSERT INTO "__new_dirty" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_dirty" n LEFT JOIN "dirty" h ON n."path" = h."path" WHERE h."path" IS NULL`, `INSERT INTO "__delta_dirty" ("_sign", "_sequence", "path") SELECT 1, "rowid" - 1, "path" FROM "__new_dirty"`, `INSERT INTO "__frontier_dirty" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_dirty"`, `INSERT INTO "__next_frontier_dirty" ("_phase", "_sequence", "path") SELECT ?, "rowid" - 1, "path" FROM "__new_dirty"`, `INSERT OR IGNORE INTO "dirty" ("path", "__refcount") SELECT n."path", n."__refcount" FROM "__support_next_dirty" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-const EDGE_WORKTREE_FILE_0_PROJECT_SQL = `SELECT ?1 AS "path", ?2 AS "digest"`;
-const EDGE_WORKTREE_FILE_0_WRITE_SQL = `INSERT INTO "worktree_file" ("path", "digest") VALUES (?, ?) ON CONFLICT("path") DO UPDATE SET "digest" = excluded."digest"`;
-const EDGE_WORKTREE_FILE_0_HEAD_COLUMNS: readonly string[] = ["path", "digest"];
-const EDGE_WORKTREE_FILE_0_KEY_INDICES: readonly number[] = [0];
-
-const EDGE_TREE_FILE_1_PROJECT_SQL = `SELECT ?1 AS "rev_id", ?2 AS "path", ?3 AS "digest"`;
-const EDGE_TREE_FILE_1_WRITE_SQL = `INSERT INTO "tree_file" ("rev_id", "path", "digest") VALUES (?, ?, ?) ON CONFLICT("rev_id", "path") DO UPDATE SET "digest" = excluded."digest"`;
-const EDGE_TREE_FILE_1_HEAD_COLUMNS: readonly string[] = ["rev_id", "path", "digest"];
-const EDGE_TREE_FILE_1_KEY_INDICES: readonly number[] = [0, 1];
-
-const EDGE_HEAD_2_PROJECT_SQL = `SELECT ?1 AS "repo_id", ?2 AS "rev_id"`;
-const EDGE_HEAD_2_WRITE_SQL = `INSERT INTO "head" ("repo_id", "rev_id") VALUES (?, ?) ON CONFLICT("repo_id") DO UPDATE SET "rev_id" = excluded."rev_id"`;
-const EDGE_HEAD_2_HEAD_COLUMNS: readonly string[] = ["repo_id", "rev_id"];
-const EDGE_HEAD_2_KEY_INDICES: readonly number[] = [0];
-
-function resolveWorktreeFile_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "worktree_edit", before.worktree_edit, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_WORKTREE_FILE_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_WORKTREE_FILE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_WORKTREE_FILE_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_WORKTREE_FILE_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolveTreeFile_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "commit_arrival", before.commit_arrival, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_TREE_FILE_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_TREE_FILE_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_TREE_FILE_1_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_TREE_FILE_1_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolveHead_2Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "head_move", before.head_move, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_HEAD_2_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_HEAD_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_HEAD_2_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_HEAD_2_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "dirty";
-INSERT OR IGNORE INTO "dirty" ("path") SELECT b0."path" FROM "worktree_file" b0, "head" b1, "tree_file" b2 WHERE b2."rev_id" = b1."rev_id" AND b2."path" = b0."path" AND (b0."digest" IS NOT b2."digest")`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const commit_arrival = multiset_diff(before.commit_arrival, after.commit_arrival);
-  const dirty = multiset_diff(before.dirty, after.dirty);
-  const head = multiset_diff(before.head, after.head);
-  const head_move = multiset_diff(before.head_move, after.head_move);
-  const tree_file = multiset_diff(before.tree_file, after.tree_file);
-  const worktree_edit = multiset_diff(before.worktree_edit, after.worktree_edit);
-  const worktree_file = multiset_diff(before.worktree_file, after.worktree_file);
-  return {
-    rels: [
-      { rel: "commit_arrival", add: commit_arrival.add, del: commit_arrival.del },
-      { rel: "dirty", add: dirty.add, del: dirty.del },
-      { rel: "head", add: head.add, del: head.del },
-      { rel: "head_move", add: head_move.add, del: head_move.del },
-      { rel: "tree_file", add: tree_file.add, del: tree_file.del },
-      { rel: "worktree_edit", add: worktree_edit.add, del: worktree_edit.del },
-      { rel: "worktree_file", add: worktree_file.add, del: worktree_file.del },
-    ],
-    carry_pending: head.add.length > 0 || head.del.length > 0 || tree_file.add.length > 0 || tree_file.del.length > 0 || worktree_file.add.length > 0 || worktree_file.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolveWorktreeFile_0Writes(seam, before.stored, arrivals), resolveTreeFile_1Writes(seam, before.stored, arrivals), resolveHead_2Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // dirty_retracts_on_matching_commit: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -607,14 +401,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

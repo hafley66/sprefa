@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -361,46 +360,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "labelled", sql: `INSERT OR IGNORE INTO "labelled" ("tree_id", "state") SELECT b0."tree_id", b1."tag" FROM "orchard__tree" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."label"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __opt_text_none: readonly IRow[];
-  readonly __opt_text_some: readonly IRow[];
-  readonly __opt_text_tag: readonly IRow[];
-  readonly labelled: readonly IRow[];
-  readonly orchard: readonly IRow[];
-  readonly orchard__tree: readonly IRow[];
-  readonly planted: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __opt_text_none: select_rows(seam, `SELECT t."id" FROM "__opt_text_none" t`, rel_columns.__opt_text_none!, rel_column_types.__opt_text_none!),
-    __opt_text_some: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___opt_text_some" t`, rel_columns.__opt_text_some!, rel_column_types.__opt_text_some!),
-    __opt_text_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt___opt_text_tag" t`, rel_columns.__opt_text_tag!, rel_column_types.__opt_text_tag!),
-    labelled: select_rows(seam, `SELECT t."tree_id", CASE WHEN json_valid(t."state") AND json_type(t."state") = 'object' AND json_type(t."state", '$.fn') = 'text' AND json_type(t."state", '$.args') = 'array' THEN json_extract(t."state", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."state", '$.args')), '') || ')' ELSE t."state" END AS "state" FROM "__txt_labelled" t`, rel_columns.labelled!, rel_column_types.labelled!),
-    orchard: select_rows(seam, `SELECT t."orchard_id" FROM "orchard" t`, rel_columns.orchard!, rel_column_types.orchard!),
-    orchard__tree: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = t."parent") AS "parent", t."tree_id", t."label" FROM "orchard__tree" t`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
-    planted: select_rows(seam, `SELECT t."orchard_id", t."tree_id" FROM "planted" t`, rel_columns.planted!, rel_column_types.planted!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __opt_text_none: select_rows(seam, `SELECT "id" FROM "__opt_text_none"`, rel_columns.__opt_text_none!, rel_column_types.__opt_text_none!),
-    __opt_text_some: select_rows(seam, `SELECT "id", "value" FROM "__opt_text_some"`, rel_columns.__opt_text_some!, rel_column_types.__opt_text_some!),
-    __opt_text_tag: select_rows(seam, `SELECT "id", "tag" FROM "__opt_text_tag"`, rel_columns.__opt_text_tag!, rel_column_types.__opt_text_tag!),
-    labelled: select_rows(seam, `SELECT "tree_id", "state" FROM "labelled"`, rel_columns.labelled!, rel_column_types.labelled!),
-    orchard: select_rows(seam, `SELECT "orchard_id" FROM "orchard"`, rel_columns.orchard!, rel_column_types.orchard!),
-    orchard__tree: select_rows(seam, `SELECT "parent", "tree_id", "label" FROM "orchard__tree"`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
-    planted: select_rows(seam, `SELECT "orchard_id", "tree_id" FROM "planted"`, rel_columns.planted!, rel_column_types.planted!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __opt_text_none: `SELECT t."id" FROM "__opt_text_none" t`,
   __opt_text_some: `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___opt_text_some" t`,
@@ -410,34 +369,6 @@ const final_select: Record<string, string> = {
   orchard__tree: `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = t."parent") AS "parent", t."tree_id", t."label" FROM "orchard__tree" t`,
   planted: `SELECT t."orchard_id", t."tree_id" FROM "planted" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __opt_text_none: { kind: "set", add_sql: `INSERT INTO "__opt_text_none" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__opt_text_none" WHERE "id" = ?` },
-  __opt_text_some: { kind: "set", add_sql: `INSERT INTO "__opt_text_some" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "__opt_text_some" WHERE "id" = ? AND "value" = ?` },
-  planted: { kind: "set", add_sql: `INSERT OR IGNORE INTO "planted" ("orchard_id", "tree_id") VALUES (?, ?)`, del_sql: `DELETE FROM "planted" WHERE "orchard_id" = ? AND "tree_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`nested_child_and_an_option_column_coexist: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`nested_child_and_an_option_column_coexist: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`nested_child_and_an_option_column_coexist: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__opt_text_none", kind: "set", table_name: "__opt_text_none", delta_table_name: "__delta___opt_text_none", frontier_table_name: "__frontier___opt_text_none", next_frontier_table_name: "__next_frontier___opt_text_none", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "__opt_text_none" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "__opt_text_none" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___opt_text_none" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: ["__opt_text_tag/2"] },
@@ -464,62 +395,10 @@ INSERT OR IGNORE INTO "orchard__tree" ("parent", "tree_id", "label") SELECT b0."
 INSERT OR IGNORE INTO "labelled" ("tree_id", "state") SELECT b0."tree_id", b1."tag" FROM "orchard__tree" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."label"`, support_sql: [`DELETE FROM "__support_next_labelled"`, `INSERT INTO "__support_next_labelled" ("tree_id", "state", "__refcount") SELECT "tree_id", "state", sum("__refcount") FROM (SELECT b0."tree_id" AS "tree_id", b1."tag" AS "state", count(*) AS "__refcount" FROM "orchard__tree" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."label" GROUP BY b0."tree_id", b1."tag") GROUP BY "tree_id", "state"`, `UPDATE "labelled" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_labelled" n WHERE n."tree_id" = h."tree_id" AND n."state" = h."state"), 0)`, `INSERT INTO "__delta_labelled" ("_sign", "_sequence", "tree_id", "state") SELECT -1, row_number() OVER () - 1, "tree_id", "state" FROM "labelled" WHERE "__refcount" <= 0`, `DELETE FROM "labelled" WHERE "__refcount" <= 0`, `DELETE FROM "__new_labelled"`, `INSERT INTO "__new_labelled" ("tree_id", "state", "__refcount") SELECT n."tree_id", n."state", n."__refcount" FROM "__support_next_labelled" n LEFT JOIN "labelled" h ON n."tree_id" = h."tree_id" AND n."state" = h."state" WHERE h."tree_id" IS NULL`, `INSERT INTO "__delta_labelled" ("_sign", "_sequence", "tree_id", "state") SELECT 1, "rowid" - 1, "tree_id", "state" FROM "__new_labelled"`, `INSERT INTO "__frontier_labelled" ("_phase", "_sequence", "tree_id", "state") SELECT ?, "rowid" - 1, "tree_id", "state" FROM "__new_labelled"`, `INSERT INTO "__next_frontier_labelled" ("_phase", "_sequence", "tree_id", "state") SELECT ?, "rowid" - 1, "tree_id", "state" FROM "__new_labelled"`, `INSERT OR IGNORE INTO "labelled" ("tree_id", "state", "__refcount") SELECT n."tree_id", n."state", n."__refcount" FROM "__support_next_labelled" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "__opt_text_tag";
-INSERT OR IGNORE INTO "__opt_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "__opt_text_none" b0;
-INSERT OR IGNORE INTO "__opt_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') FROM "__opt_text_some" b0;
-DELETE FROM "orchard";
-INSERT OR IGNORE INTO "orchard" ("orchard_id") SELECT b0."orchard_id" FROM "planted" b0;
-DELETE FROM "orchard__tree";
-INSERT OR IGNORE INTO "orchard__tree" ("parent", "tree_id", "label") SELECT b0."__id", b1."tree_id", 801 FROM "orchard" b0, "planted" b1 WHERE b1."orchard_id" = b0."orchard_id";
-DELETE FROM "labelled";
-INSERT OR IGNORE INTO "labelled" ("tree_id", "state") SELECT b0."tree_id", b1."tag" FROM "orchard__tree" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."label"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __opt_text_none = multiset_diff(before.__opt_text_none, after.__opt_text_none);
-  const __opt_text_some = multiset_diff(before.__opt_text_some, after.__opt_text_some);
-  const __opt_text_tag = multiset_diff(before.__opt_text_tag, after.__opt_text_tag);
-  const labelled = multiset_diff(before.labelled, after.labelled);
-  const orchard = multiset_diff(before.orchard, after.orchard);
-  const orchard__tree = multiset_diff(before.orchard__tree, after.orchard__tree);
-  const planted = multiset_diff(before.planted, after.planted);
-  return {
-    rels: [
-      { rel: "__opt_text_none", add: __opt_text_none.add, del: __opt_text_none.del },
-      { rel: "__opt_text_some", add: __opt_text_some.add, del: __opt_text_some.del },
-      { rel: "__opt_text_tag", add: __opt_text_tag.add, del: __opt_text_tag.del },
-      { rel: "labelled", add: labelled.add, del: labelled.del },
-      { rel: "orchard", add: orchard.add, del: orchard.del },
-      { rel: "orchard__tree", add: orchard__tree.add, del: orchard__tree.del },
-      { rel: "planted", add: planted.add, del: planted.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // nested_child_and_an_option_column_coexist: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -551,14 +430,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

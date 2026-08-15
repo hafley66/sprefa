@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -344,43 +343,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "pascal", sql: `INSERT OR IGNORE INTO "pascal" ("name", "rendered") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."name" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word"), '' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word")) AS "__agg_2" FROM "sym_word" b0 GROUP BY b0."name" HAVING count(*) > 0)`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __gen__list_text_df210f232c1299bd: readonly IRow[];
-  readonly __gen__list_text_df210f232c1299bd__member: readonly IRow[];
-  readonly pascal: readonly IRow[];
-  readonly sym: readonly IRow[];
-  readonly sym_parts: readonly IRow[];
-  readonly sym_word: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content" FROM "__txt___gen__list_text_df210f232c1299bd" t`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member" t`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
-    pascal: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."rendered") AND json_type(t."rendered") = 'object' AND json_type(t."rendered", '$.fn') = 'text' AND json_type(t."rendered", '$.args') = 'array' THEN json_extract(t."rendered", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."rendered", '$.args')), '') || ')' ELSE t."rendered" END AS "rendered" FROM "__txt_pascal" t`, rel_columns.pascal!, rel_column_types.pascal!),
-    sym: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_sym" t`, rel_columns.sym!, rel_column_types.sym!),
-    sym_parts: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", coalesce("__l_parts"."value_text", '[]') AS "parts" FROM "__txt_sym_parts" t LEFT JOIN "__list___gen__list_text_df210f232c1299bd" "__l_parts" ON "__l_parts"."list_id" = t."parts"`, rel_columns.sym_parts!, rel_column_types.sym_parts!),
-    sym_word: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."word") AND json_type(t."word") = 'object' AND json_type(t."word", '$.fn') = 'text' AND json_type(t."word", '$.args') = 'array' THEN json_extract(t."word", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."word", '$.args')), '') || ')' ELSE t."word" END AS "word" FROM "__txt_sym_word" t`, rel_columns.sym_word!, rel_column_types.sym_word!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT "content" FROM "__gen__list_text_df210f232c1299bd"`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT "list_id", "idx", "value" FROM "__gen__list_text_df210f232c1299bd__member"`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
-    pascal: select_rows(seam, `SELECT "name", "rendered" FROM "pascal"`, rel_columns.pascal!, rel_column_types.pascal!),
-    sym: select_rows(seam, `SELECT "name" FROM "sym"`, rel_columns.sym!, rel_column_types.sym!),
-    sym_parts: select_rows(seam, `SELECT "name", "parts" FROM "sym_parts"`, rel_columns.sym_parts!, rel_column_types.sym_parts!),
-    sym_word: select_rows(seam, `SELECT "name", "word" FROM "sym_word"`, rel_columns.sym_word!, rel_column_types.sym_word!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__list_text_df210f232c1299bd: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content" FROM "__txt___gen__list_text_df210f232c1299bd" t`,
   __gen__list_text_df210f232c1299bd__member: `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member" t`,
@@ -389,34 +351,6 @@ const final_select: Record<string, string> = {
   sym_parts: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", coalesce("__l_parts"."value_text", '[]') AS "parts" FROM "__txt_sym_parts" t LEFT JOIN "__list___gen__list_text_df210f232c1299bd" "__l_parts" ON "__l_parts"."list_id" = t."parts"`,
   sym_word: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."word") AND json_type(t."word") = 'object' AND json_type(t."word", '$.fn') = 'text' AND json_type(t."word", '$.args') = 'array' THEN json_extract(t."word", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."word", '$.args')), '') || ')' ELSE t."word" END AS "word" FROM "__txt_sym_word" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_text_df210f232c1299bd: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") VALUES (?) ON CONFLICT ("content") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE "content" = ?` },
-  __gen__list_text_df210f232c1299bd__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") VALUES (?, ?, ?) ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE "list_id" = ? AND "idx" = ? AND "value" = ?` },
-  sym: { kind: "set", add_sql: `INSERT OR IGNORE INTO "sym" ("name") VALUES (?)`, del_sql: `DELETE FROM "sym" WHERE "name" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`split_initcap_and_fold_render_pascal_case: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`split_initcap_and_fold_render_pascal_case: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`split_initcap_and_fold_render_pascal_case: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_text_df210f232c1299bd", kind: "set", table_name: "__gen__list_text_df210f232c1299bd", delta_table_name: "__delta___gen__list_text_df210f232c1299bd", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd", columns: ["content"], column_types: ["text"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("content") DO NOTHING RETURNING "content"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE ("content") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "content"`, boundary_sql: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_text_df210f232c1299bd" t WHERE t."_sign" IN (-1, 1) GROUP BY t."content", t."_sign"`, rule_observers: [] },
@@ -445,60 +379,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content
 INSERT OR IGNORE INTO "pascal" ("name", "rendered") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."name" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word"), '' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word")) AS "__agg_2" FROM "sym_word" b0 GROUP BY b0."name" HAVING count(*) > 0)`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_pascal"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_pascal" ("name") SELECT DISTINCT d0."name" FROM "__delta_sym_word" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "pascal" WHERE ("name") IN (SELECT "name" FROM "__agg_scope_pascal") RETURNING "name", "rendered"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "pascal" ("name", "rendered") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."name" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word"), '' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word")) AS "__agg_2" FROM "sym_word" b0 WHERE (b0."name") IN (SELECT "name" FROM "__agg_scope_pascal") GROUP BY b0."name" HAVING count(*) > 0) RETURNING "name", "rendered"`], intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word"), '' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word")) FROM "sym_word" b0 WHERE (b0."name") IN (SELECT "name" FROM "__agg_scope_pascal") GROUP BY b0."name" HAVING count(*) > 0`], delta_maintained: false } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "sym_parts";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (CASE WHEN '_' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name") || '_', NULL UNION ALL SELECT substr("rest", instr("rest", '_') + length('_')), substr("rest", 1, instr("rest", '_') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END) FROM "sym" b0;
-INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT DISTINCT (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '_' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name") || '_', NULL UNION ALL SELECT substr("rest", instr("rest", '_') + length('_')), substr("rest", 1, instr("rest", '_') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) FROM "sym" b0 ORDER BY (CASE WHEN '_' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name") || '_', NULL UNION ALL SELECT substr("rest", instr("rest", '_') + length('_')), substr("rest", 1, instr("rest", '_') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END);
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT i.value FROM "sym" b0, json_each((CASE WHEN '_' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name") || '_', NULL UNION ALL SELECT substr("rest", instr("rest", '_') + length('_')), substr("rest", 1, instr("rest", '_') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) i;
-INSERT OR IGNORE INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") SELECT e."__id", i.key, s."__id" FROM "sym" b0, json_each((CASE WHEN '_' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name") || '_', NULL UNION ALL SELECT substr("rest", instr("rest", '_') + length('_')), substr("rest", 1, instr("rest", '_') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) i JOIN "__gen__list_text_df210f232c1299bd" e ON e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '_' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name") || '_', NULL UNION ALL SELECT substr("rest", instr("rest", '_') + length('_')), substr("rest", 1, instr("rest", '_') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END)) JOIN "__str" s ON s."content" = i.value ON CONFLICT ("list_id", "idx") DO NOTHING;
-INSERT OR IGNORE INTO "sym_parts" ("name", "parts") SELECT b0."name", (SELECT e."__id" FROM "__gen__list_text_df210f232c1299bd" e WHERE e."content" = (SELECT s."__id" FROM "__str" s WHERE s."content" = (CASE WHEN '_' = '' THEN json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) ELSE (WITH RECURSIVE "__split_parts"("rest", "part") AS (SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name") || '_', NULL UNION ALL SELECT substr("rest", instr("rest", '_') + length('_')), substr("rest", 1, instr("rest", '_') - 1) FROM "__split_parts" WHERE "rest" <> '') SELECT json_group_array("part") FROM "__split_parts" WHERE "part" IS NOT NULL) END))) FROM "sym" b0;
-DELETE FROM "sym_word";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (WITH RECURSIVE "__cap_chars"("i", "c", "p") AS (SELECT 1, substr((SELECT s."content" FROM "__str" s WHERE s."__id" = b1."value"), 1, 1), '' UNION ALL SELECT "i" + 1, substr((SELECT s."content" FROM "__str" s WHERE s."__id" = b1."value"), "i" + 1, 1), substr((SELECT s."content" FROM "__str" s WHERE s."__id" = b1."value"), "i", 1) FROM "__cap_chars" WHERE "i" < length((SELECT s."content" FROM "__str" s WHERE s."__id" = b1."value"))) SELECT coalesce(group_concat(CASE WHEN "p" = '' OR NOT ((unicode("p") BETWEEN 48 AND 57) OR (unicode("p") BETWEEN 65 AND 90) OR (unicode("p") BETWEEN 97 AND 122)) THEN upper("c") ELSE lower("c") END, ''), '') FROM "__cap_chars") FROM "sym_parts" b0, "__gen__list_text_df210f232c1299bd__member" b1 WHERE b1."list_id" = b0."parts";
-INSERT OR IGNORE INTO "sym_word" ("name", "word") SELECT b0."name", (SELECT s."__id" FROM "__str" s WHERE s."content" = (WITH RECURSIVE "__cap_chars"("i", "c", "p") AS (SELECT 1, substr((SELECT s."content" FROM "__str" s WHERE s."__id" = b1."value"), 1, 1), '' UNION ALL SELECT "i" + 1, substr((SELECT s."content" FROM "__str" s WHERE s."__id" = b1."value"), "i" + 1, 1), substr((SELECT s."content" FROM "__str" s WHERE s."__id" = b1."value"), "i", 1) FROM "__cap_chars" WHERE "i" < length((SELECT s."content" FROM "__str" s WHERE s."__id" = b1."value"))) SELECT coalesce(group_concat(CASE WHEN "p" = '' OR NOT ((unicode("p") BETWEEN 48 AND 57) OR (unicode("p") BETWEEN 65 AND 90) OR (unicode("p") BETWEEN 97 AND 122)) THEN upper("c") ELSE lower("c") END, ''), '') FROM "__cap_chars")) FROM "sym_parts" b0, "__gen__list_text_df210f232c1299bd__member" b1 WHERE b1."list_id" = b0."parts";
-DELETE FROM "pascal";
-INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word"), '' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word")) FROM "sym_word" b0 GROUP BY b0."name" HAVING count(*) > 0;
-INSERT OR IGNORE INTO "pascal" ("name", "rendered") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."name" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word"), '' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."word")) AS "__agg_2" FROM "sym_word" b0 GROUP BY b0."name" HAVING count(*) > 0)`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__list_text_df210f232c1299bd = multiset_diff(before.__gen__list_text_df210f232c1299bd, after.__gen__list_text_df210f232c1299bd);
-  const __gen__list_text_df210f232c1299bd__member = multiset_diff(before.__gen__list_text_df210f232c1299bd__member, after.__gen__list_text_df210f232c1299bd__member);
-  const pascal = multiset_diff(before.pascal, after.pascal);
-  const sym = multiset_diff(before.sym, after.sym);
-  const sym_parts = multiset_diff(before.sym_parts, after.sym_parts);
-  const sym_word = multiset_diff(before.sym_word, after.sym_word);
-  return {
-    rels: [
-      { rel: "__gen__list_text_df210f232c1299bd", add: __gen__list_text_df210f232c1299bd.add, del: __gen__list_text_df210f232c1299bd.del },
-      { rel: "__gen__list_text_df210f232c1299bd__member", add: __gen__list_text_df210f232c1299bd__member.add, del: __gen__list_text_df210f232c1299bd__member.del },
-      { rel: "pascal", add: pascal.add, del: pascal.del },
-      { rel: "sym", add: sym.add, del: sym.del },
-      { rel: "sym_parts", add: sym_parts.add, del: sym_parts.del },
-      { rel: "sym_word", add: sym_word.add, del: sym_word.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // split_initcap_and_fold_render_pascal_case: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -527,14 +411,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -299,40 +298,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "loc_tag", sql: `INSERT OR IGNORE INTO "loc_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'elsewhere') FROM "loc_elsewhere" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly holder: readonly IRow[];
-  readonly loc_elsewhere: readonly IRow[];
-  readonly loc_here: readonly IRow[];
-  readonly loc_tag: readonly IRow[];
-  readonly span: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    holder: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."item") AS "item" FROM "holder" t`, rel_columns.holder!, rel_column_types.holder!),
-    loc_elsewhere: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."note") AND json_type(t."note") = 'object' AND json_type(t."note", '$.fn') = 'text' AND json_type(t."note", '$.args') = 'array' THEN json_extract(t."note", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."note", '$.args')), '') || ')' ELSE t."note" END AS "note" FROM "__txt_loc_elsewhere" t`, rel_columns.loc_elsewhere!, rel_column_types.loc_elsewhere!),
-    loc_here: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "loc_here" t`, rel_columns.loc_here!, rel_column_types.loc_here!),
-    loc_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_loc_tag" t`, rel_columns.loc_tag!, rel_column_types.loc_tag!),
-    span: select_rows(seam, `SELECT t."lo", t."hi" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    holder: select_rows(seam, `SELECT "item" FROM "holder"`, rel_columns.holder!, rel_column_types.holder!),
-    loc_elsewhere: select_rows(seam, `SELECT "id", "note" FROM "loc_elsewhere"`, rel_columns.loc_elsewhere!, rel_column_types.loc_elsewhere!),
-    loc_here: select_rows(seam, `SELECT "id", "at" FROM "loc_here"`, rel_columns.loc_here!, rel_column_types.loc_here!),
-    loc_tag: select_rows(seam, `SELECT "id", "tag" FROM "loc_tag"`, rel_columns.loc_tag!, rel_column_types.loc_tag!),
-    span: select_rows(seam, `SELECT "lo", "hi" FROM "span"`, rel_columns.span!, rel_column_types.span!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   holder: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."item") AS "item" FROM "holder" t`,
   loc_elsewhere: `SELECT t."id", CASE WHEN json_valid(t."note") AND json_type(t."note") = 'object' AND json_type(t."note", '$.fn') = 'text' AND json_type(t."note", '$.args') = 'array' THEN json_extract(t."note", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."note", '$.args')), '') || ')' ELSE t."note" END AS "note" FROM "__txt_loc_elsewhere" t`,
@@ -340,35 +305,6 @@ const final_select: Record<string, string> = {
   loc_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_loc_tag" t`,
   span: `SELECT t."lo", t."hi" FROM "span" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  holder: { kind: "set", add_sql: `INSERT OR IGNORE INTO "holder" ("item") VALUES (?)`, del_sql: `DELETE FROM "holder" WHERE "item" = ?` },
-  loc_elsewhere: { kind: "set", add_sql: `INSERT INTO "loc_elsewhere" ("id", "note") VALUES (?, ?) ON CONFLICT ("note") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "loc_elsewhere" WHERE "id" = ? AND "note" = ?` },
-  loc_here: { kind: "set", add_sql: `INSERT INTO "loc_here" ("id", "at") VALUES (?, ?) ON CONFLICT ("at") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "loc_here" WHERE "id" = ? AND "at" = ?` },
-  span: { kind: "set", add_sql: `INSERT OR IGNORE INTO "span" ("lo", "hi") VALUES (?, ?)`, del_sql: `DELETE FROM "span" WHERE "lo" = ? AND "hi" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`variant_field_typed_as_struct_is_a_ref: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`variant_field_typed_as_struct_is_a_ref: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`variant_field_typed_as_struct_is_a_ref: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "holder", kind: "set", table_name: "holder", delta_table_name: "__delta_holder", frontier_table_name: "__frontier_holder", next_frontier_table_name: "__next_frontier_holder", columns: ["item"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "holder" ("item") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "item"`, arrival_del_sql: `DELETE FROM "holder" WHERE ("item") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "item"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."item") AS "item", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_holder" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."_sign"`, rule_observers: [] },
@@ -387,52 +323,10 @@ INSERT OR IGNORE INTO "loc_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" F
 INSERT OR IGNORE INTO "loc_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'elsewhere') FROM "loc_elsewhere" b0`, support_sql: [`DELETE FROM "__support_next_loc_tag"`, `INSERT INTO "__support_next_loc_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'here') AS "tag", count(*) AS "__refcount" FROM "loc_here" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'here') UNION ALL SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'elsewhere') AS "tag", count(*) AS "__refcount" FROM "loc_elsewhere" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'elsewhere')) GROUP BY "id", "tag"`, `UPDATE "loc_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_loc_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_loc_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "loc_tag" WHERE "__refcount" <= 0`, `DELETE FROM "loc_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_loc_tag"`, `INSERT INTO "__new_loc_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_loc_tag" n LEFT JOIN "loc_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_loc_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_loc_tag"`, `INSERT INTO "__frontier_loc_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_loc_tag"`, `INSERT INTO "__next_frontier_loc_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_loc_tag"`, `INSERT OR IGNORE INTO "loc_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_loc_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "loc_tag";
-INSERT OR IGNORE INTO "loc_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'here') FROM "loc_here" b0;
-INSERT OR IGNORE INTO "loc_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'elsewhere') FROM "loc_elsewhere" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const holder = multiset_diff(before.holder, after.holder);
-  const loc_elsewhere = multiset_diff(before.loc_elsewhere, after.loc_elsewhere);
-  const loc_here = multiset_diff(before.loc_here, after.loc_here);
-  const loc_tag = multiset_diff(before.loc_tag, after.loc_tag);
-  const span = multiset_diff(before.span, after.span);
-  return {
-    rels: [
-      { rel: "holder", add: holder.add, del: holder.del },
-      { rel: "loc_elsewhere", add: loc_elsewhere.add, del: loc_elsewhere.del },
-      { rel: "loc_here", add: loc_here.add, del: loc_here.del },
-      { rel: "loc_tag", add: loc_tag.add, del: loc_tag.del },
-      { rel: "span", add: span.add, del: span.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // variant_field_typed_as_struct_is_a_ref: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -464,14 +358,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

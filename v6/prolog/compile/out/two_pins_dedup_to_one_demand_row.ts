@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
     });
     return { ...arrival, row };
   });
-}
-
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
 }
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -324,40 +304,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "stale_pin", sql: `INSERT OR IGNORE INTO "stale_pin" ("dep_repo_id", "ref_text") SELECT b0."dep_repo_id", b0."ref_text" FROM "rev_status" b0 WHERE (b0."behind" > 0)`, params: [] },
 ];
 
-type Snapshot = {
-  readonly demand_rev: readonly IRow[];
-  readonly pin_want: readonly IRow[];
-  readonly rev_fill: readonly IRow[];
-  readonly rev_status: readonly IRow[];
-  readonly stale_pin: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    demand_rev: select_rows(seam, `SELECT t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text" FROM "__txt_demand_rev" t`, rel_columns.demand_rev!, rel_column_types.demand_rev!),
-    pin_want: select_rows(seam, `SELECT t."col1", t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text" FROM "__txt_pin_want" t`, rel_columns.pin_want!, rel_column_types.pin_want!),
-    rev_fill: select_rows(seam, `SELECT t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text", t."behind", t."ahead" FROM "__txt_rev_fill" t`, rel_columns.rev_fill!, rel_column_types.rev_fill!),
-    rev_status: select_rows(seam, `SELECT t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text", t."behind", t."ahead" FROM "__txt_rev_status" t`, rel_columns.rev_status!, rel_column_types.rev_status!),
-    stale_pin: select_rows(seam, `SELECT t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text" FROM "__txt_stale_pin" t`, rel_columns.stale_pin!, rel_column_types.stale_pin!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    demand_rev: select_rows(seam, `SELECT "dep_repo_id", "ref_text" FROM "demand_rev"`, rel_columns.demand_rev!, rel_column_types.demand_rev!),
-    pin_want: select_rows(seam, `SELECT "col1", "dep_repo_id", "ref_text" FROM "pin_want"`, rel_columns.pin_want!, rel_column_types.pin_want!),
-    rev_fill: select_rows(seam, `SELECT "dep_repo_id", "ref_text", "behind", "ahead" FROM "rev_fill"`, rel_columns.rev_fill!, rel_column_types.rev_fill!),
-    rev_status: select_rows(seam, `SELECT "dep_repo_id", "ref_text", "behind", "ahead" FROM "rev_status"`, rel_columns.rev_status!, rel_column_types.rev_status!),
-    stale_pin: select_rows(seam, `SELECT "dep_repo_id", "ref_text" FROM "stale_pin"`, rel_columns.stale_pin!, rel_column_types.stale_pin!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   demand_rev: `SELECT t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text" FROM "__txt_demand_rev" t`,
   pin_want: `SELECT t."col1", t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text" FROM "__txt_pin_want" t`,
@@ -365,33 +311,6 @@ const final_select: Record<string, string> = {
   rev_status: `SELECT t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text", t."behind", t."ahead" FROM "__txt_rev_status" t`,
   stale_pin: `SELECT t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text" FROM "__txt_stale_pin" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  pin_want: { kind: "log", add_sql: `INSERT INTO "pin_want" ("col1", "dep_repo_id", "ref_text") VALUES (?, ?, ?)`, del_sql: null },
-  rev_fill: { kind: "log", add_sql: `INSERT INTO "rev_fill" ("dep_repo_id", "ref_text", "behind", "ahead") VALUES (?, ?, ?, ?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`two_pins_dedup_to_one_demand_row: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`two_pins_dedup_to_one_demand_row: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`two_pins_dedup_to_one_demand_row: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "demand_rev", kind: "set", table_name: "demand_rev", delta_table_name: "__delta_demand_rev", frontier_table_name: "__frontier_demand_rev", next_frontier_table_name: "__next_frontier_demand_rev", columns: ["dep_repo_id", "ref_text"], column_types: ["int", "text"], key_indices: [0, 1], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."dep_repo_id", CASE WHEN json_valid(t."ref_text") AND json_type(t."ref_text") = 'object' AND json_type(t."ref_text", '$.fn') = 'text' AND json_type(t."ref_text", '$.args') = 'array' THEN json_extract(t."ref_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ref_text", '$.args')), '') || ')' ELSE t."ref_text" END AS "ref_text", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_demand_rev" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dep_repo_id", t."ref_text", t."_sign"`, rule_observers: [] },
@@ -411,101 +330,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "stale_pin" ("dep_repo_id", "ref_text") SELECT b0."dep_repo_id", b0."ref_text" FROM "rev_status" b0 WHERE (b0."behind" > 0)`, support_sql: [`DELETE FROM "__support_next_stale_pin"`, `INSERT INTO "__support_next_stale_pin" ("dep_repo_id", "ref_text", "__refcount") SELECT "dep_repo_id", "ref_text", sum("__refcount") FROM (SELECT b0."dep_repo_id" AS "dep_repo_id", b0."ref_text" AS "ref_text", count(*) AS "__refcount" FROM "rev_status" b0 WHERE (b0."behind" > 0) GROUP BY b0."dep_repo_id", b0."ref_text") GROUP BY "dep_repo_id", "ref_text"`, `UPDATE "stale_pin" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_stale_pin" n WHERE n."dep_repo_id" = h."dep_repo_id" AND n."ref_text" = h."ref_text"), 0)`, `INSERT INTO "__delta_stale_pin" ("_sign", "_sequence", "dep_repo_id", "ref_text") SELECT -1, row_number() OVER () - 1, "dep_repo_id", "ref_text" FROM "stale_pin" WHERE "__refcount" <= 0`, `DELETE FROM "stale_pin" WHERE "__refcount" <= 0`, `DELETE FROM "__new_stale_pin"`, `INSERT INTO "__new_stale_pin" ("dep_repo_id", "ref_text", "__refcount") SELECT n."dep_repo_id", n."ref_text", n."__refcount" FROM "__support_next_stale_pin" n LEFT JOIN "stale_pin" h ON n."dep_repo_id" = h."dep_repo_id" AND n."ref_text" = h."ref_text" WHERE h."dep_repo_id" IS NULL`, `INSERT INTO "__delta_stale_pin" ("_sign", "_sequence", "dep_repo_id", "ref_text") SELECT 1, "rowid" - 1, "dep_repo_id", "ref_text" FROM "__new_stale_pin"`, `INSERT INTO "__frontier_stale_pin" ("_phase", "_sequence", "dep_repo_id", "ref_text") SELECT ?, "rowid" - 1, "dep_repo_id", "ref_text" FROM "__new_stale_pin"`, `INSERT INTO "__next_frontier_stale_pin" ("_phase", "_sequence", "dep_repo_id", "ref_text") SELECT ?, "rowid" - 1, "dep_repo_id", "ref_text" FROM "__new_stale_pin"`, `INSERT OR IGNORE INTO "stale_pin" ("dep_repo_id", "ref_text", "__refcount") SELECT n."dep_repo_id", n."ref_text", n."__refcount" FROM "__support_next_stale_pin" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-const EDGE_DEMAND_REV_0_PROJECT_SQL = `SELECT ?2 AS "dep_repo_id", ?3 AS "ref_text"`;
-const EDGE_DEMAND_REV_0_WRITE_SQL = `INSERT INTO "demand_rev" ("dep_repo_id", "ref_text") VALUES (?, ?) ON CONFLICT("dep_repo_id", "ref_text") DO NOTHING`;
-const EDGE_DEMAND_REV_0_HEAD_COLUMNS: readonly string[] = ["dep_repo_id", "ref_text"];
-const EDGE_DEMAND_REV_0_KEY_INDICES: readonly number[] = [0, 1];
-
-const EDGE_REV_STATUS_1_PROJECT_SQL = `SELECT ?1 AS "dep_repo_id", ?2 AS "ref_text", ?3 AS "behind", ?4 AS "ahead" FROM "demand_rev" b0 WHERE b0."dep_repo_id" = ?1 AND b0."ref_text" = ?2`;
-const EDGE_REV_STATUS_1_WRITE_SQL = `INSERT INTO "rev_status" ("dep_repo_id", "ref_text", "behind", "ahead") VALUES (?, ?, ?, ?) ON CONFLICT("dep_repo_id", "ref_text") DO UPDATE SET "behind" = excluded."behind", "ahead" = excluded."ahead"`;
-const EDGE_REV_STATUS_1_HEAD_COLUMNS: readonly string[] = ["dep_repo_id", "ref_text", "behind", "ahead"];
-const EDGE_REV_STATUS_1_KEY_INDICES: readonly number[] = [0, 1];
-
-function resolveDemandRev_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "pin_want", before.pin_want, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_DEMAND_REV_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_DEMAND_REV_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_DEMAND_REV_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_DEMAND_REV_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolveRevStatus_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "rev_fill", before.rev_fill, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_REV_STATUS_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_REV_STATUS_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_REV_STATUS_1_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_REV_STATUS_1_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "stale_pin";
-INSERT OR IGNORE INTO "stale_pin" ("dep_repo_id", "ref_text") SELECT b0."dep_repo_id", b0."ref_text" FROM "rev_status" b0 WHERE (b0."behind" > 0)`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const demand_rev = multiset_diff(before.demand_rev, after.demand_rev);
-  const pin_want = multiset_diff(before.pin_want, after.pin_want);
-  const rev_fill = multiset_diff(before.rev_fill, after.rev_fill);
-  const rev_status = multiset_diff(before.rev_status, after.rev_status);
-  const stale_pin = multiset_diff(before.stale_pin, after.stale_pin);
-  return {
-    rels: [
-      { rel: "demand_rev", add: demand_rev.add, del: demand_rev.del },
-      { rel: "pin_want", add: pin_want.add, del: pin_want.del },
-      { rel: "rev_fill", add: rev_fill.add, del: rev_fill.del },
-      { rel: "rev_status", add: rev_status.add, del: rev_status.del },
-      { rel: "stale_pin", add: stale_pin.add, del: stale_pin.del },
-    ],
-    carry_pending: demand_rev.add.length > 0 || demand_rev.del.length > 0 || rev_status.add.length > 0 || rev_status.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolveDemandRev_0Writes(seam, before.stored, arrivals), resolveRevStatus_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // two_pins_dedup_to_one_demand_row: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -535,14 +363,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

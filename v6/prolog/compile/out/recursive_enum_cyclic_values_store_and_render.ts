@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -279,70 +278,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "tree_kind", sql: `INSERT OR IGNORE INTO "tree_kind" ("id", "kind") SELECT b0."id", b0."tag" FROM "tree_tag" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly tree_branch: readonly IRow[];
-  readonly tree_kind: readonly IRow[];
-  readonly tree_leaf: readonly IRow[];
-  readonly tree_tag: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    tree_branch: select_rows(seam, `SELECT t."id", t."left", t."right" FROM "tree_branch" t`, rel_columns.tree_branch!, rel_column_types.tree_branch!),
-    tree_kind: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_tree_kind" t`, rel_columns.tree_kind!, rel_column_types.tree_kind!),
-    tree_leaf: select_rows(seam, `SELECT t."id", t."value" FROM "tree_leaf" t`, rel_columns.tree_leaf!, rel_column_types.tree_leaf!),
-    tree_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_tree_tag" t`, rel_columns.tree_tag!, rel_column_types.tree_tag!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    tree_branch: select_rows(seam, `SELECT "id", "left", "right" FROM "tree_branch"`, rel_columns.tree_branch!, rel_column_types.tree_branch!),
-    tree_kind: select_rows(seam, `SELECT "id", "kind" FROM "tree_kind"`, rel_columns.tree_kind!, rel_column_types.tree_kind!),
-    tree_leaf: select_rows(seam, `SELECT "id", "value" FROM "tree_leaf"`, rel_columns.tree_leaf!, rel_column_types.tree_leaf!),
-    tree_tag: select_rows(seam, `SELECT "id", "tag" FROM "tree_tag"`, rel_columns.tree_tag!, rel_column_types.tree_tag!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   tree_branch: `SELECT t."id", t."left", t."right" FROM "tree_branch" t`,
   tree_kind: `SELECT t."id", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_tree_kind" t`,
   tree_leaf: `SELECT t."id", t."value" FROM "tree_leaf" t`,
   tree_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_tree_tag" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  tree_branch: { kind: "set", add_sql: `INSERT INTO "tree_branch" ("id", "left", "right") VALUES (?, ?, ?) ON CONFLICT ("left", "right") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "tree_branch" WHERE "id" = ? AND "left" = ? AND "right" = ?` },
-  tree_leaf: { kind: "set", add_sql: `INSERT INTO "tree_leaf" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "tree_leaf" WHERE "id" = ? AND "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`recursive_enum_cyclic_values_store_and_render: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`recursive_enum_cyclic_values_store_and_render: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`recursive_enum_cyclic_values_store_and_render: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "tree_branch", kind: "set", table_name: "tree_branch", delta_table_name: "__delta_tree_branch", frontier_table_name: "__frontier_tree_branch", next_frontier_table_name: "__next_frontier_tree_branch", columns: ["id", "left", "right"], column_types: ["int", "int", "int"], key_indices: [1, 2], arrival_add_sql: `INSERT INTO "tree_branch" ("id", "left", "right") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) WHERE true ON CONFLICT ("left", "right") DO UPDATE SET "id" = excluded."id" RETURNING "id", "left", "right"`, arrival_del_sql: `DELETE FROM "tree_branch" WHERE ("id", "left", "right") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "id", "left", "right"`, boundary_sql: `SELECT t."id", t."left", t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_tree_branch" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."left", t."right", t."_sign"`, rule_observers: ["tree_tag/2"] },
@@ -362,49 +303,10 @@ INSERT OR IGNORE INTO "tree_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" 
 INSERT OR IGNORE INTO "tree_kind" ("id", "kind") SELECT b0."id", b0."tag" FROM "tree_tag" b0`, support_sql: [`DELETE FROM "__support_next_tree_kind"`, `INSERT INTO "__support_next_tree_kind" ("id", "kind", "__refcount") SELECT "id", "kind", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."tag" AS "kind", count(*) AS "__refcount" FROM "tree_tag" b0 GROUP BY b0."id", b0."tag") GROUP BY "id", "kind"`, `UPDATE "tree_kind" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_tree_kind" n WHERE n."id" = h."id" AND n."kind" = h."kind"), 0)`, `INSERT INTO "__delta_tree_kind" ("_sign", "_sequence", "id", "kind") SELECT -1, row_number() OVER () - 1, "id", "kind" FROM "tree_kind" WHERE "__refcount" <= 0`, `DELETE FROM "tree_kind" WHERE "__refcount" <= 0`, `DELETE FROM "__new_tree_kind"`, `INSERT INTO "__new_tree_kind" ("id", "kind", "__refcount") SELECT n."id", n."kind", n."__refcount" FROM "__support_next_tree_kind" n LEFT JOIN "tree_kind" h ON n."id" = h."id" AND n."kind" = h."kind" WHERE h."id" IS NULL`, `INSERT INTO "__delta_tree_kind" ("_sign", "_sequence", "id", "kind") SELECT 1, "rowid" - 1, "id", "kind" FROM "__new_tree_kind"`, `INSERT INTO "__frontier_tree_kind" ("_phase", "_sequence", "id", "kind") SELECT ?, "rowid" - 1, "id", "kind" FROM "__new_tree_kind"`, `INSERT INTO "__next_frontier_tree_kind" ("_phase", "_sequence", "id", "kind") SELECT ?, "rowid" - 1, "id", "kind" FROM "__new_tree_kind"`, `INSERT OR IGNORE INTO "tree_kind" ("id", "kind", "__refcount") SELECT n."id", n."kind", n."__refcount" FROM "__support_next_tree_kind" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "tree_tag";
-INSERT OR IGNORE INTO "tree_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'leaf') FROM "tree_leaf" b0;
-INSERT OR IGNORE INTO "tree_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'branch') FROM "tree_branch" b0;
-DELETE FROM "tree_kind";
-INSERT OR IGNORE INTO "tree_kind" ("id", "kind") SELECT b0."id", b0."tag" FROM "tree_tag" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const tree_branch = multiset_diff(before.tree_branch, after.tree_branch);
-  const tree_kind = multiset_diff(before.tree_kind, after.tree_kind);
-  const tree_leaf = multiset_diff(before.tree_leaf, after.tree_leaf);
-  const tree_tag = multiset_diff(before.tree_tag, after.tree_tag);
-  return {
-    rels: [
-      { rel: "tree_branch", add: tree_branch.add, del: tree_branch.del },
-      { rel: "tree_kind", add: tree_kind.add, del: tree_kind.del },
-      { rel: "tree_leaf", add: tree_leaf.add, del: tree_leaf.del },
-      { rel: "tree_tag", add: tree_tag.add, del: tree_tag.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // recursive_enum_cyclic_values_store_and_render: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -433,14 +335,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

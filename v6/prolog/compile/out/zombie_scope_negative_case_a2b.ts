@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -333,43 +332,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "detail_view", sql: `INSERT OR IGNORE INTO "detail_view" ("item_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')), b1."body" FROM "demanded" b0, "detail_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'detail' AND b1."item_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'))`, params: [] },
 ];
 
-type Snapshot = {
-  readonly demanded: readonly IRow[];
-  readonly detail_row: readonly IRow[];
-  readonly detail_view: readonly IRow[];
-  readonly live_detail: readonly IRow[];
-  readonly open_detail: readonly IRow[];
-  readonly open_pane: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    demanded: select_rows(seam, `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."pane_id") AND json_type(t."pane_id") = 'object' AND json_type(t."pane_id", '$.fn') = 'text' AND json_type(t."pane_id", '$.args') = 'array' THEN json_extract(t."pane_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."pane_id", '$.args')), '') || ')' ELSE t."pane_id" END AS "pane_id" FROM "__txt_demanded" t`, rel_columns.demanded!, rel_column_types.demanded!),
-    detail_row: select_rows(seam, `SELECT CASE WHEN json_valid(t."item_id") AND json_type(t."item_id") = 'object' AND json_type(t."item_id", '$.fn') = 'text' AND json_type(t."item_id", '$.args') = 'array' THEN json_extract(t."item_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item_id", '$.args')), '') || ')' ELSE t."item_id" END AS "item_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_detail_row" t`, rel_columns.detail_row!, rel_column_types.detail_row!),
-    detail_view: select_rows(seam, `SELECT CASE WHEN json_valid(t."item_id") AND json_type(t."item_id") = 'object' AND json_type(t."item_id", '$.fn') = 'text' AND json_type(t."item_id", '$.args') = 'array' THEN json_extract(t."item_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item_id", '$.args')), '') || ')' ELSE t."item_id" END AS "item_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_detail_view" t`, rel_columns.detail_view!, rel_column_types.detail_view!),
-    live_detail: select_rows(seam, `SELECT CASE WHEN json_valid(t."pane_id") AND json_type(t."pane_id") = 'object' AND json_type(t."pane_id", '$.fn') = 'text' AND json_type(t."pane_id", '$.args') = 'array' THEN json_extract(t."pane_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."pane_id", '$.args')), '') || ')' ELSE t."pane_id" END AS "pane_id", CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target" FROM "__txt_live_detail" t`, rel_columns.live_detail!, rel_column_types.live_detail!),
-    open_detail: select_rows(seam, `SELECT CASE WHEN json_valid(t."pane_id") AND json_type(t."pane_id") = 'object' AND json_type(t."pane_id", '$.fn') = 'text' AND json_type(t."pane_id", '$.args') = 'array' THEN json_extract(t."pane_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."pane_id", '$.args')), '') || ')' ELSE t."pane_id" END AS "pane_id", CASE WHEN json_valid(t."item_id") AND json_type(t."item_id") = 'object' AND json_type(t."item_id", '$.fn') = 'text' AND json_type(t."item_id", '$.args') = 'array' THEN json_extract(t."item_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item_id", '$.args')), '') || ')' ELSE t."item_id" END AS "item_id" FROM "__txt_open_detail" t`, rel_columns.open_detail!, rel_column_types.open_detail!),
-    open_pane: select_rows(seam, `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_open_pane" t`, rel_columns.open_pane!, rel_column_types.open_pane!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    demanded: select_rows(seam, `SELECT "target", "pane_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
-    detail_row: select_rows(seam, `SELECT "item_id", "body" FROM "detail_row"`, rel_columns.detail_row!, rel_column_types.detail_row!),
-    detail_view: select_rows(seam, `SELECT "item_id", "body" FROM "detail_view"`, rel_columns.detail_view!, rel_column_types.detail_view!),
-    live_detail: select_rows(seam, `SELECT "pane_id", "target" FROM "live_detail"`, rel_columns.live_detail!, rel_column_types.live_detail!),
-    open_detail: select_rows(seam, `SELECT "pane_id", "item_id" FROM "open_detail"`, rel_columns.open_detail!, rel_column_types.open_detail!),
-    open_pane: select_rows(seam, `SELECT "col1", "col2" FROM "open_pane"`, rel_columns.open_pane!, rel_column_types.open_pane!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   demanded: `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."pane_id") AND json_type(t."pane_id") = 'object' AND json_type(t."pane_id", '$.fn') = 'text' AND json_type(t."pane_id", '$.args') = 'array' THEN json_extract(t."pane_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."pane_id", '$.args')), '') || ')' ELSE t."pane_id" END AS "pane_id" FROM "__txt_demanded" t`,
   detail_row: `SELECT CASE WHEN json_valid(t."item_id") AND json_type(t."item_id") = 'object' AND json_type(t."item_id", '$.fn') = 'text' AND json_type(t."item_id", '$.args') = 'array' THEN json_extract(t."item_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item_id", '$.args')), '') || ')' ELSE t."item_id" END AS "item_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_detail_row" t`,
@@ -378,34 +340,6 @@ const final_select: Record<string, string> = {
   open_detail: `SELECT CASE WHEN json_valid(t."pane_id") AND json_type(t."pane_id") = 'object' AND json_type(t."pane_id", '$.fn') = 'text' AND json_type(t."pane_id", '$.args') = 'array' THEN json_extract(t."pane_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."pane_id", '$.args')), '') || ')' ELSE t."pane_id" END AS "pane_id", CASE WHEN json_valid(t."item_id") AND json_type(t."item_id") = 'object' AND json_type(t."item_id", '$.fn') = 'text' AND json_type(t."item_id", '$.args') = 'array' THEN json_extract(t."item_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item_id", '$.args')), '') || ')' ELSE t."item_id" END AS "item_id" FROM "__txt_open_detail" t`,
   open_pane: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_open_pane" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  detail_row: { kind: "set", add_sql: `INSERT OR IGNORE INTO "detail_row" ("item_id", "body") VALUES (?, ?)`, del_sql: `DELETE FROM "detail_row" WHERE "item_id" = ? AND "body" = ?` },
-  open_detail: { kind: "set", add_sql: `INSERT INTO "open_detail" ("pane_id", "item_id") VALUES (?, ?) ON CONFLICT ("pane_id", "item_id") DO NOTHING`, del_sql: `DELETE FROM "open_detail" WHERE "pane_id" = ? AND "item_id" = ?` },
-  open_pane: { kind: "set", add_sql: `INSERT INTO "open_pane" ("col1", "col2") VALUES (?, ?) ON CONFLICT ("col1") DO UPDATE SET "col2" = excluded."col2"`, del_sql: `DELETE FROM "open_pane" WHERE "col1" = ? AND "col2" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`zombie_scope_negative_case_a2b: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`zombie_scope_negative_case_a2b: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`zombie_scope_negative_case_a2b: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "demanded", kind: "set", table_name: "demanded", delta_table_name: "__delta_demanded", frontier_table_name: "__frontier_demanded", next_frontier_table_name: "__next_frontier_demanded", columns: ["target", "pane_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."pane_id") AND json_type(t."pane_id") = 'object' AND json_type(t."pane_id", '$.fn') = 'text' AND json_type(t."pane_id", '$.args') = 'array' THEN json_extract(t."pane_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."pane_id", '$.args')), '') || ')' ELSE t."pane_id" END AS "pane_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_demanded" t WHERE t."_sign" IN (-1, 1) GROUP BY t."target", t."pane_id", t."_sign"`, rule_observers: ["detail_view/2"] },
@@ -430,56 +364,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s
 INSERT OR IGNORE INTO "detail_view" ("item_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')), b1."body" FROM "demanded" b0, "detail_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'detail' AND b1."item_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'))`, support_sql: [`DELETE FROM "__support_next_detail_view"`, `INSERT INTO "__support_next_detail_view" ("item_id", "body", "__refcount") SELECT "item_id", "body", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')) AS "item_id", b1."body" AS "body", count(*) AS "__refcount" FROM "demanded" b0, "detail_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'detail' AND b1."item_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')) GROUP BY json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'), b1."body") GROUP BY "item_id", "body"`, `UPDATE "detail_view" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_detail_view" n WHERE n."item_id" = h."item_id" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_detail_view" ("_sign", "_sequence", "item_id", "body") SELECT -1, row_number() OVER () - 1, "item_id", "body" FROM "detail_view" WHERE "__refcount" <= 0`, `DELETE FROM "detail_view" WHERE "__refcount" <= 0`, `DELETE FROM "__new_detail_view"`, `INSERT INTO "__new_detail_view" ("item_id", "body", "__refcount") SELECT n."item_id", n."body", n."__refcount" FROM "__support_next_detail_view" n LEFT JOIN "detail_view" h ON n."item_id" = h."item_id" AND n."body" = h."body" WHERE h."item_id" IS NULL`, `INSERT INTO "__delta_detail_view" ("_sign", "_sequence", "item_id", "body") SELECT 1, "rowid" - 1, "item_id", "body" FROM "__new_detail_view"`, `INSERT INTO "__frontier_detail_view" ("_phase", "_sequence", "item_id", "body") SELECT ?, "rowid" - 1, "item_id", "body" FROM "__new_detail_view"`, `INSERT INTO "__next_frontier_detail_view" ("_phase", "_sequence", "item_id", "body") SELECT ?, "rowid" - 1, "item_id", "body" FROM "__new_detail_view"`, `INSERT OR IGNORE INTO "detail_view" ("item_id", "body", "__refcount") SELECT n."item_id", n."body", n."__refcount" FROM "__support_next_detail_view" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), '$.args[0]') FROM "__frontier_demanded" d0, "detail_row" b0 WHERE d0."_phase" >= 0 AND json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), '$.fn') = 'detail' AND b0."item_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), '$.args[0]'))`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]') FROM "demanded" b0, "detail_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'detail' AND b1."item_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'))`] },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "live_detail";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_object('fn', 'detail', 'args', json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."item_id"))) FROM "open_detail" b0;
-INSERT OR IGNORE INTO "live_detail" ("pane_id", "target") SELECT b0."pane_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_object('fn', 'detail', 'args', json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."item_id")))) FROM "open_detail" b0;
-DELETE FROM "demanded";
-INSERT OR IGNORE INTO "demanded" ("target", "pane_id") SELECT b0."target", b0."pane_id" FROM "live_detail" b0;
-DELETE FROM "detail_view";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]') FROM "demanded" b0, "detail_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'detail' AND b1."item_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'));
-INSERT OR IGNORE INTO "detail_view" ("item_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')), b1."body" FROM "demanded" b0, "detail_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'detail' AND b1."item_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'))`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const demanded = multiset_diff(before.demanded, after.demanded);
-  const detail_row = multiset_diff(before.detail_row, after.detail_row);
-  const detail_view = multiset_diff(before.detail_view, after.detail_view);
-  const live_detail = multiset_diff(before.live_detail, after.live_detail);
-  const open_detail = multiset_diff(before.open_detail, after.open_detail);
-  const open_pane = multiset_diff(before.open_pane, after.open_pane);
-  return {
-    rels: [
-      { rel: "demanded", add: demanded.add, del: demanded.del },
-      { rel: "detail_row", add: detail_row.add, del: detail_row.del },
-      { rel: "detail_view", add: detail_view.add, del: detail_view.del },
-      { rel: "live_detail", add: live_detail.add, del: live_detail.del },
-      { rel: "open_detail", add: open_detail.add, del: open_detail.del },
-      { rel: "open_pane", add: open_pane.add, del: open_pane.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // zombie_scope_negative_case_a2b: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -508,14 +396,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

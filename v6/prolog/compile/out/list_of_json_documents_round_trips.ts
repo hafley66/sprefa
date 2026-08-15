@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -211,48 +210,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "carry", sql: `INSERT OR IGNORE INTO "carry" ("id", "payloads") SELECT b0."id", b0."payloads" FROM "batch" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly batch: readonly IRow[];
-  readonly carry: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    batch: select_rows(seam, `SELECT t."id", t."payloads" FROM "batch" t`, rel_columns.batch!, rel_column_types.batch!),
-    carry: select_rows(seam, `SELECT t."id", t."payloads" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
-  });
-}
-
 const final_select: Record<string, string> = {
   batch: `SELECT t."id", t."payloads" FROM "batch" t`,
   carry: `SELECT t."id", t."payloads" FROM "carry" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  batch: { kind: "set", add_sql: `INSERT OR IGNORE INTO "batch" ("id", "payloads") VALUES (?, ?)`, del_sql: `DELETE FROM "batch" WHERE "id" = ? AND "payloads" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`list_of_json_documents_round_trips: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`list_of_json_documents_round_trips: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`list_of_json_documents_round_trips: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "batch", kind: "set", table_name: "batch", delta_table_name: "__delta_batch", frontier_table_name: "__frontier_batch", next_frontier_table_name: "__next_frontier_batch", columns: ["id", "payloads"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "batch" ("id", "payloads") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payloads"`, arrival_del_sql: `DELETE FROM "batch" WHERE ("id", "payloads") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "payloads"`, boundary_sql: `SELECT t."id", t."payloads", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_batch" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."payloads", t."_sign"`, rule_observers: ["carry/2"] },
@@ -267,40 +228,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "carry" ("id", "payloads") SELECT b0."id", b0."payloads" FROM "batch" b0`, support_sql: [`DELETE FROM "__support_next_carry"`, `INSERT INTO "__support_next_carry" ("id", "payloads", "__refcount") SELECT "id", "payloads", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."payloads" AS "payloads", count(*) AS "__refcount" FROM "batch" b0 GROUP BY b0."id", b0."payloads") GROUP BY "id", "payloads"`, `UPDATE "carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_carry" n WHERE n."id" = h."id" AND n."payloads" = h."payloads"), 0)`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "payloads") SELECT -1, row_number() OVER () - 1, "id", "payloads" FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_carry"`, `INSERT INTO "__new_carry" ("id", "payloads", "__refcount") SELECT n."id", n."payloads", n."__refcount" FROM "__support_next_carry" n LEFT JOIN "carry" h ON n."id" = h."id" AND n."payloads" = h."payloads" WHERE h."id" IS NULL`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "payloads") SELECT 1, "rowid" - 1, "id", "payloads" FROM "__new_carry"`, `INSERT INTO "__frontier_carry" ("_phase", "_sequence", "id", "payloads") SELECT ?, "rowid" - 1, "id", "payloads" FROM "__new_carry"`, `INSERT INTO "__next_frontier_carry" ("_phase", "_sequence", "id", "payloads") SELECT ?, "rowid" - 1, "id", "payloads" FROM "__new_carry"`, `INSERT OR IGNORE INTO "carry" ("id", "payloads", "__refcount") SELECT n."id", n."payloads", n."__refcount" FROM "__support_next_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "carry";
-INSERT OR IGNORE INTO "carry" ("id", "payloads") SELECT b0."id", b0."payloads" FROM "batch" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const batch = multiset_diff(before.batch, after.batch);
-  const carry = multiset_diff(before.carry, after.carry);
-  return {
-    rels: [
-      { rel: "batch", add: batch.add, del: batch.del },
-      { rel: "carry", add: carry.add, del: carry.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // list_of_json_documents_round_trips: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -326,14 +257,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

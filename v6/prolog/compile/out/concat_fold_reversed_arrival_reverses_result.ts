@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -314,30 +313,6 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_LOG_TEXT_0_PROJECT_SQL = `SELECT ?1 AS "channel", (SELECT s."__id" FROM "__str" s WHERE s."content" = ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = ?2))) AS "next" FROM "__pre_log_text" b0 WHERE b0."channel" = ?1`;
-const EDGE_LOG_TEXT_0_WRITE_SQL = `INSERT INTO "log_text" ("channel", "next") VALUES (?, ?) ON CONFLICT("channel") DO UPDATE SET "next" = excluded."next"`;
-const EDGE_LOG_TEXT_0_HEAD_COLUMNS: readonly string[] = ["channel", "next"];
-const EDGE_LOG_TEXT_0_KEY_INDICES: readonly number[] = [0];
-const EDGE_LOG_TEXT_0_INTERN_SQL: readonly string[] = [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = ?2)) FROM "__pre_log_text" b0 WHERE b0."channel" = ?1`];
-
-function resolveLogText_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "append_line", before.append_line, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => intern_then_execute(seam, EDGE_LOG_TEXT_0_INTERN_SQL, { sql: EDGE_LOG_TEXT_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_LOG_TEXT_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_LOG_TEXT_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_LOG_TEXT_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
 function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
   return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_log_text";
 INSERT INTO "__pre_log_text" ("channel", "next") SELECT "channel", "next" FROM "log_text"`);
@@ -493,25 +468,6 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
   };
 }
 
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      resolveLogText_0Writes(seam, before.stored, arrivals).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // concat_fold_reversed_arrival_reverses_result: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
 function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshots(seam).pipe(
     concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
@@ -531,9 +487,7 @@ function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<I
   // concat_fold_reversed_arrival_reverses_result: ordered process_occurrences with evolving pre snapshots.
 }
 
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
 const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";
@@ -570,7 +524,6 @@ function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDelt
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

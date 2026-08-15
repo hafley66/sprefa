@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -257,66 +256,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "eprintln_waived", sql: `INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_number") SELECT b0."path", b1."line_number" FROM "eprintln_waiver_line" b0, "eprintln_hit" b1 WHERE b1."path" = b0."path" AND (b0."waiver_line" >= (b1."line_number" - 1)) AND (b0."waiver_line" <= b1."line_number")`, params: [] },
 ];
 
-type Snapshot = {
-  readonly eprintln_hit: readonly IRow[];
-  readonly eprintln_waived: readonly IRow[];
-  readonly eprintln_waiver_line: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    eprintln_hit: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_number" FROM "__txt_eprintln_hit" t`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
-    eprintln_waived: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_number" FROM "__txt_eprintln_waived" t`, rel_columns.eprintln_waived!, rel_column_types.eprintln_waived!),
-    eprintln_waiver_line: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."waiver_line" FROM "__txt_eprintln_waiver_line" t`, rel_columns.eprintln_waiver_line!, rel_column_types.eprintln_waiver_line!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    eprintln_hit: select_rows(seam, `SELECT "path", "line_number" FROM "eprintln_hit"`, rel_columns.eprintln_hit!, rel_column_types.eprintln_hit!),
-    eprintln_waived: select_rows(seam, `SELECT "path", "line_number" FROM "eprintln_waived"`, rel_columns.eprintln_waived!, rel_column_types.eprintln_waived!),
-    eprintln_waiver_line: select_rows(seam, `SELECT "path", "waiver_line" FROM "eprintln_waiver_line"`, rel_columns.eprintln_waiver_line!, rel_column_types.eprintln_waiver_line!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   eprintln_hit: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_number" FROM "__txt_eprintln_hit" t`,
   eprintln_waived: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_number" FROM "__txt_eprintln_waived" t`,
   eprintln_waiver_line: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."waiver_line" FROM "__txt_eprintln_waiver_line" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  eprintln_hit: { kind: "set", add_sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") VALUES (?, ?)`, del_sql: `DELETE FROM "eprintln_hit" WHERE "path" = ? AND "line_number" = ?` },
-  eprintln_waiver_line: { kind: "set", add_sql: `INSERT OR IGNORE INTO "eprintln_waiver_line" ("path", "waiver_line") VALUES (?, ?)`, del_sql: `DELETE FROM "eprintln_waiver_line" WHERE "path" = ? AND "waiver_line" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`range_join_over_arithmetic: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`range_join_over_arithmetic: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`range_join_over_arithmetic: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "eprintln_hit", kind: "set", table_name: "eprintln_hit", delta_table_name: "__delta_eprintln_hit", frontier_table_name: "__frontier_eprintln_hit", next_frontier_table_name: "__next_frontier_eprintln_hit", columns: ["path", "line_number"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "eprintln_hit" ("path", "line_number") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "line_number"`, arrival_del_sql: `DELETE FROM "eprintln_hit" WHERE ("path", "line_number") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "line_number"`, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_number", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_eprintln_hit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."line_number", t."_sign"`, rule_observers: ["eprintln_waived/2"] },
@@ -332,44 +276,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_number") SELECT b0."path", b1."line_number" FROM "eprintln_waiver_line" b0, "eprintln_hit" b1 WHERE b1."path" = b0."path" AND (b0."waiver_line" >= (b1."line_number" - 1)) AND (b0."waiver_line" <= b1."line_number")`, support_sql: [`DELETE FROM "__support_next_eprintln_waived"`, `INSERT INTO "__support_next_eprintln_waived" ("path", "line_number", "__refcount") SELECT "path", "line_number", sum("__refcount") FROM (SELECT b0."path" AS "path", b1."line_number" AS "line_number", count(*) AS "__refcount" FROM "eprintln_waiver_line" b0, "eprintln_hit" b1 WHERE b1."path" = b0."path" AND (b0."waiver_line" >= (b1."line_number" - 1)) AND (b0."waiver_line" <= b1."line_number") GROUP BY b0."path", b1."line_number") GROUP BY "path", "line_number"`, `UPDATE "eprintln_waived" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_eprintln_waived" n WHERE n."path" = h."path" AND n."line_number" = h."line_number"), 0)`, `INSERT INTO "__delta_eprintln_waived" ("_sign", "_sequence", "path", "line_number") SELECT -1, row_number() OVER () - 1, "path", "line_number" FROM "eprintln_waived" WHERE "__refcount" <= 0`, `DELETE FROM "eprintln_waived" WHERE "__refcount" <= 0`, `DELETE FROM "__new_eprintln_waived"`, `INSERT INTO "__new_eprintln_waived" ("path", "line_number", "__refcount") SELECT n."path", n."line_number", n."__refcount" FROM "__support_next_eprintln_waived" n LEFT JOIN "eprintln_waived" h ON n."path" = h."path" AND n."line_number" = h."line_number" WHERE h."path" IS NULL`, `INSERT INTO "__delta_eprintln_waived" ("_sign", "_sequence", "path", "line_number") SELECT 1, "rowid" - 1, "path", "line_number" FROM "__new_eprintln_waived"`, `INSERT INTO "__frontier_eprintln_waived" ("_phase", "_sequence", "path", "line_number") SELECT ?, "rowid" - 1, "path", "line_number" FROM "__new_eprintln_waived"`, `INSERT INTO "__next_frontier_eprintln_waived" ("_phase", "_sequence", "path", "line_number") SELECT ?, "rowid" - 1, "path", "line_number" FROM "__new_eprintln_waived"`, `INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_number", "__refcount") SELECT n."path", n."line_number", n."__refcount" FROM "__support_next_eprintln_waived" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "eprintln_waived";
-INSERT OR IGNORE INTO "eprintln_waived" ("path", "line_number") SELECT b0."path", b1."line_number" FROM "eprintln_waiver_line" b0, "eprintln_hit" b1 WHERE b1."path" = b0."path" AND (b0."waiver_line" >= (b1."line_number" - 1)) AND (b0."waiver_line" <= b1."line_number")`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const eprintln_hit = multiset_diff(before.eprintln_hit, after.eprintln_hit);
-  const eprintln_waived = multiset_diff(before.eprintln_waived, after.eprintln_waived);
-  const eprintln_waiver_line = multiset_diff(before.eprintln_waiver_line, after.eprintln_waiver_line);
-  return {
-    rels: [
-      { rel: "eprintln_hit", add: eprintln_hit.add, del: eprintln_hit.del },
-      { rel: "eprintln_waived", add: eprintln_waived.add, del: eprintln_waived.del },
-      { rel: "eprintln_waiver_line", add: eprintln_waiver_line.add, del: eprintln_waiver_line.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // range_join_over_arithmetic: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -398,14 +308,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

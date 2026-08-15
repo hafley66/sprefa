@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -19,7 +18,7 @@
 
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
-import { IncrementalRuntime, intern_then_execute } from "../runtime/1_incremental.ts";
+import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
@@ -143,31 +142,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
-}
-
-function departure_occurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {
-  return seam.runner.execute(seam.db, sql).pipe(
-    map((result) => result.rows.map((row) => columns.map((column) => row[column] as IRowValue) as IRow)),
-  );
-}
-
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
   internSql: `INSERT OR IGNORE INTO "__str" ("content") SELECT i.value FROM json_each(?) i`,
   lookupSql: `SELECT s."content" AS "__lookup", s."__id" AS "__id" FROM json_each(?) i JOIN "__str" s ON s."content" = i.value`,
@@ -276,65 +250,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "mirror", sql: `INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly closed_at: readonly IRow[];
-  readonly mirror: readonly IRow[];
-  readonly source_row: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    closed_at: select_rows(seam, `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."tick" FROM "__txt_closed_at" t`, rel_columns.closed_at!, rel_column_types.closed_at!),
-    mirror: select_rows(seam, `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_mirror" t`, rel_columns.mirror!, rel_column_types.mirror!),
-    source_row: select_rows(seam, `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_source_row" t`, rel_columns.source_row!, rel_column_types.source_row!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    closed_at: select_rows(seam, `SELECT "item", "tick" FROM "closed_at"`, rel_columns.closed_at!, rel_column_types.closed_at!),
-    mirror: select_rows(seam, `SELECT "item" FROM "mirror"`, rel_columns.mirror!, rel_column_types.mirror!),
-    source_row: select_rows(seam, `SELECT "item" FROM "source_row"`, rel_columns.source_row!, rel_column_types.source_row!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   closed_at: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."tick" FROM "__txt_closed_at" t`,
   mirror: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_mirror" t`,
   source_row: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item" FROM "__txt_source_row" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  source_row: { kind: "set", add_sql: `INSERT OR IGNORE INTO "source_row" ("item") VALUES (?)`, del_sql: `DELETE FROM "source_row" WHERE "item" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`departed_fires_next_tick_on_retraction: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`departed_fires_next_tick_on_retraction: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`departed_fires_next_tick_on_retraction: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "closed_at", kind: "log", table_name: "closed_at", delta_table_name: "__delta_closed_at", frontier_table_name: "__frontier_closed_at", next_frontier_table_name: "__next_frontier_closed_at", columns: ["item", "tick"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."tick", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_closed_at" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."tick", t."_sign"`, rule_observers: [] },
@@ -351,83 +271,11 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`, support_sql: [`DELETE FROM "__support_next_mirror"`, `INSERT INTO "__support_next_mirror" ("item", "__refcount") SELECT "item", sum("__refcount") FROM (SELECT b0."item" AS "item", count(*) AS "__refcount" FROM "source_row" b0 GROUP BY b0."item") GROUP BY "item"`, `UPDATE "mirror" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_mirror" n WHERE n."item" = h."item"), 0)`, `INSERT INTO "__delta_mirror" ("_sign", "_sequence", "item") SELECT -1, row_number() OVER () - 1, "item" FROM "mirror" WHERE "__refcount" <= 0`, `DELETE FROM "mirror" WHERE "__refcount" <= 0`, `DELETE FROM "__new_mirror"`, `INSERT INTO "__new_mirror" ("item", "__refcount") SELECT n."item", n."__refcount" FROM "__support_next_mirror" n LEFT JOIN "mirror" h ON n."item" = h."item" WHERE h."item" IS NULL`, `INSERT INTO "__delta_mirror" ("_sign", "_sequence", "item") SELECT 1, "rowid" - 1, "item" FROM "__new_mirror"`, `INSERT INTO "__frontier_mirror" ("_phase", "_sequence", "item") SELECT ?, "rowid" - 1, "item" FROM "__new_mirror"`, `INSERT INTO "__next_frontier_mirror" ("_phase", "_sequence", "item") SELECT ?, "rowid" - 1, "item" FROM "__new_mirror"`, `INSERT OR IGNORE INTO "mirror" ("item", "__refcount") SELECT n."item", n."__refcount" FROM "__support_next_mirror" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-const EDGE_CLOSED_AT_0_PROJECT_SQL = `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1) AS "item", (SELECT "n" FROM "__tick") AS "tick"`;
-const EDGE_CLOSED_AT_0_WRITE_SQL = `INSERT INTO "closed_at" ("item", "tick") VALUES (?, ?)`;
-const EDGE_CLOSED_AT_0_HEAD_COLUMNS: readonly string[] = ["item", "tick"];
-const EDGE_CLOSED_AT_0_INTERN_SQL: readonly string[] = [`INSERT OR IGNORE INTO "__str" ("content") SELECT ?1`];
-const EDGE_CLOSED_AT_0_DEPARTURE_SQL = `SELECT "item" FROM "__departure_frontier_mirror" ORDER BY "_phase", "_sequence"`;
-const EDGE_CLOSED_AT_0_TRIGGER_COLUMNS: readonly string[] = ["item"];
-
-function resolveClosedAt_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  void before;
-  void arrivals;
-  return departure_occurrences(seam, EDGE_CLOSED_AT_0_DEPARTURE_SQL, EDGE_CLOSED_AT_0_TRIGGER_COLUMNS).pipe(
-    concatMap((trigger_rows) => {
-      if (trigger_rows.length === 0) return of<readonly SqlStatement[]>([]);
-      return forkJoin(trigger_rows.map((departed_row) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_AT_0_PROJECT_SQL, args: bind_args(departed_row) }))).pipe(
-        map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_CLOSED_AT_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_CLOSED_AT_0_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-        }),
-      );
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "mirror";
-INSERT OR IGNORE INTO "mirror" ("item") SELECT b0."item" FROM "source_row" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const closed_at = multiset_diff(before.closed_at, after.closed_at);
-  const mirror = multiset_diff(before.mirror, after.mirror);
-  const source_row = multiset_diff(before.source_row, after.source_row);
-  return {
-    rels: [
-      { rel: "closed_at", add: closed_at.add, del: closed_at.del },
-      { rel: "mirror", add: mirror.add, del: mirror.del },
-      { rel: "source_row", add: source_row.add, del: source_row.del },
-    ],
-    carry_pending: closed_at.add.length > 0 || closed_at.del.length > 0 || mirror.del.length > 0,
-  };
-}
-
 function advance_tick(seam: ISqlSeam): Observable<void> {
   return seam.runner.execute(seam.db, `UPDATE "__tick" SET "n" = "n" + 1`).pipe(map(() => undefined));
 }
 
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => advance_tick(seam).pipe(map(() => before))),
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      resolveClosedAt_0Writes(seam, before.stored, arrivals).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-    concatMap((deltas) => IncrementalRuntime.stage_departures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
-  );
-  // departed_fires_next_tick_on_retraction: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
 const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
@@ -462,12 +310,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  // Derived edge triggers consume the P1 current/next frontier, including drain carry.
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

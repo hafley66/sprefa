@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -204,48 +203,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "probe_out", sql: `INSERT OR IGNORE INTO "probe_out" ("probe_value") SELECT b0."probe_value" FROM "probe_in" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly probe_in: readonly IRow[];
-  readonly probe_out: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    probe_in: select_rows(seam, `SELECT t."probe_value" FROM "probe_in" t`, rel_columns.probe_in!, rel_column_types.probe_in!),
-    probe_out: select_rows(seam, `SELECT t."probe_value" FROM "probe_out" t`, rel_columns.probe_out!, rel_column_types.probe_out!),
-  });
-}
-
 const final_select: Record<string, string> = {
   probe_in: `SELECT t."probe_value" FROM "probe_in" t`,
   probe_out: `SELECT t."probe_value" FROM "probe_out" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  probe_in: { kind: "log", add_sql: `INSERT INTO "probe_in" ("probe_value") VALUES (?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`arrival_affinity_rewrite_keeps_delta: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`arrival_affinity_rewrite_keeps_delta: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`arrival_affinity_rewrite_keeps_delta: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "probe_in", kind: "log", table_name: "probe_in", delta_table_name: "__delta_probe_in", frontier_table_name: "__frontier_probe_in", next_frontier_table_name: "__next_frontier_probe_in", columns: ["probe_value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "probe_in" ("probe_value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "probe_value"`, arrival_del_sql: null, boundary_sql: `SELECT t."probe_value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_probe_in" t WHERE t."_sign" IN (-1, 1) GROUP BY t."probe_value", t."_sign"`, rule_observers: ["probe_out/1"] },
@@ -260,40 +221,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "probe_out" ("probe_value") SELECT b0."probe_value" FROM "probe_in" b0`, support_sql: [`DELETE FROM "__support_next_probe_out"`, `INSERT INTO "__support_next_probe_out" ("probe_value", "__refcount") SELECT "probe_value", sum("__refcount") FROM (SELECT b0."probe_value" AS "probe_value", count(*) AS "__refcount" FROM "probe_in" b0 GROUP BY b0."probe_value") GROUP BY "probe_value"`, `UPDATE "probe_out" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_probe_out" n WHERE n."probe_value" = h."probe_value"), 0)`, `INSERT INTO "__delta_probe_out" ("_sign", "_sequence", "probe_value") SELECT -1, row_number() OVER () - 1, "probe_value" FROM "probe_out" WHERE "__refcount" <= 0`, `DELETE FROM "probe_out" WHERE "__refcount" <= 0`, `DELETE FROM "__new_probe_out"`, `INSERT INTO "__new_probe_out" ("probe_value", "__refcount") SELECT n."probe_value", n."__refcount" FROM "__support_next_probe_out" n LEFT JOIN "probe_out" h ON n."probe_value" = h."probe_value" WHERE h."probe_value" IS NULL`, `INSERT INTO "__delta_probe_out" ("_sign", "_sequence", "probe_value") SELECT 1, "rowid" - 1, "probe_value" FROM "__new_probe_out"`, `INSERT INTO "__frontier_probe_out" ("_phase", "_sequence", "probe_value") SELECT ?, "rowid" - 1, "probe_value" FROM "__new_probe_out"`, `INSERT INTO "__next_frontier_probe_out" ("_phase", "_sequence", "probe_value") SELECT ?, "rowid" - 1, "probe_value" FROM "__new_probe_out"`, `INSERT OR IGNORE INTO "probe_out" ("probe_value", "__refcount") SELECT n."probe_value", n."__refcount" FROM "__support_next_probe_out" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "probe_out";
-INSERT OR IGNORE INTO "probe_out" ("probe_value") SELECT b0."probe_value" FROM "probe_in" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const probe_in = multiset_diff(before.probe_in, after.probe_in);
-  const probe_out = multiset_diff(before.probe_out, after.probe_out);
-  return {
-    rels: [
-      { rel: "probe_in", add: probe_in.add, del: probe_in.del },
-      { rel: "probe_out", add: probe_out.add, del: probe_out.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // arrival_affinity_rewrite_keeps_delta: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -319,14 +250,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

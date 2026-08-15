@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -266,66 +265,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "carry", sql: `INSERT OR IGNORE INTO "carry" ("id", "slot") SELECT b0."id", b0."slot" FROM "cell" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __gen__entry_text_int_a6c3f6c7e60e6b95: readonly IRow[];
-  readonly carry: readonly IRow[];
-  readonly cell: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__entry_text_int_a6c3f6c7e60e6b95: select_rows(seam, `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt___gen__entry_text_int_a6c3f6c7e60e6b95" t`, rel_columns.__gen__entry_text_int_a6c3f6c7e60e6b95!, rel_column_types.__gen__entry_text_int_a6c3f6c7e60e6b95!),
-    carry: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
-    cell: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot" FROM "cell" t`, rel_columns.cell!, rel_column_types.cell!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__entry_text_int_a6c3f6c7e60e6b95: select_rows(seam, `SELECT "key", "value" FROM "__gen__entry_text_int_a6c3f6c7e60e6b95"`, rel_columns.__gen__entry_text_int_a6c3f6c7e60e6b95!, rel_column_types.__gen__entry_text_int_a6c3f6c7e60e6b95!),
-    carry: select_rows(seam, `SELECT "id", "slot" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
-    cell: select_rows(seam, `SELECT "id", "slot" FROM "cell"`, rel_columns.cell!, rel_column_types.cell!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__entry_text_int_a6c3f6c7e60e6b95: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt___gen__entry_text_int_a6c3f6c7e60e6b95" t`,
   carry: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot" FROM "carry" t`,
   cell: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__entry_text_int_a6c3f6c7e60e6b95" d WHERE d."__id" = t."slot") AS "slot" FROM "cell" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__entry_text_int_a6c3f6c7e60e6b95: { kind: "set", add_sql: `INSERT OR IGNORE INTO "__gen__entry_text_int_a6c3f6c7e60e6b95" ("key", "value") VALUES (?, ?)`, del_sql: `DELETE FROM "__gen__entry_text_int_a6c3f6c7e60e6b95" WHERE "key" = ? AND "value" = ?` },
-  cell: { kind: "set", add_sql: `INSERT INTO "cell" ("id", "slot") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "slot" = excluded."slot"`, del_sql: `DELETE FROM "cell" WHERE "id" = ? AND "slot" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`mixed_bounded_and_free_parameters: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`mixed_bounded_and_free_parameters: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`mixed_bounded_and_free_parameters: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__entry_text_int_a6c3f6c7e60e6b95", kind: "set", table_name: "__gen__entry_text_int_a6c3f6c7e60e6b95", delta_table_name: "__delta___gen__entry_text_int_a6c3f6c7e60e6b95", frontier_table_name: "__frontier___gen__entry_text_int_a6c3f6c7e60e6b95", next_frontier_table_name: "__next_frontier___gen__entry_text_int_a6c3f6c7e60e6b95", columns: ["key", "value"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "__gen__entry_text_int_a6c3f6c7e60e6b95" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "__gen__entry_text_int_a6c3f6c7e60e6b95" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__entry_text_int_a6c3f6c7e60e6b95" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: [] },
@@ -341,47 +285,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "carry" ("id", "slot") SELECT b0."id", b0."slot" FROM "cell" b0`, support_sql: [`DELETE FROM "__support_next_carry"`, `INSERT INTO "__support_next_carry" ("id", "slot", "__refcount") SELECT "id", "slot", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."slot" AS "slot", count(*) AS "__refcount" FROM "cell" b0 GROUP BY b0."id", b0."slot") GROUP BY "id", "slot"`, `UPDATE "carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_carry" n WHERE n."id" = h."id" AND n."slot" = h."slot"), 0)`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "slot") SELECT -1, row_number() OVER () - 1, "id", "slot" FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_carry"`, `INSERT INTO "__new_carry" ("id", "slot", "__refcount") SELECT n."id", n."slot", n."__refcount" FROM "__support_next_carry" n LEFT JOIN "carry" h ON n."id" = h."id" AND n."slot" = h."slot" WHERE h."id" IS NULL`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "slot") SELECT 1, "rowid" - 1, "id", "slot" FROM "__new_carry"`, `INSERT INTO "__frontier_carry" ("_phase", "_sequence", "id", "slot") SELECT ?, "rowid" - 1, "id", "slot" FROM "__new_carry"`, `INSERT INTO "__next_frontier_carry" ("_phase", "_sequence", "id", "slot") SELECT ?, "rowid" - 1, "id", "slot" FROM "__new_carry"`, `INSERT OR IGNORE INTO "carry" ("id", "slot", "__refcount") SELECT n."id", n."slot", n."__refcount" FROM "__support_next_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "carry";
-INSERT OR IGNORE INTO "carry" ("id", "slot") SELECT b0."id", b0."slot" FROM "cell" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__entry_text_int_a6c3f6c7e60e6b95 = multiset_diff(before.__gen__entry_text_int_a6c3f6c7e60e6b95, after.__gen__entry_text_int_a6c3f6c7e60e6b95);
-  const carry = multiset_diff(before.carry, after.carry);
-  const cell = multiset_diff(before.cell, after.cell);
-  return {
-    rels: [
-      { rel: "__gen__entry_text_int_a6c3f6c7e60e6b95", add: __gen__entry_text_int_a6c3f6c7e60e6b95.add, del: __gen__entry_text_int_a6c3f6c7e60e6b95.del },
-      { rel: "carry", add: carry.add, del: carry.del },
-      { rel: "cell", add: cell.add, del: cell.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // mixed_bounded_and_free_parameters: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -413,14 +320,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

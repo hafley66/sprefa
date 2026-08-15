@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -221,48 +220,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "reachable", sql: `INSERT OR IGNORE INTO "reachable" ("from_node", "to_node") SELECT b0."from_node", b1."to_node" FROM "reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly link: readonly IRow[];
-  readonly reachable: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    link: select_rows(seam, `SELECT t."from_node", t."to_node" FROM "link" t`, rel_columns.link!, rel_column_types.link!),
-    reachable: select_rows(seam, `SELECT t."from_node", t."to_node" FROM "reachable" t`, rel_columns.reachable!, rel_column_types.reachable!),
-  });
-}
-
 const final_select: Record<string, string> = {
   link: `SELECT t."from_node", t."to_node" FROM "link" t`,
   reachable: `SELECT t."from_node", t."to_node" FROM "reachable" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  link: { kind: "set", add_sql: `INSERT OR IGNORE INTO "link" ("from_node", "to_node") VALUES (?, ?)`, del_sql: `DELETE FROM "link" WHERE "from_node" = ? AND "to_node" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`bounded_measure_recursion_still_closes: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`bounded_measure_recursion_still_closes: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`bounded_measure_recursion_still_closes: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "link", kind: "set", table_name: "link", delta_table_name: "__delta_link", frontier_table_name: "__frontier_link", next_frontier_table_name: "__next_frontier_link", columns: ["from_node", "to_node"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "link" ("from_node", "to_node") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "from_node", "to_node"`, arrival_del_sql: `DELETE FROM "link" WHERE ("from_node", "to_node") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "from_node", "to_node"`, boundary_sql: `SELECT t."from_node", t."to_node", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_link" t WHERE t."_sign" IN (-1, 1) GROUP BY t."from_node", t."to_node", t."_sign"`, rule_observers: ["reachable/2"] },
@@ -278,50 +239,10 @@ INSERT OR IGNORE INTO "reachable" ("from_node", "to_node") SELECT b0."from_node"
 INSERT OR IGNORE INTO "reachable" ("from_node", "to_node") SELECT b0."from_node", b1."to_node" FROM "reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node"`, support_sql: [`DELETE FROM "__support_next_reachable"`, `INSERT INTO "__support_next_reachable" ("from_node", "to_node", "__refcount") WITH RECURSIVE "reachable" ("from_node", "to_node") AS (SELECT b0."from_node" AS "from_node", b0."to_node" AS "to_node" FROM "link" b0 UNION SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") SELECT "from_node", "to_node", 1 FROM "reachable"`, `UPDATE "reachable" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_reachable" n WHERE n."from_node" = h."from_node" AND n."to_node" = h."to_node"), 0)`, `INSERT INTO "__delta_reachable" ("_sign", "_sequence", "from_node", "to_node") SELECT -1, row_number() OVER () - 1, "from_node", "to_node" FROM "reachable" WHERE "__refcount" <= 0`, `DELETE FROM "reachable" WHERE "__refcount" <= 0`, `DELETE FROM "__new_reachable"`, `INSERT INTO "__new_reachable" ("from_node", "to_node", "__refcount") SELECT n."from_node", n."to_node", n."__refcount" FROM "__support_next_reachable" n LEFT JOIN "reachable" h ON n."from_node" = h."from_node" AND n."to_node" = h."to_node" WHERE h."from_node" IS NULL`, `INSERT INTO "__delta_reachable" ("_sign", "_sequence", "from_node", "to_node") SELECT 1, "rowid" - 1, "from_node", "to_node" FROM "__new_reachable"`, `INSERT INTO "__frontier_reachable" ("_phase", "_sequence", "from_node", "to_node") SELECT ?, "rowid" - 1, "from_node", "to_node" FROM "__new_reachable"`, `INSERT INTO "__next_frontier_reachable" ("_phase", "_sequence", "from_node", "to_node") SELECT ?, "rowid" - 1, "from_node", "to_node" FROM "__new_reachable"`, `INSERT OR IGNORE INTO "reachable" ("from_node", "to_node", "__refcount") SELECT n."from_node", n."to_node", n."__refcount" FROM "__support_next_reachable" n`], expand_sql: { clear_a_sql: `DELETE FROM "__expand_a_reachable"`, clear_b_sql: `DELETE FROM "__expand_b_reachable"`, seed_sqls: [`INSERT OR IGNORE INTO "__expand_a_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b0."to_node" AS "to_node" FROM "link" b0)`], hop_ab_sql: `WITH "reachable" ("from_node", "to_node") AS (SELECT "from_node", "to_node" FROM "__expand_a_reachable") INSERT OR IGNORE INTO "__expand_b_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") x WHERE NOT EXISTS (SELECT 1 FROM "__support_next_reachable" n WHERE x."from_node" = n."from_node" AND x."to_node" = n."to_node")`, hop_ba_sql: `WITH "reachable" ("from_node", "to_node") AS (SELECT "from_node", "to_node" FROM "__expand_b_reachable") INSERT OR IGNORE INTO "__expand_a_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") x WHERE NOT EXISTS (SELECT 1 FROM "__support_next_reachable" n WHERE x."from_node" = n."from_node" AND x."to_node" = n."to_node")`, absorb_a_sql: `INSERT OR IGNORE INTO "__support_next_reachable" ("from_node", "to_node", "__refcount") SELECT "from_node", "to_node", 1 FROM "__expand_a_reachable"`, absorb_b_sql: `INSERT OR IGNORE INTO "__support_next_reachable" ("from_node", "to_node", "__refcount") SELECT "from_node", "to_node", 1 FROM "__expand_b_reachable"`, round_cap: 1000 }, dred_sql: { clear_ping_sql: `DELETE FROM "__ping_reachable"`, clear_pong_sql: `DELETE FROM "__pong_reachable"`, clear_cone_sql: `DELETE FROM "__cone_reachable"`, assert_seed_sqls: [`INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b0."to_node" AS "to_node" FROM (SELECT d."from_node", d."to_node" FROM "__delta_link" d WHERE d."_sign" = 1 AND EXISTS (SELECT 1 FROM "link" t WHERE t."from_node" = d."from_node" AND t."to_node" = d."to_node")) b0) x WHERE NOT EXISTS (SELECT 1 FROM "reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`, `INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "reachable" b0, (SELECT d."from_node", d."to_node" FROM "__delta_link" d WHERE d."_sign" = 1 AND EXISTS (SELECT 1 FROM "link" t WHERE t."from_node" = d."from_node" AND t."to_node" = d."to_node")) b1 WHERE b1."from_node" = b0."to_node") x WHERE NOT EXISTS (SELECT 1 FROM "reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`], assert_hop_ab_sql: `INSERT OR IGNORE INTO "__pong_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "__ping_reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") x WHERE NOT EXISTS (SELECT 1 FROM "reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`, assert_hop_ba_sql: `INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "__pong_reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") x WHERE NOT EXISTS (SELECT 1 FROM "reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`, commit_a_sql: `INSERT OR IGNORE INTO "reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM "__ping_reachable"`, commit_b_sql: `INSERT OR IGNORE INTO "reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM "__pong_reachable"`, arrival_a_sql: `INSERT INTO "__new_reachable" ("from_node", "to_node", "__refcount") SELECT "from_node", "to_node", 1 FROM "__ping_reachable"`, arrival_b_sql: `INSERT INTO "__new_reachable" ("from_node", "to_node", "__refcount") SELECT "from_node", "to_node", 1 FROM "__pong_reachable"`, dred_seed_sqls: [`INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b0."to_node" AS "to_node" FROM (SELECT d."from_node", d."to_node" FROM "__delta_link" d WHERE d."_sign" = -1 AND NOT EXISTS (SELECT 1 FROM "link" t WHERE t."from_node" = d."from_node" AND t."to_node" = d."to_node")) b0) x WHERE EXISTS (SELECT 1 FROM "reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`, `INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "reachable" b0, (SELECT d."from_node", d."to_node" FROM "__delta_link" d WHERE d."_sign" = -1 AND NOT EXISTS (SELECT 1 FROM "link" t WHERE t."from_node" = d."from_node" AND t."to_node" = d."to_node")) b1 WHERE b1."from_node" = b0."to_node") x WHERE EXISTS (SELECT 1 FROM "reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`], dred_hop_ab_sql: `INSERT OR IGNORE INTO "__pong_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "__ping_reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") x WHERE NOT EXISTS (SELECT 1 FROM "__cone_reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`, dred_hop_ba_sql: `INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "__pong_reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") x WHERE NOT EXISTS (SELECT 1 FROM "__cone_reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`, cone_absorb_a_sql: `INSERT OR IGNORE INTO "__cone_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM "__ping_reachable"`, cone_absorb_b_sql: `INSERT OR IGNORE INTO "__cone_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM "__pong_reachable"`, cone_trim_sql: `DELETE FROM "__cone_reachable" WHERE NOT EXISTS (SELECT 1 FROM "reachable" h WHERE h."from_node" = "__cone_reachable"."from_node" AND h."to_node" = "__cone_reachable"."to_node")`, head_delete_sql: `DELETE FROM "reachable" WHERE ("from_node", "to_node") IN (SELECT "from_node", "to_node" FROM "__cone_reachable")`, rederive_seed_sqls: [`INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT b0."from_node" AS "from_node", b0."to_node" AS "to_node" FROM "__cone_reachable" c, "link" b0 WHERE b0."from_node" = c."from_node" AND b0."to_node" = c."to_node"`, `INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "__cone_reachable" c, "reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node" AND b0."from_node" = c."from_node" AND b1."to_node" = c."to_node"`], revive_hop_ab_sql: `INSERT OR IGNORE INTO "__pong_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "__ping_reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") x WHERE EXISTS (SELECT 1 FROM "__cone_reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`, revive_hop_ba_sql: `INSERT OR IGNORE INTO "__ping_reachable" ("from_node", "to_node") SELECT "from_node", "to_node" FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node" FROM "__pong_reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node") x WHERE EXISTS (SELECT 1 FROM "__cone_reachable" p WHERE x."from_node" = p."from_node" AND x."to_node" = p."to_node")`, cone_drop_a_sql: `DELETE FROM "__cone_reachable" WHERE ("from_node", "to_node") IN (SELECT "from_node", "to_node" FROM "__ping_reachable")`, cone_drop_b_sql: `DELETE FROM "__cone_reachable" WHERE ("from_node", "to_node") IN (SELECT "from_node", "to_node" FROM "__pong_reachable")`, stage_retract_sql: `INSERT INTO "__delta_reachable" ("_sign", "_sequence", "from_node", "to_node") SELECT -1, row_number() OVER () - 1, "from_node", "to_node" FROM "__cone_reachable"`, head_count_sql: `SELECT count(*) AS "n" FROM "reachable"` }, fixpoint_ir: { head: { rel: "reachable", columns: ["from_node", "to_node"], types: ["int", "int"] }, storage: [{ rel: "link", arity: 2, columns: [{ name: "from_node", type: "int", storage: "integer", collation: null, encoding: { kind: "direct" } }, { name: "to_node", type: "int", storage: "integer", collation: null, encoding: { kind: "direct" } }] }, { rel: "reachable", arity: 2, columns: [{ name: "from_node", type: "int", storage: "integer", collation: null, encoding: { kind: "direct" } }, { name: "to_node", type: "int", storage: "integer", collation: null, encoding: { kind: "direct" } }] }], assert: { seeds: [{ sources: [{ index: 0, source: { kind: "delta", rel: "link", arity: 2, sign: 1, liveness: "present" } }], equalities: [], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 0, ordinal: 1 }], selfIndex: null }, { sources: [{ index: 0, source: { kind: "rel", rel: "reachable", arity: 2 } }, { index: 1, source: { kind: "delta", rel: "link", arity: 2, sign: 1, liveness: "present" } }], equalities: [{ left: { kind: "col", index: 1, ordinal: 0 }, right: { kind: "col", index: 0, ordinal: 1 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 1, ordinal: 1 }], selfIndex: null }], hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }, { index: 1, source: { kind: "rel", rel: "link", arity: 2 } }], equalities: [{ left: { kind: "col", index: 1, ordinal: 0 }, right: { kind: "col", index: 0, ordinal: 1 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 1, ordinal: 1 }], selfIndex: 0 }], stop: { seed: { kind: "absent", target: "head" }, hop: { kind: "absent", target: "head" } }, emit: "round_major" }, dred: { seeds: [{ sources: [{ index: 0, source: { kind: "delta", rel: "link", arity: 2, sign: -1, liveness: "absent" } }], equalities: [], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 0, ordinal: 1 }], selfIndex: null }, { sources: [{ index: 0, source: { kind: "rel", rel: "reachable", arity: 2 } }, { index: 1, source: { kind: "delta", rel: "link", arity: 2, sign: -1, liveness: "absent" } }], equalities: [{ left: { kind: "col", index: 1, ordinal: 0 }, right: { kind: "col", index: 0, ordinal: 1 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 1, ordinal: 1 }], selfIndex: null }], hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }, { index: 1, source: { kind: "rel", rel: "link", arity: 2 } }], equalities: [{ left: { kind: "col", index: 1, ordinal: 0 }, right: { kind: "col", index: 0, ordinal: 1 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 1, ordinal: 1 }], selfIndex: 0 }], stop: { seed: { kind: "present", target: "head" }, hop: { kind: "absent", target: "cone" } }, emit: null }, revive: { seeds: [{ sources: [{ index: 0, source: { kind: "rel", rel: "link", arity: 2 } }, { index: 1, source: { kind: "cone" } }], equalities: [{ left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "col", index: 1, ordinal: 0 } }, { left: { kind: "col", index: 0, ordinal: 1 }, right: { kind: "col", index: 1, ordinal: 1 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 0, ordinal: 1 }], selfIndex: null }, { sources: [{ index: 0, source: { kind: "rel", rel: "reachable", arity: 2 } }, { index: 1, source: { kind: "rel", rel: "link", arity: 2 } }, { index: 2, source: { kind: "cone" } }], equalities: [{ left: { kind: "col", index: 1, ordinal: 0 }, right: { kind: "col", index: 0, ordinal: 1 } }, { left: { kind: "col", index: 0, ordinal: 0 }, right: { kind: "col", index: 2, ordinal: 0 } }, { left: { kind: "col", index: 1, ordinal: 1 }, right: { kind: "col", index: 2, ordinal: 1 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 1, ordinal: 1 }], selfIndex: null }], hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }, { index: 1, source: { kind: "rel", rel: "link", arity: 2 } }], equalities: [{ left: { kind: "col", index: 1, ordinal: 0 }, right: { kind: "col", index: 0, ordinal: 1 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 1, ordinal: 1 }], selfIndex: 0 }], stop: { seed: null, hop: { kind: "present", target: "cone" } }, emit: null }, expand: { seeds: [{ sources: [{ index: 0, source: { kind: "rel", rel: "link", arity: 2 } }], equalities: [], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 0, ordinal: 1 }], selfIndex: null }], hop: [{ sources: [{ index: 0, source: { kind: "wave", slot: "frontier" } }, { index: 1, source: { kind: "rel", rel: "link", arity: 2 } }], equalities: [{ left: { kind: "col", index: 1, ordinal: 0 }, right: { kind: "col", index: 0, ordinal: 1 } }], filters: [], project: [{ kind: "col", index: 0, ordinal: 0 }, { kind: "col", index: 1, ordinal: 1 }], selfIndex: 0 }], stop: { seed: null, hop: { kind: "absent", target: "refCount" } }, emit: "key_major" } }, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const delete_sql = `DELETE FROM "reachable"`;
-  const insert_sql = `INSERT OR IGNORE INTO "reachable" ("from_node", "to_node") SELECT b0."from_node", b0."to_node" FROM "link" b0;
-INSERT OR IGNORE INTO "reachable" ("from_node", "to_node") SELECT b0."from_node", b1."to_node" FROM "reachable" b0, "link" b1 WHERE b1."from_node" = b0."to_node"`;
-  const count_sql = `SELECT (SELECT count(*) FROM "reachable")`;
-  return seam.runner.executeMultiple(seam.db, delete_sql).pipe(
-    map(() => -1),
-    expand((prior_rows) => seam.runner.executeMultiple(seam.db, insert_sql).pipe(
-      concatMap(() => seam.runner.scalar(seam.db, count_sql)),
-      concatMap((rows) => (rows === prior_rows ? EMPTY : of(rows))),
-    )),
-    last(),
-    map(() => undefined),
-  );
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const link = multiset_diff(before.link, after.link);
-  const reachable = multiset_diff(before.reachable, after.reachable);
-  return {
-    rels: [
-      { rel: "link", add: link.add, del: link.del },
-      { rel: "reachable", add: reachable.add, del: reachable.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // bounded_measure_recursion_still_closes: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -347,14 +268,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "recursive-cte-reseed",
   relations: INCREMENTAL_RELATIONS,

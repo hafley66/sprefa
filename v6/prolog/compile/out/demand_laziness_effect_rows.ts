@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -256,65 +255,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "effect_call", sql: `INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly demanded: readonly IRow[];
-  readonly effect_call: readonly IRow[];
-  readonly open_feed: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    demanded: select_rows(seam, `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id" FROM "__txt_demanded" t`, rel_columns.demanded!, rel_column_types.demanded!),
-    effect_call: select_rows(seam, `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target" FROM "__txt_effect_call" t`, rel_columns.effect_call!, rel_column_types.effect_call!),
-    open_feed: select_rows(seam, `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target" FROM "__txt_open_feed" t`, rel_columns.open_feed!, rel_column_types.open_feed!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    demanded: select_rows(seam, `SELECT "target", "session_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
-    effect_call: select_rows(seam, `SELECT "target" FROM "effect_call"`, rel_columns.effect_call!, rel_column_types.effect_call!),
-    open_feed: select_rows(seam, `SELECT "session_id", "target" FROM "open_feed"`, rel_columns.open_feed!, rel_column_types.open_feed!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   demanded: `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id" FROM "__txt_demanded" t`,
   effect_call: `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target" FROM "__txt_effect_call" t`,
   open_feed: `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target" FROM "__txt_open_feed" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  open_feed: { kind: "set", add_sql: `INSERT INTO "open_feed" ("session_id", "target") VALUES (?, ?) ON CONFLICT ("session_id") DO UPDATE SET "target" = excluded."target"`, del_sql: `DELETE FROM "open_feed" WHERE "session_id" = ? AND "target" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`demand_laziness_effect_rows: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`demand_laziness_effect_rows: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`demand_laziness_effect_rows: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "demanded", kind: "set", table_name: "demanded", delta_table_name: "__delta_demanded", frontier_table_name: "__frontier_demanded", next_frontier_table_name: "__next_frontier_demanded", columns: ["target", "session_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_demanded" t WHERE t."_sign" IN (-1, 1) GROUP BY t."target", t."session_id", t."_sign"`, rule_observers: ["effect_call/1"] },
@@ -332,46 +277,10 @@ INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0
 INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0`, support_sql: [`DELETE FROM "__support_next_effect_call"`, `INSERT INTO "__support_next_effect_call" ("target", "__refcount") SELECT "target", sum("__refcount") FROM (SELECT b0."target" AS "target", count(*) AS "__refcount" FROM "demanded" b0 GROUP BY b0."target") GROUP BY "target"`, `UPDATE "effect_call" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_effect_call" n WHERE n."target" = h."target"), 0)`, `INSERT INTO "__delta_effect_call" ("_sign", "_sequence", "target") SELECT -1, row_number() OVER () - 1, "target" FROM "effect_call" WHERE "__refcount" <= 0`, `DELETE FROM "effect_call" WHERE "__refcount" <= 0`, `DELETE FROM "__new_effect_call"`, `INSERT INTO "__new_effect_call" ("target", "__refcount") SELECT n."target", n."__refcount" FROM "__support_next_effect_call" n LEFT JOIN "effect_call" h ON n."target" = h."target" WHERE h."target" IS NULL`, `INSERT INTO "__delta_effect_call" ("_sign", "_sequence", "target") SELECT 1, "rowid" - 1, "target" FROM "__new_effect_call"`, `INSERT INTO "__frontier_effect_call" ("_phase", "_sequence", "target") SELECT ?, "rowid" - 1, "target" FROM "__new_effect_call"`, `INSERT INTO "__next_frontier_effect_call" ("_phase", "_sequence", "target") SELECT ?, "rowid" - 1, "target" FROM "__new_effect_call"`, `INSERT OR IGNORE INTO "effect_call" ("target", "__refcount") SELECT n."target", n."__refcount" FROM "__support_next_effect_call" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "demanded";
-INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_feed" b0;
-DELETE FROM "effect_call";
-INSERT OR IGNORE INTO "effect_call" ("target") SELECT b0."target" FROM "demanded" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const demanded = multiset_diff(before.demanded, after.demanded);
-  const effect_call = multiset_diff(before.effect_call, after.effect_call);
-  const open_feed = multiset_diff(before.open_feed, after.open_feed);
-  return {
-    rels: [
-      { rel: "demanded", add: demanded.add, del: demanded.del },
-      { rel: "effect_call", add: effect_call.add, del: effect_call.del },
-      { rel: "open_feed", add: open_feed.add, del: open_feed.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // demand_laziness_effect_rows: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -400,14 +309,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

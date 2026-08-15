@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -234,61 +233,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "trimmed", sql: `INSERT OR IGNORE INTO "trimmed" ("path", "out") SELECT b0."path", (SELECT s."__id" FROM "__str" s WHERE s."content" = rtrim((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path"), '/')) FROM "path" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly path: readonly IRow[];
-  readonly trimmed: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    path: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path" FROM "__txt_path" t`, rel_columns.path!, rel_column_types.path!),
-    trimmed: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."out") AND json_type(t."out") = 'object' AND json_type(t."out", '$.fn') = 'text' AND json_type(t."out", '$.args') = 'array' THEN json_extract(t."out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."out", '$.args')), '') || ')' ELSE t."out" END AS "out" FROM "__txt_trimmed" t`, rel_columns.trimmed!, rel_column_types.trimmed!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    path: select_rows(seam, `SELECT "path" FROM "path"`, rel_columns.path!, rel_column_types.path!),
-    trimmed: select_rows(seam, `SELECT "path", "out" FROM "trimmed"`, rel_columns.trimmed!, rel_column_types.trimmed!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   path: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path" FROM "__txt_path" t`,
   trimmed: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."out") AND json_type(t."out") = 'object' AND json_type(t."out", '$.fn') = 'text' AND json_type(t."out", '$.args') = 'array' THEN json_extract(t."out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."out", '$.args')), '') || ')' ELSE t."out" END AS "out" FROM "__txt_trimmed" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  path: { kind: "set", add_sql: `INSERT OR IGNORE INTO "path" ("path") VALUES (?)`, del_sql: `DELETE FROM "path" WHERE "path" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`rtrim_strips_trailing_chars: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`rtrim_strips_trailing_chars: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`rtrim_strips_trailing_chars: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "path", kind: "set", table_name: "path", delta_table_name: "__delta_path", frontier_table_name: "__frontier_path", next_frontier_table_name: "__next_frontier_path", columns: ["path"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "path" ("path") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "path"`, arrival_del_sql: `DELETE FROM "path" WHERE ("path") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "path"`, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_path" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."_sign"`, rule_observers: ["trimmed/2"] },
@@ -304,43 +252,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT rtrim((SELECT s."conte
 INSERT OR IGNORE INTO "trimmed" ("path", "out") SELECT b0."path", (SELECT s."__id" FROM "__str" s WHERE s."content" = rtrim((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path"), '/')) FROM "path" b0`, support_sql: [`DELETE FROM "__support_next_trimmed"`, `INSERT INTO "__support_next_trimmed" ("path", "out", "__refcount") SELECT "path", "out", sum("__refcount") FROM (SELECT b0."path" AS "path", (SELECT s."__id" FROM "__str" s WHERE s."content" = rtrim((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path"), '/')) AS "out", count(*) AS "__refcount" FROM "path" b0 GROUP BY b0."path", rtrim((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path"), '/')) GROUP BY "path", "out"`, `UPDATE "trimmed" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_trimmed" n WHERE n."path" = h."path" AND n."out" = h."out"), 0)`, `INSERT INTO "__delta_trimmed" ("_sign", "_sequence", "path", "out") SELECT -1, row_number() OVER () - 1, "path", "out" FROM "trimmed" WHERE "__refcount" <= 0`, `DELETE FROM "trimmed" WHERE "__refcount" <= 0`, `DELETE FROM "__new_trimmed"`, `INSERT INTO "__new_trimmed" ("path", "out", "__refcount") SELECT n."path", n."out", n."__refcount" FROM "__support_next_trimmed" n LEFT JOIN "trimmed" h ON n."path" = h."path" AND n."out" = h."out" WHERE h."path" IS NULL`, `INSERT INTO "__delta_trimmed" ("_sign", "_sequence", "path", "out") SELECT 1, "rowid" - 1, "path", "out" FROM "__new_trimmed"`, `INSERT INTO "__frontier_trimmed" ("_phase", "_sequence", "path", "out") SELECT ?, "rowid" - 1, "path", "out" FROM "__new_trimmed"`, `INSERT INTO "__next_frontier_trimmed" ("_phase", "_sequence", "path", "out") SELECT ?, "rowid" - 1, "path", "out" FROM "__new_trimmed"`, `INSERT OR IGNORE INTO "trimmed" ("path", "out", "__refcount") SELECT n."path", n."out", n."__refcount" FROM "__support_next_trimmed" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT rtrim((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."path"), '/') FROM "__frontier_path" d0 WHERE d0."_phase" >= 0`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT rtrim((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path"), '/') FROM "path" b0`] },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "trimmed";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT rtrim((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path"), '/') FROM "path" b0;
-INSERT OR IGNORE INTO "trimmed" ("path", "out") SELECT b0."path", (SELECT s."__id" FROM "__str" s WHERE s."content" = rtrim((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."path"), '/')) FROM "path" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const path = multiset_diff(before.path, after.path);
-  const trimmed = multiset_diff(before.trimmed, after.trimmed);
-  return {
-    rels: [
-      { rel: "path", add: path.add, del: path.del },
-      { rel: "trimmed", add: trimmed.add, del: trimmed.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // rtrim_strips_trailing_chars: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -369,14 +284,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -257,55 +256,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "report", sql: `INSERT OR IGNORE INTO "report" ("tree_id", "kilos") SELECT b0."tree_id", 0 FROM "tree" b0 WHERE NOT EXISTS (SELECT 1 FROM "heavy" n0 WHERE n0."tree_id" = b0."tree_id")`, params: [] },
 ];
 
-type Snapshot = {
-  readonly heavy: readonly IRow[];
-  readonly pick: readonly IRow[];
-  readonly report: readonly IRow[];
-  readonly tree: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    heavy: select_rows(seam, `SELECT t."tree_id", t."kilos" FROM "heavy" t`, rel_columns.heavy!, rel_column_types.heavy!),
-    pick: select_rows(seam, `SELECT t."tree_id", t."kilos" FROM "pick" t`, rel_columns.pick!, rel_column_types.pick!),
-    report: select_rows(seam, `SELECT t."tree_id", t."kilos" FROM "report" t`, rel_columns.report!, rel_column_types.report!),
-    tree: select_rows(seam, `SELECT t."tree_id" FROM "tree" t`, rel_columns.tree!, rel_column_types.tree!),
-  });
-}
-
 const final_select: Record<string, string> = {
   heavy: `SELECT t."tree_id", t."kilos" FROM "heavy" t`,
   pick: `SELECT t."tree_id", t."kilos" FROM "pick" t`,
   report: `SELECT t."tree_id", t."kilos" FROM "report" t`,
   tree: `SELECT t."tree_id" FROM "tree" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  pick: { kind: "set", add_sql: `INSERT OR IGNORE INTO "pick" ("tree_id", "kilos") VALUES (?, ?)`, del_sql: `DELETE FROM "pick" WHERE "tree_id" = ? AND "kilos" = ?` },
-  tree: { kind: "set", add_sql: `INSERT OR IGNORE INTO "tree" ("tree_id") VALUES (?)`, del_sql: `DELETE FROM "tree" WHERE "tree_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`coalesce_over_derived_source: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`coalesce_over_derived_source: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`coalesce_over_derived_source: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "heavy", kind: "set", table_name: "heavy", delta_table_name: "__delta_heavy", frontier_table_name: "__frontier_heavy", next_frontier_table_name: "__next_frontier_heavy", columns: ["tree_id", "kilos"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."kilos", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_heavy" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."kilos", t."_sign"`, rule_observers: ["report/2"] },
@@ -325,47 +281,10 @@ INSERT OR IGNORE INTO "report" ("tree_id", "kilos") SELECT b0."tree_id", b1."kil
 INSERT OR IGNORE INTO "report" ("tree_id", "kilos") SELECT b0."tree_id", 0 FROM "tree" b0 WHERE NOT EXISTS (SELECT 1 FROM "heavy" n0 WHERE n0."tree_id" = b0."tree_id")`, support_sql: [`DELETE FROM "__support_next_report"`, `INSERT INTO "__support_next_report" ("tree_id", "kilos", "__refcount") SELECT "tree_id", "kilos", sum("__refcount") FROM (SELECT b0."tree_id" AS "tree_id", b1."kilos" AS "kilos", count(*) AS "__refcount" FROM "tree" b0, "heavy" b1 WHERE b1."tree_id" = b0."tree_id" GROUP BY b0."tree_id", b1."kilos" UNION ALL SELECT b0."tree_id" AS "tree_id", 0 AS "kilos", count(*) AS "__refcount" FROM "tree" b0 WHERE NOT EXISTS (SELECT 1 FROM "heavy" n0 WHERE n0."tree_id" = b0."tree_id") GROUP BY b0."tree_id", (0 + 0)) GROUP BY "tree_id", "kilos"`, `UPDATE "report" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_report" n WHERE n."tree_id" = h."tree_id" AND n."kilos" = h."kilos"), 0)`, `INSERT INTO "__delta_report" ("_sign", "_sequence", "tree_id", "kilos") SELECT -1, row_number() OVER () - 1, "tree_id", "kilos" FROM "report" WHERE "__refcount" <= 0`, `DELETE FROM "report" WHERE "__refcount" <= 0`, `DELETE FROM "__new_report"`, `INSERT INTO "__new_report" ("tree_id", "kilos", "__refcount") SELECT n."tree_id", n."kilos", n."__refcount" FROM "__support_next_report" n LEFT JOIN "report" h ON n."tree_id" = h."tree_id" AND n."kilos" = h."kilos" WHERE h."tree_id" IS NULL`, `INSERT INTO "__delta_report" ("_sign", "_sequence", "tree_id", "kilos") SELECT 1, "rowid" - 1, "tree_id", "kilos" FROM "__new_report"`, `INSERT INTO "__frontier_report" ("_phase", "_sequence", "tree_id", "kilos") SELECT ?, "rowid" - 1, "tree_id", "kilos" FROM "__new_report"`, `INSERT INTO "__next_frontier_report" ("_phase", "_sequence", "tree_id", "kilos") SELECT ?, "rowid" - 1, "tree_id", "kilos" FROM "__new_report"`, `INSERT OR IGNORE INTO "report" ("tree_id", "kilos", "__refcount") SELECT n."tree_id", n."kilos", n."__refcount" FROM "__support_next_report" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "heavy";
-INSERT OR IGNORE INTO "heavy" ("tree_id", "kilos") SELECT b0."tree_id", b0."kilos" FROM "pick" b0 WHERE (b0."kilos" > 10);
-DELETE FROM "report";
-INSERT OR IGNORE INTO "report" ("tree_id", "kilos") SELECT b0."tree_id", b1."kilos" FROM "tree" b0, "heavy" b1 WHERE b1."tree_id" = b0."tree_id";
-INSERT OR IGNORE INTO "report" ("tree_id", "kilos") SELECT b0."tree_id", 0 FROM "tree" b0 WHERE NOT EXISTS (SELECT 1 FROM "heavy" n0 WHERE n0."tree_id" = b0."tree_id")`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const heavy = multiset_diff(before.heavy, after.heavy);
-  const pick = multiset_diff(before.pick, after.pick);
-  const report = multiset_diff(before.report, after.report);
-  const tree = multiset_diff(before.tree, after.tree);
-  return {
-    rels: [
-      { rel: "heavy", add: heavy.add, del: heavy.del },
-      { rel: "pick", add: pick.add, del: pick.del },
-      { rel: "report", add: report.add, del: report.del },
-      { rel: "tree", add: tree.add, del: tree.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // coalesce_over_derived_source: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -391,14 +310,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

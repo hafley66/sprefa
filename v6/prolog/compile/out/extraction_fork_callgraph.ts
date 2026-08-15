@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -365,43 +364,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "call_site", sql: `INSERT OR IGNORE INTO "call_site" ("file", "caller", "callee") SELECT b0."file", b2."caller", b2."callee" FROM "file" b0, "query_value" b1, "__host_response_sg" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query_digest" = b1."query_digest" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest")))`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __host_demand_sg: readonly IRow[];
-  readonly __host_response_sg: readonly IRow[];
-  readonly call_edge: readonly IRow[];
-  readonly call_site: readonly IRow[];
-  readonly file: readonly IRow[];
-  readonly query_value: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __host_demand_sg: select_rows(seam, `SELECT CASE WHEN json_valid(t."identity_digest") AND json_type(t."identity_digest") = 'object' AND json_type(t."identity_digest", '$.fn') = 'text' AND json_type(t."identity_digest", '$.args') = 'array' THEN json_extract(t."identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."identity_digest", '$.args')), '') || ')' ELSE t."identity_digest" END AS "identity_digest", CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query_digest") AND json_type(t."query_digest") = 'object' AND json_type(t."query_digest", '$.fn') = 'text' AND json_type(t."query_digest", '$.args') = 'array' THEN json_extract(t."query_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query_digest", '$.args')), '') || ')' ELSE t."query_digest" END AS "query_digest" FROM "__txt___host_demand_sg" t`, rel_columns.__host_demand_sg!, rel_column_types.__host_demand_sg!),
-    __host_response_sg: select_rows(seam, `SELECT CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", t."ordinal", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query_digest") AND json_type(t."query_digest") = 'object' AND json_type(t."query_digest", '$.fn') = 'text' AND json_type(t."query_digest", '$.args') = 'array' THEN json_extract(t."query_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query_digest", '$.args')), '') || ')' ELSE t."query_digest" END AS "query_digest", CASE WHEN json_valid(t."caller") AND json_type(t."caller") = 'object' AND json_type(t."caller", '$.fn') = 'text' AND json_type(t."caller", '$.args') = 'array' THEN json_extract(t."caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller", '$.args')), '') || ')' ELSE t."caller" END AS "caller", CASE WHEN json_valid(t."callee") AND json_type(t."callee") = 'object' AND json_type(t."callee", '$.fn') = 'text' AND json_type(t."callee", '$.args') = 'array' THEN json_extract(t."callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee", '$.args')), '') || ')' ELSE t."callee" END AS "callee", t."start_byte", t."end_byte" FROM "__txt___host_response_sg" t`, rel_columns.__host_response_sg!, rel_column_types.__host_response_sg!),
-    call_edge: select_rows(seam, `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file", CASE WHEN json_valid(t."caller") AND json_type(t."caller") = 'object' AND json_type(t."caller", '$.fn') = 'text' AND json_type(t."caller", '$.args') = 'array' THEN json_extract(t."caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller", '$.args')), '') || ')' ELSE t."caller" END AS "caller", CASE WHEN json_valid(t."callee") AND json_type(t."callee") = 'object' AND json_type(t."callee", '$.fn') = 'text' AND json_type(t."callee", '$.args') = 'array' THEN json_extract(t."callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee", '$.args')), '') || ')' ELSE t."callee" END AS "callee", t."start", t."end" FROM "__txt_call_edge" t`, rel_columns.call_edge!, rel_column_types.call_edge!),
-    call_site: select_rows(seam, `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file", CASE WHEN json_valid(t."caller") AND json_type(t."caller") = 'object' AND json_type(t."caller", '$.fn') = 'text' AND json_type(t."caller", '$.args') = 'array' THEN json_extract(t."caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller", '$.args')), '') || ')' ELSE t."caller" END AS "caller", CASE WHEN json_valid(t."callee") AND json_type(t."callee") = 'object' AND json_type(t."callee", '$.fn') = 'text' AND json_type(t."callee", '$.args') = 'array' THEN json_extract(t."callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee", '$.args')), '') || ')' ELSE t."callee" END AS "callee" FROM "__txt_call_site" t`, rel_columns.call_site!, rel_column_types.call_site!),
-    file: select_rows(seam, `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest" FROM "__txt_file" t`, rel_columns.file!, rel_column_types.file!),
-    query_value: select_rows(seam, `SELECT CASE WHEN json_valid(t."query_digest") AND json_type(t."query_digest") = 'object' AND json_type(t."query_digest", '$.fn') = 'text' AND json_type(t."query_digest", '$.args') = 'array' THEN json_extract(t."query_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query_digest", '$.args')), '') || ')' ELSE t."query_digest" END AS "query_digest" FROM "__txt_query_value" t`, rel_columns.query_value!, rel_column_types.query_value!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __host_demand_sg: select_rows(seam, `SELECT "identity_digest", "witness_digest", "file_digest", "query_digest" FROM "__host_demand_sg"`, rel_columns.__host_demand_sg!, rel_column_types.__host_demand_sg!),
-    __host_response_sg: select_rows(seam, `SELECT "witness_digest", "ordinal", "file_digest", "query_digest", "caller", "callee", "start_byte", "end_byte" FROM "__host_response_sg"`, rel_columns.__host_response_sg!, rel_column_types.__host_response_sg!),
-    call_edge: select_rows(seam, `SELECT "file", "caller", "callee", "start", "end" FROM "call_edge"`, rel_columns.call_edge!, rel_column_types.call_edge!),
-    call_site: select_rows(seam, `SELECT "file", "caller", "callee" FROM "call_site"`, rel_columns.call_site!, rel_column_types.call_site!),
-    file: select_rows(seam, `SELECT "file", "file_digest" FROM "file"`, rel_columns.file!, rel_column_types.file!),
-    query_value: select_rows(seam, `SELECT "query_digest" FROM "query_value"`, rel_columns.query_value!, rel_column_types.query_value!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __host_demand_sg: `SELECT CASE WHEN json_valid(t."identity_digest") AND json_type(t."identity_digest") = 'object' AND json_type(t."identity_digest", '$.fn') = 'text' AND json_type(t."identity_digest", '$.args') = 'array' THEN json_extract(t."identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."identity_digest", '$.args')), '') || ')' ELSE t."identity_digest" END AS "identity_digest", CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query_digest") AND json_type(t."query_digest") = 'object' AND json_type(t."query_digest", '$.fn') = 'text' AND json_type(t."query_digest", '$.args') = 'array' THEN json_extract(t."query_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query_digest", '$.args')), '') || ')' ELSE t."query_digest" END AS "query_digest" FROM "__txt___host_demand_sg" t`,
   __host_response_sg: `SELECT CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", t."ordinal", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query_digest") AND json_type(t."query_digest") = 'object' AND json_type(t."query_digest", '$.fn') = 'text' AND json_type(t."query_digest", '$.args') = 'array' THEN json_extract(t."query_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query_digest", '$.args')), '') || ')' ELSE t."query_digest" END AS "query_digest", CASE WHEN json_valid(t."caller") AND json_type(t."caller") = 'object' AND json_type(t."caller", '$.fn') = 'text' AND json_type(t."caller", '$.args') = 'array' THEN json_extract(t."caller", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller", '$.args')), '') || ')' ELSE t."caller" END AS "caller", CASE WHEN json_valid(t."callee") AND json_type(t."callee") = 'object' AND json_type(t."callee", '$.fn') = 'text' AND json_type(t."callee", '$.args') = 'array' THEN json_extract(t."callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee", '$.args')), '') || ')' ELSE t."callee" END AS "callee", t."start_byte", t."end_byte" FROM "__txt___host_response_sg" t`,
@@ -410,34 +372,6 @@ const final_select: Record<string, string> = {
   file: `SELECT CASE WHEN json_valid(t."file") AND json_type(t."file") = 'object' AND json_type(t."file", '$.fn') = 'text' AND json_type(t."file", '$.args') = 'array' THEN json_extract(t."file", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file", '$.args')), '') || ')' ELSE t."file" END AS "file", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest" FROM "__txt_file" t`,
   query_value: `SELECT CASE WHEN json_valid(t."query_digest") AND json_type(t."query_digest") = 'object' AND json_type(t."query_digest", '$.fn') = 'text' AND json_type(t."query_digest", '$.args') = 'array' THEN json_extract(t."query_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query_digest", '$.args')), '') || ')' ELSE t."query_digest" END AS "query_digest" FROM "__txt_query_value" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __host_response_sg: { kind: "set", add_sql: `INSERT INTO "__host_response_sg" ("witness_digest", "ordinal", "file_digest", "query_digest", "caller", "callee", "start_byte", "end_byte") VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT ("witness_digest", "ordinal") DO UPDATE SET "file_digest" = excluded."file_digest", "query_digest" = excluded."query_digest", "caller" = excluded."caller", "callee" = excluded."callee", "start_byte" = excluded."start_byte", "end_byte" = excluded."end_byte"`, del_sql: `DELETE FROM "__host_response_sg" WHERE "witness_digest" = ? AND "ordinal" = ? AND "file_digest" = ? AND "query_digest" = ? AND "caller" = ? AND "callee" = ? AND "start_byte" = ? AND "end_byte" = ?` },
-  file: { kind: "set", add_sql: `INSERT OR IGNORE INTO "file" ("file", "file_digest") VALUES (?, ?)`, del_sql: `DELETE FROM "file" WHERE "file" = ? AND "file_digest" = ?` },
-  query_value: { kind: "set", add_sql: `INSERT OR IGNORE INTO "query_value" ("query_digest") VALUES (?)`, del_sql: `DELETE FROM "query_value" WHERE "query_digest" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`extraction_fork_callgraph: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`extraction_fork_callgraph: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`extraction_fork_callgraph: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__host_demand_sg", kind: "set", table_name: "__host_demand_sg", delta_table_name: "__delta___host_demand_sg", frontier_table_name: "__frontier___host_demand_sg", next_frontier_table_name: "__next_frontier___host_demand_sg", columns: ["identity_digest", "witness_digest", "file_digest", "query_digest"], column_types: ["text", "text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."identity_digest") AND json_type(t."identity_digest") = 'object' AND json_type(t."identity_digest", '$.fn') = 'text' AND json_type(t."identity_digest", '$.args') = 'array' THEN json_extract(t."identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."identity_digest", '$.args')), '') || ')' ELSE t."identity_digest" END AS "identity_digest", CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query_digest") AND json_type(t."query_digest") = 'object' AND json_type(t."query_digest", '$.fn') = 'text' AND json_type(t."query_digest", '$.args') = 'array' THEN json_extract(t."query_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query_digest", '$.args')), '') || ')' ELSE t."query_digest" END AS "query_digest", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___host_demand_sg" t WHERE t."_sign" IN (-1, 1) GROUP BY t."identity_digest", t."witness_digest", t."file_digest", t."query_digest", t."_sign"`, rule_observers: [] },
@@ -463,57 +397,10 @@ INSERT OR IGNORE INTO "call_edge" ("file", "caller", "callee", "start", "end") S
 INSERT OR IGNORE INTO "call_site" ("file", "caller", "callee") SELECT b0."file", b2."caller", b2."callee" FROM "file" b0, "query_value" b1, "__host_response_sg" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query_digest" = b1."query_digest" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest")))`, support_sql: [`DELETE FROM "__support_next_call_site"`, `INSERT INTO "__support_next_call_site" ("file", "caller", "callee", "__refcount") SELECT "file", "caller", "callee", sum("__refcount") FROM (SELECT b0."file" AS "file", b2."caller" AS "caller", b2."callee" AS "callee", count(*) AS "__refcount" FROM "file" b0, "query_value" b1, "__host_response_sg" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query_digest" = b1."query_digest" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest"))) GROUP BY b0."file", b2."caller", b2."callee") GROUP BY "file", "caller", "callee"`, `UPDATE "call_site" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_call_site" n WHERE n."file" = h."file" AND n."caller" = h."caller" AND n."callee" = h."callee"), 0)`, `INSERT INTO "__delta_call_site" ("_sign", "_sequence", "file", "caller", "callee") SELECT -1, row_number() OVER () - 1, "file", "caller", "callee" FROM "call_site" WHERE "__refcount" <= 0`, `DELETE FROM "call_site" WHERE "__refcount" <= 0`, `DELETE FROM "__new_call_site"`, `INSERT INTO "__new_call_site" ("file", "caller", "callee", "__refcount") SELECT n."file", n."caller", n."callee", n."__refcount" FROM "__support_next_call_site" n LEFT JOIN "call_site" h ON n."file" = h."file" AND n."caller" = h."caller" AND n."callee" = h."callee" WHERE h."file" IS NULL`, `INSERT INTO "__delta_call_site" ("_sign", "_sequence", "file", "caller", "callee") SELECT 1, "rowid" - 1, "file", "caller", "callee" FROM "__new_call_site"`, `INSERT INTO "__frontier_call_site" ("_phase", "_sequence", "file", "caller", "callee") SELECT ?, "rowid" - 1, "file", "caller", "callee" FROM "__new_call_site"`, `INSERT INTO "__next_frontier_call_site" ("_phase", "_sequence", "file", "caller", "callee") SELECT ?, "rowid" - 1, "file", "caller", "callee" FROM "__new_call_site"`, `INSERT OR IGNORE INTO "call_site" ("file", "caller", "callee", "__refcount") SELECT n."file", n."caller", n."callee", n."__refcount" FROM "__support_next_call_site" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "__host_demand_sg";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ('identity|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest")) FROM "file" b0, "query_value" b1 UNION SELECT DISTINCT ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest")) FROM "file" b0, "query_value" b1;
-INSERT OR IGNORE INTO "__host_demand_sg" ("identity_digest", "witness_digest", "file_digest", "query_digest") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = ('identity|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest"))), (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest"))), b0."file_digest", b1."query_digest" FROM "file" b0, "query_value" b1;
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ('identity|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest")) FROM "file" b0, "query_value" b1 UNION SELECT DISTINCT ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest")) FROM "file" b0, "query_value" b1;
-INSERT OR IGNORE INTO "__host_demand_sg" ("identity_digest", "witness_digest", "file_digest", "query_digest") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = ('identity|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest"))), (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest"))), b0."file_digest", b1."query_digest" FROM "file" b0, "query_value" b1;
-DELETE FROM "call_edge";
-INSERT OR IGNORE INTO "call_edge" ("file", "caller", "callee", "start", "end") SELECT b0."file", b2."caller", b2."callee", b2."start_byte", b2."end_byte" FROM "file" b0, "query_value" b1, "__host_response_sg" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query_digest" = b1."query_digest" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest")));
-DELETE FROM "call_site";
-INSERT OR IGNORE INTO "call_site" ("file", "caller", "callee") SELECT b0."file", b2."caller", b2."callee" FROM "file" b0, "query_value" b1, "__host_response_sg" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query_digest" = b1."query_digest" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|sg' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query_digest")))`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __host_demand_sg = multiset_diff(before.__host_demand_sg, after.__host_demand_sg);
-  const __host_response_sg = multiset_diff(before.__host_response_sg, after.__host_response_sg);
-  const call_edge = multiset_diff(before.call_edge, after.call_edge);
-  const call_site = multiset_diff(before.call_site, after.call_site);
-  const file = multiset_diff(before.file, after.file);
-  const query_value = multiset_diff(before.query_value, after.query_value);
-  return {
-    rels: [
-      { rel: "__host_demand_sg", add: __host_demand_sg.add, del: __host_demand_sg.del },
-      { rel: "__host_response_sg", add: __host_response_sg.add, del: __host_response_sg.del },
-      { rel: "call_edge", add: call_edge.add, del: call_edge.del },
-      { rel: "call_site", add: call_site.add, del: call_site.del },
-      { rel: "file", add: file.add, del: file.del },
-      { rel: "query_value", add: query_value.add, del: query_value.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // extraction_fork_callgraph: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -542,14 +429,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

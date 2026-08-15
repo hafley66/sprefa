@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -320,46 +319,6 @@ const arrival_targets: readonly string[] = ["__gen__list_entity_dense_sequence_f
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42: readonly IRow[];
-  readonly __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member: readonly IRow[];
-  readonly __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner: readonly IRow[];
-  readonly __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount: readonly IRow[];
-  readonly fighter_summary: readonly IRow[];
-  readonly squad: readonly IRow[];
-  readonly squad__members: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42: select_rows(seam, `SELECT t."id" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42" t`, rel_columns.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42!, rel_column_types.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42!),
-    __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member: select_rows(seam, `SELECT t."list_id", t."idx", (SELECT d."__rendered" FROM "__ref_fighter_summary" d WHERE d."__id" = t."value") AS "value" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member" t`, rel_columns.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member!, rel_column_types.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member!),
-    __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner: select_rows(seam, `SELECT t."owner_id", t."list_id" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner" t`, rel_columns.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner!, rel_column_types.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner!),
-    __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount: select_rows(seam, `SELECT t."list_id", t."count" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount" t`, rel_columns.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount!, rel_column_types.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount!),
-    fighter_summary: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."url") AND json_type(t."url") = 'object' AND json_type(t."url", '$.fn') = 'text' AND json_type(t."url", '$.args') = 'array' THEN json_extract(t."url", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."url", '$.args')), '') || ')' ELSE t."url" END AS "url" FROM "__txt_fighter_summary" t`, rel_columns.fighter_summary!, rel_column_types.fighter_summary!),
-    squad: select_rows(seam, `SELECT t."id" FROM "squad" t`, rel_columns.squad!, rel_column_types.squad!),
-    squad__members: select_rows(seam, `SELECT t."squad_id", t."__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42_id" FROM "squad__members" t`, rel_columns.squad__members!, rel_column_types.squad__members!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42: select_rows(seam, `SELECT "id" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42"`, rel_columns.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42!, rel_column_types.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42!),
-    __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member: select_rows(seam, `SELECT "list_id", "idx", "value" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member"`, rel_columns.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member!, rel_column_types.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member!),
-    __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner: select_rows(seam, `SELECT "owner_id", "list_id" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner"`, rel_columns.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner!, rel_column_types.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner!),
-    __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount: select_rows(seam, `SELECT "list_id", "count" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount"`, rel_columns.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount!, rel_column_types.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount!),
-    fighter_summary: select_rows(seam, `SELECT "name", "url" FROM "fighter_summary"`, rel_columns.fighter_summary!, rel_column_types.fighter_summary!),
-    squad: select_rows(seam, `SELECT "id" FROM "squad"`, rel_columns.squad!, rel_column_types.squad!),
-    squad__members: select_rows(seam, `SELECT "squad_id", "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42_id" FROM "squad__members"`, rel_columns.squad__members!, rel_column_types.squad__members!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42: `SELECT t."id" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42" t`,
   __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member: `SELECT t."list_id", t."idx", (SELECT d."__rendered" FROM "__ref_fighter_summary" d WHERE d."__id" = t."value") AS "value" FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member" t`,
@@ -369,38 +328,6 @@ const final_select: Record<string, string> = {
   squad: `SELECT t."id" FROM "squad" t`,
   squad__members: `SELECT t."squad_id", t."__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42_id" FROM "squad__members" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42" WHERE "id" = ?` },
-  __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member" ("list_id", "idx", "value") VALUES (?, ?, ?) ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member" WHERE "list_id" = ? AND "idx" = ? AND "value" = ?` },
-  __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner" ("owner_id", "list_id") VALUES (?, ?) ON CONFLICT ("owner_id", "list_id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner" WHERE "owner_id" = ? AND "list_id" = ?` },
-  __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount" ("list_id", "count") VALUES (?, ?) ON CONFLICT ("list_id") DO UPDATE SET "count" = excluded."count"`, del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount" WHERE "list_id" = ? AND "count" = ?` },
-  fighter_summary: { kind: "set", add_sql: `INSERT OR IGNORE INTO "fighter_summary" ("name", "url") VALUES (?, ?)`, del_sql: `DELETE FROM "fighter_summary" WHERE "name" = ? AND "url" = ?` },
-  squad: { kind: "set", add_sql: `INSERT INTO "squad" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "squad" WHERE "id" = ?` },
-  squad__members: { kind: "set", add_sql: `INSERT INTO "squad__members" ("squad_id", "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42_id") VALUES (?, ?) ON CONFLICT ("squad_id") DO UPDATE SET "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42_id" = excluded."__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42_id"`, del_sql: `DELETE FROM "squad__members" WHERE "squad_id" = ? AND "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`option_dense_sequence_of_rel_round_trips_absent_and_present: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`option_dense_sequence_of_rel_round_trips_absent_and_present: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`option_dense_sequence_of_rel_round_trips_absent_and_present: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42", kind: "set", table_name: "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42", delta_table_name: "__delta___gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42", frontier_table_name: "__frontier___gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42", next_frontier_table_name: "__next_frontier___gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: [] },
@@ -418,54 +345,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42 = multiset_diff(before.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42, after.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42);
-  const __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member = multiset_diff(before.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member, after.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member);
-  const __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner = multiset_diff(before.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner, after.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner);
-  const __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount = multiset_diff(before.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount, after.__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount);
-  const fighter_summary = multiset_diff(before.fighter_summary, after.fighter_summary);
-  const squad = multiset_diff(before.squad, after.squad);
-  const squad__members = multiset_diff(before.squad__members, after.squad__members);
-  return {
-    rels: [
-      { rel: "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42", add: __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42.add, del: __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42.del },
-      { rel: "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member", add: __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member.add, del: __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__member.del },
-      { rel: "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner", add: __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner.add, del: __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__owner.del },
-      { rel: "__gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount", add: __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount.add, del: __gen__list_entity_dense_sequence_fighter_summary_bb78bd1b4eb62d42__refcount.del },
-      { rel: "fighter_summary", add: fighter_summary.add, del: fighter_summary.del },
-      { rel: "squad", add: squad.add, del: squad.del },
-      { rel: "squad__members", add: squad__members.add, del: squad__members.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // option_dense_sequence_of_rel_round_trips_absent_and_present: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -497,14 +380,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

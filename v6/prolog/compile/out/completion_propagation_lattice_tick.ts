@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
     });
     return { ...arrival, row };
   });
-}
-
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
 }
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -407,52 +387,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "live_inner", sql: `INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT b0."outer_id", b0."inner_id" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id")`, params: [] },
 ];
 
-type Snapshot = {
-  readonly closed_inner: readonly IRow[];
-  readonly closed_outer: readonly IRow[];
-  readonly end_a_signal: readonly IRow[];
-  readonly end_b_signal: readonly IRow[];
-  readonly end_c_signal: readonly IRow[];
-  readonly live_inner: readonly IRow[];
-  readonly live_outer: readonly IRow[];
-  readonly open_inner: readonly IRow[];
-  readonly open_outer: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    closed_inner: select_rows(seam, `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id", CASE WHEN json_valid(t."inner_id") AND json_type(t."inner_id") = 'object' AND json_type(t."inner_id", '$.fn') = 'text' AND json_type(t."inner_id", '$.args') = 'array' THEN json_extract(t."inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."inner_id", '$.args')), '') || ')' ELSE t."inner_id" END AS "inner_id" FROM "__txt_closed_inner" t`, rel_columns.closed_inner!, rel_column_types.closed_inner!),
-    closed_outer: select_rows(seam, `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id" FROM "__txt_closed_outer" t`, rel_columns.closed_outer!, rel_column_types.closed_outer!),
-    end_a_signal: select_rows(seam, `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id" FROM "__txt_end_a_signal" t`, rel_columns.end_a_signal!, rel_column_types.end_a_signal!),
-    end_b_signal: select_rows(seam, `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id" FROM "__txt_end_b_signal" t`, rel_columns.end_b_signal!, rel_column_types.end_b_signal!),
-    end_c_signal: select_rows(seam, `SELECT CASE WHEN json_valid(t."inner_id") AND json_type(t."inner_id") = 'object' AND json_type(t."inner_id", '$.fn') = 'text' AND json_type(t."inner_id", '$.args') = 'array' THEN json_extract(t."inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."inner_id", '$.args')), '') || ')' ELSE t."inner_id" END AS "inner_id" FROM "__txt_end_c_signal" t`, rel_columns.end_c_signal!, rel_column_types.end_c_signal!),
-    live_inner: select_rows(seam, `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id", CASE WHEN json_valid(t."inner_id") AND json_type(t."inner_id") = 'object' AND json_type(t."inner_id", '$.fn') = 'text' AND json_type(t."inner_id", '$.args') = 'array' THEN json_extract(t."inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."inner_id", '$.args')), '') || ')' ELSE t."inner_id" END AS "inner_id" FROM "__txt_live_inner" t`, rel_columns.live_inner!, rel_column_types.live_inner!),
-    live_outer: select_rows(seam, `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id" FROM "__txt_live_outer" t`, rel_columns.live_outer!, rel_column_types.live_outer!),
-    open_inner: select_rows(seam, `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id", CASE WHEN json_valid(t."inner_id") AND json_type(t."inner_id") = 'object' AND json_type(t."inner_id", '$.fn') = 'text' AND json_type(t."inner_id", '$.args') = 'array' THEN json_extract(t."inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."inner_id", '$.args')), '') || ')' ELSE t."inner_id" END AS "inner_id" FROM "__txt_open_inner" t`, rel_columns.open_inner!, rel_column_types.open_inner!),
-    open_outer: select_rows(seam, `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id" FROM "__txt_open_outer" t`, rel_columns.open_outer!, rel_column_types.open_outer!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    closed_inner: select_rows(seam, `SELECT "outer_id", "inner_id" FROM "closed_inner"`, rel_columns.closed_inner!, rel_column_types.closed_inner!),
-    closed_outer: select_rows(seam, `SELECT "outer_id" FROM "closed_outer"`, rel_columns.closed_outer!, rel_column_types.closed_outer!),
-    end_a_signal: select_rows(seam, `SELECT "outer_id" FROM "end_a_signal"`, rel_columns.end_a_signal!, rel_column_types.end_a_signal!),
-    end_b_signal: select_rows(seam, `SELECT "outer_id" FROM "end_b_signal"`, rel_columns.end_b_signal!, rel_column_types.end_b_signal!),
-    end_c_signal: select_rows(seam, `SELECT "inner_id" FROM "end_c_signal"`, rel_columns.end_c_signal!, rel_column_types.end_c_signal!),
-    live_inner: select_rows(seam, `SELECT "outer_id", "inner_id" FROM "live_inner"`, rel_columns.live_inner!, rel_column_types.live_inner!),
-    live_outer: select_rows(seam, `SELECT "outer_id" FROM "live_outer"`, rel_columns.live_outer!, rel_column_types.live_outer!),
-    open_inner: select_rows(seam, `SELECT "outer_id", "inner_id" FROM "open_inner"`, rel_columns.open_inner!, rel_column_types.open_inner!),
-    open_outer: select_rows(seam, `SELECT "outer_id" FROM "open_outer"`, rel_columns.open_outer!, rel_column_types.open_outer!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   closed_inner: `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id", CASE WHEN json_valid(t."inner_id") AND json_type(t."inner_id") = 'object' AND json_type(t."inner_id", '$.fn') = 'text' AND json_type(t."inner_id", '$.args') = 'array' THEN json_extract(t."inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."inner_id", '$.args')), '') || ')' ELSE t."inner_id" END AS "inner_id" FROM "__txt_closed_inner" t`,
   closed_outer: `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id" FROM "__txt_closed_outer" t`,
@@ -464,36 +398,6 @@ const final_select: Record<string, string> = {
   open_inner: `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id", CASE WHEN json_valid(t."inner_id") AND json_type(t."inner_id") = 'object' AND json_type(t."inner_id", '$.fn') = 'text' AND json_type(t."inner_id", '$.args') = 'array' THEN json_extract(t."inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."inner_id", '$.args')), '') || ')' ELSE t."inner_id" END AS "inner_id" FROM "__txt_open_inner" t`,
   open_outer: `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id" FROM "__txt_open_outer" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  end_a_signal: { kind: "log", add_sql: `INSERT INTO "end_a_signal" ("outer_id") VALUES (?)`, del_sql: null },
-  end_b_signal: { kind: "log", add_sql: `INSERT INTO "end_b_signal" ("outer_id") VALUES (?)`, del_sql: null },
-  end_c_signal: { kind: "log", add_sql: `INSERT INTO "end_c_signal" ("inner_id") VALUES (?)`, del_sql: null },
-  open_inner: { kind: "set", add_sql: `INSERT INTO "open_inner" ("outer_id", "inner_id") VALUES (?, ?) ON CONFLICT ("outer_id", "inner_id") DO NOTHING`, del_sql: `DELETE FROM "open_inner" WHERE "outer_id" = ? AND "inner_id" = ?` },
-  open_outer: { kind: "set", add_sql: `INSERT INTO "open_outer" ("outer_id") VALUES (?) ON CONFLICT ("outer_id") DO NOTHING`, del_sql: `DELETE FROM "open_outer" WHERE "outer_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`completion_propagation_lattice_tick: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`completion_propagation_lattice_tick: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`completion_propagation_lattice_tick: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "closed_inner", kind: "log", table_name: "closed_inner", delta_table_name: "__delta_closed_inner", frontier_table_name: "__frontier_closed_inner", next_frontier_table_name: "__next_frontier_closed_inner", columns: ["outer_id", "inner_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."outer_id") AND json_type(t."outer_id") = 'object' AND json_type(t."outer_id", '$.fn') = 'text' AND json_type(t."outer_id", '$.args') = 'array' THEN json_extract(t."outer_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."outer_id", '$.args')), '') || ')' ELSE t."outer_id" END AS "outer_id", CASE WHEN json_valid(t."inner_id") AND json_type(t."inner_id") = 'object' AND json_type(t."inner_id", '$.fn') = 'text' AND json_type(t."inner_id", '$.args') = 'array' THEN json_extract(t."inner_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."inner_id", '$.args')), '') || ')' ELSE t."inner_id" END AS "inner_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_closed_inner" t WHERE t."_sign" IN (-1, 1) GROUP BY t."outer_id", t."inner_id", t."_sign"`, rule_observers: [] },
@@ -521,149 +425,10 @@ INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT b0."outer_id" FROM "open_
 INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT b0."outer_id", b0."inner_id" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id")`, support_sql: [`DELETE FROM "__support_next_live_inner"`, `INSERT INTO "__support_next_live_inner" ("outer_id", "inner_id", "__refcount") SELECT "outer_id", "inner_id", sum("__refcount") FROM (SELECT b0."outer_id" AS "outer_id", b0."inner_id" AS "inner_id", count(*) AS "__refcount" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id") GROUP BY b0."outer_id", b0."inner_id") GROUP BY "outer_id", "inner_id"`, `UPDATE "live_inner" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_live_inner" n WHERE n."outer_id" = h."outer_id" AND n."inner_id" = h."inner_id"), 0)`, `INSERT INTO "__delta_live_inner" ("_sign", "_sequence", "outer_id", "inner_id") SELECT -1, row_number() OVER () - 1, "outer_id", "inner_id" FROM "live_inner" WHERE "__refcount" <= 0`, `DELETE FROM "live_inner" WHERE "__refcount" <= 0`, `DELETE FROM "__new_live_inner"`, `INSERT INTO "__new_live_inner" ("outer_id", "inner_id", "__refcount") SELECT n."outer_id", n."inner_id", n."__refcount" FROM "__support_next_live_inner" n LEFT JOIN "live_inner" h ON n."outer_id" = h."outer_id" AND n."inner_id" = h."inner_id" WHERE h."outer_id" IS NULL`, `INSERT INTO "__delta_live_inner" ("_sign", "_sequence", "outer_id", "inner_id") SELECT 1, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT INTO "__frontier_live_inner" ("_phase", "_sequence", "outer_id", "inner_id") SELECT ?, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT INTO "__next_frontier_live_inner" ("_phase", "_sequence", "outer_id", "inner_id") SELECT ?, "rowid" - 1, "outer_id", "inner_id" FROM "__new_live_inner"`, `INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id", "__refcount") SELECT n."outer_id", n."inner_id", n."__refcount" FROM "__support_next_live_inner" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-const EDGE_CLOSED_OUTER_0_PROJECT_SQL = `SELECT ?1 AS "outer_id" FROM "end_b_signal" b0, "open_outer" b1 WHERE b0."outer_id" = ?1 AND b1."outer_id" = ?1`;
-const EDGE_CLOSED_OUTER_0_WRITE_SQL = `INSERT INTO "closed_outer" ("outer_id") VALUES (?)`;
-const EDGE_CLOSED_OUTER_0_HEAD_COLUMNS: readonly string[] = ["outer_id"];
-
-const EDGE_CLOSED_OUTER_1_PROJECT_SQL = `SELECT ?1 AS "outer_id" FROM "end_a_signal" b0, "open_outer" b1 WHERE b0."outer_id" = ?1 AND b1."outer_id" = ?1`;
-const EDGE_CLOSED_OUTER_1_WRITE_SQL = `INSERT INTO "closed_outer" ("outer_id") VALUES (?)`;
-const EDGE_CLOSED_OUTER_1_HEAD_COLUMNS: readonly string[] = ["outer_id"];
-
-const EDGE_CLOSED_OUTER_2_PROJECT_SQL = `SELECT ?1 AS "outer_id" FROM "end_a_signal" b0, "end_b_signal" b1 WHERE b0."outer_id" = ?1 AND b1."outer_id" = ?1`;
-const EDGE_CLOSED_OUTER_2_WRITE_SQL = `INSERT INTO "closed_outer" ("outer_id") VALUES (?)`;
-const EDGE_CLOSED_OUTER_2_HEAD_COLUMNS: readonly string[] = ["outer_id"];
-
-const EDGE_CLOSED_INNER_3_PROJECT_SQL = `SELECT b0."outer_id" AS "outer_id", ?1 AS "inner_id" FROM "open_inner" b0 WHERE b0."inner_id" = ?1`;
-const EDGE_CLOSED_INNER_3_WRITE_SQL = `INSERT INTO "closed_inner" ("outer_id", "inner_id") VALUES (?, ?)`;
-const EDGE_CLOSED_INNER_3_HEAD_COLUMNS: readonly string[] = ["outer_id", "inner_id"];
-
-function resolveClosedOuter_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "end_a_signal", before.end_a_signal, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_CLOSED_OUTER_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_CLOSED_OUTER_0_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function resolveClosedOuter_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "end_b_signal", before.end_b_signal, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_CLOSED_OUTER_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_CLOSED_OUTER_1_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function resolveClosedOuter_2Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("set", "open_outer", before.open_outer, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_OUTER_2_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_CLOSED_OUTER_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_CLOSED_OUTER_2_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function resolveClosedInner_3Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "end_c_signal", before.end_c_signal, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_INNER_3_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_CLOSED_INNER_3_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_CLOSED_INNER_3_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "live_outer";
-INSERT OR IGNORE INTO "live_outer" ("outer_id") SELECT b0."outer_id" FROM "open_outer" b0 WHERE NOT EXISTS (SELECT 1 FROM "closed_outer" n0 WHERE n0."outer_id" = b0."outer_id");
-DELETE FROM "live_inner";
-INSERT OR IGNORE INTO "live_inner" ("outer_id", "inner_id") SELECT b0."outer_id", b0."inner_id" FROM "open_inner" b0, "live_outer" b1 WHERE b1."outer_id" = b0."outer_id" AND NOT EXISTS (SELECT 1 FROM "closed_inner" n0 WHERE n0."outer_id" = b0."outer_id" AND n0."inner_id" = b0."inner_id")`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const closed_inner = multiset_diff(before.closed_inner, after.closed_inner);
-  const closed_outer = multiset_diff(before.closed_outer, after.closed_outer);
-  const end_a_signal = multiset_diff(before.end_a_signal, after.end_a_signal);
-  const end_b_signal = multiset_diff(before.end_b_signal, after.end_b_signal);
-  const end_c_signal = multiset_diff(before.end_c_signal, after.end_c_signal);
-  const live_inner = multiset_diff(before.live_inner, after.live_inner);
-  const live_outer = multiset_diff(before.live_outer, after.live_outer);
-  const open_inner = multiset_diff(before.open_inner, after.open_inner);
-  const open_outer = multiset_diff(before.open_outer, after.open_outer);
-  return {
-    rels: [
-      { rel: "closed_inner", add: closed_inner.add, del: closed_inner.del },
-      { rel: "closed_outer", add: closed_outer.add, del: closed_outer.del },
-      { rel: "end_a_signal", add: end_a_signal.add, del: end_a_signal.del },
-      { rel: "end_b_signal", add: end_b_signal.add, del: end_b_signal.del },
-      { rel: "end_c_signal", add: end_c_signal.add, del: end_c_signal.del },
-      { rel: "live_inner", add: live_inner.add, del: live_inner.del },
-      { rel: "live_outer", add: live_outer.add, del: live_outer.del },
-      { rel: "open_inner", add: open_inner.add, del: open_inner.del },
-      { rel: "open_outer", add: open_outer.add, del: open_outer.del },
-    ],
-    carry_pending: closed_inner.add.length > 0 || closed_inner.del.length > 0 || closed_outer.add.length > 0 || closed_outer.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolveClosedOuter_0Writes(seam, before.stored, arrivals), resolveClosedOuter_1Writes(seam, before.stored, arrivals), resolveClosedOuter_2Writes(seam, before.stored, arrivals), resolveClosedInner_3Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // completion_propagation_lattice_tick: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -693,14 +458,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

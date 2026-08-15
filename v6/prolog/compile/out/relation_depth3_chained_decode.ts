@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -429,49 +428,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "nfound", sql: `INSERT OR IGNORE INTO "nfound" ("path_name", "kind") SELECT b3."name", b0."kind" FROM "located" b0, "__ref_span" b1, "__ref_file" b2, "__ref_fpath" b3 WHERE b1."__id" = b0."span" AND b2."__id" = b1."file" AND b3."__id" = b2."at"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly dfound: readonly IRow[];
-  readonly file: readonly IRow[];
-  readonly fpath: readonly IRow[];
-  readonly located: readonly IRow[];
-  readonly nfound: readonly IRow[];
-  readonly rawk: readonly IRow[];
-  readonly repo: readonly IRow[];
-  readonly span: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    dfound: select_rows(seam, `SELECT CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_dfound" t`, rel_columns.dfound!, rel_column_types.dfound!),
-    file: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = t."repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = t."at") AS "at" FROM "file" t`, rel_columns.file!, rel_column_types.file!),
-    fpath: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_fpath" t`, rel_columns.fpath!, rel_column_types.fpath!),
-    located: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."span") AS "span", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_located" t`, rel_columns.located!, rel_column_types.located!),
-    nfound: select_rows(seam, `SELECT CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_nfound" t`, rel_columns.nfound!, rel_column_types.nfound!),
-    rawk: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo_name") AND json_type(t."repo_name") = 'object' AND json_type(t."repo_name", '$.fn') = 'text' AND json_type(t."repo_name", '$.args') = 'array' THEN json_extract(t."repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo_name", '$.args')), '') || ')' ELSE t."repo_name" END AS "repo_name", CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", t."start", t."end", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_rawk" t`, rel_columns.rawk!, rel_column_types.rawk!),
-    repo: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_repo" t`, rel_columns.repo!, rel_column_types.repo!),
-    span: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = t."file") AS "file", t."start", t."end" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    dfound: select_rows(seam, `SELECT "path_name", "kind" FROM "dfound"`, rel_columns.dfound!, rel_column_types.dfound!),
-    file: select_rows(seam, `SELECT "repo", "at" FROM "file"`, rel_columns.file!, rel_column_types.file!),
-    fpath: select_rows(seam, `SELECT "name" FROM "fpath"`, rel_columns.fpath!, rel_column_types.fpath!),
-    located: select_rows(seam, `SELECT "span", "kind" FROM "located"`, rel_columns.located!, rel_column_types.located!),
-    nfound: select_rows(seam, `SELECT "path_name", "kind" FROM "nfound"`, rel_columns.nfound!, rel_column_types.nfound!),
-    rawk: select_rows(seam, `SELECT "repo_name", "path_name", "start", "end", "kind" FROM "rawk"`, rel_columns.rawk!, rel_column_types.rawk!),
-    repo: select_rows(seam, `SELECT "name" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
-    span: select_rows(seam, `SELECT "file", "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   dfound: `SELECT CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_dfound" t`,
   file: `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = t."repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = t."at") AS "at" FROM "file" t`,
@@ -482,32 +438,6 @@ const final_select: Record<string, string> = {
   repo: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_repo" t`,
   span: `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = t."file") AS "file", t."start", t."end" FROM "span" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  rawk: { kind: "set", add_sql: `INSERT OR IGNORE INTO "rawk" ("repo_name", "path_name", "start", "end", "kind") VALUES (?, ?, ?, ?, ?)`, del_sql: `DELETE FROM "rawk" WHERE "repo_name" = ? AND "path_name" = ? AND "start" = ? AND "end" = ? AND "kind" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`relation_depth3_chained_decode: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`relation_depth3_chained_decode: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`relation_depth3_chained_decode: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "dfound", kind: "set", table_name: "dfound", delta_table_name: "__delta_dfound", frontier_table_name: "__frontier_dfound", next_frontier_table_name: "__next_frontier_dfound", columns: ["path_name", "kind"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_dfound" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path_name", t."kind", t."_sign"`, rule_observers: [] },
@@ -540,69 +470,10 @@ INSERT OR IGNORE INTO "dfound" ("path_name", "kind") SELECT b3."name", b0."kind"
 INSERT OR IGNORE INTO "nfound" ("path_name", "kind") SELECT b3."name", b0."kind" FROM "located" b0, "__ref_span" b1, "__ref_file" b2, "__ref_fpath" b3 WHERE b1."__id" = b0."span" AND b2."__id" = b1."file" AND b3."__id" = b2."at"`, support_sql: [`DELETE FROM "__support_next_nfound"`, `INSERT INTO "__support_next_nfound" ("path_name", "kind", "__refcount") SELECT "path_name", "kind", sum("__refcount") FROM (SELECT b3."name" AS "path_name", b0."kind" AS "kind", count(*) AS "__refcount" FROM "located" b0, "__ref_span" b1, "__ref_file" b2, "__ref_fpath" b3 WHERE b1."__id" = b0."span" AND b2."__id" = b1."file" AND b3."__id" = b2."at" GROUP BY b3."name", b0."kind") GROUP BY "path_name", "kind"`, `UPDATE "nfound" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_nfound" n WHERE n."path_name" = h."path_name" AND n."kind" = h."kind"), 0)`, `INSERT INTO "__delta_nfound" ("_sign", "_sequence", "path_name", "kind") SELECT -1, row_number() OVER () - 1, "path_name", "kind" FROM "nfound" WHERE "__refcount" <= 0`, `DELETE FROM "nfound" WHERE "__refcount" <= 0`, `DELETE FROM "__new_nfound"`, `INSERT INTO "__new_nfound" ("path_name", "kind", "__refcount") SELECT n."path_name", n."kind", n."__refcount" FROM "__support_next_nfound" n LEFT JOIN "nfound" h ON n."path_name" = h."path_name" AND n."kind" = h."kind" WHERE h."path_name" IS NULL`, `INSERT INTO "__delta_nfound" ("_sign", "_sequence", "path_name", "kind") SELECT 1, "rowid" - 1, "path_name", "kind" FROM "__new_nfound"`, `INSERT INTO "__frontier_nfound" ("_phase", "_sequence", "path_name", "kind") SELECT ?, "rowid" - 1, "path_name", "kind" FROM "__new_nfound"`, `INSERT INTO "__next_frontier_nfound" ("_phase", "_sequence", "path_name", "kind") SELECT ?, "rowid" - 1, "path_name", "kind" FROM "__new_nfound"`, `INSERT OR IGNORE INTO "nfound" ("path_name", "kind", "__refcount") SELECT n."path_name", n."kind", n."__refcount" FROM "__support_next_nfound" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "fpath";
-INSERT OR IGNORE INTO "fpath" ("name") SELECT b0."path_name" FROM "rawk" b0;
-DELETE FROM "repo";
-INSERT OR IGNORE INTO "repo" ("name") SELECT b0."repo_name" FROM "rawk" b0;
-DELETE FROM "file";
-INSERT OR IGNORE INTO "file" ("repo", "at") SELECT b1."__id", b2."__id" FROM "rawk" b0, "repo" b1, "fpath" b2 WHERE b1."name" = b0."repo_name" AND b2."name" = b0."path_name";
-DELETE FROM "span";
-INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT b1."__id", b0."start", b0."end" FROM "rawk" b0, "file" b1, "__ref_repo" b2, "__ref_fpath" b3 WHERE b2."__id" = b1."repo" AND b2."name" = b0."repo_name" AND b3."__id" = b1."at" AND b3."name" = b0."path_name";
-DELETE FROM "located";
-INSERT OR IGNORE INTO "located" ("span", "kind") SELECT b1."__id", b0."kind" FROM "rawk" b0, "span" b1, "__ref_repo" b2, "__ref_fpath" b3, "__ref_file" b4 WHERE b1."start" = b0."start" AND b1."end" = b0."end" AND b2."name" = b0."repo_name" AND b3."name" = b0."path_name" AND b4."__id" = b1."file" AND b4."repo" = b2."__id" AND b4."at" = b3."__id";
-DELETE FROM "dfound";
-INSERT OR IGNORE INTO "dfound" ("path_name", "kind") SELECT b3."name", b0."kind" FROM "located" b0, "__ref_span" b1, "__ref_file" b2, "__ref_fpath" b3 WHERE b1."__id" = b0."span" AND b2."__id" = b1."file" AND b3."__id" = b2."at";
-DELETE FROM "nfound";
-INSERT OR IGNORE INTO "nfound" ("path_name", "kind") SELECT b3."name", b0."kind" FROM "located" b0, "__ref_span" b1, "__ref_file" b2, "__ref_fpath" b3 WHERE b1."__id" = b0."span" AND b2."__id" = b1."file" AND b3."__id" = b2."at"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const dfound = multiset_diff(before.dfound, after.dfound);
-  const file = multiset_diff(before.file, after.file);
-  const fpath = multiset_diff(before.fpath, after.fpath);
-  const located = multiset_diff(before.located, after.located);
-  const nfound = multiset_diff(before.nfound, after.nfound);
-  const rawk = multiset_diff(before.rawk, after.rawk);
-  const repo = multiset_diff(before.repo, after.repo);
-  const span = multiset_diff(before.span, after.span);
-  return {
-    rels: [
-      { rel: "dfound", add: dfound.add, del: dfound.del },
-      { rel: "file", add: file.add, del: file.del },
-      { rel: "fpath", add: fpath.add, del: fpath.del },
-      { rel: "located", add: located.add, del: located.del },
-      { rel: "nfound", add: nfound.add, del: nfound.del },
-      { rel: "rawk", add: rawk.add, del: rawk.del },
-      { rel: "repo", add: repo.add, del: repo.del },
-      { rel: "span", add: span.add, del: span.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // relation_depth3_chained_decode: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -634,14 +505,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

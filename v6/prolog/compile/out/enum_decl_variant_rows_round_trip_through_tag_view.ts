@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -251,66 +250,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "body_tag", sql: `INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') FROM "body_redirect" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly body_page: readonly IRow[];
-  readonly body_redirect: readonly IRow[];
-  readonly body_tag: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    body_page: select_rows(seam, `SELECT t."id", t."view" FROM "body_page" t`, rel_columns.body_page!, rel_column_types.body_page!),
-    body_redirect: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."to") AND json_type(t."to") = 'object' AND json_type(t."to", '$.fn') = 'text' AND json_type(t."to", '$.args') = 'array' THEN json_extract(t."to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to", '$.args')), '') || ')' ELSE t."to" END AS "to" FROM "__txt_body_redirect" t`, rel_columns.body_redirect!, rel_column_types.body_redirect!),
-    body_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_body_tag" t`, rel_columns.body_tag!, rel_column_types.body_tag!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    body_page: select_rows(seam, `SELECT "id", "view" FROM "body_page"`, rel_columns.body_page!, rel_column_types.body_page!),
-    body_redirect: select_rows(seam, `SELECT "id", "to" FROM "body_redirect"`, rel_columns.body_redirect!, rel_column_types.body_redirect!),
-    body_tag: select_rows(seam, `SELECT "id", "tag" FROM "body_tag"`, rel_columns.body_tag!, rel_column_types.body_tag!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   body_page: `SELECT t."id", t."view" FROM "body_page" t`,
   body_redirect: `SELECT t."id", CASE WHEN json_valid(t."to") AND json_type(t."to") = 'object' AND json_type(t."to", '$.fn') = 'text' AND json_type(t."to", '$.args') = 'array' THEN json_extract(t."to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to", '$.args')), '') || ')' ELSE t."to" END AS "to" FROM "__txt_body_redirect" t`,
   body_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_body_tag" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  body_page: { kind: "set", add_sql: `INSERT INTO "body_page" ("id", "view") VALUES (?, ?) ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "body_page" WHERE "id" = ? AND "view" = ?` },
-  body_redirect: { kind: "set", add_sql: `INSERT INTO "body_redirect" ("id", "to") VALUES (?, ?) ON CONFLICT ("to") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "body_redirect" WHERE "id" = ? AND "to" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`enum_decl_variant_rows_round_trip_through_tag_view: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`enum_decl_variant_rows_round_trip_through_tag_view: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`enum_decl_variant_rows_round_trip_through_tag_view: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "body_page", kind: "set", table_name: "body_page", delta_table_name: "__delta_body_page", frontier_table_name: "__frontier_body_page", next_frontier_table_name: "__next_frontier_body_page", columns: ["id", "view"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "body_page" ("id", "view") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("view") DO UPDATE SET "id" = excluded."id" RETURNING "id", "view"`, arrival_del_sql: `DELETE FROM "body_page" WHERE ("id", "view") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "view"`, boundary_sql: `SELECT t."id", t."view", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_body_page" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."view", t."_sign"`, rule_observers: ["body_tag/2"] },
@@ -327,45 +271,10 @@ INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" 
 INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') FROM "body_redirect" b0`, support_sql: [`DELETE FROM "__support_next_body_tag"`, `INSERT INTO "__support_next_body_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') AS "tag", count(*) AS "__refcount" FROM "body_page" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') UNION ALL SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') AS "tag", count(*) AS "__refcount" FROM "body_redirect" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect')) GROUP BY "id", "tag"`, `UPDATE "body_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_body_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_body_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "body_tag" WHERE "__refcount" <= 0`, `DELETE FROM "body_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_body_tag"`, `INSERT INTO "__new_body_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_body_tag" n LEFT JOIN "body_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_body_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT INTO "__frontier_body_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT INTO "__next_frontier_body_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_body_tag"`, `INSERT OR IGNORE INTO "body_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_body_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "body_tag";
-INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'page') FROM "body_page" b0;
-INSERT OR IGNORE INTO "body_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'redirect') FROM "body_redirect" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const body_page = multiset_diff(before.body_page, after.body_page);
-  const body_redirect = multiset_diff(before.body_redirect, after.body_redirect);
-  const body_tag = multiset_diff(before.body_tag, after.body_tag);
-  return {
-    rels: [
-      { rel: "body_page", add: body_page.add, del: body_page.del },
-      { rel: "body_redirect", add: body_redirect.add, del: body_redirect.del },
-      { rel: "body_tag", add: body_tag.add, del: body_tag.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // enum_decl_variant_rows_round_trip_through_tag_view: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -394,14 +303,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

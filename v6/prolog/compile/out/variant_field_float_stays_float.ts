@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -248,66 +247,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "reading_tag", sql: `INSERT OR IGNORE INTO "reading_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'trough') FROM "reading_trough" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly reading_peak: readonly IRow[];
-  readonly reading_tag: readonly IRow[];
-  readonly reading_trough: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    reading_peak: select_rows(seam, `SELECT t."id", t."value" FROM "reading_peak" t`, rel_columns.reading_peak!, rel_column_types.reading_peak!),
-    reading_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_reading_tag" t`, rel_columns.reading_tag!, rel_column_types.reading_tag!),
-    reading_trough: select_rows(seam, `SELECT t."id", t."value" FROM "reading_trough" t`, rel_columns.reading_trough!, rel_column_types.reading_trough!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    reading_peak: select_rows(seam, `SELECT "id", "value" FROM "reading_peak"`, rel_columns.reading_peak!, rel_column_types.reading_peak!),
-    reading_tag: select_rows(seam, `SELECT "id", "tag" FROM "reading_tag"`, rel_columns.reading_tag!, rel_column_types.reading_tag!),
-    reading_trough: select_rows(seam, `SELECT "id", "value" FROM "reading_trough"`, rel_columns.reading_trough!, rel_column_types.reading_trough!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   reading_peak: `SELECT t."id", t."value" FROM "reading_peak" t`,
   reading_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_reading_tag" t`,
   reading_trough: `SELECT t."id", t."value" FROM "reading_trough" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  reading_peak: { kind: "set", add_sql: `INSERT INTO "reading_peak" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "reading_peak" WHERE "id" = ? AND "value" = ?` },
-  reading_trough: { kind: "set", add_sql: `INSERT INTO "reading_trough" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "reading_trough" WHERE "id" = ? AND "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`variant_field_float_stays_float: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`variant_field_float_stays_float: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`variant_field_float_stays_float: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "reading_peak", kind: "set", table_name: "reading_peak", delta_table_name: "__delta_reading_peak", frontier_table_name: "__frontier_reading_peak", next_frontier_table_name: "__next_frontier_reading_peak", columns: ["id", "value"], column_types: ["int", "float"], key_indices: [1], arrival_add_sql: `INSERT INTO "reading_peak" ("id", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id" RETURNING "id", "value"`, arrival_del_sql: `DELETE FROM "reading_peak" WHERE ("id", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "value"`, boundary_sql: `SELECT t."id", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_reading_peak" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."value", t."_sign"`, rule_observers: ["reading_tag/2"] },
@@ -324,45 +268,10 @@ INSERT OR IGNORE INTO "reading_tag" ("id", "tag") SELECT b0."id", (SELECT s."__i
 INSERT OR IGNORE INTO "reading_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'trough') FROM "reading_trough" b0`, support_sql: [`DELETE FROM "__support_next_reading_tag"`, `INSERT INTO "__support_next_reading_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'peak') AS "tag", count(*) AS "__refcount" FROM "reading_peak" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'peak') UNION ALL SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'trough') AS "tag", count(*) AS "__refcount" FROM "reading_trough" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'trough')) GROUP BY "id", "tag"`, `UPDATE "reading_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_reading_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_reading_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "reading_tag" WHERE "__refcount" <= 0`, `DELETE FROM "reading_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_reading_tag"`, `INSERT INTO "__new_reading_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_reading_tag" n LEFT JOIN "reading_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_reading_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_reading_tag"`, `INSERT INTO "__frontier_reading_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_reading_tag"`, `INSERT INTO "__next_frontier_reading_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_reading_tag"`, `INSERT OR IGNORE INTO "reading_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_reading_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "reading_tag";
-INSERT OR IGNORE INTO "reading_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'peak') FROM "reading_peak" b0;
-INSERT OR IGNORE INTO "reading_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'trough') FROM "reading_trough" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const reading_peak = multiset_diff(before.reading_peak, after.reading_peak);
-  const reading_tag = multiset_diff(before.reading_tag, after.reading_tag);
-  const reading_trough = multiset_diff(before.reading_trough, after.reading_trough);
-  return {
-    rels: [
-      { rel: "reading_peak", add: reading_peak.add, del: reading_peak.del },
-      { rel: "reading_tag", add: reading_tag.add, del: reading_tag.del },
-      { rel: "reading_trough", add: reading_trough.add, del: reading_trough.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // variant_field_float_stays_float: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -391,14 +300,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

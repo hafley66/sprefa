@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -228,61 +227,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("item", "name", "leaf") SELECT json_extract(j0.value, '$."n"'), (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key), json_extract(j2.value, '$."leaf"') FROM "spec" b0, json_each(json_extract(b0."body", '$."items"')) j0, json_each(json_extract(b0."body", '$."tags"')) j1, json_tree(b0."body") j2 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."items"') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."n"') IS NOT NULL AND json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."tags"') = 'object' AND j1.value IS NOT NULL AND json_type(b0."body", '$') = 'object' AND j2.type = 'object' AND json_extract(j2.value, '$."leaf"') IS NOT NULL`, params: [] },
 ];
 
-type Snapshot = {
-  readonly hit: readonly IRow[];
-  readonly spec: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    hit: select_rows(seam, `SELECT t."item", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."leaf" FROM "__txt_hit" t`, rel_columns.hit!, rel_column_types.hit!),
-    spec: select_rows(seam, `SELECT t."body" FROM "spec" t`, rel_columns.spec!, rel_column_types.spec!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    hit: select_rows(seam, `SELECT "item", "name", "leaf" FROM "hit"`, rel_columns.hit!, rel_column_types.hit!),
-    spec: select_rows(seam, `SELECT "body" FROM "spec"`, rel_columns.spec!, rel_column_types.spec!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   hit: `SELECT t."item", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."leaf" FROM "__txt_hit" t`,
   spec: `SELECT t."body" FROM "spec" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  spec: { kind: "set", add_sql: `INSERT OR IGNORE INTO "spec" ("body") VALUES (?)`, del_sql: `DELETE FROM "spec" WHERE "body" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`json_spread_and_capture_and_descent_multiply: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`json_spread_and_capture_and_descent_multiply: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`json_spread_and_capture_and_descent_multiply: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "hit", kind: "set", table_name: "hit", delta_table_name: "__delta_hit", frontier_table_name: "__frontier_hit", next_frontier_table_name: "__next_frontier_hit", columns: ["item", "name", "leaf"], column_types: ["int", "text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."item", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."leaf", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_hit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."item", t."name", t."leaf", t."_sign"`, rule_observers: [] },
@@ -298,43 +246,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j1.key FROM "spec" b0,
 INSERT OR IGNORE INTO "hit" ("item", "name", "leaf") SELECT json_extract(j0.value, '$."n"'), (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key), json_extract(j2.value, '$."leaf"') FROM "spec" b0, json_each(json_extract(b0."body", '$."items"')) j0, json_each(json_extract(b0."body", '$."tags"')) j1, json_tree(b0."body") j2 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."items"') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."n"') IS NOT NULL AND json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."tags"') = 'object' AND j1.value IS NOT NULL AND json_type(b0."body", '$') = 'object' AND j2.type = 'object' AND json_extract(j2.value, '$."leaf"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_hit"`, `INSERT INTO "__support_next_hit" ("item", "name", "leaf", "__refcount") SELECT "item", "name", "leaf", sum("__refcount") FROM (SELECT json_extract(j0.value, '$."n"') AS "item", (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key) AS "name", json_extract(j2.value, '$."leaf"') AS "leaf", count(*) AS "__refcount" FROM "spec" b0, json_each(json_extract(b0."body", '$."items"')) j0, json_each(json_extract(b0."body", '$."tags"')) j1, json_tree(b0."body") j2 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."items"') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."n"') IS NOT NULL AND json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."tags"') = 'object' AND j1.value IS NOT NULL AND json_type(b0."body", '$') = 'object' AND j2.type = 'object' AND json_extract(j2.value, '$."leaf"') IS NOT NULL GROUP BY json_extract(j0.value, '$."n"'), j1.key, json_extract(j2.value, '$."leaf"')) GROUP BY "item", "name", "leaf"`, `UPDATE "hit" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_hit" n WHERE n."item" = h."item" AND n."name" = h."name" AND n."leaf" = h."leaf"), 0)`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "item", "name", "leaf") SELECT -1, row_number() OVER () - 1, "item", "name", "leaf" FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "hit" WHERE "__refcount" <= 0`, `DELETE FROM "__new_hit"`, `INSERT INTO "__new_hit" ("item", "name", "leaf", "__refcount") SELECT n."item", n."name", n."leaf", n."__refcount" FROM "__support_next_hit" n LEFT JOIN "hit" h ON n."item" = h."item" AND n."name" = h."name" AND n."leaf" = h."leaf" WHERE h."item" IS NULL`, `INSERT INTO "__delta_hit" ("_sign", "_sequence", "item", "name", "leaf") SELECT 1, "rowid" - 1, "item", "name", "leaf" FROM "__new_hit"`, `INSERT INTO "__frontier_hit" ("_phase", "_sequence", "item", "name", "leaf") SELECT ?, "rowid" - 1, "item", "name", "leaf" FROM "__new_hit"`, `INSERT INTO "__next_frontier_hit" ("_phase", "_sequence", "item", "name", "leaf") SELECT ?, "rowid" - 1, "item", "name", "leaf" FROM "__new_hit"`, `INSERT OR IGNORE INTO "hit" ("item", "name", "leaf", "__refcount") SELECT n."item", n."name", n."leaf", n."__refcount" FROM "__support_next_hit" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j1.key FROM "__frontier_spec" d0, json_each(json_extract(d0."body", '$."items"')) j0, json_each(json_extract(d0."body", '$."tags"')) j1, json_tree(d0."body") j2 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND json_type(d0."body", '$."items"') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."n"') IS NOT NULL AND json_type(d0."body", '$') = 'object' AND json_type(d0."body", '$."tags"') = 'object' AND j1.value IS NOT NULL AND json_type(d0."body", '$') = 'object' AND j2.type = 'object' AND json_extract(j2.value, '$."leaf"') IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j1.key FROM "spec" b0, json_each(json_extract(b0."body", '$."items"')) j0, json_each(json_extract(b0."body", '$."tags"')) j1, json_tree(b0."body") j2 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."items"') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."n"') IS NOT NULL AND json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."tags"') = 'object' AND j1.value IS NOT NULL AND json_type(b0."body", '$') = 'object' AND j2.type = 'object' AND json_extract(j2.value, '$."leaf"') IS NOT NULL`] },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "hit";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT j1.key FROM "spec" b0, json_each(json_extract(b0."body", '$."items"')) j0, json_each(json_extract(b0."body", '$."tags"')) j1, json_tree(b0."body") j2 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."items"') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."n"') IS NOT NULL AND json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."tags"') = 'object' AND j1.value IS NOT NULL AND json_type(b0."body", '$') = 'object' AND j2.type = 'object' AND json_extract(j2.value, '$."leaf"') IS NOT NULL;
-INSERT OR IGNORE INTO "hit" ("item", "name", "leaf") SELECT json_extract(j0.value, '$."n"'), (SELECT s."__id" FROM "__str" s WHERE s."content" = j1.key), json_extract(j2.value, '$."leaf"') FROM "spec" b0, json_each(json_extract(b0."body", '$."items"')) j0, json_each(json_extract(b0."body", '$."tags"')) j1, json_tree(b0."body") j2 WHERE json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."items"') = 'array' AND j0.type = 'object' AND json_extract(j0.value, '$."n"') IS NOT NULL AND json_type(b0."body", '$') = 'object' AND json_type(b0."body", '$."tags"') = 'object' AND j1.value IS NOT NULL AND json_type(b0."body", '$') = 'object' AND j2.type = 'object' AND json_extract(j2.value, '$."leaf"') IS NOT NULL`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const hit = multiset_diff(before.hit, after.hit);
-  const spec = multiset_diff(before.spec, after.spec);
-  return {
-    rels: [
-      { rel: "hit", add: hit.add, del: hit.del },
-      { rel: "spec", add: spec.add, del: spec.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // json_spread_and_capture_and_descent_multiply: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -363,14 +278,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

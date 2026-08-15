@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
-}
-
 const ddl: readonly string[] = [
   `CREATE TABLE "head" ("__id" INTEGER PRIMARY KEY, "repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL, UNIQUE ("repo_id"))`,
   `CREATE TABLE "head_move" ("repo_id" INTEGER NOT NULL, "rev_id" INTEGER NOT NULL)`,
@@ -221,48 +201,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "head", sql: `INSERT OR IGNORE INTO "head" ("repo_id", "rev_id") VALUES (?, ?)`, params: [1, 100] },
 ];
 
-type Snapshot = {
-  readonly head: readonly IRow[];
-  readonly head_move: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    head: select_rows(seam, `SELECT t."repo_id", t."rev_id" FROM "head" t`, rel_columns.head!, rel_column_types.head!),
-    head_move: select_rows(seam, `SELECT t."repo_id", t."rev_id" FROM "head_move" t`, rel_columns.head_move!, rel_column_types.head_move!),
-  });
-}
-
 const final_select: Record<string, string> = {
   head: `SELECT t."repo_id", t."rev_id" FROM "head" t`,
   head_move: `SELECT t."repo_id", t."rev_id" FROM "head_move" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  head_move: { kind: "log", add_sql: `INSERT INTO "head_move" ("repo_id", "rev_id") VALUES (?, ?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`head_move_replaces_key: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`head_move_replaces_key: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`head_move_replaces_key: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "head", kind: "set", table_name: "head", delta_table_name: "__delta_head", frontier_table_name: "__frontier_head", next_frontier_table_name: "__next_frontier_head", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."repo_id", t."rev_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo_id", t."rev_id", t."_sign"`, rule_observers: [] },
@@ -276,69 +218,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_HEAD_0_PROJECT_SQL = `SELECT ?1 AS "repo_id", ?2 AS "rev_id"`;
-const EDGE_HEAD_0_WRITE_SQL = `INSERT INTO "head" ("repo_id", "rev_id") VALUES (?, ?) ON CONFLICT("repo_id") DO UPDATE SET "rev_id" = excluded."rev_id"`;
-const EDGE_HEAD_0_HEAD_COLUMNS: readonly string[] = ["repo_id", "rev_id"];
-const EDGE_HEAD_0_KEY_INDICES: readonly number[] = [0];
-
-function resolveHead_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "head_move", before.head_move, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_HEAD_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_HEAD_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_HEAD_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_HEAD_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const head = multiset_diff(before.head, after.head);
-  const head_move = multiset_diff(before.head_move, after.head_move);
-  return {
-    rels: [
-      { rel: "head", add: head.add, del: head.del },
-      { rel: "head_move", add: head_move.add, del: head_move.del },
-    ],
-    carry_pending: head.add.length > 0 || head.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      resolveHead_0Writes(seam, before, arrivals).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // head_move_replaces_key: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -366,14 +249,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

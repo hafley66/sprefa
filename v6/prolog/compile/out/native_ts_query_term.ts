@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -367,46 +366,6 @@ _*') FROM "query_source" b0 WHERE b0."col1" = (SELECT s."__id" FROM "__str" s WH
   { rel: "captured", sql: `INSERT OR IGNORE INTO "captured" ("capture") SELECT b2."capture" FROM "file_digest" b0, "query_value" b1, "__host_response_tree_sitter" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query" = b1."query" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|tree_sitter' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query")))`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __host_demand_tree_sitter: readonly IRow[];
-  readonly __host_response_tree_sitter: readonly IRow[];
-  readonly captured: readonly IRow[];
-  readonly file_digest: readonly IRow[];
-  readonly interval: readonly IRow[];
-  readonly query_source: readonly IRow[];
-  readonly query_value: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __host_demand_tree_sitter: select_rows(seam, `SELECT CASE WHEN json_valid(t."identity_digest") AND json_type(t."identity_digest") = 'object' AND json_type(t."identity_digest", '$.fn') = 'text' AND json_type(t."identity_digest", '$.args') = 'array' THEN json_extract(t."identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."identity_digest", '$.args')), '') || ')' ELSE t."identity_digest" END AS "identity_digest", CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query") AND json_type(t."query") = 'object' AND json_type(t."query", '$.fn') = 'text' AND json_type(t."query", '$.args') = 'array' THEN json_extract(t."query", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query", '$.args')), '') || ')' ELSE t."query" END AS "query" FROM "__txt___host_demand_tree_sitter" t`, rel_columns.__host_demand_tree_sitter!, rel_column_types.__host_demand_tree_sitter!),
-    __host_response_tree_sitter: select_rows(seam, `SELECT CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", t."ordinal", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query") AND json_type(t."query") = 'object' AND json_type(t."query", '$.fn') = 'text' AND json_type(t."query", '$.args') = 'array' THEN json_extract(t."query", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query", '$.args')), '') || ')' ELSE t."query" END AS "query", CASE WHEN json_valid(t."capture") AND json_type(t."capture") = 'object' AND json_type(t."capture", '$.fn') = 'text' AND json_type(t."capture", '$.args') = 'array' THEN json_extract(t."capture", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."capture", '$.args')), '') || ')' ELSE t."capture" END AS "capture" FROM "__txt___host_response_tree_sitter" t`, rel_columns.__host_response_tree_sitter!, rel_column_types.__host_response_tree_sitter!),
-    captured: select_rows(seam, `SELECT CASE WHEN json_valid(t."capture") AND json_type(t."capture") = 'object' AND json_type(t."capture", '$.fn') = 'text' AND json_type(t."capture", '$.args') = 'array' THEN json_extract(t."capture", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."capture", '$.args')), '') || ')' ELSE t."capture" END AS "capture" FROM "__txt_captured" t`, rel_columns.captured!, rel_column_types.captured!),
-    file_digest: select_rows(seam, `SELECT CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest" FROM "__txt_file_digest" t`, rel_columns.file_digest!, rel_column_types.file_digest!),
-    interval: select_rows(seam, `SELECT t."period", t."bucket" FROM "interval" t`, rel_columns.interval!, rel_column_types.interval!),
-    query_source: select_rows(seam, `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_query_source" t`, rel_columns.query_source!, rel_column_types.query_source!),
-    query_value: select_rows(seam, `SELECT CASE WHEN json_valid(t."query") AND json_type(t."query") = 'object' AND json_type(t."query", '$.fn') = 'text' AND json_type(t."query", '$.args') = 'array' THEN json_extract(t."query", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query", '$.args')), '') || ')' ELSE t."query" END AS "query" FROM "__txt_query_value" t`, rel_columns.query_value!, rel_column_types.query_value!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __host_demand_tree_sitter: select_rows(seam, `SELECT "identity_digest", "witness_digest", "file_digest", "query" FROM "__host_demand_tree_sitter"`, rel_columns.__host_demand_tree_sitter!, rel_column_types.__host_demand_tree_sitter!),
-    __host_response_tree_sitter: select_rows(seam, `SELECT "witness_digest", "ordinal", "file_digest", "query", "capture" FROM "__host_response_tree_sitter"`, rel_columns.__host_response_tree_sitter!, rel_column_types.__host_response_tree_sitter!),
-    captured: select_rows(seam, `SELECT "capture" FROM "captured"`, rel_columns.captured!, rel_column_types.captured!),
-    file_digest: select_rows(seam, `SELECT "file_digest" FROM "file_digest"`, rel_columns.file_digest!, rel_column_types.file_digest!),
-    interval: select_rows(seam, `SELECT "period", "bucket" FROM "interval"`, rel_columns.interval!, rel_column_types.interval!),
-    query_source: select_rows(seam, `SELECT "col1" FROM "query_source"`, rel_columns.query_source!, rel_column_types.query_source!),
-    query_value: select_rows(seam, `SELECT "query" FROM "query_value"`, rel_columns.query_value!, rel_column_types.query_value!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __host_demand_tree_sitter: `SELECT CASE WHEN json_valid(t."identity_digest") AND json_type(t."identity_digest") = 'object' AND json_type(t."identity_digest", '$.fn') = 'text' AND json_type(t."identity_digest", '$.args') = 'array' THEN json_extract(t."identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."identity_digest", '$.args')), '') || ')' ELSE t."identity_digest" END AS "identity_digest", CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query") AND json_type(t."query") = 'object' AND json_type(t."query", '$.fn') = 'text' AND json_type(t."query", '$.args') = 'array' THEN json_extract(t."query", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query", '$.args')), '') || ')' ELSE t."query" END AS "query" FROM "__txt___host_demand_tree_sitter" t`,
   __host_response_tree_sitter: `SELECT CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", t."ordinal", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query") AND json_type(t."query") = 'object' AND json_type(t."query", '$.fn') = 'text' AND json_type(t."query", '$.args') = 'array' THEN json_extract(t."query", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query", '$.args')), '') || ')' ELSE t."query" END AS "query", CASE WHEN json_valid(t."capture") AND json_type(t."capture") = 'object' AND json_type(t."capture", '$.fn') = 'text' AND json_type(t."capture", '$.args') = 'array' THEN json_extract(t."capture", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."capture", '$.args')), '') || ')' ELSE t."capture" END AS "capture" FROM "__txt___host_response_tree_sitter" t`,
@@ -416,35 +375,6 @@ const final_select: Record<string, string> = {
   query_source: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_query_source" t`,
   query_value: `SELECT CASE WHEN json_valid(t."query") AND json_type(t."query") = 'object' AND json_type(t."query", '$.fn') = 'text' AND json_type(t."query", '$.args') = 'array' THEN json_extract(t."query", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query", '$.args')), '') || ')' ELSE t."query" END AS "query" FROM "__txt_query_value" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __host_response_tree_sitter: { kind: "set", add_sql: `INSERT INTO "__host_response_tree_sitter" ("witness_digest", "ordinal", "file_digest", "query", "capture") VALUES (?, ?, ?, ?, ?) ON CONFLICT ("witness_digest", "ordinal") DO UPDATE SET "file_digest" = excluded."file_digest", "query" = excluded."query", "capture" = excluded."capture"`, del_sql: `DELETE FROM "__host_response_tree_sitter" WHERE "witness_digest" = ? AND "ordinal" = ? AND "file_digest" = ? AND "query" = ? AND "capture" = ?` },
-  file_digest: { kind: "set", add_sql: `INSERT OR IGNORE INTO "file_digest" ("file_digest") VALUES (?)`, del_sql: `DELETE FROM "file_digest" WHERE "file_digest" = ?` },
-  interval: { kind: "set", add_sql: `INSERT OR IGNORE INTO "interval" ("period", "bucket") VALUES (?, ?)`, del_sql: `DELETE FROM "interval" WHERE "period" = ? AND "bucket" = ?` },
-  query_source: { kind: "set", add_sql: `INSERT OR IGNORE INTO "query_source" ("col1") VALUES (?)`, del_sql: `DELETE FROM "query_source" WHERE "col1" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`native_ts_query_term: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`native_ts_query_term: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`native_ts_query_term: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__host_demand_tree_sitter", kind: "set", table_name: "__host_demand_tree_sitter", delta_table_name: "__delta___host_demand_tree_sitter", frontier_table_name: "__frontier___host_demand_tree_sitter", next_frontier_table_name: "__next_frontier___host_demand_tree_sitter", columns: ["identity_digest", "witness_digest", "file_digest", "query"], column_types: ["text", "text", "text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."identity_digest") AND json_type(t."identity_digest") = 'object' AND json_type(t."identity_digest", '$.fn') = 'text' AND json_type(t."identity_digest", '$.args') = 'array' THEN json_extract(t."identity_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."identity_digest", '$.args')), '') || ')' ELSE t."identity_digest" END AS "identity_digest", CASE WHEN json_valid(t."witness_digest") AND json_type(t."witness_digest") = 'object' AND json_type(t."witness_digest", '$.fn') = 'text' AND json_type(t."witness_digest", '$.args') = 'array' THEN json_extract(t."witness_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."witness_digest", '$.args')), '') || ')' ELSE t."witness_digest" END AS "witness_digest", CASE WHEN json_valid(t."file_digest") AND json_type(t."file_digest") = 'object' AND json_type(t."file_digest", '$.fn') = 'text' AND json_type(t."file_digest", '$.args') = 'array' THEN json_extract(t."file_digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_digest", '$.args')), '') || ')' ELSE t."file_digest" END AS "file_digest", CASE WHEN json_valid(t."query") AND json_type(t."query") = 'object' AND json_type(t."query", '$.fn') = 'text' AND json_type(t."query", '$.args') = 'array' THEN json_extract(t."query", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."query", '$.args')), '') || ')' ELSE t."query" END AS "query", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___host_demand_tree_sitter" t WHERE t."_sign" IN (-1, 1) GROUP BY t."identity_digest", t."witness_digest", t."file_digest", t."query", t."_sign"`, rule_observers: [] },
@@ -477,59 +407,10 @@ INSERT OR IGNORE INTO "__host_demand_tree_sitter" ("identity_digest", "witness_d
 INSERT OR IGNORE INTO "captured" ("capture") SELECT b2."capture" FROM "file_digest" b0, "query_value" b1, "__host_response_tree_sitter" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query" = b1."query" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|tree_sitter' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query")))`, support_sql: [`DELETE FROM "__support_next_captured"`, `INSERT INTO "__support_next_captured" ("capture", "__refcount") SELECT "capture", sum("__refcount") FROM (SELECT b2."capture" AS "capture", count(*) AS "__refcount" FROM "file_digest" b0, "query_value" b1, "__host_response_tree_sitter" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query" = b1."query" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|tree_sitter' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query"))) GROUP BY b2."capture") GROUP BY "capture"`, `UPDATE "captured" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_captured" n WHERE n."capture" = h."capture"), 0)`, `INSERT INTO "__delta_captured" ("_sign", "_sequence", "capture") SELECT -1, row_number() OVER () - 1, "capture" FROM "captured" WHERE "__refcount" <= 0`, `DELETE FROM "captured" WHERE "__refcount" <= 0`, `DELETE FROM "__new_captured"`, `INSERT INTO "__new_captured" ("capture", "__refcount") SELECT n."capture", n."__refcount" FROM "__support_next_captured" n LEFT JOIN "captured" h ON n."capture" = h."capture" WHERE h."capture" IS NULL`, `INSERT INTO "__delta_captured" ("_sign", "_sequence", "capture") SELECT 1, "rowid" - 1, "capture" FROM "__new_captured"`, `INSERT INTO "__frontier_captured" ("_phase", "_sequence", "capture") SELECT ?, "rowid" - 1, "capture" FROM "__new_captured"`, `INSERT INTO "__next_frontier_captured" ("_phase", "_sequence", "capture") SELECT ?, "rowid" - 1, "capture" FROM "__new_captured"`, `INSERT OR IGNORE INTO "captured" ("capture", "__refcount") SELECT n."capture", n."__refcount" FROM "__support_next_captured" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "query_value";
-INSERT OR IGNORE INTO "query_value" ("query") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = '((call_expression function: (identifier) @callee arguments: (arguments [(_) @arg ","]+)) (#eq? @callee "fetch") (#match? @arg "^[a-z]+$"))
-(comment)?
-_*') FROM "query_source" b0 WHERE b0."col1" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unit');
-DELETE FROM "__host_demand_tree_sitter";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ('identity|tree_sitter' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query")) FROM "file_digest" b0, "query_value" b1 UNION SELECT DISTINCT ('witness|tree_sitter' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query")) FROM "file_digest" b0, "query_value" b1;
-INSERT OR IGNORE INTO "__host_demand_tree_sitter" ("identity_digest", "witness_digest", "file_digest", "query") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = ('identity|tree_sitter' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query"))), (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|tree_sitter' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query"))), b0."file_digest", b1."query" FROM "file_digest" b0, "query_value" b1;
-DELETE FROM "captured";
-INSERT OR IGNORE INTO "captured" ("capture") SELECT b2."capture" FROM "file_digest" b0, "query_value" b1, "__host_response_tree_sitter" b2 WHERE b2."file_digest" = b0."file_digest" AND b2."query" = b1."query" AND b2."witness_digest" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ('witness|tree_sitter' || '|' || 'file_digest' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."file_digest") || '|' || 'query' || ':' || 'text' || '=' || (SELECT s."content" FROM "__str" s WHERE s."__id" = b1."query")))`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __host_demand_tree_sitter = multiset_diff(before.__host_demand_tree_sitter, after.__host_demand_tree_sitter);
-  const __host_response_tree_sitter = multiset_diff(before.__host_response_tree_sitter, after.__host_response_tree_sitter);
-  const captured = multiset_diff(before.captured, after.captured);
-  const file_digest = multiset_diff(before.file_digest, after.file_digest);
-  const interval = multiset_diff(before.interval, after.interval);
-  const query_source = multiset_diff(before.query_source, after.query_source);
-  const query_value = multiset_diff(before.query_value, after.query_value);
-  return {
-    rels: [
-      { rel: "__host_demand_tree_sitter", add: __host_demand_tree_sitter.add, del: __host_demand_tree_sitter.del },
-      { rel: "__host_response_tree_sitter", add: __host_response_tree_sitter.add, del: __host_response_tree_sitter.del },
-      { rel: "captured", add: captured.add, del: captured.del },
-      { rel: "file_digest", add: file_digest.add, del: file_digest.del },
-      { rel: "interval", add: interval.add, del: interval.del },
-      { rel: "query_source", add: query_source.add, del: query_source.del },
-      { rel: "query_value", add: query_value.add, del: query_value.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // native_ts_query_term: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -558,14 +439,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

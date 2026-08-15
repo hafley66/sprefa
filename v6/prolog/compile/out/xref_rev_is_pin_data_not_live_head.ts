@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
     });
     return { ...arrival, row };
   });
-}
-
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
 }
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -307,40 +287,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "known_repo", sql: `INSERT OR IGNORE INTO "known_repo" ("col1") VALUES (?)`, params: [2] },
 ];
 
-type Snapshot = {
-  readonly head: readonly IRow[];
-  readonly head_move: readonly IRow[];
-  readonly known_repo: readonly IRow[];
-  readonly pin_extracted: readonly IRow[];
-  readonly xref: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    head: select_rows(seam, `SELECT t."repo_id", t."rev_id" FROM "head" t`, rel_columns.head!, rel_column_types.head!),
-    head_move: select_rows(seam, `SELECT t."repo_id", t."rev_id" FROM "head_move" t`, rel_columns.head_move!, rel_column_types.head_move!),
-    known_repo: select_rows(seam, `SELECT t."col1" FROM "known_repo" t`, rel_columns.known_repo!, rel_column_types.known_repo!),
-    pin_extracted: select_rows(seam, `SELECT t."from_span_id", t."to_repo_id", t."to_rev_id", CASE WHEN json_valid(t."to_path") AND json_type(t."to_path") = 'object' AND json_type(t."to_path", '$.fn') = 'text' AND json_type(t."to_path", '$.args') = 'array' THEN json_extract(t."to_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to_path", '$.args')), '') || ')' ELSE t."to_path" END AS "to_path", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_pin_extracted" t`, rel_columns.pin_extracted!, rel_column_types.pin_extracted!),
-    xref: select_rows(seam, `SELECT t."from_span_id", t."to_repo_id", t."to_rev_id", CASE WHEN json_valid(t."to_path") AND json_type(t."to_path") = 'object' AND json_type(t."to_path", '$.fn') = 'text' AND json_type(t."to_path", '$.args') = 'array' THEN json_extract(t."to_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to_path", '$.args')), '') || ')' ELSE t."to_path" END AS "to_path", CASE WHEN json_valid(t."col5") AND json_type(t."col5") = 'object' AND json_type(t."col5", '$.fn') = 'text' AND json_type(t."col5", '$.args') = 'array' THEN json_extract(t."col5", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col5", '$.args')), '') || ')' ELSE t."col5" END AS "col5", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_xref" t`, rel_columns.xref!, rel_column_types.xref!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    head: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head"`, rel_columns.head!, rel_column_types.head!),
-    head_move: select_rows(seam, `SELECT "repo_id", "rev_id" FROM "head_move"`, rel_columns.head_move!, rel_column_types.head_move!),
-    known_repo: select_rows(seam, `SELECT "col1" FROM "known_repo"`, rel_columns.known_repo!, rel_column_types.known_repo!),
-    pin_extracted: select_rows(seam, `SELECT "from_span_id", "to_repo_id", "to_rev_id", "to_path", "kind" FROM "pin_extracted"`, rel_columns.pin_extracted!, rel_column_types.pin_extracted!),
-    xref: select_rows(seam, `SELECT "from_span_id", "to_repo_id", "to_rev_id", "to_path", "col5", "kind" FROM "xref"`, rel_columns.xref!, rel_column_types.xref!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   head: `SELECT t."repo_id", t."rev_id" FROM "head" t`,
   head_move: `SELECT t."repo_id", t."rev_id" FROM "head_move" t`,
@@ -348,34 +294,6 @@ const final_select: Record<string, string> = {
   pin_extracted: `SELECT t."from_span_id", t."to_repo_id", t."to_rev_id", CASE WHEN json_valid(t."to_path") AND json_type(t."to_path") = 'object' AND json_type(t."to_path", '$.fn') = 'text' AND json_type(t."to_path", '$.args') = 'array' THEN json_extract(t."to_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to_path", '$.args')), '') || ')' ELSE t."to_path" END AS "to_path", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_pin_extracted" t`,
   xref: `SELECT t."from_span_id", t."to_repo_id", t."to_rev_id", CASE WHEN json_valid(t."to_path") AND json_type(t."to_path") = 'object' AND json_type(t."to_path", '$.fn') = 'text' AND json_type(t."to_path", '$.args') = 'array' THEN json_extract(t."to_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to_path", '$.args')), '') || ')' ELSE t."to_path" END AS "to_path", CASE WHEN json_valid(t."col5") AND json_type(t."col5") = 'object' AND json_type(t."col5", '$.fn') = 'text' AND json_type(t."col5", '$.args') = 'array' THEN json_extract(t."col5", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col5", '$.args')), '') || ')' ELSE t."col5" END AS "col5", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_xref" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  head_move: { kind: "log", add_sql: `INSERT INTO "head_move" ("repo_id", "rev_id") VALUES (?, ?)`, del_sql: null },
-  known_repo: { kind: "set", add_sql: `INSERT OR IGNORE INTO "known_repo" ("col1") VALUES (?)`, del_sql: `DELETE FROM "known_repo" WHERE "col1" = ?` },
-  pin_extracted: { kind: "log", add_sql: `INSERT INTO "pin_extracted" ("from_span_id", "to_repo_id", "to_rev_id", "to_path", "kind") VALUES (?, ?, ?, ?, ?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`xref_rev_is_pin_data_not_live_head: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`xref_rev_is_pin_data_not_live_head: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`xref_rev_is_pin_data_not_live_head: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "head", kind: "set", table_name: "head", delta_table_name: "__delta_head", frontier_table_name: "__frontier_head", next_frontier_table_name: "__next_frontier_head", columns: ["repo_id", "rev_id"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."repo_id", t."rev_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_head" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo_id", t."rev_id", t."_sign"`, rule_observers: [] },
@@ -393,100 +311,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_XREF_0_PROJECT_SQL = `SELECT ?1 AS "from_span_id", ?2 AS "to_repo_id", ?3 AS "to_rev_id", ?4 AS "to_path", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') AS "col5", ?5 AS "kind"`;
-const EDGE_XREF_0_WRITE_SQL = `INSERT INTO "xref" ("from_span_id", "to_repo_id", "to_rev_id", "to_path", "col5", "kind") VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT("from_span_id") DO UPDATE SET "to_repo_id" = excluded."to_repo_id", "to_rev_id" = excluded."to_rev_id", "to_path" = excluded."to_path", "col5" = excluded."col5", "kind" = excluded."kind"`;
-const EDGE_XREF_0_HEAD_COLUMNS: readonly string[] = ["from_span_id", "to_repo_id", "to_rev_id", "to_path", "col5", "kind"];
-const EDGE_XREF_0_KEY_INDICES: readonly number[] = [0];
-
-const EDGE_HEAD_1_PROJECT_SQL = `SELECT ?1 AS "repo_id", ?2 AS "rev_id"`;
-const EDGE_HEAD_1_WRITE_SQL = `INSERT INTO "head" ("repo_id", "rev_id") VALUES (?, ?) ON CONFLICT("repo_id") DO UPDATE SET "rev_id" = excluded."rev_id"`;
-const EDGE_HEAD_1_HEAD_COLUMNS: readonly string[] = ["repo_id", "rev_id"];
-const EDGE_HEAD_1_KEY_INDICES: readonly number[] = [0];
-
-function resolveXref_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "pin_extracted", before.pin_extracted, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_XREF_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_XREF_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_XREF_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_XREF_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolveHead_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "head_move", before.head_move, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_HEAD_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_HEAD_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_HEAD_1_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_HEAD_1_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const head = multiset_diff(before.head, after.head);
-  const head_move = multiset_diff(before.head_move, after.head_move);
-  const known_repo = multiset_diff(before.known_repo, after.known_repo);
-  const pin_extracted = multiset_diff(before.pin_extracted, after.pin_extracted);
-  const xref = multiset_diff(before.xref, after.xref);
-  return {
-    rels: [
-      { rel: "head", add: head.add, del: head.del },
-      { rel: "head_move", add: head_move.add, del: head_move.del },
-      { rel: "known_repo", add: known_repo.add, del: known_repo.del },
-      { rel: "pin_extracted", add: pin_extracted.add, del: pin_extracted.del },
-      { rel: "xref", add: xref.add, del: xref.del },
-    ],
-    carry_pending: head.add.length > 0 || head.del.length > 0 || xref.add.length > 0 || xref.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolveXref_0Writes(seam, before.stored, arrivals), resolveHead_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // xref_rev_is_pin_data_not_live_head: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -516,14 +344,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

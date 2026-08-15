@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -236,61 +235,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "simple_joined", sql: `INSERT OR IGNORE INTO "simple_joined" ("group", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ',' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) AS "__agg_2" FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0)`, params: [] },
 ];
 
-type Snapshot = {
-  readonly item: readonly IRow[];
-  readonly simple_joined: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    item: select_rows(seam, `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_item" t`, rel_columns.item!, rel_column_types.item!),
-    simple_joined: select_rows(seam, `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_simple_joined" t`, rel_columns.simple_joined!, rel_column_types.simple_joined!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    item: select_rows(seam, `SELECT "group", "value" FROM "item"`, rel_columns.item!, rel_column_types.item!),
-    simple_joined: select_rows(seam, `SELECT "group", "col2" FROM "simple_joined"`, rel_columns.simple_joined!, rel_column_types.simple_joined!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   item: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_item" t`,
   simple_joined: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_simple_joined" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  item: { kind: "set", add_sql: `INSERT OR IGNORE INTO "item" ("group", "value") VALUES (?, ?)`, del_sql: `DELETE FROM "item" WHERE "group" = ? AND "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`ordered_group_concat_one_argument_defaults_to_comma: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`ordered_group_concat_one_argument_defaults_to_comma: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`ordered_group_concat_one_argument_defaults_to_comma: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "item", kind: "set", table_name: "item", delta_table_name: "__delta_item", frontier_table_name: "__frontier_item", next_frontier_table_name: "__next_frontier_item", columns: ["group", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "item" ("group", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "group", "value"`, arrival_del_sql: `DELETE FROM "item" WHERE ("group", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "group", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."group") AND json_type(t."group") = 'object' AND json_type(t."group", '$.fn') = 'text' AND json_type(t."group", '$.args') = 'array' THEN json_extract(t."group", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."group", '$.args')), '') || ')' ELSE t."group" END AS "group", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_item" t WHERE t."_sign" IN (-1, 1) GROUP BY t."group", t."value", t."_sign"`, rule_observers: ["simple_joined/2"] },
@@ -306,43 +254,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content
 INSERT OR IGNORE INTO "simple_joined" ("group", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ',' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) AS "__agg_2" FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0)`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_simple_joined"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_simple_joined" ("group") SELECT DISTINCT d0."group" FROM "__delta_item" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "simple_joined" WHERE ("group") IN (SELECT "group" FROM "__agg_scope_simple_joined") RETURNING "group", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "simple_joined" ("group", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ',' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) AS "__agg_2" FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_simple_joined") GROUP BY b0."group" HAVING count(*) > 0) RETURNING "group", "col2"`], intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ',' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) FROM "item" b0 WHERE (b0."group") IN (SELECT "group" FROM "__agg_scope_simple_joined") GROUP BY b0."group" HAVING count(*) > 0`], delta_maintained: false } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "simple_joined";
-INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ',' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0;
-INSERT OR IGNORE INTO "simple_joined" ("group", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."group" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value"), ',' ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."value")) AS "__agg_2" FROM "item" b0 GROUP BY b0."group" HAVING count(*) > 0)`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const item = multiset_diff(before.item, after.item);
-  const simple_joined = multiset_diff(before.simple_joined, after.simple_joined);
-  return {
-    rels: [
-      { rel: "item", add: item.add, del: item.del },
-      { rel: "simple_joined", add: simple_joined.add, del: simple_joined.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // ordered_group_concat_one_argument_defaults_to_comma: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -371,14 +286,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

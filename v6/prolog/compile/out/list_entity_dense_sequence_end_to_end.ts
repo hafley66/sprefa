@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -289,43 +288,6 @@ const arrival_targets: readonly string[] = ["__gen__list_entity_dense_sequence_t
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly __gen__list_entity_dense_sequence_text_42382f22da23f5c6: readonly IRow[];
-  readonly __gen__list_entity_dense_sequence_text_42382f22da23f5c6__member: readonly IRow[];
-  readonly __gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner: readonly IRow[];
-  readonly __gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount: readonly IRow[];
-  readonly entity_parent: readonly IRow[];
-  readonly entity_parent__entries: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_entity_dense_sequence_text_42382f22da23f5c6: select_rows(seam, `SELECT t."id" FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6" t`, rel_columns.__gen__list_entity_dense_sequence_text_42382f22da23f5c6!, rel_column_types.__gen__list_entity_dense_sequence_text_42382f22da23f5c6!),
-    __gen__list_entity_dense_sequence_text_42382f22da23f5c6__member: select_rows(seam, `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_entity_dense_sequence_text_42382f22da23f5c6__member" t`, rel_columns.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member!, rel_column_types.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member!),
-    __gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner: select_rows(seam, `SELECT t."owner_id", t."list_id" FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner" t`, rel_columns.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner!, rel_column_types.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner!),
-    __gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount: select_rows(seam, `SELECT t."list_id", t."count" FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount" t`, rel_columns.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount!, rel_column_types.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount!),
-    entity_parent: select_rows(seam, `SELECT t."id" FROM "entity_parent" t`, rel_columns.entity_parent!, rel_column_types.entity_parent!),
-    entity_parent__entries: select_rows(seam, `SELECT t."entity_parent_id", t."__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id" FROM "entity_parent__entries" t`, rel_columns.entity_parent__entries!, rel_column_types.entity_parent__entries!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_entity_dense_sequence_text_42382f22da23f5c6: select_rows(seam, `SELECT "id" FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6"`, rel_columns.__gen__list_entity_dense_sequence_text_42382f22da23f5c6!, rel_column_types.__gen__list_entity_dense_sequence_text_42382f22da23f5c6!),
-    __gen__list_entity_dense_sequence_text_42382f22da23f5c6__member: select_rows(seam, `SELECT "list_id", "idx", "value" FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member"`, rel_columns.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member!, rel_column_types.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member!),
-    __gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner: select_rows(seam, `SELECT "owner_id", "list_id" FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner"`, rel_columns.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner!, rel_column_types.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner!),
-    __gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount: select_rows(seam, `SELECT "list_id", "count" FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount"`, rel_columns.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount!, rel_column_types.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount!),
-    entity_parent: select_rows(seam, `SELECT "id" FROM "entity_parent"`, rel_columns.entity_parent!, rel_column_types.entity_parent!),
-    entity_parent__entries: select_rows(seam, `SELECT "entity_parent_id", "__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id" FROM "entity_parent__entries"`, rel_columns.entity_parent__entries!, rel_column_types.entity_parent__entries!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__list_entity_dense_sequence_text_42382f22da23f5c6: `SELECT t."id" FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6" t`,
   __gen__list_entity_dense_sequence_text_42382f22da23f5c6__member: `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_entity_dense_sequence_text_42382f22da23f5c6__member" t`,
@@ -334,37 +296,6 @@ const final_select: Record<string, string> = {
   entity_parent: `SELECT t."id" FROM "entity_parent" t`,
   entity_parent__entries: `SELECT t."entity_parent_id", t."__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id" FROM "entity_parent__entries" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_entity_dense_sequence_text_42382f22da23f5c6: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_text_42382f22da23f5c6" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6" WHERE "id" = ?` },
-  __gen__list_entity_dense_sequence_text_42382f22da23f5c6__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member" ("list_id", "idx", "value") VALUES (?, ?, ?) ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member" WHERE "list_id" = ? AND "idx" = ? AND "value" = ?` },
-  __gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner" ("owner_id", "list_id") VALUES (?, ?) ON CONFLICT ("owner_id", "list_id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner" WHERE "owner_id" = ? AND "list_id" = ?` },
-  __gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount" ("list_id", "count") VALUES (?, ?) ON CONFLICT ("list_id") DO UPDATE SET "count" = excluded."count"`, del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount" WHERE "list_id" = ? AND "count" = ?` },
-  entity_parent: { kind: "set", add_sql: `INSERT INTO "entity_parent" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "entity_parent" WHERE "id" = ?` },
-  entity_parent__entries: { kind: "set", add_sql: `INSERT INTO "entity_parent__entries" ("entity_parent_id", "__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id") VALUES (?, ?) ON CONFLICT ("entity_parent_id") DO UPDATE SET "__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id" = excluded."__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id"`, del_sql: `DELETE FROM "entity_parent__entries" WHERE "entity_parent_id" = ? AND "__gen__list_entity_dense_sequence_text_42382f22da23f5c6_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`list_entity_dense_sequence_end_to_end: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`list_entity_dense_sequence_end_to_end: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`list_entity_dense_sequence_end_to_end: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_entity_dense_sequence_text_42382f22da23f5c6", kind: "set", table_name: "__gen__list_entity_dense_sequence_text_42382f22da23f5c6", delta_table_name: "__delta___gen__list_entity_dense_sequence_text_42382f22da23f5c6", frontier_table_name: "__frontier___gen__list_entity_dense_sequence_text_42382f22da23f5c6", next_frontier_table_name: "__next_frontier___gen__list_entity_dense_sequence_text_42382f22da23f5c6", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_entity_dense_sequence_text_42382f22da23f5c6" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "__gen__list_entity_dense_sequence_text_42382f22da23f5c6" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__list_entity_dense_sequence_text_42382f22da23f5c6" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: [] },
@@ -381,49 +312,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__list_entity_dense_sequence_text_42382f22da23f5c6 = multiset_diff(before.__gen__list_entity_dense_sequence_text_42382f22da23f5c6, after.__gen__list_entity_dense_sequence_text_42382f22da23f5c6);
-  const __gen__list_entity_dense_sequence_text_42382f22da23f5c6__member = multiset_diff(before.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member, after.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member);
-  const __gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner = multiset_diff(before.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner, after.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner);
-  const __gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount = multiset_diff(before.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount, after.__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount);
-  const entity_parent = multiset_diff(before.entity_parent, after.entity_parent);
-  const entity_parent__entries = multiset_diff(before.entity_parent__entries, after.entity_parent__entries);
-  return {
-    rels: [
-      { rel: "__gen__list_entity_dense_sequence_text_42382f22da23f5c6", add: __gen__list_entity_dense_sequence_text_42382f22da23f5c6.add, del: __gen__list_entity_dense_sequence_text_42382f22da23f5c6.del },
-      { rel: "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__member", add: __gen__list_entity_dense_sequence_text_42382f22da23f5c6__member.add, del: __gen__list_entity_dense_sequence_text_42382f22da23f5c6__member.del },
-      { rel: "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner", add: __gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner.add, del: __gen__list_entity_dense_sequence_text_42382f22da23f5c6__owner.del },
-      { rel: "__gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount", add: __gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount.add, del: __gen__list_entity_dense_sequence_text_42382f22da23f5c6__refcount.del },
-      { rel: "entity_parent", add: entity_parent.add, del: entity_parent.del },
-      { rel: "entity_parent__entries", add: entity_parent__entries.add, del: entity_parent__entries.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // list_entity_dense_sequence_end_to_end: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -452,14 +344,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
