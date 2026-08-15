@@ -6383,6 +6383,25 @@ surface_round_trip(Source, Program, RoundTripped, Text) :-
     atom_codes(Text, PrintedCodes),
     once(parse_dl(PrintedCodes, RoundTripped, _, [])).
 
+% A second print of the reparsed program. `=@=` alone passes on a printer that
+% renames or reorders bounds, and a needle passes on one that emits the needle
+% plus junk; only equal TEXT pins the surface byte for byte.
+surface_print_fixpoint(Source, Text) :-
+    atom_codes(Source, Codes),
+    once(parse_dl(Codes, Program, Bindings, [])),
+    once(print_dl_program(Program, Bindings, Text)),
+    atom_codes(Text, PrintedCodes),
+    once(parse_dl(PrintedCodes, Reparsed, ReparsedBindings, [])),
+    once(print_dl_program(Reparsed, ReparsedBindings, SecondText)),
+    (   Text == SecondText
+    ->  true
+    ;   throw(print_fixpoint_broken(Source, Text, SecondText))
+    ).
+
+surface_parse_stops(Source, Error) :-
+    atom_codes(Source, Codes),
+    catch(( once(parse_dl(Codes, _, _, _)), Error = parsed ), Error, true).
+
 % compile_dl6/2 names the emitted module after the source BASENAME, so two
 % texts only compare byte-for-byte from equally named files in separate
 % directories.
@@ -6545,6 +6564,97 @@ test(an_is_clause_emits_interface_catalog_metadata) :-
         WithoutClause),
     WithClause \== WithoutClause,
     once(sub_atom(WithClause, _, _, _, 'implementation')).
+
+% ═══ bounds inside the parameter parens (ruling template_bound_spelling) ═════
+
+test(every_bounds_spelling_prints_to_a_fixpoint) :-
+    forall(member(Source-Expected,
+                  ['interface json_encodable.\nrel pair(T: json_encodable)(first: T, second: T).\n'
+                   -'interface json_encodable.\nrel pair(T: json_encodable)(first: T, second: T).\n',
+                   'interface json_encodable.\ninterface addressable.\nrel box(T: json_encodable + addressable)(value: T).\n'
+                   -'interface json_encodable.\ninterface addressable.\nrel box(T: json_encodable + addressable)(value: T).\n',
+                   'interface json_encodable.\nrel entry(Key: json_encodable, Value)(key: Key, value: Value).\n'
+                   -'interface json_encodable.\nrel entry(Key: json_encodable, Value)(key: Key, value: Value).\n',
+                   'interface json_encodable.\nrel shapes.pair(T: json_encodable)(first: T, second: T).\n'
+                   -'interface json_encodable.\nrel shapes.pair(T: json_encodable)(first: T, second: T).\n']),
+           ( surface_print_fixpoint(Source, Text),
+             (   Text == Expected
+             ->  true
+             ;   throw(printed_surface_moved(Source, Expected, Text)) ) )).
+
+test(a_multi_bound_parameter_keeps_its_constraint_order) :-
+    surface_decls(
+        'interface json_encodable. interface addressable. rel box(T: json_encodable + addressable)(value: T).',
+        Decls),
+    memberchk(rel_template([box],
+                           [type_parameter('T', [json_encodable, addressable])],
+                           [column(value, 'T')]),
+              Decls).
+
+test(a_bounded_parameter_sits_beside_a_free_one) :-
+    surface_decls(
+        'interface json_encodable. rel entry(Key: json_encodable, Value)(key: Key, value: Value).',
+        Decls),
+    memberchk(rel_template([entry],
+                           [type_parameter('Key', [json_encodable]),
+                            type_parameter('Value', [])],
+                           [column(key, 'Key'), column(value, 'Value')]),
+              Decls).
+
+% The ruling keeps parens as the one grouping symbol, so neither competing
+% spelling reaches a declaration: both stop in the statement production.
+test(angle_bracket_bounds_are_outside_the_grammar) :-
+    surface_parse_stops(
+        'interface json_encodable. rel pair<T: json_encodable>(first: T).',
+        Error),
+    Error = dl_parse_error(statement, _).
+
+test(a_where_clause_is_outside_the_grammar) :-
+    surface_parse_stops(
+        'interface json_encodable. rel pair(T)(first: T) where T: json_encodable.',
+        Error),
+    Error = dl_parse_error(statement, _).
+
+test(a_trailing_plus_stops_the_parameter_group) :-
+    surface_parse_stops(
+        'interface json_encodable. rel pair(T: json_encodable +)(first: T).',
+        Error),
+    Error = dl_parse_error(statement, _).
+
+% An empty first group cannot mean a template: generic_parameters//1 requires a
+% non-empty list, so `rel pair()` stays the arity-zero declaration.
+test(an_empty_parameter_group_is_not_a_template) :-
+    surface_parse_stops('rel pair()(first: int).', Error),
+    Error = dl_parse_error(statement, _).
+
+% A bound names an INTERFACE. Nothing at parse separates an interface name
+% from a sibling parameter name, so the sibling spelling parses and stops at
+% the expander that owns interface identity.
+test(a_bound_naming_a_sibling_parameter_stops_at_interface_unknown) :-
+    surface_decls(
+        'interface json_encodable. rel pair(T: json_encodable, U: T)(first: T, second: U).',
+        Decls),
+    memberchk(rel_template([pair],
+                           [type_parameter('T', [json_encodable]),
+                            type_parameter('U', ['T'])],
+                           _),
+              Decls),
+    Program = prog([ interface_decl(json_encodable, []),
+                     rel_template([pair],
+                                  [type_parameter('T', [json_encodable]),
+                                   type_parameter('U', ['T'])],
+                                  [column(first, 'T'), column(second, 'U')]),
+                     col_type(edge/1, endpoints, pair(int, int)) ], []),
+    catch(expand_generic_program(Program, _), Thrown, true),
+    Thrown == unsupported_construct(interface_unknown('T')).
+
+test(a_bounded_template_reaches_the_text_door) :-
+    canonical_type_name(pair(int), PairName),
+    door_emitted_text(bounded_pair,
+        'interface json_encodable.\nrel pair(T: json_encodable)(first: T, second: T).\nrel edge(id: int, endpoints: pair(int)).\n',
+        Emitted),
+    format(atom(TableNeedle), 'CREATE TABLE "~w"', [PairName]),
+    once(sub_atom(Emitted, _, _, _, TableNeedle)).
 
 :- end_tests(rel_template_and_is_clause).
 
