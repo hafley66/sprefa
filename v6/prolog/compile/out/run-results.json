@@ -644,6 +644,20 @@
     "final_detail": ""
   },
   {
+    "name": "mutual_closure_needs_outer_rounds",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "typegen_list_element_ladder",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "extraction_fork_callgraph",
     "bucket": "identical",
     "detail": "",

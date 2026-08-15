@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "edge": {
+      "additionalProperties":false,
+      "properties": {"from_node": {"type":"integer"},"to_node": {"type":"integer"}},
+      "required": ["from_node", "to_node" ],
+      "type":"object"
+    },
+    "path": {
+      "additionalProperties":false,
+      "properties": {"from_node": {"type":"integer"},"to_node": {"type":"integer"}},
+      "required": ["from_node", "to_node" ],
+      "type":"object"
+    },
+    "reach": {
+      "additionalProperties":false,
+      "properties": {"from_node": {"type":"integer"},"to_node": {"type":"integer"}},
+      "required": ["from_node", "to_node" ],
+      "type":"object"
+    }
+  },
+  "$id":"mutual_closure_needs_outer_rounds#ca8ee6717896dc3d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
