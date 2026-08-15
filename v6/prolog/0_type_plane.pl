@@ -124,6 +124,12 @@ column_storage(Types, json_list(Element), json_list(Element)) :-
     ;   throw(unsupported_construct(list_element_not_scalar(Element)))
     ).
 
+% Stores the minted entity's INTEGER id (lower.pl:column_def/4). The element
+% lands in the member rel's `value` column, so every column type is admissible.
+column_storage(Types, list(Element), list(Element)) :-
+    !,
+    column_storage(Types, Element, _).
+
 column_storage(_, bool, bool) :- !.
 column_storage(_, float, float) :- !.
 column_storage(Types, Name, ref(Name)) :- declared_type_name(Types, Name), !.

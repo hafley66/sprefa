@@ -336,8 +336,8 @@ program_violation(type_cycle, prog(Decls, _), Names) :-
 % parser accepts a bare identifier in type position (that is what makes
 % `at: span` spellable at all), so a typo would otherwise become a column
 % with no storage kind at all.
-% json_list(T) is checked by 0_type_plane.pl:column_storage/3 instead of by the
-% primitive list here, because its two failure modes carry DIFFERENT reasons
+% json_list(T) and list(T) are checked by 0_type_plane.pl:column_storage/3
+% instead of by the primitive list here: their two failure modes carry reasons
 % (list_of_relation_refs vs list_element_not_scalar) and collapsing both into
 % column_type_unknown would lose which one it was.
 program_violation(column_type_unknown, prog(Decls, _), Name) :-
@@ -345,6 +345,7 @@ program_violation(column_type_unknown, prog(Decls, _), Name) :-
     declared_column_type_use(Decls, Name),
     \+ memberchk(Name, [int, text, json, bool, float]),
     \+ Name = json_list(_),
+    \+ Name = list(_),
     \+ declared_type_name(Types, Name).
 
 % An argument sitting in a ref-typed column that is not a relation value of

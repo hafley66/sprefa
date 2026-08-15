@@ -4883,12 +4883,11 @@ test(generic_expansion_retargets_ref_target_schema_mirror) :-
     expand_generic_program(Program, prog(Expanded, _)),
     memberchk(type_decl(item,
                         [col(item_id, int), col(note, int),
-                         col(items, int)]),
+                         col(items, list(text))]),
               Expanded),
     memberchk(col_type(box/2, subject, item), Expanded),
     memberchk(col_type(_, value, item), Expanded),
-    \+ member(col_type(item/3, note, option(text)), Expanded),
-    \+ member(col_type(item/3, items, list(text)), Expanded).
+    \+ member(col_type(item/3, note, option(text)), Expanded).
 
 % The receipt uses the full e2e program. Under fix A, only whole-rel movement
 % is invariant; a within-rel column shuffle changes the program.
@@ -4940,7 +4939,9 @@ test(generic_nested_list_mints_inner_and_outer) :-
     member(col_type('__gen__list_list_text_735a7cc11c2152ea'/1, content, text),
            Expanded),
     member(col_type('__gen__list_text_df210f232c1299bd'/1, content, text), Expanded),
-    \+ member(col_type(_, value, list(text)), Expanded).
+    member(col_type('__gen__list_list_text_735a7cc11c2152ea__member'/3,
+                    value, list(text)),
+           Expanded).
 
 test(generic_nested_list_declaration_permutation_is_byte_deterministic) :-
     nested_list_decls(Decls),
@@ -4959,8 +4960,7 @@ test(list_rel_element_mints_ref_typed_member_value) :-
     expand_generic_program(prog(Decls, []), prog(Expanded, _)),
     member(col_type('__gen__list_fighter_summary_b424a4b49951eef7__member'/3,
                     value, fighter_summary), Expanded),
-    member(col_type(squad/2, members, int), Expanded),
-    \+ member(col_type(_, value, list(fighter_summary)), Expanded).
+    member(col_type(squad/2, members, list(fighter_summary)), Expanded).
 
 test(list_rel_element_declaration_permutation_is_byte_deterministic) :-
     rel_element_decls(Decls),
@@ -8953,6 +8953,64 @@ member_rel_name(MemberName) :-
     atomic_list_concat([EntityName, member], '__', MemberName).
 
 :- end_tests(list_value_position).
+
+% A list column's DECLARED spelling is what the type plane and the boundary
+% read; its STORAGE is the entity id. Both survive to the relplan.
+:- begin_tests(list_column_spelling).
+
+list_parts_program(
+    prog([ col_type(row_parts/2, name, text),
+           col_type(row_parts/2, parts, list(text)),
+           keyed(row_parts/2, [1]) ],
+         [])).
+
+% FAIL-PRE-FIX: replace_generic_type/3 collapsed the column to `int` before
+% the relplan was built, so nothing downstream could tell a list id from an
+% ordinary integer.
+test(the_relplan_keeps_the_list_spelling) :-
+    list_parts_program(Program),
+    program_plan(fixture(list_spelling, Program, [], [], [])-[],
+                 [intern(direct)], plan(_, _, _, RelPlans, _, _, _, _, _)),
+    relplan_column_types(RelPlans, row_parts/2, ColumnTypes),
+    ColumnTypes == [text, list(text)],
+    relplan_declared_types(RelPlans, row_parts/2, DeclaredTypes),
+    DeclaredTypes == [text, list(text)].
+
+% FAIL-PRE-FIX: column_storage/3 had no list/1 arm and threw
+% column_type_unknown once the collapse stopped.
+test(the_storage_kind_carries_the_element_type) :-
+    type_plane:column_storage([], list(text), list(text)),
+    type_plane:column_storage([], list(int), list(int)),
+    type_plane:column_storage([], list(list(text)), list(list(text))).
+
+% The element reaches the member rel's `value` column, so a relation ref is an
+% element and an unrecognized name is named by the element, not by the column.
+test(the_element_is_checked_as_a_column_type) :-
+    Types = [type_def(span, [start, end], [int, int])],
+    type_plane:column_storage(Types, list(span), list(span)),
+    catch(type_plane:column_storage(Types, list(spann), _), Thrown, true),
+    Thrown == unsupported_construct(column_type_unknown(spann)).
+
+% The physical column is the interned entity id, byte-identical to what the
+% collapse to `int` emitted.
+test(the_physical_column_is_still_an_integer_id) :-
+    column_def(dict, '"parts"', list(text), Def),
+    Def == '"parts" INTEGER NOT NULL'.
+
+test(the_emitted_table_ddl_does_not_move) :-
+    list_parts_program(Program),
+    program_plan(fixture(list_spelling_ddl, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TABLE "row_parts" ("__id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL, "parts" INTEGER NOT NULL, UNIQUE ("name"))', Ddl).
+
+% The boundary still prints the id in this slice; the elements arrive with the
+% read surface, and this pin is what makes that move visible.
+test(the_boundary_expression_is_still_the_bare_column) :-
+    lower:canonical_column_expr('parts', list(text), Expr),
+    Expr == '"parts"'.
+
+:- end_tests(list_column_spelling).
 
 % File level, so both the access-path unit above and the acyclic guard below
 % read the planner's own answer rather than asserting one.

@@ -333,6 +333,10 @@ align_to_encoding(_, _, Sql, Sql).
 % fixture that pins the oracle side of it.
 join_column_types_agree(_, ColumnType, _, ExistingType) :-
     ColumnType == ExistingType, !.
+% A list column IS its entity id, so the member rel's int `list_id` and the
+% column hold one stored value; no affinity conversion is in reach.
+join_column_types_agree(_, list(_), _, int) :- !.
+join_column_types_agree(_, int, _, list(_)) :- !.
 join_column_types_agree(ColumnExpr, ColumnType, Existing, ExistingType) :-
     throw(unsupported_construct(
         join_column_type_mismatch(ColumnExpr, ColumnType, Existing, ExistingType))).
@@ -2140,6 +2144,9 @@ catalog_column_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
     list_row_id(ListIdMap, json_list(Element), TypeId).
 catalog_column_type_id(ref(Name), RelIdMap, _ListIdMap, TypeId) :- !,
     rel_row_id(RelIdMap, Name, TypeId).
+% The stored id is an int until the catalog mints a `list` type row.
+catalog_column_type_id(list(_), _RelIdMap, _ListIdMap, TypeId) :- !,
+    catalog_type_id(int, TypeId).
 catalog_column_type_id(ColumnType, _RelIdMap, _ListIdMap, TypeId) :-
     catalog_type_id(ColumnType, TypeId).
 
@@ -2672,6 +2679,10 @@ column_def(_, QuotedColumn, float, Def) :- !,
 % second parent and leaving dangling refs (types-as-rels verdict finding 6,
 % plans/2026-07-28-sqlite-retraction-verdict.md fk_cascade WRONG).
 column_def(_, QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+% A relational list column stores its minted entity's id, the ref(_) shape with
+% an ordered child set instead of one row.
+column_def(_, QuotedColumn, list(_), Def) :- !,
+    format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
 % A list column stores the same TEXT json carrier as a json column, and adds
 % the array-ness CHECK the storage kind now survives to emit. The ARRAY-ness
 % predicate is verified on both SQLite builds this repo runs.
@@ -4828,6 +4839,9 @@ ir_column_storage(_, int, int, integer, direct) :- !.
 ir_column_storage(_, float, float, real, direct) :- !.
 ir_column_storage(_, json, json, text, direct) :- !.
 ir_column_storage(_, json_list(_), list, text, direct) :- !.
+% The comparator over an entity id is the integer one, so the IR type name is
+% the storage's, never the spelling's.
+ir_column_storage(_, list(_), int, integer, direct) :- !.
 % An interned text column reports storage `integer`; without the encoding slot
 % the pair {type: text, storage: integer} is uninterpretable to an executor.
 ir_column_storage(Mode, text, text, integer, dict(Dictionary)) :-
@@ -6111,6 +6125,11 @@ canonical_column_expr(Column, json, QuotedColumn) :-
 % A list column's stored text is its own array text, rendered as-is like a
 % json column's.
 canonical_column_expr(Column, json_list(_), QuotedColumn) :-
+    !,
+    quote_ident(Column, QuotedColumn).
+% The elements are the boundary value; until the read surface lands the id is
+% what crosses, exactly as the collapse to `int` made it cross.
+canonical_column_expr(Column, list(_), QuotedColumn) :-
     !,
     quote_ident(Column, QuotedColumn).
 % THE GUARD TESTS FOR THE TAGGED TERM, not merely for an object. `json_valid`
