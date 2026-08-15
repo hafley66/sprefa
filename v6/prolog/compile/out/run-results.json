@@ -546,6 +546,13 @@
     "final_detail": ""
   },
   {
+    "name": "acyclic_option_chain_matches_the_bare_spelling",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "extraction_fork_callgraph",
     "bucket": "identical",
     "detail": "",

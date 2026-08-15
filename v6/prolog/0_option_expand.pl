@@ -21,11 +21,33 @@ expand_option_program(prog(Decls0, Rules), prog(Decls, Rules)) :-
     expand_option_decls(Decls0, Decls).
 
 expand_option_decls(Decls0, Decls) :-
+    strip_acyclic_wrappers(Decls0, Decls1),
+    desugar_option_columns(Decls1, Decls).
+
+desugar_option_columns(Decls0, Decls) :-
     ( member(col_type(Ref, Column, option(Element)), Decls0)
     -> desugar_option_column(Decls0, Ref, Column, Element, Decls1),
-       expand_option_decls(Decls1, Decls)
+       desugar_option_columns(Decls1, Decls)
     ; Decls = Decls0
     ).
+
+% acyclic(...) is a constraint the storage plane never sees: the inner type
+% stays, and acyclic_column/2 records that the author spelled the guard out.
+strip_acyclic_wrappers(Decls0, Decls) :-
+    (   selectchk(col_type(Ref, Column, acyclic(Inner)), Decls0,
+                  col_type(Ref, Column, Inner), Decls1)
+    ->  check_acyclic_target(Ref, Column, Inner),
+        append(Decls1, [acyclic_column(Ref, Column)], Decls2),
+        strip_acyclic_wrappers(Decls2, Decls)
+    ;   Decls = Decls0
+    ).
+
+% The guard walks the chain the column itself forms, so the only type it can
+% wrap is an option of the rel that declares it.
+check_acyclic_target(Name/_, _, option(Name)) :- !.
+check_acyclic_target(Ref, Column, Inner) :-
+    throw(unsupported_construct(acyclic_not_a_self_option(Ref, Column,
+                                                          Inner))).
 
 desugar_option_column(Decls0, Ref, Column, Element, Decls) :-
     ( option_column_position(Decls0, Ref, Column, Position)
