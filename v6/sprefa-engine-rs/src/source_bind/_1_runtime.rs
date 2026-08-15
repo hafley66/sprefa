@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use anyhow::Context;
 use serde_json::json;
 use sprefa_rust_runtime_host::{
     ClockedSourceHostRequest, ReadRequestWire, SourceHost, SourceHostDemand, SourceHostEnvelope,
@@ -15,8 +14,8 @@ use crate::{
 };
 
 use super::{
-    source_row, DenseSourceCache, DenseSpanCache, SourceBindError, SourceBindFrame,
-    SourceBindRelations, SourceBindTickFrame,
+    source_row, DenseSourceCache, DenseSpanCache, GitSourceRegistration, SourceBindError,
+    SourceBindFrame, SourceBindRelations, SourceBindTickFrame, SourceInputs,
 };
 
 /// Long-lived filesystem, Git, identity-store, and extraction state for one
@@ -25,7 +24,7 @@ use super::{
 pub struct SourceBind {
     host: SourceHost,
     relations: SourceBindRelations,
-    trees: BTreeMap<soopy::RepositoryId, soopy::SourceTree>,
+    inputs: SourceInputs,
     roots: BTreeMap<soopy::RepositoryId, String>,
     sources: DenseSourceCache,
     contents: BTreeMap<i64, soopy::ContentId>,
@@ -49,7 +48,7 @@ impl SourceBind {
         Self {
             host,
             relations,
-            trees: BTreeMap::new(),
+            inputs: SourceInputs::default(),
             roots: BTreeMap::new(),
             sources: BTreeMap::new(),
             contents: BTreeMap::new(),
@@ -59,14 +58,48 @@ impl SourceBind {
     }
 
     pub fn register_root(&mut self, root: impl AsRef<Path>) -> anyhow::Result<soopy::RepositoryId> {
-        let repository = soopy::open(root.as_ref().to_path_buf())?;
-        let id = repository.identity.clone();
+        let registration = self.inputs.register_git(root.as_ref())?;
+        let id = registration.repository;
         self.roots
-            .insert(id.clone(), repository.root.to_string_lossy().to_string());
-        self.trees
-            .insert(id.clone(), soopy::SourceTree::open(repository));
+            .insert(id.clone(), root.as_ref().to_string_lossy().to_string());
         self.host.register_root(root)?;
         Ok(id)
+    }
+
+    pub fn register_directory(
+        &mut self,
+        root: impl AsRef<Path>,
+    ) -> anyhow::Result<soopy::DirectoryId> {
+        self.inputs.register_directory(root)
+    }
+
+    pub fn register_git(
+        &mut self,
+        root: impl AsRef<Path>,
+    ) -> anyhow::Result<GitSourceRegistration> {
+        let registration = self.inputs.register_git(root.as_ref())?;
+        self.roots.insert(
+            registration.repository.clone(),
+            root.as_ref().to_string_lossy().to_string(),
+        );
+        self.host.register_root(root)?;
+        Ok(registration)
+    }
+
+    pub fn directory_snapshot(
+        &mut self,
+        directory: &soopy::DirectoryId,
+        query: &soopy::FileQuery,
+    ) -> anyhow::Result<soopy::FileSnapshot> {
+        self.inputs.directory_snapshot(directory, query)
+    }
+
+    pub fn tracked_state(
+        &mut self,
+        worktree: &soopy::WorktreeId,
+        query: &soopy::GitFileQuery,
+    ) -> anyhow::Result<soopy::TrackedStateResult> {
+        self.inputs.tracked_state(worktree, query)
     }
 
     pub fn relations(&self) -> &SourceBindRelations {
@@ -175,35 +208,28 @@ impl SourceBind {
         &mut self,
         reads: &[ReadRequestWire],
     ) -> anyhow::Result<BTreeMap<soopy::SourceRef, Vec<Arrival>>> {
-        let mut by_repo = BTreeMap::<soopy::RepositoryId, Vec<soopy::ReadRequest>>::new();
-        for read in reads {
-            by_repo
-                .entry(read.source.repository.clone())
-                .or_default()
-                .push(read.clone().into());
-        }
+        let requests = reads
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect::<Vec<soopy::ReadRequest>>();
         let relations = self.relations.clone();
         let roots = self.roots.clone();
         let mut extracted = BTreeMap::new();
-        for (repository, requests) in by_repo {
-            let tree = self.trees.get_mut(&repository).with_context(|| {
-                format!("no Soopy repository is registered for {}", repository.0)
-            })?;
-            let mut buffer = Vec::new();
-            tree.read_each(&requests, &mut buffer, |result| {
-                extracted.insert(
-                    result.source.clone(),
-                    extract_specifiers(
-                        &relations,
-                        result.source,
-                        result.content,
-                        result.bytes,
-                        &roots,
-                    ),
-                );
-                Ok(())
-            })?;
-        }
+        let mut buffer = Vec::new();
+        self.inputs.read_each(&requests, &mut buffer, |result| {
+            extracted.insert(
+                result.source.clone(),
+                extract_specifiers(
+                    &relations,
+                    result.source,
+                    result.content,
+                    result.bytes,
+                    &roots,
+                ),
+            );
+            Ok(())
+        })?;
         Ok(extracted)
     }
 

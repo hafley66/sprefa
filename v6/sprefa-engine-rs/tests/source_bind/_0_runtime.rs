@@ -131,6 +131,89 @@ fn authored_source_contract_has_only_source_values() {
 }
 
 #[test]
+fn source_inputs_keep_directories_worktrees_and_clones_distinct() {
+    let plain = tempdir().unwrap();
+    std::fs::write(plain.path().join("plain.txt"), b"plain\n").unwrap();
+    let main = fixture();
+    let linked_path = main.path().with_extension("linked");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked_path.to_str().unwrap(),
+        ],
+    );
+    let clone = tempdir().unwrap();
+    let output = Command::new("git")
+        .args([
+            "clone",
+            "-q",
+            main.path().to_str().unwrap(),
+            clone.path().to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let mut bind = SourceBind::in_memory(SourceBindRelations::default()).unwrap();
+    let directory = bind.register_directory(plain.path()).unwrap();
+    let snapshot = bind
+        .directory_snapshot(&directory, &soopy::FileQuery::default())
+        .unwrap();
+    assert_eq!(snapshot.files.len(), 1);
+    assert_eq!(snapshot.files[0].file.path.0.as_ref(), "plain.txt");
+
+    let main_registration = bind.register_git(main.path()).unwrap();
+    let linked_registration = bind.register_git(&linked_path).unwrap();
+    let clone_registration = bind.register_git(clone.path()).unwrap();
+    assert_eq!(main_registration.repository, linked_registration.repository);
+    assert_ne!(main_registration.worktree, linked_registration.worktree);
+    assert_ne!(main_registration.repository, clone_registration.repository);
+
+    std::fs::write(linked_path.join("main.dl6"), b"changed\n").unwrap();
+    let main_state = bind
+        .tracked_state(
+            &main_registration.worktree,
+            &soopy::GitFileQuery {
+                pathspecs: vec!["main.dl6".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let linked_state = bind
+        .tracked_state(
+            &linked_registration.worktree,
+            &soopy::GitFileQuery {
+                pathspecs: vec!["main.dl6".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        main_state.observations[0].state,
+        soopy::TrackedFileState::Clean
+    );
+    assert_eq!(
+        linked_state.observations[0].state,
+        soopy::TrackedFileState::Unstaged
+    );
+
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "remove",
+            "--force",
+            linked_path.to_str().unwrap(),
+        ],
+    );
+}
+
+#[test]
 fn unregistered_soopy_read_is_a_typed_bind_error() {
     let fixture = fixture();
     let entry = worktree_entry(fixture.path());
