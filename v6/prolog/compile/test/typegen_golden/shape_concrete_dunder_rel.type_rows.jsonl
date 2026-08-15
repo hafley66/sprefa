@@ -1,0 +1,7 @@
+{"rel":"type_row","row": [1, 0, 0, "int", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [2, 0, 0, "text", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [3, 0, 0, "shape_concrete_dunder_rel", "module", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [4, 3, 0, "__cache__entry", "rel", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [5, 4, 1, "id", "column", 1, 3 ],"sign":"add"}
+{"rel":"type_row","row": [6, 4, 2, "label", "column", 2, 3 ],"sign":"add"}
+{"rel":"type_row","row": [7, 4, 0, "CacheEntry", "concrete_type", 0, 0 ],"sign":"add"}

@@ -37,6 +37,9 @@ SHAPES=(
   "shape_module_prefix_collision"
   "shape_list_nesting_depth"
   "shape_option_of_list"
+  "shape_list_nesting_depth_five"
+  "shape_camel_case_module"
+  "shape_concrete_dunder_rel"
 )
 
 swipl_run() { # goal ; runs from v6/prolog so conformance/... paths resolve

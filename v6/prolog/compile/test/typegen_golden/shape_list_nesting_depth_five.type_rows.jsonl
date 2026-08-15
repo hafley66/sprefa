@@ -1,0 +1,11 @@
+{"rel":"type_row","row": [1, 0, 0, "int", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [2, 0, 0, "text", "primitive", 0, 0 ],"sign":"add"}
+{"rel":"type_row","row": [3, 0, 0, "shape_list_nesting_depth_five", "module", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [4, 0, 0, "json_list(text)", "json_list", 2, 0 ],"sign":"add"}
+{"rel":"type_row","row": [5, 0, 0, "json_list(json_list(text))", "json_list", 4, 0 ],"sign":"add"}
+{"rel":"type_row","row": [6, 0, 0, "json_list(json_list(json_list(text)))", "json_list", 5, 0 ],"sign":"add"}
+{"rel":"type_row","row": [7, 0, 0, "json_list(json_list(json_list(json_list(text))))", "json_list", 6, 0 ],"sign":"add"}
+{"rel":"type_row","row": [8, 0, 0, "json_list(json_list(json_list(json_list(json_list(text)))))", "json_list", 7, 0 ],"sign":"add"}
+{"rel":"type_row","row": [9, 3, 0, "pentacube", "rel", 0, 3 ],"sign":"add"}
+{"rel":"type_row","row": [10, 9, 1, "id", "column", 1, 3 ],"sign":"add"}
+{"rel":"type_row","row": [11, 9, 2, "depth_five_values", "column", 8, 3 ],"sign":"add"}
