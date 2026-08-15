@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -212,48 +211,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "carry", sql: `INSERT OR IGNORE INTO "carry" ("id", "rows") SELECT b0."id", b0."rows" FROM "grid" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly carry: readonly IRow[];
-  readonly grid: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    carry: select_rows(seam, `SELECT t."id", t."rows" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
-    grid: select_rows(seam, `SELECT t."id", t."rows" FROM "grid" t`, rel_columns.grid!, rel_column_types.grid!),
-  });
-}
-
 const final_select: Record<string, string> = {
   carry: `SELECT t."id", t."rows" FROM "carry" t`,
   grid: `SELECT t."id", t."rows" FROM "grid" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  grid: { kind: "set", add_sql: `INSERT OR IGNORE INTO "grid" ("id", "rows") VALUES (?, ?)`, del_sql: `DELETE FROM "grid" WHERE "id" = ? AND "rows" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`nested_list_of_text_round_trips: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`nested_list_of_text_round_trips: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`nested_list_of_text_round_trips: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "rows"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", t."rows", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."rows", t."_sign"`, rule_observers: [] },
@@ -268,40 +229,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "carry" ("id", "rows") SELECT b0."id", b0."rows" FROM "grid" b0`, support_sql: [`DELETE FROM "__support_next_carry"`, `INSERT INTO "__support_next_carry" ("id", "rows", "__refcount") SELECT "id", "rows", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."rows" AS "rows", count(*) AS "__refcount" FROM "grid" b0 GROUP BY b0."id", b0."rows") GROUP BY "id", "rows"`, `UPDATE "carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_carry" n WHERE n."id" = h."id" AND n."rows" = h."rows"), 0)`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "rows") SELECT -1, row_number() OVER () - 1, "id", "rows" FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_carry"`, `INSERT INTO "__new_carry" ("id", "rows", "__refcount") SELECT n."id", n."rows", n."__refcount" FROM "__support_next_carry" n LEFT JOIN "carry" h ON n."id" = h."id" AND n."rows" = h."rows" WHERE h."id" IS NULL`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "rows") SELECT 1, "rowid" - 1, "id", "rows" FROM "__new_carry"`, `INSERT INTO "__frontier_carry" ("_phase", "_sequence", "id", "rows") SELECT ?, "rowid" - 1, "id", "rows" FROM "__new_carry"`, `INSERT INTO "__next_frontier_carry" ("_phase", "_sequence", "id", "rows") SELECT ?, "rowid" - 1, "id", "rows" FROM "__new_carry"`, `INSERT OR IGNORE INTO "carry" ("id", "rows", "__refcount") SELECT n."id", n."rows", n."__refcount" FROM "__support_next_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "carry";
-INSERT OR IGNORE INTO "carry" ("id", "rows") SELECT b0."id", b0."rows" FROM "grid" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const carry = multiset_diff(before.carry, after.carry);
-  const grid = multiset_diff(before.grid, after.grid);
-  return {
-    rels: [
-      { rel: "carry", add: carry.add, del: carry.del },
-      { rel: "grid", add: grid.add, del: grid.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // nested_list_of_text_round_trips: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -327,14 +258,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

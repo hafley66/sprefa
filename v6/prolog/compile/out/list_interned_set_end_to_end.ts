@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -270,40 +269,6 @@ const arrival_targets: readonly string[] = ["__gen__list_interned_set_text_5de2c
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly __gen__list_interned_set_text_5de2cb6bdb4dd03b: readonly IRow[];
-  readonly __gen__list_interned_set_text_5de2cb6bdb4dd03b__member: readonly IRow[];
-  readonly __gen__list_interned_set_text_5de2cb6bdb4dd03b__value: readonly IRow[];
-  readonly interned_parent: readonly IRow[];
-  readonly interned_parent__entries: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_interned_set_text_5de2cb6bdb4dd03b: select_rows(seam, `SELECT t."content_id" FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b" t`, rel_columns.__gen__list_interned_set_text_5de2cb6bdb4dd03b!, rel_column_types.__gen__list_interned_set_text_5de2cb6bdb4dd03b!),
-    __gen__list_interned_set_text_5de2cb6bdb4dd03b__member: select_rows(seam, `SELECT t."content_id", t."value_id" FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b__member" t`, rel_columns.__gen__list_interned_set_text_5de2cb6bdb4dd03b__member!, rel_column_types.__gen__list_interned_set_text_5de2cb6bdb4dd03b__member!),
-    __gen__list_interned_set_text_5de2cb6bdb4dd03b__value: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_interned_set_text_5de2cb6bdb4dd03b__value" t`, rel_columns.__gen__list_interned_set_text_5de2cb6bdb4dd03b__value!, rel_column_types.__gen__list_interned_set_text_5de2cb6bdb4dd03b__value!),
-    interned_parent: select_rows(seam, `SELECT t."id" FROM "interned_parent" t`, rel_columns.interned_parent!, rel_column_types.interned_parent!),
-    interned_parent__entries: select_rows(seam, `SELECT t."interned_parent_id", t."__gen__list_interned_set_text_5de2cb6bdb4dd03b_id" FROM "interned_parent__entries" t`, rel_columns.interned_parent__entries!, rel_column_types.interned_parent__entries!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_interned_set_text_5de2cb6bdb4dd03b: select_rows(seam, `SELECT "content_id" FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b"`, rel_columns.__gen__list_interned_set_text_5de2cb6bdb4dd03b!, rel_column_types.__gen__list_interned_set_text_5de2cb6bdb4dd03b!),
-    __gen__list_interned_set_text_5de2cb6bdb4dd03b__member: select_rows(seam, `SELECT "content_id", "value_id" FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b__member"`, rel_columns.__gen__list_interned_set_text_5de2cb6bdb4dd03b__member!, rel_column_types.__gen__list_interned_set_text_5de2cb6bdb4dd03b__member!),
-    __gen__list_interned_set_text_5de2cb6bdb4dd03b__value: select_rows(seam, `SELECT "id", "value" FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b__value"`, rel_columns.__gen__list_interned_set_text_5de2cb6bdb4dd03b__value!, rel_column_types.__gen__list_interned_set_text_5de2cb6bdb4dd03b__value!),
-    interned_parent: select_rows(seam, `SELECT "id" FROM "interned_parent"`, rel_columns.interned_parent!, rel_column_types.interned_parent!),
-    interned_parent__entries: select_rows(seam, `SELECT "interned_parent_id", "__gen__list_interned_set_text_5de2cb6bdb4dd03b_id" FROM "interned_parent__entries"`, rel_columns.interned_parent__entries!, rel_column_types.interned_parent__entries!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__list_interned_set_text_5de2cb6bdb4dd03b: `SELECT t."content_id" FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b" t`,
   __gen__list_interned_set_text_5de2cb6bdb4dd03b__member: `SELECT t."content_id", t."value_id" FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b__member" t`,
@@ -311,36 +276,6 @@ const final_select: Record<string, string> = {
   interned_parent: `SELECT t."id" FROM "interned_parent" t`,
   interned_parent__entries: `SELECT t."interned_parent_id", t."__gen__list_interned_set_text_5de2cb6bdb4dd03b_id" FROM "interned_parent__entries" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_interned_set_text_5de2cb6bdb4dd03b: { kind: "set", add_sql: `INSERT INTO "__gen__list_interned_set_text_5de2cb6bdb4dd03b" ("content_id") VALUES (?) ON CONFLICT ("content_id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b" WHERE "content_id" = ?` },
-  __gen__list_interned_set_text_5de2cb6bdb4dd03b__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_interned_set_text_5de2cb6bdb4dd03b__member" ("content_id", "value_id") VALUES (?, ?) ON CONFLICT ("content_id", "value_id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b__member" WHERE "content_id" = ? AND "value_id" = ?` },
-  __gen__list_interned_set_text_5de2cb6bdb4dd03b__value: { kind: "set", add_sql: `INSERT INTO "__gen__list_interned_set_text_5de2cb6bdb4dd03b__value" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b__value" WHERE "id" = ? AND "value" = ?` },
-  interned_parent: { kind: "set", add_sql: `INSERT INTO "interned_parent" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "interned_parent" WHERE "id" = ?` },
-  interned_parent__entries: { kind: "set", add_sql: `INSERT INTO "interned_parent__entries" ("interned_parent_id", "__gen__list_interned_set_text_5de2cb6bdb4dd03b_id") VALUES (?, ?) ON CONFLICT ("interned_parent_id") DO UPDATE SET "__gen__list_interned_set_text_5de2cb6bdb4dd03b_id" = excluded."__gen__list_interned_set_text_5de2cb6bdb4dd03b_id"`, del_sql: `DELETE FROM "interned_parent__entries" WHERE "interned_parent_id" = ? AND "__gen__list_interned_set_text_5de2cb6bdb4dd03b_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`list_interned_set_end_to_end: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`list_interned_set_end_to_end: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`list_interned_set_end_to_end: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_interned_set_text_5de2cb6bdb4dd03b", kind: "set", table_name: "__gen__list_interned_set_text_5de2cb6bdb4dd03b", delta_table_name: "__delta___gen__list_interned_set_text_5de2cb6bdb4dd03b", frontier_table_name: "__frontier___gen__list_interned_set_text_5de2cb6bdb4dd03b", next_frontier_table_name: "__next_frontier___gen__list_interned_set_text_5de2cb6bdb4dd03b", columns: ["content_id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_interned_set_text_5de2cb6bdb4dd03b" ("content_id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("content_id") DO NOTHING RETURNING "content_id"`, arrival_del_sql: `DELETE FROM "__gen__list_interned_set_text_5de2cb6bdb4dd03b" WHERE ("content_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "content_id"`, boundary_sql: `SELECT t."content_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__list_interned_set_text_5de2cb6bdb4dd03b" t WHERE t."_sign" IN (-1, 1) GROUP BY t."content_id", t."_sign"`, rule_observers: [] },
@@ -356,47 +291,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__list_interned_set_text_5de2cb6bdb4dd03b = multiset_diff(before.__gen__list_interned_set_text_5de2cb6bdb4dd03b, after.__gen__list_interned_set_text_5de2cb6bdb4dd03b);
-  const __gen__list_interned_set_text_5de2cb6bdb4dd03b__member = multiset_diff(before.__gen__list_interned_set_text_5de2cb6bdb4dd03b__member, after.__gen__list_interned_set_text_5de2cb6bdb4dd03b__member);
-  const __gen__list_interned_set_text_5de2cb6bdb4dd03b__value = multiset_diff(before.__gen__list_interned_set_text_5de2cb6bdb4dd03b__value, after.__gen__list_interned_set_text_5de2cb6bdb4dd03b__value);
-  const interned_parent = multiset_diff(before.interned_parent, after.interned_parent);
-  const interned_parent__entries = multiset_diff(before.interned_parent__entries, after.interned_parent__entries);
-  return {
-    rels: [
-      { rel: "__gen__list_interned_set_text_5de2cb6bdb4dd03b", add: __gen__list_interned_set_text_5de2cb6bdb4dd03b.add, del: __gen__list_interned_set_text_5de2cb6bdb4dd03b.del },
-      { rel: "__gen__list_interned_set_text_5de2cb6bdb4dd03b__member", add: __gen__list_interned_set_text_5de2cb6bdb4dd03b__member.add, del: __gen__list_interned_set_text_5de2cb6bdb4dd03b__member.del },
-      { rel: "__gen__list_interned_set_text_5de2cb6bdb4dd03b__value", add: __gen__list_interned_set_text_5de2cb6bdb4dd03b__value.add, del: __gen__list_interned_set_text_5de2cb6bdb4dd03b__value.del },
-      { rel: "interned_parent", add: interned_parent.add, del: interned_parent.del },
-      { rel: "interned_parent__entries", add: interned_parent__entries.add, del: interned_parent__entries.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // list_interned_set_end_to_end: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -425,14 +323,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

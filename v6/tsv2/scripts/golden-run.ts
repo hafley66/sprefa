@@ -12,10 +12,6 @@
  * same runner, so a divergence between this and the sweep is a divergence in
  * the module, not in two copies of a comparison.
  *
- * SPREFA_TSV2_EMITTER_MODE is read by the emitted module itself at load time
- * (`naive` = the snapshot referee, anything else = incremental), so the mode is
- * selected by the environment of this process and nothing here passes it on.
- *
  * Usage:
  *   node --experimental-transform-types scripts/golden-run.ts <module> <schedule.json> [--final]
  *

@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -234,61 +233,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "repo_meta", sql: `INSERT OR IGNORE INTO "repo_meta" ("repo", "col2") SELECT b0."repo", CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "repo_kv" b0 GROUP BY b0."repo" HAVING count(*) > 0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly repo_kv: readonly IRow[];
-  readonly repo_meta: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    repo_kv: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt_repo_kv" t`, rel_columns.repo_kv!, rel_column_types.repo_kv!),
-    repo_meta: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."col2" FROM "__txt_repo_meta" t`, rel_columns.repo_meta!, rel_column_types.repo_meta!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    repo_kv: select_rows(seam, `SELECT "repo", "key", "value" FROM "repo_kv"`, rel_columns.repo_kv!, rel_column_types.repo_kv!),
-    repo_meta: select_rows(seam, `SELECT "repo", "col2" FROM "repo_meta"`, rel_columns.repo_meta!, rel_column_types.repo_meta!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   repo_kv: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value" FROM "__txt_repo_kv" t`,
   repo_meta: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."col2" FROM "__txt_repo_meta" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  repo_kv: { kind: "set", add_sql: `INSERT OR IGNORE INTO "repo_kv" ("repo", "key", "value") VALUES (?, ?, ?)`, del_sql: `DELETE FROM "repo_kv" WHERE "repo" = ? AND "key" = ? AND "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`json_object_builds_document: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`json_object_builds_document: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`json_object_builds_document: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "repo_kv", kind: "set", table_name: "repo_kv", delta_table_name: "__delta_repo_kv", frontier_table_name: "__frontier_repo_kv", next_frontier_table_name: "__next_frontier_repo_kv", columns: ["repo", "key", "value"], column_types: ["text", "text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo_kv" ("repo", "key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "repo", "key", "value"`, arrival_del_sql: `DELETE FROM "repo_kv" WHERE ("repo", "key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "repo", "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_kv" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo", t."key", t."value", t."_sign"`, rule_observers: ["repo_meta/2"] },
@@ -303,42 +251,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "repo_meta" ("repo", "col2") SELECT b0."repo", CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "repo_kv" b0 GROUP BY b0."repo" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_repo_meta"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_repo_meta" ("repo") SELECT DISTINCT d0."repo" FROM "__delta_repo_kv" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "repo_meta" WHERE ("repo") IN (SELECT "repo" FROM "__agg_scope_repo_meta") RETURNING "repo", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "repo_meta" ("repo", "col2") SELECT b0."repo", CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "repo_kv" b0 WHERE (b0."repo") IN (SELECT "repo" FROM "__agg_scope_repo_meta") GROUP BY b0."repo" HAVING count(*) > 0 RETURNING "repo", "col2"`], delta_maintained: false } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "repo_meta";
-INSERT OR IGNORE INTO "repo_meta" ("repo", "col2") SELECT b0."repo", CASE WHEN count(DISTINCT json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value"))) = count(DISTINCT (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) THEN json_group_object((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key"), json(b0."value") ORDER BY (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."key")) ELSE json('json_object_dup_key') END FROM "repo_kv" b0 GROUP BY b0."repo" HAVING count(*) > 0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const repo_kv = multiset_diff(before.repo_kv, after.repo_kv);
-  const repo_meta = multiset_diff(before.repo_meta, after.repo_meta);
-  return {
-    rels: [
-      { rel: "repo_kv", add: repo_kv.add, del: repo_kv.del },
-      { rel: "repo_meta", add: repo_meta.add, del: repo_meta.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // json_object_builds_document: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -367,14 +283,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

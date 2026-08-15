@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -322,40 +321,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "dir_size", sql: `INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir", sum(b0."adds"), sum(b0."dels"), count(*) FROM "dir_file" b0 GROUP BY b0."dir" HAVING count(*) > 0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly dir_file: readonly IRow[];
-  readonly dir_size: readonly IRow[];
-  readonly files_resp: readonly IRow[];
-  readonly in_dir: readonly IRow[];
-  readonly pr_file: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    dir_file: select_rows(seam, `SELECT CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."adds", t."dels" FROM "__txt_dir_file" t`, rel_columns.dir_file!, rel_column_types.dir_file!),
-    dir_size: select_rows(seam, `SELECT CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir", t."adds", t."dels", t."files" FROM "__txt_dir_size" t`, rel_columns.dir_size!, rel_column_types.dir_size!),
-    files_resp: select_rows(seam, `SELECT t."body" FROM "files_resp" t`, rel_columns.files_resp!, rel_column_types.files_resp!),
-    in_dir: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir" FROM "__txt_in_dir" t`, rel_columns.in_dir!, rel_column_types.in_dir!),
-    pr_file: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."adds", t."dels" FROM "__txt_pr_file" t`, rel_columns.pr_file!, rel_column_types.pr_file!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    dir_file: select_rows(seam, `SELECT "dir", "path", "adds", "dels" FROM "dir_file"`, rel_columns.dir_file!, rel_column_types.dir_file!),
-    dir_size: select_rows(seam, `SELECT "dir", "adds", "dels", "files" FROM "dir_size"`, rel_columns.dir_size!, rel_column_types.dir_size!),
-    files_resp: select_rows(seam, `SELECT "body" FROM "files_resp"`, rel_columns.files_resp!, rel_column_types.files_resp!),
-    in_dir: select_rows(seam, `SELECT "path", "dir" FROM "in_dir"`, rel_columns.in_dir!, rel_column_types.in_dir!),
-    pr_file: select_rows(seam, `SELECT "path", "adds", "dels" FROM "pr_file"`, rel_columns.pr_file!, rel_column_types.pr_file!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   dir_file: `SELECT CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."adds", t."dels" FROM "__txt_dir_file" t`,
   dir_size: `SELECT CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir", t."adds", t."dels", t."files" FROM "__txt_dir_size" t`,
@@ -363,33 +328,6 @@ const final_select: Record<string, string> = {
   in_dir: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir" FROM "__txt_in_dir" t`,
   pr_file: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."adds", t."dels" FROM "__txt_pr_file" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  files_resp: { kind: "set", add_sql: `INSERT OR IGNORE INTO "files_resp" ("body") VALUES (?)`, del_sql: `DELETE FROM "files_resp" WHERE "body" = ?` },
-  in_dir: { kind: "set", add_sql: `INSERT OR IGNORE INTO "in_dir" ("path", "dir") VALUES (?, ?)`, del_sql: `DELETE FROM "in_dir" WHERE "path" = ? AND "dir" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`pr_size_decodes_files_and_rolls_up: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`pr_size_decodes_files_and_rolls_up: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`pr_size_decodes_files_and_rolls_up: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "dir_file", kind: "set", table_name: "dir_file", delta_table_name: "__delta_dir_file", frontier_table_name: "__frontier_dir_file", next_frontier_table_name: "__next_frontier_dir_file", columns: ["dir", "path", "adds", "dels"], column_types: ["text", "text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."dir") AND json_type(t."dir") = 'object' AND json_type(t."dir", '$.fn') = 'text' AND json_type(t."dir", '$.args') = 'array' THEN json_extract(t."dir", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."dir", '$.args')), '') || ')' ELSE t."dir" END AS "dir", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."adds", t."dels", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_dir_file" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dir", t."path", t."adds", t."dels", t."_sign"`, rule_observers: ["dir_size/4"] },
@@ -412,53 +350,10 @@ INSERT OR IGNORE INTO "dir_file" ("dir", "path", "adds", "dels") SELECT b1."dir"
 INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir", sum(b0."adds"), sum(b0."dels"), count(*) FROM "dir_file" b0 GROUP BY b0."dir" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_dir_size"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_dir_size" ("dir") SELECT DISTINCT d0."dir" FROM "__delta_dir_file" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "dir_size" WHERE ("dir") IN (SELECT "dir" FROM "__agg_scope_dir_size") RETURNING "dir", "adds", "dels", "files"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir", sum(b0."adds"), sum(b0."dels"), count(*) FROM "dir_file" b0 WHERE (b0."dir") IN (SELECT "dir" FROM "__agg_scope_dir_size") GROUP BY b0."dir" HAVING count(*) > 0 RETURNING "dir", "adds", "dels", "files"`], delta_maintained: false } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "pr_file";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."filename"') FROM "files_resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer';
-INSERT OR IGNORE INTO "pr_file" ("path", "adds", "dels") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."filename"')), json_extract(j0.value, '$."additions"'), json_extract(j0.value, '$."deletions"') FROM "files_resp" b0, json_each(b0."body") j0 WHERE json_type(b0."body", '$') = 'array' AND j0.type = 'object' AND json_type(j0.value, '$."filename"') = 'text' AND json_type(j0.value, '$."additions"') = 'integer' AND json_type(j0.value, '$."deletions"') = 'integer';
-DELETE FROM "dir_file";
-INSERT OR IGNORE INTO "dir_file" ("dir", "path", "adds", "dels") SELECT b1."dir", b0."path", b0."adds", b0."dels" FROM "pr_file" b0, "in_dir" b1 WHERE b1."path" = b0."path";
-DELETE FROM "dir_size";
-INSERT OR IGNORE INTO "dir_size" ("dir", "adds", "dels", "files") SELECT b0."dir", sum(b0."adds"), sum(b0."dels"), count(*) FROM "dir_file" b0 GROUP BY b0."dir" HAVING count(*) > 0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const dir_file = multiset_diff(before.dir_file, after.dir_file);
-  const dir_size = multiset_diff(before.dir_size, after.dir_size);
-  const files_resp = multiset_diff(before.files_resp, after.files_resp);
-  const in_dir = multiset_diff(before.in_dir, after.in_dir);
-  const pr_file = multiset_diff(before.pr_file, after.pr_file);
-  return {
-    rels: [
-      { rel: "dir_file", add: dir_file.add, del: dir_file.del },
-      { rel: "dir_size", add: dir_size.add, del: dir_size.del },
-      { rel: "files_resp", add: files_resp.add, del: files_resp.del },
-      { rel: "in_dir", add: in_dir.add, del: in_dir.del },
-      { rel: "pr_file", add: pr_file.add, del: pr_file.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // pr_size_decodes_files_and_rolls_up: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -487,14 +382,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

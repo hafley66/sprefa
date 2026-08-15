@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -335,43 +334,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "graded_tag", sql: `INSERT OR IGNORE INTO "graded_tag" ("id", "tag") SELECT b0."id", b1."tag" FROM "graded" b0, "grade_tag" b1 WHERE b1."id" = b0."g"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly grade_bruised: readonly IRow[];
-  readonly grade_ripe: readonly IRow[];
-  readonly grade_tag: readonly IRow[];
-  readonly graded: readonly IRow[];
-  readonly graded_tag: readonly IRow[];
-  readonly tree: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    grade_bruised: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."reason") AND json_type(t."reason") = 'object' AND json_type(t."reason", '$.fn') = 'text' AND json_type(t."reason", '$.args') = 'array' THEN json_extract(t."reason", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reason", '$.args')), '') || ')' ELSE t."reason" END AS "reason" FROM "__txt_grade_bruised" t`, rel_columns.grade_bruised!, rel_column_types.grade_bruised!),
-    grade_ripe: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref_tree" d WHERE d."__id" = t."subject") AS "subject" FROM "grade_ripe" t`, rel_columns.grade_ripe!, rel_column_types.grade_ripe!),
-    grade_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_grade_tag" t`, rel_columns.grade_tag!, rel_column_types.grade_tag!),
-    graded: select_rows(seam, `SELECT t."id", t."g" FROM "graded" t`, rel_columns.graded!, rel_column_types.graded!),
-    graded_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_graded_tag" t`, rel_columns.graded_tag!, rel_column_types.graded_tag!),
-    tree: select_rows(seam, `SELECT t."tree_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_tree" t`, rel_columns.tree!, rel_column_types.tree!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    grade_bruised: select_rows(seam, `SELECT "id", "reason" FROM "grade_bruised"`, rel_columns.grade_bruised!, rel_column_types.grade_bruised!),
-    grade_ripe: select_rows(seam, `SELECT "id", "subject" FROM "grade_ripe"`, rel_columns.grade_ripe!, rel_column_types.grade_ripe!),
-    grade_tag: select_rows(seam, `SELECT "id", "tag" FROM "grade_tag"`, rel_columns.grade_tag!, rel_column_types.grade_tag!),
-    graded: select_rows(seam, `SELECT "id", "g" FROM "graded"`, rel_columns.graded!, rel_column_types.graded!),
-    graded_tag: select_rows(seam, `SELECT "id", "tag" FROM "graded_tag"`, rel_columns.graded_tag!, rel_column_types.graded_tag!),
-    tree: select_rows(seam, `SELECT "tree_id", "name" FROM "tree"`, rel_columns.tree!, rel_column_types.tree!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   grade_bruised: `SELECT t."id", CASE WHEN json_valid(t."reason") AND json_type(t."reason") = 'object' AND json_type(t."reason", '$.fn') = 'text' AND json_type(t."reason", '$.args') = 'array' THEN json_extract(t."reason", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reason", '$.args')), '') || ')' ELSE t."reason" END AS "reason" FROM "__txt_grade_bruised" t`,
   grade_ripe: `SELECT t."id", (SELECT d."__rendered" FROM "__ref_tree" d WHERE d."__id" = t."subject") AS "subject" FROM "grade_ripe" t`,
@@ -380,35 +342,6 @@ const final_select: Record<string, string> = {
   graded_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_graded_tag" t`,
   tree: `SELECT t."tree_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_tree" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  grade_bruised: { kind: "set", add_sql: `INSERT INTO "grade_bruised" ("id", "reason") VALUES (?, ?) ON CONFLICT ("reason") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "grade_bruised" WHERE "id" = ? AND "reason" = ?` },
-  grade_ripe: { kind: "set", add_sql: `INSERT INTO "grade_ripe" ("id", "subject") VALUES (?, ?) ON CONFLICT ("subject") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "grade_ripe" WHERE "id" = ? AND "subject" = ?` },
-  graded: { kind: "set", add_sql: `INSERT OR IGNORE INTO "graded" ("id", "g") VALUES (?, ?)`, del_sql: `DELETE FROM "graded" WHERE "id" = ? AND "g" = ?` },
-  tree: { kind: "set", add_sql: `INSERT OR IGNORE INTO "tree" ("tree_id", "name") VALUES (?, ?)`, del_sql: `DELETE FROM "tree" WHERE "tree_id" = ? AND "name" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`enum_variant_field_typed_as_rel_is_a_ref: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`enum_variant_field_typed_as_rel_is_a_ref: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`enum_variant_field_typed_as_rel_is_a_ref: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "grade_bruised", kind: "set", table_name: "grade_bruised", delta_table_name: "__delta_grade_bruised", frontier_table_name: "__frontier_grade_bruised", next_frontier_table_name: "__next_frontier_grade_bruised", columns: ["id", "reason"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "grade_bruised" ("id", "reason") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("reason") DO UPDATE SET "id" = excluded."id" RETURNING "id", "reason"`, arrival_del_sql: `DELETE FROM "grade_bruised" WHERE ("id", "reason") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "reason"`, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."reason") AND json_type(t."reason") = 'object' AND json_type(t."reason", '$.fn') = 'text' AND json_type(t."reason", '$.args') = 'array' THEN json_extract(t."reason", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reason", '$.args')), '') || ')' ELSE t."reason" END AS "reason", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_grade_bruised" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."reason", t."_sign"`, rule_observers: ["grade_tag/2"] },
@@ -430,56 +363,10 @@ INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id"
 INSERT OR IGNORE INTO "graded_tag" ("id", "tag") SELECT b0."id", b1."tag" FROM "graded" b0, "grade_tag" b1 WHERE b1."id" = b0."g"`, support_sql: [`DELETE FROM "__support_next_graded_tag"`, `INSERT INTO "__support_next_graded_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", b1."tag" AS "tag", count(*) AS "__refcount" FROM "graded" b0, "grade_tag" b1 WHERE b1."id" = b0."g" GROUP BY b0."id", b1."tag") GROUP BY "id", "tag"`, `UPDATE "graded_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_graded_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_graded_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "graded_tag" WHERE "__refcount" <= 0`, `DELETE FROM "graded_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_graded_tag"`, `INSERT INTO "__new_graded_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_graded_tag" n LEFT JOIN "graded_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_graded_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_graded_tag"`, `INSERT INTO "__frontier_graded_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_graded_tag"`, `INSERT INTO "__next_frontier_graded_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_graded_tag"`, `INSERT OR IGNORE INTO "graded_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_graded_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "grade_tag";
-INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ripe') FROM "grade_ripe" b0;
-INSERT OR IGNORE INTO "grade_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'bruised') FROM "grade_bruised" b0;
-DELETE FROM "graded_tag";
-INSERT OR IGNORE INTO "graded_tag" ("id", "tag") SELECT b0."id", b1."tag" FROM "graded" b0, "grade_tag" b1 WHERE b1."id" = b0."g"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const grade_bruised = multiset_diff(before.grade_bruised, after.grade_bruised);
-  const grade_ripe = multiset_diff(before.grade_ripe, after.grade_ripe);
-  const grade_tag = multiset_diff(before.grade_tag, after.grade_tag);
-  const graded = multiset_diff(before.graded, after.graded);
-  const graded_tag = multiset_diff(before.graded_tag, after.graded_tag);
-  const tree = multiset_diff(before.tree, after.tree);
-  return {
-    rels: [
-      { rel: "grade_bruised", add: grade_bruised.add, del: grade_bruised.del },
-      { rel: "grade_ripe", add: grade_ripe.add, del: grade_ripe.del },
-      { rel: "grade_tag", add: grade_tag.add, del: grade_tag.del },
-      { rel: "graded", add: graded.add, del: graded.del },
-      { rel: "graded_tag", add: graded_tag.add, del: graded_tag.del },
-      { rel: "tree", add: tree.add, del: tree.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // enum_variant_field_typed_as_rel_is_a_ref: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -511,14 +398,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

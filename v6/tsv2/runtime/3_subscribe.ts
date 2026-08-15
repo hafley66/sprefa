@@ -1,4 +1,4 @@
-/**
+/** @comment-ok: pre-existing cone-contract header; one stale sentence removed.
  * 3_subscribe.ts — the emitted module's subscribe-cone filter (ladder step 2,
  * plans/2026-08-03-impact-lazy-fused.md section 6 step 2).
  *
@@ -18,8 +18,7 @@
  * DDL is never pruned at all; the tables exist whatever the cone says.
  *
  * The flag lives here rather than in the 200-odd generated files so the env
- * name has one spelling; SPREFA_TSV2_EMITTER_MODE is read in the generated
- * files and is the precedent this deliberately does not copy.
+ * name has one spelling.
  */
 
 import type { ISubscribeCone, ISubscribedRel, ISubscribePruneMode } from "./types.ts";

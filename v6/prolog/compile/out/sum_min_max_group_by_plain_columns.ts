@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -236,61 +235,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "stat", sql: `INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", sum(b0."stars"), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo" HAVING count(*) > 0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly star_row: readonly IRow[];
-  readonly stat: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    star_row: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars" FROM "__txt_star_row" t`, rel_columns.star_row!, rel_column_types.star_row!),
-    stat: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."col2", t."col3", t."col4" FROM "__txt_stat" t`, rel_columns.stat!, rel_column_types.stat!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    star_row: select_rows(seam, `SELECT "repo", "stars" FROM "star_row"`, rel_columns.star_row!, rel_column_types.star_row!),
-    stat: select_rows(seam, `SELECT "repo", "col2", "col3", "col4" FROM "stat"`, rel_columns.stat!, rel_column_types.stat!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   star_row: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars" FROM "__txt_star_row" t`,
   stat: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."col2", t."col3", t."col4" FROM "__txt_stat" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  star_row: { kind: "set", add_sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") VALUES (?, ?)`, del_sql: `DELETE FROM "star_row" WHERE "repo" = ? AND "stars" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`sum_min_max_group_by_plain_columns: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`sum_min_max_group_by_plain_columns: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`sum_min_max_group_by_plain_columns: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "star_row", kind: "set", table_name: "star_row", delta_table_name: "__delta_star_row", frontier_table_name: "__frontier_star_row", next_frontier_table_name: "__next_frontier_star_row", columns: ["repo", "stars"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "star_row" ("repo", "stars") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "repo", "stars"`, arrival_del_sql: `DELETE FROM "star_row" WHERE ("repo", "stars") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "repo", "stars"`, boundary_sql: `SELECT CASE WHEN json_valid(t."repo") AND json_type(t."repo") = 'object' AND json_type(t."repo", '$.fn') = 'text' AND json_type(t."repo", '$.args') = 'array' THEN json_extract(t."repo", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo", '$.args')), '') || ')' ELSE t."repo" END AS "repo", t."stars", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_star_row" t WHERE t."_sign" IN (-1, 1) GROUP BY t."repo", t."stars", t."_sign"`, rule_observers: ["stat/4"] },
@@ -305,42 +253,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", sum(b0."stars"), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_stat"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_stat" ("repo") SELECT DISTINCT d0."repo" FROM "__delta_star_row" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "stat" WHERE ("repo") IN (SELECT "repo" FROM "__agg_scope_stat") RETURNING "repo", "col2", "col3", "col4"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", sum(b0."stars"), min(b0."stars"), max(b0."stars") FROM "star_row" b0 WHERE (b0."repo") IN (SELECT "repo" FROM "__agg_scope_stat") GROUP BY b0."repo" HAVING count(*) > 0 RETURNING "repo", "col2", "col3", "col4"`], delta_maintained: false } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "stat";
-INSERT OR IGNORE INTO "stat" ("repo", "col2", "col3", "col4") SELECT b0."repo", sum(b0."stars"), min(b0."stars"), max(b0."stars") FROM "star_row" b0 GROUP BY b0."repo" HAVING count(*) > 0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const star_row = multiset_diff(before.star_row, after.star_row);
-  const stat = multiset_diff(before.stat, after.stat);
-  return {
-    rels: [
-      { rel: "star_row", add: star_row.add, del: star_row.del },
-      { rel: "stat", add: stat.add, del: stat.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // sum_min_max_group_by_plain_columns: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -369,14 +285,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

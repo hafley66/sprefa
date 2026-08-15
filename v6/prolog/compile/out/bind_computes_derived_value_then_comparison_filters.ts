@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -263,66 +262,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "over_budget", sql: `INSERT OR IGNORE INTO "over_budget" ("name", "sum") SELECT b0."name", (b0."base" + b1."extra") FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10)`, params: [] },
 ];
 
-type Snapshot = {
-  readonly bump: readonly IRow[];
-  readonly over_budget: readonly IRow[];
-  readonly seen: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    bump: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."extra" FROM "__txt_bump" t`, rel_columns.bump!, rel_column_types.bump!),
-    over_budget: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."sum" FROM "__txt_over_budget" t`, rel_columns.over_budget!, rel_column_types.over_budget!),
-    seen: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."base", CASE WHEN json_valid(t."col3") AND json_type(t."col3") = 'object' AND json_type(t."col3", '$.fn') = 'text' AND json_type(t."col3", '$.args') = 'array' THEN json_extract(t."col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col3", '$.args')), '') || ')' ELSE t."col3" END AS "col3" FROM "__txt_seen" t`, rel_columns.seen!, rel_column_types.seen!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    bump: select_rows(seam, `SELECT "name", "extra" FROM "bump"`, rel_columns.bump!, rel_column_types.bump!),
-    over_budget: select_rows(seam, `SELECT "name", "sum" FROM "over_budget"`, rel_columns.over_budget!, rel_column_types.over_budget!),
-    seen: select_rows(seam, `SELECT "name", "base", "col3" FROM "seen"`, rel_columns.seen!, rel_column_types.seen!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   bump: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."extra" FROM "__txt_bump" t`,
   over_budget: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."sum" FROM "__txt_over_budget" t`,
   seen: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."base", CASE WHEN json_valid(t."col3") AND json_type(t."col3") = 'object' AND json_type(t."col3", '$.fn') = 'text' AND json_type(t."col3", '$.args') = 'array' THEN json_extract(t."col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col3", '$.args')), '') || ')' ELSE t."col3" END AS "col3" FROM "__txt_seen" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  bump: { kind: "set", add_sql: `INSERT OR IGNORE INTO "bump" ("name", "extra") VALUES (?, ?)`, del_sql: `DELETE FROM "bump" WHERE "name" = ? AND "extra" = ?` },
-  seen: { kind: "set", add_sql: `INSERT OR IGNORE INTO "seen" ("name", "base", "col3") VALUES (?, ?, ?)`, del_sql: `DELETE FROM "seen" WHERE "name" = ? AND "base" = ? AND "col3" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`bind_computes_derived_value_then_comparison_filters: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`bind_computes_derived_value_then_comparison_filters: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`bind_computes_derived_value_then_comparison_filters: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "bump", kind: "set", table_name: "bump", delta_table_name: "__delta_bump", frontier_table_name: "__frontier_bump", next_frontier_table_name: "__next_frontier_bump", columns: ["name", "extra"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "bump" ("name", "extra") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "extra"`, arrival_del_sql: `DELETE FROM "bump" WHERE ("name", "extra") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "extra"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."extra", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_bump" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."extra", t."_sign"`, rule_observers: ["over_budget/2"] },
@@ -338,44 +282,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "over_budget" ("name", "sum") SELECT b0."name", (b0."base" + b1."extra") FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10)`, support_sql: [`DELETE FROM "__support_next_over_budget"`, `INSERT INTO "__support_next_over_budget" ("name", "sum", "__refcount") SELECT "name", "sum", sum("__refcount") FROM (SELECT b0."name" AS "name", (b0."base" + b1."extra") AS "sum", count(*) AS "__refcount" FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10) GROUP BY b0."name", (b0."base" + b1."extra")) GROUP BY "name", "sum"`, `UPDATE "over_budget" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_over_budget" n WHERE n."name" = h."name" AND n."sum" = h."sum"), 0)`, `INSERT INTO "__delta_over_budget" ("_sign", "_sequence", "name", "sum") SELECT -1, row_number() OVER () - 1, "name", "sum" FROM "over_budget" WHERE "__refcount" <= 0`, `DELETE FROM "over_budget" WHERE "__refcount" <= 0`, `DELETE FROM "__new_over_budget"`, `INSERT INTO "__new_over_budget" ("name", "sum", "__refcount") SELECT n."name", n."sum", n."__refcount" FROM "__support_next_over_budget" n LEFT JOIN "over_budget" h ON n."name" = h."name" AND n."sum" = h."sum" WHERE h."name" IS NULL`, `INSERT INTO "__delta_over_budget" ("_sign", "_sequence", "name", "sum") SELECT 1, "rowid" - 1, "name", "sum" FROM "__new_over_budget"`, `INSERT INTO "__frontier_over_budget" ("_phase", "_sequence", "name", "sum") SELECT ?, "rowid" - 1, "name", "sum" FROM "__new_over_budget"`, `INSERT INTO "__next_frontier_over_budget" ("_phase", "_sequence", "name", "sum") SELECT ?, "rowid" - 1, "name", "sum" FROM "__new_over_budget"`, `INSERT OR IGNORE INTO "over_budget" ("name", "sum", "__refcount") SELECT n."name", n."sum", n."__refcount" FROM "__support_next_over_budget" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "over_budget";
-INSERT OR IGNORE INTO "over_budget" ("name", "sum") SELECT b0."name", (b0."base" + b1."extra") FROM "seen" b0, "bump" b1 WHERE b1."name" = b0."name" AND ((b0."base" + b1."extra") > 10)`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const bump = multiset_diff(before.bump, after.bump);
-  const over_budget = multiset_diff(before.over_budget, after.over_budget);
-  const seen = multiset_diff(before.seen, after.seen);
-  return {
-    rels: [
-      { rel: "bump", add: bump.add, del: bump.del },
-      { rel: "over_budget", add: over_budget.add, del: over_budget.del },
-      { rel: "seen", add: seen.add, del: seen.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // bind_computes_derived_value_then_comparison_filters: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -404,14 +314,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

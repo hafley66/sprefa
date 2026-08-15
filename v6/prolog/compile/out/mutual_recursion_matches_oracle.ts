@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -258,70 +257,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "odd", sql: `INSERT OR IGNORE INTO "odd" ("value") SELECT b0."value" FROM "even" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly clock: readonly IRow[];
-  readonly even: readonly IRow[];
-  readonly odd: readonly IRow[];
-  readonly seed: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    clock: select_rows(seam, `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_clock" t`, rel_columns.clock!, rel_column_types.clock!),
-    even: select_rows(seam, `SELECT t."value" FROM "even" t`, rel_columns.even!, rel_column_types.even!),
-    odd: select_rows(seam, `SELECT t."value" FROM "odd" t`, rel_columns.odd!, rel_column_types.odd!),
-    seed: select_rows(seam, `SELECT t."value" FROM "seed" t`, rel_columns.seed!, rel_column_types.seed!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    clock: select_rows(seam, `SELECT "col1" FROM "clock"`, rel_columns.clock!, rel_column_types.clock!),
-    even: select_rows(seam, `SELECT "value" FROM "even"`, rel_columns.even!, rel_column_types.even!),
-    odd: select_rows(seam, `SELECT "value" FROM "odd"`, rel_columns.odd!, rel_column_types.odd!),
-    seed: select_rows(seam, `SELECT "value" FROM "seed"`, rel_columns.seed!, rel_column_types.seed!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   clock: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_clock" t`,
   even: `SELECT t."value" FROM "even" t`,
   odd: `SELECT t."value" FROM "odd" t`,
   seed: `SELECT t."value" FROM "seed" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  clock: { kind: "set", add_sql: `INSERT OR IGNORE INTO "clock" ("col1") VALUES (?)`, del_sql: `DELETE FROM "clock" WHERE "col1" = ?` },
-  seed: { kind: "set", add_sql: `INSERT OR IGNORE INTO "seed" ("value") VALUES (?)`, del_sql: `DELETE FROM "seed" WHERE "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`mutual_recursion_matches_oracle: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`mutual_recursion_matches_oracle: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`mutual_recursion_matches_oracle: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "clock", kind: "set", table_name: "clock", delta_table_name: "__delta_clock", frontier_table_name: "__frontier_clock", next_frontier_table_name: "__next_frontier_clock", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "clock" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: `DELETE FROM "clock" WHERE ("col1") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "col1"`, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_clock" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
@@ -341,58 +282,10 @@ INSERT OR IGNORE INTO "even" ("value") SELECT b0."value" FROM "odd" b0`, support
 INSERT OR IGNORE INTO "odd" ("value") SELECT b0."value" FROM "even" b0`, support_sql: [`DELETE FROM "__support_next_odd"`, `INSERT INTO "__support_next_odd" ("value", "__refcount") SELECT "value", sum("__refcount") FROM (SELECT b0."value" AS "value", count(*) AS "__refcount" FROM "even" b0 GROUP BY b0."value") GROUP BY "value"`, `UPDATE "odd" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_odd" n WHERE n."value" = h."value"), 0)`, `INSERT INTO "__delta_odd" ("_sign", "_sequence", "value") SELECT -1, row_number() OVER () - 1, "value" FROM "odd" WHERE "__refcount" <= 0`, `DELETE FROM "odd" WHERE "__refcount" <= 0`, `DELETE FROM "__new_odd"`, `INSERT INTO "__new_odd" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_odd" n LEFT JOIN "odd" h ON n."value" = h."value" WHERE h."value" IS NULL`, `INSERT INTO "__delta_odd" ("_sign", "_sequence", "value") SELECT 1, "rowid" - 1, "value" FROM "__new_odd"`, `INSERT INTO "__frontier_odd" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_odd"`, `INSERT INTO "__next_frontier_odd" ("_phase", "_sequence", "value") SELECT ?, "rowid" - 1, "value" FROM "__new_odd"`, `INSERT OR IGNORE INTO "odd" ("value", "__refcount") SELECT n."value", n."__refcount" FROM "__support_next_odd" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, recursion_group: { group: 0, round_cap: 1000, heads: "[even,odd]" } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const delete_sql = `DELETE FROM "even";
-DELETE FROM "odd"`;
-  const insert_sql = `INSERT OR IGNORE INTO "even" ("value") SELECT b0."value" FROM "seed" b0;
-INSERT OR IGNORE INTO "even" ("value") SELECT b0."value" FROM "odd" b0;
-INSERT OR IGNORE INTO "odd" ("value") SELECT b0."value" FROM "even" b0`;
-  const count_sql = `SELECT (SELECT count(*) FROM "even") + (SELECT count(*) FROM "odd")`;
-  return seam.runner.executeMultiple(seam.db, delete_sql).pipe(
-    map(() => -1),
-    expand((prior_rows) => seam.runner.executeMultiple(seam.db, insert_sql).pipe(
-      concatMap(() => seam.runner.scalar(seam.db, count_sql)),
-      concatMap((rows) => (rows === prior_rows ? EMPTY : of(rows))),
-    )),
-    last(),
-    map(() => undefined),
-  );
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const clock = multiset_diff(before.clock, after.clock);
-  const even = multiset_diff(before.even, after.even);
-  const odd = multiset_diff(before.odd, after.odd);
-  const seed = multiset_diff(before.seed, after.seed);
-  return {
-    rels: [
-      { rel: "clock", add: clock.add, del: clock.del },
-      { rel: "even", add: even.add, del: even.del },
-      { rel: "odd", add: odd.add, del: odd.del },
-      { rel: "seed", add: seed.add, del: seed.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // mutual_recursion_matches_oracle: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -421,14 +314,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "recursive-cte-reseed",
   relations: INCREMENTAL_RELATIONS,

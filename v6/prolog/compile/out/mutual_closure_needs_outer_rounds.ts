@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -236,51 +235,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "reach", sql: `INSERT OR IGNORE INTO "reach" ("from_node", "to_node") SELECT b0."from_node", b1."to_node" FROM "path" b0, "edge" b1 WHERE b1."from_node" = b0."to_node"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly edge: readonly IRow[];
-  readonly path: readonly IRow[];
-  readonly reach: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    edge: select_rows(seam, `SELECT t."from_node", t."to_node" FROM "edge" t`, rel_columns.edge!, rel_column_types.edge!),
-    path: select_rows(seam, `SELECT t."from_node", t."to_node" FROM "path" t`, rel_columns.path!, rel_column_types.path!),
-    reach: select_rows(seam, `SELECT t."from_node", t."to_node" FROM "reach" t`, rel_columns.reach!, rel_column_types.reach!),
-  });
-}
-
 const final_select: Record<string, string> = {
   edge: `SELECT t."from_node", t."to_node" FROM "edge" t`,
   path: `SELECT t."from_node", t."to_node" FROM "path" t`,
   reach: `SELECT t."from_node", t."to_node" FROM "reach" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  edge: { kind: "set", add_sql: `INSERT OR IGNORE INTO "edge" ("from_node", "to_node") VALUES (?, ?)`, del_sql: `DELETE FROM "edge" WHERE "from_node" = ? AND "to_node" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`mutual_closure_needs_outer_rounds: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`mutual_closure_needs_outer_rounds: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`mutual_closure_needs_outer_rounds: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "edge", kind: "set", table_name: "edge", delta_table_name: "__delta_edge", frontier_table_name: "__frontier_edge", next_frontier_table_name: "__next_frontier_edge", columns: ["from_node", "to_node"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "edge" ("from_node", "to_node") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "from_node", "to_node"`, arrival_del_sql: `DELETE FROM "edge" WHERE ("from_node", "to_node") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "from_node", "to_node"`, boundary_sql: `SELECT t."from_node", t."to_node", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_edge" t WHERE t."_sign" IN (-1, 1) GROUP BY t."from_node", t."to_node", t."_sign"`, rule_observers: ["path/2", "reach/2"] },
@@ -299,54 +258,10 @@ INSERT OR IGNORE INTO "path" ("from_node", "to_node") SELECT b0."from_node", b0.
 INSERT OR IGNORE INTO "reach" ("from_node", "to_node") SELECT b0."from_node", b1."to_node" FROM "path" b0, "edge" b1 WHERE b1."from_node" = b0."to_node"`, support_sql: [`DELETE FROM "__support_next_reach"`, `INSERT INTO "__support_next_reach" ("from_node", "to_node", "__refcount") SELECT "from_node", "to_node", sum("__refcount") FROM (SELECT b0."from_node" AS "from_node", b1."to_node" AS "to_node", count(*) AS "__refcount" FROM "path" b0, "edge" b1 WHERE b1."from_node" = b0."to_node" GROUP BY b0."from_node", b1."to_node") GROUP BY "from_node", "to_node"`, `UPDATE "reach" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_reach" n WHERE n."from_node" = h."from_node" AND n."to_node" = h."to_node"), 0)`, `INSERT INTO "__delta_reach" ("_sign", "_sequence", "from_node", "to_node") SELECT -1, row_number() OVER () - 1, "from_node", "to_node" FROM "reach" WHERE "__refcount" <= 0`, `DELETE FROM "reach" WHERE "__refcount" <= 0`, `DELETE FROM "__new_reach"`, `INSERT INTO "__new_reach" ("from_node", "to_node", "__refcount") SELECT n."from_node", n."to_node", n."__refcount" FROM "__support_next_reach" n LEFT JOIN "reach" h ON n."from_node" = h."from_node" AND n."to_node" = h."to_node" WHERE h."from_node" IS NULL`, `INSERT INTO "__delta_reach" ("_sign", "_sequence", "from_node", "to_node") SELECT 1, "rowid" - 1, "from_node", "to_node" FROM "__new_reach"`, `INSERT INTO "__frontier_reach" ("_phase", "_sequence", "from_node", "to_node") SELECT ?, "rowid" - 1, "from_node", "to_node" FROM "__new_reach"`, `INSERT INTO "__next_frontier_reach" ("_phase", "_sequence", "from_node", "to_node") SELECT ?, "rowid" - 1, "from_node", "to_node" FROM "__new_reach"`, `INSERT OR IGNORE INTO "reach" ("from_node", "to_node", "__refcount") SELECT n."from_node", n."to_node", n."__refcount" FROM "__support_next_reach" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, recursion_group: { group: 0, round_cap: 1000, heads: "[path,reach]" } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const delete_sql = `DELETE FROM "path";
-DELETE FROM "reach"`;
-  const insert_sql = `INSERT OR IGNORE INTO "path" ("from_node", "to_node") SELECT b0."from_node", b0."to_node" FROM "edge" b0;
-INSERT OR IGNORE INTO "path" ("from_node", "to_node") SELECT b0."from_node", b0."to_node" FROM "reach" b0;
-INSERT OR IGNORE INTO "reach" ("from_node", "to_node") SELECT b0."from_node", b1."to_node" FROM "path" b0, "edge" b1 WHERE b1."from_node" = b0."to_node"`;
-  const count_sql = `SELECT (SELECT count(*) FROM "path") + (SELECT count(*) FROM "reach")`;
-  return seam.runner.executeMultiple(seam.db, delete_sql).pipe(
-    map(() => -1),
-    expand((prior_rows) => seam.runner.executeMultiple(seam.db, insert_sql).pipe(
-      concatMap(() => seam.runner.scalar(seam.db, count_sql)),
-      concatMap((rows) => (rows === prior_rows ? EMPTY : of(rows))),
-    )),
-    last(),
-    map(() => undefined),
-  );
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const edge = multiset_diff(before.edge, after.edge);
-  const path = multiset_diff(before.path, after.path);
-  const reach = multiset_diff(before.reach, after.reach);
-  return {
-    rels: [
-      { rel: "edge", add: edge.add, del: edge.del },
-      { rel: "path", add: path.add, del: path.del },
-      { rel: "reach", add: reach.add, del: reach.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // mutual_closure_needs_outer_rounds: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -372,14 +287,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "recursive-cte-reseed",
   relations: INCREMENTAL_RELATIONS,

@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -255,66 +254,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "stream_status", sql: `INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') FROM "stream_end" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly stream_end: readonly IRow[];
-  readonly stream_item: readonly IRow[];
-  readonly stream_status: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    stream_end: select_rows(seam, `SELECT CASE WHEN json_valid(t."args") AND json_type(t."args") = 'object' AND json_type(t."args", '$.fn') = 'text' AND json_type(t."args", '$.args') = 'array' THEN json_extract(t."args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."args", '$.args')), '') || ')' ELSE t."args" END AS "args", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_stream_end" t`, rel_columns.stream_end!, rel_column_types.stream_end!),
-    stream_item: select_rows(seam, `SELECT CASE WHEN json_valid(t."args") AND json_type(t."args") = 'object' AND json_type(t."args", '$.fn') = 'text' AND json_type(t."args", '$.args') = 'array' THEN json_extract(t."args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."args", '$.args')), '') || ')' ELSE t."args" END AS "args", t."col2", CASE WHEN json_valid(t."col3") AND json_type(t."col3") = 'object' AND json_type(t."col3", '$.fn') = 'text' AND json_type(t."col3", '$.args') = 'array' THEN json_extract(t."col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col3", '$.args')), '') || ')' ELSE t."col3" END AS "col3" FROM "__txt_stream_item" t`, rel_columns.stream_item!, rel_column_types.stream_item!),
-    stream_status: select_rows(seam, `SELECT CASE WHEN json_valid(t."args") AND json_type(t."args") = 'object' AND json_type(t."args", '$.fn') = 'text' AND json_type(t."args", '$.args') = 'array' THEN json_extract(t."args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."args", '$.args')), '') || ')' ELSE t."args" END AS "args", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_stream_status" t`, rel_columns.stream_status!, rel_column_types.stream_status!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    stream_end: select_rows(seam, `SELECT "args", "col2" FROM "stream_end"`, rel_columns.stream_end!, rel_column_types.stream_end!),
-    stream_item: select_rows(seam, `SELECT "args", "col2", "col3" FROM "stream_item"`, rel_columns.stream_item!, rel_column_types.stream_item!),
-    stream_status: select_rows(seam, `SELECT "args", "col2" FROM "stream_status"`, rel_columns.stream_status!, rel_column_types.stream_status!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   stream_end: `SELECT CASE WHEN json_valid(t."args") AND json_type(t."args") = 'object' AND json_type(t."args", '$.fn') = 'text' AND json_type(t."args", '$.args') = 'array' THEN json_extract(t."args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."args", '$.args')), '') || ')' ELSE t."args" END AS "args", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_stream_end" t`,
   stream_item: `SELECT CASE WHEN json_valid(t."args") AND json_type(t."args") = 'object' AND json_type(t."args", '$.fn') = 'text' AND json_type(t."args", '$.args') = 'array' THEN json_extract(t."args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."args", '$.args')), '') || ')' ELSE t."args" END AS "args", t."col2", CASE WHEN json_valid(t."col3") AND json_type(t."col3") = 'object' AND json_type(t."col3", '$.fn') = 'text' AND json_type(t."col3", '$.args') = 'array' THEN json_extract(t."col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col3", '$.args')), '') || ')' ELSE t."col3" END AS "col3" FROM "__txt_stream_item" t`,
   stream_status: `SELECT CASE WHEN json_valid(t."args") AND json_type(t."args") = 'object' AND json_type(t."args", '$.fn') = 'text' AND json_type(t."args", '$.args') = 'array' THEN json_extract(t."args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."args", '$.args')), '') || ')' ELSE t."args" END AS "args", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_stream_status" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  stream_end: { kind: "log", add_sql: `INSERT INTO "stream_end" ("args", "col2") VALUES (?, ?)`, del_sql: null },
-  stream_item: { kind: "log", add_sql: `INSERT INTO "stream_item" ("args", "col2", "col3") VALUES (?, ?, ?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`terminal_is_terminal: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`terminal_is_terminal: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`terminal_is_terminal: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "stream_end", kind: "log", table_name: "stream_end", delta_table_name: "__delta_stream_end", frontier_table_name: "__frontier_stream_end", next_frontier_table_name: "__next_frontier_stream_end", columns: ["args", "col2"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "stream_end" ("args", "col2") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "args", "col2"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."args") AND json_type(t."args") = 'object' AND json_type(t."args", '$.fn') = 'text' AND json_type(t."args", '$.args') = 'array' THEN json_extract(t."args", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."args", '$.args')), '') || ')' ELSE t."args" END AS "args", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_stream_end" t WHERE t."_sign" IN (-1, 1) GROUP BY t."args", t."col2", t."_sign"`, rule_observers: ["stream_status/2"] },
@@ -331,45 +275,10 @@ INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT
 INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') FROM "stream_end" b0`, support_sql: [`DELETE FROM "__support_next_stream_status"`, `INSERT INTO "__support_next_stream_status" ("args", "col2", "__refcount") SELECT "args", "col2", sum("__refcount") FROM (SELECT b0."args" AS "args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') AS "col2", count(*) AS "__refcount" FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args") GROUP BY b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') UNION ALL SELECT b0."args" AS "args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') AS "col2", count(*) AS "__refcount" FROM "stream_end" b0 GROUP BY b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done')) GROUP BY "args", "col2"`, `UPDATE "stream_status" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_stream_status" n WHERE n."args" = h."args" AND n."col2" = h."col2"), 0)`, `INSERT INTO "__delta_stream_status" ("_sign", "_sequence", "args", "col2") SELECT -1, row_number() OVER () - 1, "args", "col2" FROM "stream_status" WHERE "__refcount" <= 0`, `DELETE FROM "stream_status" WHERE "__refcount" <= 0`, `DELETE FROM "__new_stream_status"`, `INSERT INTO "__new_stream_status" ("args", "col2", "__refcount") SELECT n."args", n."col2", n."__refcount" FROM "__support_next_stream_status" n LEFT JOIN "stream_status" h ON n."args" = h."args" AND n."col2" = h."col2" WHERE h."args" IS NULL`, `INSERT INTO "__delta_stream_status" ("_sign", "_sequence", "args", "col2") SELECT 1, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT INTO "__frontier_stream_status" ("_phase", "_sequence", "args", "col2") SELECT ?, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT INTO "__next_frontier_stream_status" ("_phase", "_sequence", "args", "col2") SELECT ?, "rowid" - 1, "args", "col2" FROM "__new_stream_status"`, `INSERT OR IGNORE INTO "stream_status" ("args", "col2", "__refcount") SELECT n."args", n."col2", n."__refcount" FROM "__support_next_stream_status" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "stream_status";
-INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'running') FROM "stream_item" b0 WHERE NOT EXISTS (SELECT 1 FROM "stream_end" n0 WHERE n0."args" = b0."args");
-INSERT OR IGNORE INTO "stream_status" ("args", "col2") SELECT b0."args", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'done') FROM "stream_end" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const stream_end = multiset_diff(before.stream_end, after.stream_end);
-  const stream_item = multiset_diff(before.stream_item, after.stream_item);
-  const stream_status = multiset_diff(before.stream_status, after.stream_status);
-  return {
-    rels: [
-      { rel: "stream_end", add: stream_end.add, del: stream_end.del },
-      { rel: "stream_item", add: stream_item.add, del: stream_item.del },
-      { rel: "stream_status", add: stream_status.add, del: stream_status.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // terminal_is_terminal: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -398,14 +307,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

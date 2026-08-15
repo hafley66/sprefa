@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -313,40 +312,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "carry", sql: `INSERT OR IGNORE INTO "carry" ("id", "nested") SELECT b0."id", b0."nested" FROM "index" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e: readonly IRow[];
-  readonly __gen__wrap_int_74568235536ee9d4: readonly IRow[];
-  readonly __gen__wrap_text_2bd6acc46ade78fd: readonly IRow[];
-  readonly carry: readonly IRow[];
-  readonly index: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref___gen__wrap_int_74568235536ee9d4" d WHERE d."__id" = t."first") AS "first", (SELECT d."__rendered" FROM "__ref___gen__wrap_text_2bd6acc46ade78fd" d WHERE d."__id" = t."second") AS "second" FROM "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" t`, rel_columns.__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e!, rel_column_types.__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e!),
-    __gen__wrap_int_74568235536ee9d4: select_rows(seam, `SELECT t."value" FROM "__gen__wrap_int_74568235536ee9d4" t`, rel_columns.__gen__wrap_int_74568235536ee9d4!, rel_column_types.__gen__wrap_int_74568235536ee9d4!),
-    __gen__wrap_text_2bd6acc46ade78fd: select_rows(seam, `SELECT CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__wrap_text_2bd6acc46ade78fd" t`, rel_columns.__gen__wrap_text_2bd6acc46ade78fd!, rel_column_types.__gen__wrap_text_2bd6acc46ade78fd!),
-    carry: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" d WHERE d."__id" = t."nested") AS "nested" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
-    index: select_rows(seam, `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" d WHERE d."__id" = t."nested") AS "nested" FROM "index" t`, rel_columns.index!, rel_column_types.index!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e: select_rows(seam, `SELECT "first", "second" FROM "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e"`, rel_columns.__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e!, rel_column_types.__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e!),
-    __gen__wrap_int_74568235536ee9d4: select_rows(seam, `SELECT "value" FROM "__gen__wrap_int_74568235536ee9d4"`, rel_columns.__gen__wrap_int_74568235536ee9d4!, rel_column_types.__gen__wrap_int_74568235536ee9d4!),
-    __gen__wrap_text_2bd6acc46ade78fd: select_rows(seam, `SELECT "value" FROM "__gen__wrap_text_2bd6acc46ade78fd"`, rel_columns.__gen__wrap_text_2bd6acc46ade78fd!, rel_column_types.__gen__wrap_text_2bd6acc46ade78fd!),
-    carry: select_rows(seam, `SELECT "id", "nested" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
-    index: select_rows(seam, `SELECT "id", "nested" FROM "index"`, rel_columns.index!, rel_column_types.index!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e: `SELECT (SELECT d."__rendered" FROM "__ref___gen__wrap_int_74568235536ee9d4" d WHERE d."__id" = t."first") AS "first", (SELECT d."__rendered" FROM "__ref___gen__wrap_text_2bd6acc46ade78fd" d WHERE d."__id" = t."second") AS "second" FROM "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" t`,
   __gen__wrap_int_74568235536ee9d4: `SELECT t."value" FROM "__gen__wrap_int_74568235536ee9d4" t`,
@@ -354,35 +319,6 @@ const final_select: Record<string, string> = {
   carry: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" d WHERE d."__id" = t."nested") AS "nested" FROM "carry" t`,
   index: `SELECT t."id", (SELECT d."__rendered" FROM "__ref___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" d WHERE d."__id" = t."nested") AS "nested" FROM "index" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e: { kind: "set", add_sql: `INSERT OR IGNORE INTO "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" ("first", "second") VALUES (?, ?)`, del_sql: `DELETE FROM "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" WHERE "first" = ? AND "second" = ?` },
-  __gen__wrap_int_74568235536ee9d4: { kind: "set", add_sql: `INSERT OR IGNORE INTO "__gen__wrap_int_74568235536ee9d4" ("value") VALUES (?)`, del_sql: `DELETE FROM "__gen__wrap_int_74568235536ee9d4" WHERE "value" = ?` },
-  __gen__wrap_text_2bd6acc46ade78fd: { kind: "set", add_sql: `INSERT OR IGNORE INTO "__gen__wrap_text_2bd6acc46ade78fd" ("value") VALUES (?)`, del_sql: `DELETE FROM "__gen__wrap_text_2bd6acc46ade78fd" WHERE "value" = ?` },
-  index: { kind: "set", add_sql: `INSERT INTO "index" ("id", "nested") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "nested" = excluded."nested"`, del_sql: `DELETE FROM "index" WHERE "id" = ? AND "nested" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`nested_bounded_template_instance: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`nested_bounded_template_instance: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`nested_bounded_template_instance: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", kind: "set", table_name: "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", delta_table_name: "__delta___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", frontier_table_name: "__frontier___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", next_frontier_table_name: "__next_frontier___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", columns: ["first", "second"], column_types: ["ref", "ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" ("first", "second") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "first", "second"`, arrival_del_sql: `DELETE FROM "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" WHERE ("first", "second") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "first", "second"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref___gen__wrap_int_74568235536ee9d4" d WHERE d."__id" = t."first") AS "first", (SELECT d."__rendered" FROM "__ref___gen__wrap_text_2bd6acc46ade78fd" d WHERE d."__id" = t."second") AS "second", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__couple_wrap_int_wrap_text_fea7bde20e4f244e" t WHERE t."_sign" IN (-1, 1) GROUP BY t."first", t."second", t."_sign"`, rule_observers: [] },
@@ -400,51 +336,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "carry" ("id", "nested") SELECT b0."id", b0."nested" FROM "index" b0`, support_sql: [`DELETE FROM "__support_next_carry"`, `INSERT INTO "__support_next_carry" ("id", "nested", "__refcount") SELECT "id", "nested", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."nested" AS "nested", count(*) AS "__refcount" FROM "index" b0 GROUP BY b0."id", b0."nested") GROUP BY "id", "nested"`, `UPDATE "carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_carry" n WHERE n."id" = h."id" AND n."nested" = h."nested"), 0)`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "nested") SELECT -1, row_number() OVER () - 1, "id", "nested" FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_carry"`, `INSERT INTO "__new_carry" ("id", "nested", "__refcount") SELECT n."id", n."nested", n."__refcount" FROM "__support_next_carry" n LEFT JOIN "carry" h ON n."id" = h."id" AND n."nested" = h."nested" WHERE h."id" IS NULL`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "nested") SELECT 1, "rowid" - 1, "id", "nested" FROM "__new_carry"`, `INSERT INTO "__frontier_carry" ("_phase", "_sequence", "id", "nested") SELECT ?, "rowid" - 1, "id", "nested" FROM "__new_carry"`, `INSERT INTO "__next_frontier_carry" ("_phase", "_sequence", "id", "nested") SELECT ?, "rowid" - 1, "id", "nested" FROM "__new_carry"`, `INSERT OR IGNORE INTO "carry" ("id", "nested", "__refcount") SELECT n."id", n."nested", n."__refcount" FROM "__support_next_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "carry";
-INSERT OR IGNORE INTO "carry" ("id", "nested") SELECT b0."id", b0."nested" FROM "index" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e = multiset_diff(before.__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e, after.__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e);
-  const __gen__wrap_int_74568235536ee9d4 = multiset_diff(before.__gen__wrap_int_74568235536ee9d4, after.__gen__wrap_int_74568235536ee9d4);
-  const __gen__wrap_text_2bd6acc46ade78fd = multiset_diff(before.__gen__wrap_text_2bd6acc46ade78fd, after.__gen__wrap_text_2bd6acc46ade78fd);
-  const carry = multiset_diff(before.carry, after.carry);
-  const index = multiset_diff(before.index, after.index);
-  return {
-    rels: [
-      { rel: "__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e", add: __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e.add, del: __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e.del },
-      { rel: "__gen__wrap_int_74568235536ee9d4", add: __gen__wrap_int_74568235536ee9d4.add, del: __gen__wrap_int_74568235536ee9d4.del },
-      { rel: "__gen__wrap_text_2bd6acc46ade78fd", add: __gen__wrap_text_2bd6acc46ade78fd.add, del: __gen__wrap_text_2bd6acc46ade78fd.del },
-      { rel: "carry", add: carry.add, del: carry.del },
-      { rel: "index", add: index.add, del: index.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // nested_bounded_template_instance: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -476,14 +371,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

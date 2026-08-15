@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -703,97 +702,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "author_audit", sql: `INSERT OR IGNORE INTO "author_audit" ("id", "tag") SELECT b0."id", b0."tag" FROM "seen_ticket" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __gen__list_text_df210f232c1299bd: readonly IRow[];
-  readonly __gen__list_text_df210f232c1299bd__member: readonly IRow[];
-  readonly __opt_int_none: readonly IRow[];
-  readonly __opt_int_some: readonly IRow[];
-  readonly __opt_int_tag: readonly IRow[];
-  readonly __opt_text_none: readonly IRow[];
-  readonly __opt_text_some: readonly IRow[];
-  readonly __opt_text_tag: readonly IRow[];
-  readonly author_audit: readonly IRow[];
-  readonly bucket: readonly IRow[];
-  readonly bucket__entries: readonly IRow[];
-  readonly metric: readonly IRow[];
-  readonly metric_copy: readonly IRow[];
-  readonly person: readonly IRow[];
-  readonly priority_high: readonly IRow[];
-  readonly priority_low: readonly IRow[];
-  readonly priority_tag: readonly IRow[];
-  readonly review: readonly IRow[];
-  readonly review__reviewer: readonly IRow[];
-  readonly seen_bucket: readonly IRow[];
-  readonly seen_review: readonly IRow[];
-  readonly seen_ticket: readonly IRow[];
-  readonly ticket: readonly IRow[];
-  readonly ticket_copy: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content" FROM "__txt___gen__list_text_df210f232c1299bd" t`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member" t`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
-    __opt_int_none: select_rows(seam, `SELECT t."id" FROM "__opt_int_none" t`, rel_columns.__opt_int_none!, rel_column_types.__opt_int_none!),
-    __opt_int_some: select_rows(seam, `SELECT t."id", t."value" FROM "__opt_int_some" t`, rel_columns.__opt_int_some!, rel_column_types.__opt_int_some!),
-    __opt_int_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt___opt_int_tag" t`, rel_columns.__opt_int_tag!, rel_column_types.__opt_int_tag!),
-    __opt_text_none: select_rows(seam, `SELECT t."id" FROM "__opt_text_none" t`, rel_columns.__opt_text_none!, rel_column_types.__opt_text_none!),
-    __opt_text_some: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___opt_text_some" t`, rel_columns.__opt_text_some!, rel_column_types.__opt_text_some!),
-    __opt_text_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt___opt_text_tag" t`, rel_columns.__opt_text_tag!, rel_column_types.__opt_text_tag!),
-    author_audit: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_author_audit" t`, rel_columns.author_audit!, rel_column_types.author_audit!),
-    bucket: select_rows(seam, `SELECT t."id" FROM "bucket" t`, rel_columns.bucket!, rel_column_types.bucket!),
-    bucket__entries: select_rows(seam, `SELECT t."bucket_id", t."__gen__list_text_df210f232c1299bd_id" FROM "bucket__entries" t`, rel_columns.bucket__entries!, rel_column_types.bucket__entries!),
-    metric: select_rows(seam, `SELECT t."id", t."value" FROM "metric" t`, rel_columns.metric!, rel_column_types.metric!),
-    metric_copy: select_rows(seam, `SELECT t."id", t."value" FROM "metric_copy" t`, rel_columns.metric_copy!, rel_column_types.metric_copy!),
-    person: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_person" t`, rel_columns.person!, rel_column_types.person!),
-    priority_high: select_rows(seam, `SELECT t."id" FROM "priority_high" t`, rel_columns.priority_high!, rel_column_types.priority_high!),
-    priority_low: select_rows(seam, `SELECT t."id" FROM "priority_low" t`, rel_columns.priority_low!, rel_column_types.priority_low!),
-    priority_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_priority_tag" t`, rel_columns.priority_tag!, rel_column_types.priority_tag!),
-    review: select_rows(seam, `SELECT t."id" FROM "review" t`, rel_columns.review!, rel_column_types.review!),
-    review__reviewer: select_rows(seam, `SELECT t."review_id", t."person_id" FROM "review__reviewer" t`, rel_columns.review__reviewer!, rel_column_types.review__reviewer!),
-    seen_bucket: select_rows(seam, `SELECT t."id", t."list_id" FROM "seen_bucket" t`, rel_columns.seen_bucket!, rel_column_types.seen_bucket!),
-    seen_review: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_seen_review" t`, rel_columns.seen_review!, rel_column_types.seen_review!),
-    seen_ticket: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_seen_ticket" t`, rel_columns.seen_ticket!, rel_column_types.seen_ticket!),
-    ticket: select_rows(seam, `SELECT t."id", t."title" FROM "ticket" t`, rel_columns.ticket!, rel_column_types.ticket!),
-    ticket_copy: select_rows(seam, `SELECT t."id", t."title" FROM "ticket_copy" t`, rel_columns.ticket_copy!, rel_column_types.ticket_copy!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_text_df210f232c1299bd: select_rows(seam, `SELECT "content" FROM "__gen__list_text_df210f232c1299bd"`, rel_columns.__gen__list_text_df210f232c1299bd!, rel_column_types.__gen__list_text_df210f232c1299bd!),
-    __gen__list_text_df210f232c1299bd__member: select_rows(seam, `SELECT "list_id", "idx", "value" FROM "__gen__list_text_df210f232c1299bd__member"`, rel_columns.__gen__list_text_df210f232c1299bd__member!, rel_column_types.__gen__list_text_df210f232c1299bd__member!),
-    __opt_int_none: select_rows(seam, `SELECT "id" FROM "__opt_int_none"`, rel_columns.__opt_int_none!, rel_column_types.__opt_int_none!),
-    __opt_int_some: select_rows(seam, `SELECT "id", "value" FROM "__opt_int_some"`, rel_columns.__opt_int_some!, rel_column_types.__opt_int_some!),
-    __opt_int_tag: select_rows(seam, `SELECT "id", "tag" FROM "__opt_int_tag"`, rel_columns.__opt_int_tag!, rel_column_types.__opt_int_tag!),
-    __opt_text_none: select_rows(seam, `SELECT "id" FROM "__opt_text_none"`, rel_columns.__opt_text_none!, rel_column_types.__opt_text_none!),
-    __opt_text_some: select_rows(seam, `SELECT "id", "value" FROM "__opt_text_some"`, rel_columns.__opt_text_some!, rel_column_types.__opt_text_some!),
-    __opt_text_tag: select_rows(seam, `SELECT "id", "tag" FROM "__opt_text_tag"`, rel_columns.__opt_text_tag!, rel_column_types.__opt_text_tag!),
-    author_audit: select_rows(seam, `SELECT "id", "tag" FROM "author_audit"`, rel_columns.author_audit!, rel_column_types.author_audit!),
-    bucket: select_rows(seam, `SELECT "id" FROM "bucket"`, rel_columns.bucket!, rel_column_types.bucket!),
-    bucket__entries: select_rows(seam, `SELECT "bucket_id", "__gen__list_text_df210f232c1299bd_id" FROM "bucket__entries"`, rel_columns.bucket__entries!, rel_column_types.bucket__entries!),
-    metric: select_rows(seam, `SELECT "id", "value" FROM "metric"`, rel_columns.metric!, rel_column_types.metric!),
-    metric_copy: select_rows(seam, `SELECT "id", "value" FROM "metric_copy"`, rel_columns.metric_copy!, rel_column_types.metric_copy!),
-    person: select_rows(seam, `SELECT "id", "name" FROM "person"`, rel_columns.person!, rel_column_types.person!),
-    priority_high: select_rows(seam, `SELECT "id" FROM "priority_high"`, rel_columns.priority_high!, rel_column_types.priority_high!),
-    priority_low: select_rows(seam, `SELECT "id" FROM "priority_low"`, rel_columns.priority_low!, rel_column_types.priority_low!),
-    priority_tag: select_rows(seam, `SELECT "id", "tag" FROM "priority_tag"`, rel_columns.priority_tag!, rel_column_types.priority_tag!),
-    review: select_rows(seam, `SELECT "id" FROM "review"`, rel_columns.review!, rel_column_types.review!),
-    review__reviewer: select_rows(seam, `SELECT "review_id", "person_id" FROM "review__reviewer"`, rel_columns.review__reviewer!, rel_column_types.review__reviewer!),
-    seen_bucket: select_rows(seam, `SELECT "id", "list_id" FROM "seen_bucket"`, rel_columns.seen_bucket!, rel_column_types.seen_bucket!),
-    seen_review: select_rows(seam, `SELECT "id", "name" FROM "seen_review"`, rel_columns.seen_review!, rel_column_types.seen_review!),
-    seen_ticket: select_rows(seam, `SELECT "id", "tag" FROM "seen_ticket"`, rel_columns.seen_ticket!, rel_column_types.seen_ticket!),
-    ticket: select_rows(seam, `SELECT "id", "title" FROM "ticket"`, rel_columns.ticket!, rel_column_types.ticket!),
-    ticket_copy: select_rows(seam, `SELECT "id", "title" FROM "ticket_copy"`, rel_columns.ticket_copy!, rel_column_types.ticket_copy!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__list_text_df210f232c1299bd: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content" FROM "__txt___gen__list_text_df210f232c1299bd" t`,
   __gen__list_text_df210f232c1299bd__member: `SELECT t."list_id", t."idx", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_text_df210f232c1299bd__member" t`,
@@ -820,48 +728,6 @@ const final_select: Record<string, string> = {
   ticket: `SELECT t."id", t."title" FROM "ticket" t`,
   ticket_copy: `SELECT t."id", t."title" FROM "ticket_copy" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_text_df210f232c1299bd: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") VALUES (?) ON CONFLICT ("content") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE "content" = ?` },
-  __gen__list_text_df210f232c1299bd__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd__member" ("list_id", "idx", "value") VALUES (?, ?, ?) ON CONFLICT ("list_id", "idx") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd__member" WHERE "list_id" = ? AND "idx" = ? AND "value" = ?` },
-  __opt_int_none: { kind: "set", add_sql: `INSERT INTO "__opt_int_none" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__opt_int_none" WHERE "id" = ?` },
-  __opt_int_some: { kind: "set", add_sql: `INSERT INTO "__opt_int_some" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "__opt_int_some" WHERE "id" = ? AND "value" = ?` },
-  __opt_text_none: { kind: "set", add_sql: `INSERT INTO "__opt_text_none" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__opt_text_none" WHERE "id" = ?` },
-  __opt_text_some: { kind: "set", add_sql: `INSERT INTO "__opt_text_some" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "__opt_text_some" WHERE "id" = ? AND "value" = ?` },
-  bucket: { kind: "set", add_sql: `INSERT INTO "bucket" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "bucket" WHERE "id" = ?` },
-  bucket__entries: { kind: "set", add_sql: `INSERT INTO "bucket__entries" ("bucket_id", "__gen__list_text_df210f232c1299bd_id") VALUES (?, ?) ON CONFLICT ("bucket_id") DO UPDATE SET "__gen__list_text_df210f232c1299bd_id" = excluded."__gen__list_text_df210f232c1299bd_id"`, del_sql: `DELETE FROM "bucket__entries" WHERE "bucket_id" = ? AND "__gen__list_text_df210f232c1299bd_id" = ?` },
-  metric: { kind: "set", add_sql: `INSERT INTO "metric" ("id", "value") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "metric" WHERE "id" = ? AND "value" = ?` },
-  metric_copy: { kind: "set", add_sql: `INSERT INTO "metric_copy" ("id", "value") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "value" = excluded."value"`, del_sql: `DELETE FROM "metric_copy" WHERE "id" = ? AND "value" = ?` },
-  person: { kind: "set", add_sql: `INSERT INTO "person" ("id", "name") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "name" = excluded."name"`, del_sql: `DELETE FROM "person" WHERE "id" = ? AND "name" = ?` },
-  priority_high: { kind: "set", add_sql: `INSERT INTO "priority_high" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "priority_high" WHERE "id" = ?` },
-  priority_low: { kind: "set", add_sql: `INSERT INTO "priority_low" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "priority_low" WHERE "id" = ?` },
-  review: { kind: "set", add_sql: `INSERT INTO "review" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "review" WHERE "id" = ?` },
-  review__reviewer: { kind: "set", add_sql: `INSERT INTO "review__reviewer" ("review_id", "person_id") VALUES (?, ?) ON CONFLICT ("review_id") DO UPDATE SET "person_id" = excluded."person_id"`, del_sql: `DELETE FROM "review__reviewer" WHERE "review_id" = ? AND "person_id" = ?` },
-  ticket: { kind: "set", add_sql: `INSERT INTO "ticket" ("id", "title") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "title" = excluded."title"`, del_sql: `DELETE FROM "ticket" WHERE "id" = ? AND "title" = ?` },
-  ticket_copy: { kind: "set", add_sql: `INSERT INTO "ticket_copy" ("id", "title") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "title" = excluded."title"`, del_sql: `DELETE FROM "ticket_copy" WHERE "id" = ? AND "title" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`generic_expansion_end_to_end: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`generic_expansion_end_to_end: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`generic_expansion_end_to_end: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_text_df210f232c1299bd", kind: "set", table_name: "__gen__list_text_df210f232c1299bd", delta_table_name: "__delta___gen__list_text_df210f232c1299bd", frontier_table_name: "__frontier___gen__list_text_df210f232c1299bd", next_frontier_table_name: "__next_frontier___gen__list_text_df210f232c1299bd", columns: ["content"], column_types: ["text"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_text_df210f232c1299bd" ("content") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("content") DO NOTHING RETURNING "content"`, arrival_del_sql: `DELETE FROM "__gen__list_text_df210f232c1299bd" WHERE ("content") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "content"`, boundary_sql: `SELECT CASE WHEN json_valid(t."content") AND json_type(t."content") = 'object' AND json_type(t."content", '$.fn') = 'text' AND json_type(t."content", '$.args') = 'array' THEN json_extract(t."content", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."content", '$.args')), '') || ')' ELSE t."content" END AS "content", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta___gen__list_text_df210f232c1299bd" t WHERE t."_sign" IN (-1, 1) GROUP BY t."content", t."_sign"`, rule_observers: [] },
@@ -913,101 +779,10 @@ INSERT OR IGNORE INTO "seen_ticket" ("id", "tag") SELECT b0."id", b1."tag" FROM 
 INSERT OR IGNORE INTO "author_audit" ("id", "tag") SELECT b0."id", b0."tag" FROM "seen_ticket" b0`, support_sql: [`DELETE FROM "__support_next_author_audit"`, `INSERT INTO "__support_next_author_audit" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."tag" AS "tag", count(*) AS "__refcount" FROM "seen_ticket" b0 GROUP BY b0."id", b0."tag") GROUP BY "id", "tag"`, `UPDATE "author_audit" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_author_audit" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_author_audit" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "author_audit" WHERE "__refcount" <= 0`, `DELETE FROM "author_audit" WHERE "__refcount" <= 0`, `DELETE FROM "__new_author_audit"`, `INSERT INTO "__new_author_audit" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_author_audit" n LEFT JOIN "author_audit" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_author_audit" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_author_audit"`, `INSERT INTO "__frontier_author_audit" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_author_audit"`, `INSERT INTO "__next_frontier_author_audit" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_author_audit"`, `INSERT OR IGNORE INTO "author_audit" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_author_audit" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "__opt_int_tag";
-INSERT OR IGNORE INTO "__opt_int_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "__opt_int_none" b0;
-INSERT OR IGNORE INTO "__opt_int_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') FROM "__opt_int_some" b0;
-DELETE FROM "__opt_text_tag";
-INSERT OR IGNORE INTO "__opt_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "__opt_text_none" b0;
-INSERT OR IGNORE INTO "__opt_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') FROM "__opt_text_some" b0;
-DELETE FROM "priority_tag";
-INSERT OR IGNORE INTO "priority_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'low') FROM "priority_low" b0;
-INSERT OR IGNORE INTO "priority_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'high') FROM "priority_high" b0;
-DELETE FROM "seen_bucket";
-INSERT OR IGNORE INTO "seen_bucket" ("id", "list_id") SELECT b0."bucket_id", b0."__gen__list_text_df210f232c1299bd_id" FROM "bucket__entries" b0;
-DELETE FROM "seen_review";
-INSERT OR IGNORE INTO "seen_review" ("id", "name") SELECT b0."review_id", b1."name" FROM "review__reviewer" b0, "person" b1 WHERE b1."id" = b0."person_id";
-DELETE FROM "seen_ticket";
-INSERT OR IGNORE INTO "seen_ticket" ("id", "tag") SELECT b0."id", b1."tag" FROM "ticket" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."title";
-DELETE FROM "author_audit";
-INSERT OR IGNORE INTO "author_audit" ("id", "tag") SELECT b0."id", b0."tag" FROM "seen_ticket" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__list_text_df210f232c1299bd = multiset_diff(before.__gen__list_text_df210f232c1299bd, after.__gen__list_text_df210f232c1299bd);
-  const __gen__list_text_df210f232c1299bd__member = multiset_diff(before.__gen__list_text_df210f232c1299bd__member, after.__gen__list_text_df210f232c1299bd__member);
-  const __opt_int_none = multiset_diff(before.__opt_int_none, after.__opt_int_none);
-  const __opt_int_some = multiset_diff(before.__opt_int_some, after.__opt_int_some);
-  const __opt_int_tag = multiset_diff(before.__opt_int_tag, after.__opt_int_tag);
-  const __opt_text_none = multiset_diff(before.__opt_text_none, after.__opt_text_none);
-  const __opt_text_some = multiset_diff(before.__opt_text_some, after.__opt_text_some);
-  const __opt_text_tag = multiset_diff(before.__opt_text_tag, after.__opt_text_tag);
-  const author_audit = multiset_diff(before.author_audit, after.author_audit);
-  const bucket = multiset_diff(before.bucket, after.bucket);
-  const bucket__entries = multiset_diff(before.bucket__entries, after.bucket__entries);
-  const metric = multiset_diff(before.metric, after.metric);
-  const metric_copy = multiset_diff(before.metric_copy, after.metric_copy);
-  const person = multiset_diff(before.person, after.person);
-  const priority_high = multiset_diff(before.priority_high, after.priority_high);
-  const priority_low = multiset_diff(before.priority_low, after.priority_low);
-  const priority_tag = multiset_diff(before.priority_tag, after.priority_tag);
-  const review = multiset_diff(before.review, after.review);
-  const review__reviewer = multiset_diff(before.review__reviewer, after.review__reviewer);
-  const seen_bucket = multiset_diff(before.seen_bucket, after.seen_bucket);
-  const seen_review = multiset_diff(before.seen_review, after.seen_review);
-  const seen_ticket = multiset_diff(before.seen_ticket, after.seen_ticket);
-  const ticket = multiset_diff(before.ticket, after.ticket);
-  const ticket_copy = multiset_diff(before.ticket_copy, after.ticket_copy);
-  return {
-    rels: [
-      { rel: "__gen__list_text_df210f232c1299bd", add: __gen__list_text_df210f232c1299bd.add, del: __gen__list_text_df210f232c1299bd.del },
-      { rel: "__gen__list_text_df210f232c1299bd__member", add: __gen__list_text_df210f232c1299bd__member.add, del: __gen__list_text_df210f232c1299bd__member.del },
-      { rel: "__opt_int_none", add: __opt_int_none.add, del: __opt_int_none.del },
-      { rel: "__opt_int_some", add: __opt_int_some.add, del: __opt_int_some.del },
-      { rel: "__opt_int_tag", add: __opt_int_tag.add, del: __opt_int_tag.del },
-      { rel: "__opt_text_none", add: __opt_text_none.add, del: __opt_text_none.del },
-      { rel: "__opt_text_some", add: __opt_text_some.add, del: __opt_text_some.del },
-      { rel: "__opt_text_tag", add: __opt_text_tag.add, del: __opt_text_tag.del },
-      { rel: "author_audit", add: author_audit.add, del: author_audit.del },
-      { rel: "bucket", add: bucket.add, del: bucket.del },
-      { rel: "bucket__entries", add: bucket__entries.add, del: bucket__entries.del },
-      { rel: "metric", add: metric.add, del: metric.del },
-      { rel: "metric_copy", add: metric_copy.add, del: metric_copy.del },
-      { rel: "person", add: person.add, del: person.del },
-      { rel: "priority_high", add: priority_high.add, del: priority_high.del },
-      { rel: "priority_low", add: priority_low.add, del: priority_low.del },
-      { rel: "priority_tag", add: priority_tag.add, del: priority_tag.del },
-      { rel: "review", add: review.add, del: review.del },
-      { rel: "review__reviewer", add: review__reviewer.add, del: review__reviewer.del },
-      { rel: "seen_bucket", add: seen_bucket.add, del: seen_bucket.del },
-      { rel: "seen_review", add: seen_review.add, del: seen_review.del },
-      { rel: "seen_ticket", add: seen_ticket.add, del: seen_ticket.del },
-      { rel: "ticket", add: ticket.add, del: ticket.del },
-      { rel: "ticket_copy", add: ticket_copy.add, del: ticket_copy.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // generic_expansion_end_to_end: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -1036,14 +811,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

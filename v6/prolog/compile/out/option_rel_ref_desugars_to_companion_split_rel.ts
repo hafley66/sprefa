@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -265,71 +264,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "reviewed", sql: `INSERT OR IGNORE INTO "reviewed" ("commit_id", "reviewer_name") SELECT b0."commit_id", b1."name" FROM "commit__reviewed_by" b0, "person" b1 WHERE b1."id" = b0."person_id"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly commit: readonly IRow[];
-  readonly commit__reviewed_by: readonly IRow[];
-  readonly person: readonly IRow[];
-  readonly reviewed: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    commit: select_rows(seam, `SELECT t."id" FROM "commit" t`, rel_columns.commit!, rel_column_types.commit!),
-    commit__reviewed_by: select_rows(seam, `SELECT t."commit_id", t."person_id" FROM "commit__reviewed_by" t`, rel_columns.commit__reviewed_by!, rel_column_types.commit__reviewed_by!),
-    person: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_person" t`, rel_columns.person!, rel_column_types.person!),
-    reviewed: select_rows(seam, `SELECT t."commit_id", CASE WHEN json_valid(t."reviewer_name") AND json_type(t."reviewer_name") = 'object' AND json_type(t."reviewer_name", '$.fn') = 'text' AND json_type(t."reviewer_name", '$.args') = 'array' THEN json_extract(t."reviewer_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reviewer_name", '$.args')), '') || ')' ELSE t."reviewer_name" END AS "reviewer_name" FROM "__txt_reviewed" t`, rel_columns.reviewed!, rel_column_types.reviewed!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    commit: select_rows(seam, `SELECT "id" FROM "commit"`, rel_columns.commit!, rel_column_types.commit!),
-    commit__reviewed_by: select_rows(seam, `SELECT "commit_id", "person_id" FROM "commit__reviewed_by"`, rel_columns.commit__reviewed_by!, rel_column_types.commit__reviewed_by!),
-    person: select_rows(seam, `SELECT "id", "name" FROM "person"`, rel_columns.person!, rel_column_types.person!),
-    reviewed: select_rows(seam, `SELECT "commit_id", "reviewer_name" FROM "reviewed"`, rel_columns.reviewed!, rel_column_types.reviewed!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   commit: `SELECT t."id" FROM "commit" t`,
   commit__reviewed_by: `SELECT t."commit_id", t."person_id" FROM "commit__reviewed_by" t`,
   person: `SELECT t."id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_person" t`,
   reviewed: `SELECT t."commit_id", CASE WHEN json_valid(t."reviewer_name") AND json_type(t."reviewer_name") = 'object' AND json_type(t."reviewer_name", '$.fn') = 'text' AND json_type(t."reviewer_name", '$.args') = 'array' THEN json_extract(t."reviewer_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."reviewer_name", '$.args')), '') || ')' ELSE t."reviewer_name" END AS "reviewer_name" FROM "__txt_reviewed" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  commit: { kind: "set", add_sql: `INSERT INTO "commit" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "commit" WHERE "id" = ?` },
-  commit__reviewed_by: { kind: "set", add_sql: `INSERT INTO "commit__reviewed_by" ("commit_id", "person_id") VALUES (?, ?) ON CONFLICT ("commit_id") DO UPDATE SET "person_id" = excluded."person_id"`, del_sql: `DELETE FROM "commit__reviewed_by" WHERE "commit_id" = ? AND "person_id" = ?` },
-  person: { kind: "set", add_sql: `INSERT INTO "person" ("id", "name") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "name" = excluded."name"`, del_sql: `DELETE FROM "person" WHERE "id" = ? AND "name" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`option_rel_ref_desugars_to_companion_split_rel: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`option_rel_ref_desugars_to_companion_split_rel: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`option_rel_ref_desugars_to_companion_split_rel: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "commit", kind: "set", table_name: "commit", delta_table_name: "__delta_commit", frontier_table_name: "__frontier_commit", next_frontier_table_name: "__next_frontier_commit", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "commit" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "commit" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_commit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: [] },
@@ -346,46 +286,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "reviewed" ("commit_id", "reviewer_name") SELECT b0."commit_id", b1."name" FROM "commit__reviewed_by" b0, "person" b1 WHERE b1."id" = b0."person_id"`, support_sql: [`DELETE FROM "__support_next_reviewed"`, `INSERT INTO "__support_next_reviewed" ("commit_id", "reviewer_name", "__refcount") SELECT "commit_id", "reviewer_name", sum("__refcount") FROM (SELECT b0."commit_id" AS "commit_id", b1."name" AS "reviewer_name", count(*) AS "__refcount" FROM "commit__reviewed_by" b0, "person" b1 WHERE b1."id" = b0."person_id" GROUP BY b0."commit_id", b1."name") GROUP BY "commit_id", "reviewer_name"`, `UPDATE "reviewed" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_reviewed" n WHERE n."commit_id" = h."commit_id" AND n."reviewer_name" = h."reviewer_name"), 0)`, `INSERT INTO "__delta_reviewed" ("_sign", "_sequence", "commit_id", "reviewer_name") SELECT -1, row_number() OVER () - 1, "commit_id", "reviewer_name" FROM "reviewed" WHERE "__refcount" <= 0`, `DELETE FROM "reviewed" WHERE "__refcount" <= 0`, `DELETE FROM "__new_reviewed"`, `INSERT INTO "__new_reviewed" ("commit_id", "reviewer_name", "__refcount") SELECT n."commit_id", n."reviewer_name", n."__refcount" FROM "__support_next_reviewed" n LEFT JOIN "reviewed" h ON n."commit_id" = h."commit_id" AND n."reviewer_name" = h."reviewer_name" WHERE h."commit_id" IS NULL`, `INSERT INTO "__delta_reviewed" ("_sign", "_sequence", "commit_id", "reviewer_name") SELECT 1, "rowid" - 1, "commit_id", "reviewer_name" FROM "__new_reviewed"`, `INSERT INTO "__frontier_reviewed" ("_phase", "_sequence", "commit_id", "reviewer_name") SELECT ?, "rowid" - 1, "commit_id", "reviewer_name" FROM "__new_reviewed"`, `INSERT INTO "__next_frontier_reviewed" ("_phase", "_sequence", "commit_id", "reviewer_name") SELECT ?, "rowid" - 1, "commit_id", "reviewer_name" FROM "__new_reviewed"`, `INSERT OR IGNORE INTO "reviewed" ("commit_id", "reviewer_name", "__refcount") SELECT n."commit_id", n."reviewer_name", n."__refcount" FROM "__support_next_reviewed" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "reviewed";
-INSERT OR IGNORE INTO "reviewed" ("commit_id", "reviewer_name") SELECT b0."commit_id", b1."name" FROM "commit__reviewed_by" b0, "person" b1 WHERE b1."id" = b0."person_id"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const commit = multiset_diff(before.commit, after.commit);
-  const commit__reviewed_by = multiset_diff(before.commit__reviewed_by, after.commit__reviewed_by);
-  const person = multiset_diff(before.person, after.person);
-  const reviewed = multiset_diff(before.reviewed, after.reviewed);
-  return {
-    rels: [
-      { rel: "commit", add: commit.add, del: commit.del },
-      { rel: "commit__reviewed_by", add: commit__reviewed_by.add, del: commit__reviewed_by.del },
-      { rel: "person", add: person.add, del: person.del },
-      { rel: "reviewed", add: reviewed.add, del: reviewed.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // option_rel_ref_desugars_to_companion_split_rel: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -414,14 +318,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

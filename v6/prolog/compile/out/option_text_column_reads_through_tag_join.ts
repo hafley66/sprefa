@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -298,40 +297,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "email_state", sql: `INSERT OR IGNORE INTO "email_state" ("user_id", "state") SELECT b0."user_id", b1."tag" FROM "user_profile" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."email"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __opt_text_none: readonly IRow[];
-  readonly __opt_text_some: readonly IRow[];
-  readonly __opt_text_tag: readonly IRow[];
-  readonly email_state: readonly IRow[];
-  readonly user_profile: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __opt_text_none: select_rows(seam, `SELECT t."id" FROM "__opt_text_none" t`, rel_columns.__opt_text_none!, rel_column_types.__opt_text_none!),
-    __opt_text_some: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___opt_text_some" t`, rel_columns.__opt_text_some!, rel_column_types.__opt_text_some!),
-    __opt_text_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt___opt_text_tag" t`, rel_columns.__opt_text_tag!, rel_column_types.__opt_text_tag!),
-    email_state: select_rows(seam, `SELECT t."user_id", CASE WHEN json_valid(t."state") AND json_type(t."state") = 'object' AND json_type(t."state", '$.fn') = 'text' AND json_type(t."state", '$.args') = 'array' THEN json_extract(t."state", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."state", '$.args')), '') || ')' ELSE t."state" END AS "state" FROM "__txt_email_state" t`, rel_columns.email_state!, rel_column_types.email_state!),
-    user_profile: select_rows(seam, `SELECT t."user_id", t."email" FROM "user_profile" t`, rel_columns.user_profile!, rel_column_types.user_profile!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __opt_text_none: select_rows(seam, `SELECT "id" FROM "__opt_text_none"`, rel_columns.__opt_text_none!, rel_column_types.__opt_text_none!),
-    __opt_text_some: select_rows(seam, `SELECT "id", "value" FROM "__opt_text_some"`, rel_columns.__opt_text_some!, rel_column_types.__opt_text_some!),
-    __opt_text_tag: select_rows(seam, `SELECT "id", "tag" FROM "__opt_text_tag"`, rel_columns.__opt_text_tag!, rel_column_types.__opt_text_tag!),
-    email_state: select_rows(seam, `SELECT "user_id", "state" FROM "email_state"`, rel_columns.email_state!, rel_column_types.email_state!),
-    user_profile: select_rows(seam, `SELECT "user_id", "email" FROM "user_profile"`, rel_columns.user_profile!, rel_column_types.user_profile!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __opt_text_none: `SELECT t."id" FROM "__opt_text_none" t`,
   __opt_text_some: `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___opt_text_some" t`,
@@ -339,34 +304,6 @@ const final_select: Record<string, string> = {
   email_state: `SELECT t."user_id", CASE WHEN json_valid(t."state") AND json_type(t."state") = 'object' AND json_type(t."state", '$.fn') = 'text' AND json_type(t."state", '$.args') = 'array' THEN json_extract(t."state", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."state", '$.args')), '') || ')' ELSE t."state" END AS "state" FROM "__txt_email_state" t`,
   user_profile: `SELECT t."user_id", t."email" FROM "user_profile" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __opt_text_none: { kind: "set", add_sql: `INSERT INTO "__opt_text_none" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__opt_text_none" WHERE "id" = ?` },
-  __opt_text_some: { kind: "set", add_sql: `INSERT INTO "__opt_text_some" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "__opt_text_some" WHERE "id" = ? AND "value" = ?` },
-  user_profile: { kind: "set", add_sql: `INSERT INTO "user_profile" ("user_id", "email") VALUES (?, ?) ON CONFLICT ("user_id") DO UPDATE SET "email" = excluded."email"`, del_sql: `DELETE FROM "user_profile" WHERE "user_id" = ? AND "email" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`option_text_column_reads_through_tag_join: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`option_text_column_reads_through_tag_join: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`option_text_column_reads_through_tag_join: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__opt_text_none", kind: "set", table_name: "__opt_text_none", delta_table_name: "__delta___opt_text_none", frontier_table_name: "__frontier___opt_text_none", next_frontier_table_name: "__next_frontier___opt_text_none", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "__opt_text_none" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "__opt_text_none" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___opt_text_none" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: ["__opt_text_tag/2"] },
@@ -387,51 +324,10 @@ INSERT OR IGNORE INTO "__opt_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."
 INSERT OR IGNORE INTO "email_state" ("user_id", "state") SELECT b0."user_id", b1."tag" FROM "user_profile" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."email"`, support_sql: [`DELETE FROM "__support_next_email_state"`, `INSERT INTO "__support_next_email_state" ("user_id", "state", "__refcount") SELECT "user_id", "state", sum("__refcount") FROM (SELECT b0."user_id" AS "user_id", b1."tag" AS "state", count(*) AS "__refcount" FROM "user_profile" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."email" GROUP BY b0."user_id", b1."tag") GROUP BY "user_id", "state"`, `UPDATE "email_state" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_email_state" n WHERE n."user_id" = h."user_id" AND n."state" = h."state"), 0)`, `INSERT INTO "__delta_email_state" ("_sign", "_sequence", "user_id", "state") SELECT -1, row_number() OVER () - 1, "user_id", "state" FROM "email_state" WHERE "__refcount" <= 0`, `DELETE FROM "email_state" WHERE "__refcount" <= 0`, `DELETE FROM "__new_email_state"`, `INSERT INTO "__new_email_state" ("user_id", "state", "__refcount") SELECT n."user_id", n."state", n."__refcount" FROM "__support_next_email_state" n LEFT JOIN "email_state" h ON n."user_id" = h."user_id" AND n."state" = h."state" WHERE h."user_id" IS NULL`, `INSERT INTO "__delta_email_state" ("_sign", "_sequence", "user_id", "state") SELECT 1, "rowid" - 1, "user_id", "state" FROM "__new_email_state"`, `INSERT INTO "__frontier_email_state" ("_phase", "_sequence", "user_id", "state") SELECT ?, "rowid" - 1, "user_id", "state" FROM "__new_email_state"`, `INSERT INTO "__next_frontier_email_state" ("_phase", "_sequence", "user_id", "state") SELECT ?, "rowid" - 1, "user_id", "state" FROM "__new_email_state"`, `INSERT OR IGNORE INTO "email_state" ("user_id", "state", "__refcount") SELECT n."user_id", n."state", n."__refcount" FROM "__support_next_email_state" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "__opt_text_tag";
-INSERT OR IGNORE INTO "__opt_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'none') FROM "__opt_text_none" b0;
-INSERT OR IGNORE INTO "__opt_text_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'some') FROM "__opt_text_some" b0;
-DELETE FROM "email_state";
-INSERT OR IGNORE INTO "email_state" ("user_id", "state") SELECT b0."user_id", b1."tag" FROM "user_profile" b0, "__opt_text_tag" b1 WHERE b1."id" = b0."email"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __opt_text_none = multiset_diff(before.__opt_text_none, after.__opt_text_none);
-  const __opt_text_some = multiset_diff(before.__opt_text_some, after.__opt_text_some);
-  const __opt_text_tag = multiset_diff(before.__opt_text_tag, after.__opt_text_tag);
-  const email_state = multiset_diff(before.email_state, after.email_state);
-  const user_profile = multiset_diff(before.user_profile, after.user_profile);
-  return {
-    rels: [
-      { rel: "__opt_text_none", add: __opt_text_none.add, del: __opt_text_none.del },
-      { rel: "__opt_text_some", add: __opt_text_some.add, del: __opt_text_some.del },
-      { rel: "__opt_text_tag", add: __opt_text_tag.add, del: __opt_text_tag.del },
-      { rel: "email_state", add: email_state.add, del: email_state.del },
-      { rel: "user_profile", add: user_profile.add, del: user_profile.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // option_text_column_reads_through_tag_join: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -460,14 +356,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

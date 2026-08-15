@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -246,66 +245,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "shape_tag", sql: `INSERT OR IGNORE INTO "shape_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'square') FROM "shape_square" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly shape_circle: readonly IRow[];
-  readonly shape_square: readonly IRow[];
-  readonly shape_tag: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    shape_circle: select_rows(seam, `SELECT t."id", t."radius" FROM "shape_circle" t`, rel_columns.shape_circle!, rel_column_types.shape_circle!),
-    shape_square: select_rows(seam, `SELECT t."id", t."side" FROM "shape_square" t`, rel_columns.shape_square!, rel_column_types.shape_square!),
-    shape_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_shape_tag" t`, rel_columns.shape_tag!, rel_column_types.shape_tag!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    shape_circle: select_rows(seam, `SELECT "id", "radius" FROM "shape_circle"`, rel_columns.shape_circle!, rel_column_types.shape_circle!),
-    shape_square: select_rows(seam, `SELECT "id", "side" FROM "shape_square"`, rel_columns.shape_square!, rel_column_types.shape_square!),
-    shape_tag: select_rows(seam, `SELECT "id", "tag" FROM "shape_tag"`, rel_columns.shape_tag!, rel_column_types.shape_tag!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   shape_circle: `SELECT t."id", t."radius" FROM "shape_circle" t`,
   shape_square: `SELECT t."id", t."side" FROM "shape_square" t`,
   shape_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_shape_tag" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  shape_circle: { kind: "set", add_sql: `INSERT INTO "shape_circle" ("id", "radius") VALUES (?, ?) ON CONFLICT ("radius") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "shape_circle" WHERE "id" = ? AND "radius" = ?` },
-  shape_square: { kind: "set", add_sql: `INSERT INTO "shape_square" ("id", "side") VALUES (?, ?) ON CONFLICT ("side") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "shape_square" WHERE "id" = ? AND "side" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`enum_variants_run_unchanged_under_the_origin_row_pass: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`enum_variants_run_unchanged_under_the_origin_row_pass: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`enum_variants_run_unchanged_under_the_origin_row_pass: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "shape_circle", kind: "set", table_name: "shape_circle", delta_table_name: "__delta_shape_circle", frontier_table_name: "__frontier_shape_circle", next_frontier_table_name: "__next_frontier_shape_circle", columns: ["id", "radius"], column_types: ["int", "int"], key_indices: [1], arrival_add_sql: `INSERT INTO "shape_circle" ("id", "radius") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("radius") DO UPDATE SET "id" = excluded."id" RETURNING "id", "radius"`, arrival_del_sql: `DELETE FROM "shape_circle" WHERE ("id", "radius") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "radius"`, boundary_sql: `SELECT t."id", t."radius", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_shape_circle" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."radius", t."_sign"`, rule_observers: ["shape_tag/2"] },
@@ -322,45 +266,10 @@ INSERT OR IGNORE INTO "shape_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id"
 INSERT OR IGNORE INTO "shape_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'square') FROM "shape_square" b0`, support_sql: [`DELETE FROM "__support_next_shape_tag"`, `INSERT INTO "__support_next_shape_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'circle') AS "tag", count(*) AS "__refcount" FROM "shape_circle" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'circle') UNION ALL SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'square') AS "tag", count(*) AS "__refcount" FROM "shape_square" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'square')) GROUP BY "id", "tag"`, `UPDATE "shape_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_shape_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_shape_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "shape_tag" WHERE "__refcount" <= 0`, `DELETE FROM "shape_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_shape_tag"`, `INSERT INTO "__new_shape_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_shape_tag" n LEFT JOIN "shape_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_shape_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_shape_tag"`, `INSERT INTO "__frontier_shape_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_shape_tag"`, `INSERT INTO "__next_frontier_shape_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_shape_tag"`, `INSERT OR IGNORE INTO "shape_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_shape_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "shape_tag";
-INSERT OR IGNORE INTO "shape_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'circle') FROM "shape_circle" b0;
-INSERT OR IGNORE INTO "shape_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'square') FROM "shape_square" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const shape_circle = multiset_diff(before.shape_circle, after.shape_circle);
-  const shape_square = multiset_diff(before.shape_square, after.shape_square);
-  const shape_tag = multiset_diff(before.shape_tag, after.shape_tag);
-  return {
-    rels: [
-      { rel: "shape_circle", add: shape_circle.add, del: shape_circle.del },
-      { rel: "shape_square", add: shape_square.add, del: shape_square.del },
-      { rel: "shape_tag", add: shape_tag.add, del: shape_tag.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // enum_variants_run_unchanged_under_the_origin_row_pass: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -389,14 +298,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

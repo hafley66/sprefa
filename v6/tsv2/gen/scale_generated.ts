@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -17,12 +16,9 @@
 // run-emitted.ts (the reconciliation runner) runs it after DDL and before
 // the tick fold.
 
-import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
+import { concatMap, map, of, type Observable } from "rxjs";
 
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
-import { multiset_diff } from "../runtime/diff.ts";
-import { select_rows } from "../runtime/rows.ts";
-import { list_at_scalar_seam } from "../runtime/boundary.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -58,15 +54,6 @@ export const host_plans: readonly IHostPlanData[] = [];
 export const bind_plans: readonly IBindPlanData[] = [];
 export const query_plans: readonly IQueryPlanData[] = [];
 export const unsupported_execution: readonly string[] = [];
-
-function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
-  return values.map((value) => {
-    if (typeof value === "boolean") return BigInt(value ? 1 : 0);
-    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
-    if (typeof value === "string") return value;
-    throw list_at_scalar_seam("sql_parameter");
-  });
-}
 
 const SAFE_INTEGER_LIMIT = 9007199254740991n;
 
@@ -138,25 +125,6 @@ function validateArrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function triggerOccurrences(
-  kind: "log" | "set",
-  relName: string,
-  beforeRows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === relName && arrival.sign === "add");
-  const seen = new Set<string>(beforeRows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== relName || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
-}
-
 const ddl: readonly string[] = [
   `CREATE TABLE "change" ("key" TEXT NOT NULL, "value" TEXT NOT NULL)`,
   `CREATE TABLE "head" ("key" TEXT NOT NULL, "value" TEXT NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
@@ -194,48 +162,10 @@ const arrival_targets: readonly string[] = ["change"];
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly change: readonly IRow[];
-  readonly head: readonly IRow[];
-};
-
-function readSnapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    change: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "change"`, rel_columns.change!, rel_column_types.change!),
-    head: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "head"`, rel_columns.head!, rel_column_types.head!),
-  });
-}
-
 const final_select: Record<string, string> = {
   change: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "change"`,
   head: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value" FROM "head"`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; addSql: string; delSql: string | null }> = {
-  change: { kind: "log", addSql: `INSERT INTO "change" ("key", "value") VALUES (?, ?)`, delSql: null },
-};
-
-function arrivalStatement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`scale_bench: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`scale_bench: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.delSql === null) {
-      throw new Error(`scale_bench: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.delSql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.addSql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrivalStatement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "change", kind: "log", table_name: "change", delta_table_name: "__delta_change", frontier_table_name: "__frontier_change", next_frontier_table_name: "__next_frontier_change", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "change" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", CASE WHEN json_valid("value") AND json_type("value") = 'object' AND json_type("value", '$.fn') = 'text' AND json_type("value", '$.args') = 'array' THEN json_extract("value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("value", '$.args')), '') || ')' ELSE "value" END AS "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_change" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"` },
@@ -249,65 +179,7 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_HEAD_0_PROJECT_SQL = `SELECT ?1 AS "key", ?2 AS "value"`;
-const EDGE_HEAD_0_WRITE_SQL = `INSERT INTO "head" ("key", "value") VALUES (?, ?) ON CONFLICT("key") DO UPDATE SET "value" = excluded."value"`;
-const EDGE_HEAD_0_HEAD_COLUMNS: readonly string[] = ["key", "value"];
-const EDGE_HEAD_0_KEY_INDICES: readonly number[] = [0];
-
-function resolveHead_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const triggerRows = triggerOccurrences("log", "change", before.change, arrivals);
-  if (triggerRows.length === 0) return of([]);
-  return forkJoin(triggerRows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_HEAD_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projectedRows = result.rows.map((row) => EDGE_HEAD_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projectedRow of projectedRows) {
-          const key = JSON.stringify(EDGE_HEAD_0_KEY_INDICES.map((index) => projectedRow[index]));
-          resolved.set(key, projectedRow);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_HEAD_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function recomputeLevels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function buildDeltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const change = multiset_diff(before.change, after.change);
-  const head = multiset_diff(before.head, after.head);
-  return {
-    rels: [
-      { rel: "change", add: change.add, del: change.del },
-      { rel: "head", add: head.add, del: head.del },
-    ],
-    carry_pending: head.add.length > 0 || head.del.length > 0,
-  };
-}
-
-function runNaiveTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return readSnapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      resolveHead_0Writes(seam, before, arrivals).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-    concatMap((before) => recomputeLevels(seam).pipe(map(() => before))),
-    concatMap((before) => readSnapshot(seam).pipe(map((after) => buildDeltas(before, after)))),
-  );
-  // scale_bench: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return IncrementalRuntime.prepare_tick(seam, INCREMENTAL_RELATIONS).pipe(
@@ -328,14 +200,10 @@ function runIncrementalTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable
 
 function runTick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validateArrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return runNaiveTick(seam, arrivals);
-  }
   return runIncrementalTick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

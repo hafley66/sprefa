@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -225,61 +224,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "image", sql: `INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`, params: [] },
 ];
 
-type Snapshot = {
-  readonly chart: readonly IRow[];
-  readonly image: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    chart: select_rows(seam, `SELECT t."body" FROM "chart" t`, rel_columns.chart!, rel_column_types.chart!),
-    image: select_rows(seam, `SELECT CASE WHEN json_valid(t."repository") AND json_type(t."repository") = 'object' AND json_type(t."repository", '$.fn') = 'text' AND json_type(t."repository", '$.args') = 'array' THEN json_extract(t."repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repository", '$.args')), '') || ')' ELSE t."repository" END AS "repository", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_image" t`, rel_columns.image!, rel_column_types.image!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    chart: select_rows(seam, `SELECT "body" FROM "chart"`, rel_columns.chart!, rel_column_types.chart!),
-    image: select_rows(seam, `SELECT "repository", "tag" FROM "image"`, rel_columns.image!, rel_column_types.image!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   chart: `SELECT t."body" FROM "chart" t`,
   image: `SELECT CASE WHEN json_valid(t."repository") AND json_type(t."repository") = 'object' AND json_type(t."repository", '$.fn') = 'text' AND json_type(t."repository", '$.args') = 'array' THEN json_extract(t."repository", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repository", '$.args')), '') || ')' ELSE t."repository" END AS "repository", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_image" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  chart: { kind: "set", add_sql: `INSERT OR IGNORE INTO "chart" ("body") VALUES (?)`, del_sql: `DELETE FROM "chart" WHERE "body" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`json_descent_matches_at_any_depth: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`json_descent_matches_at_any_depth: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`json_descent_matches_at_any_depth: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "chart", kind: "set", table_name: "chart", delta_table_name: "__delta_chart", frontier_table_name: "__frontier_chart", next_frontier_table_name: "__next_frontier_chart", columns: ["body"], column_types: ["json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "chart" ("body") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "body"`, arrival_del_sql: `DELETE FROM "chart" WHERE ("body") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "body"`, boundary_sql: `SELECT t."body", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_chart" t WHERE t."_sign" IN (-1, 1) GROUP BY t."body", t."_sign"`, rule_observers: ["image/2"] },
@@ -295,43 +243,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value,
 INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`, support_sql: [`DELETE FROM "__support_next_image"`, `INSERT INTO "__support_next_image" ("repository", "tag", "__refcount") SELECT "repository", "tag", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')) AS "repository", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) AS "tag", count(*) AS "__refcount" FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL GROUP BY json_extract(j0.value, '$."image"."repository"'), json_extract(j0.value, '$."image"."tag"')) GROUP BY "repository", "tag"`, `UPDATE "image" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_image" n WHERE n."repository" = h."repository" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_image" ("_sign", "_sequence", "repository", "tag") SELECT -1, row_number() OVER () - 1, "repository", "tag" FROM "image" WHERE "__refcount" <= 0`, `DELETE FROM "image" WHERE "__refcount" <= 0`, `DELETE FROM "__new_image"`, `INSERT INTO "__new_image" ("repository", "tag", "__refcount") SELECT n."repository", n."tag", n."__refcount" FROM "__support_next_image" n LEFT JOIN "image" h ON n."repository" = h."repository" AND n."tag" = h."tag" WHERE h."repository" IS NULL`, `INSERT INTO "__delta_image" ("_sign", "_sequence", "repository", "tag") SELECT 1, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT INTO "__frontier_image" ("_phase", "_sequence", "repository", "tag") SELECT ?, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT INTO "__next_frontier_image" ("_phase", "_sequence", "repository", "tag") SELECT ?, "rowid" - 1, "repository", "tag" FROM "__new_image"`, `INSERT OR IGNORE INTO "image" ("repository", "tag", "__refcount") SELECT n."repository", n."tag", n."__refcount" FROM "__support_next_image" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"') FROM "__frontier_chart" d0, json_tree(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."image"."tag"') FROM "__frontier_chart" d0, json_tree(d0."body") j0 WHERE d0."_phase" >= 0 AND json_type(d0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`] },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "image";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract(j0.value, '$."image"."repository"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL UNION SELECT DISTINCT json_extract(j0.value, '$."image"."tag"') FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL;
-INSERT OR IGNORE INTO "image" ("repository", "tag") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."repository"')), (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract(j0.value, '$."image"."tag"')) FROM "chart" b0, json_tree(b0."body") j0 WHERE json_type(b0."body", '$') = 'object' AND j0.type = 'object' AND json_type(j0.value, '$."image"') = 'object' AND json_extract(j0.value, '$."image"."repository"') IS NOT NULL AND json_extract(j0.value, '$."image"."tag"') IS NOT NULL`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const chart = multiset_diff(before.chart, after.chart);
-  const image = multiset_diff(before.image, after.image);
-  return {
-    rels: [
-      { rel: "chart", add: chart.add, del: chart.del },
-      { rel: "image", add: image.add, del: image.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // json_descent_matches_at_any_depth: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -360,14 +275,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

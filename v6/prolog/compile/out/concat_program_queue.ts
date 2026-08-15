@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -160,12 +159,6 @@ function trigger_occurrences(
     occurrences.push(arrival);
   }
   return occurrences;
-}
-
-function departure_occurrences(seam: ISqlSeam, sql: string, columns: readonly string[]): Observable<readonly IRow[]> {
-  return seam.runner.execute(seam.db, sql).pipe(
-    map((result) => result.rows.map((row) => columns.map((column) => row[column] as IRowValue) as IRow)),
-  );
 }
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -686,156 +679,6 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s
 INSERT OR IGNORE INTO "tab_view" ("tab_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]')), b1."body" FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'))`, support_sql: [`DELETE FROM "__support_next_tab_view"`, `INSERT INTO "__support_next_tab_view" ("tab_id", "body", "__refcount") SELECT "tab_id", "body", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]')) AS "tab_id", b1."body" AS "body", count(*) AS "__refcount" FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]')) GROUP BY json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'), b1."body") GROUP BY "tab_id", "body"`, `UPDATE "tab_view" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_tab_view" n WHERE n."tab_id" = h."tab_id" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_tab_view" ("_sign", "_sequence", "tab_id", "body") SELECT -1, row_number() OVER () - 1, "tab_id", "body" FROM "tab_view" WHERE "__refcount" <= 0`, `DELETE FROM "tab_view" WHERE "__refcount" <= 0`, `DELETE FROM "__new_tab_view"`, `INSERT INTO "__new_tab_view" ("tab_id", "body", "__refcount") SELECT n."tab_id", n."body", n."__refcount" FROM "__support_next_tab_view" n LEFT JOIN "tab_view" h ON n."tab_id" = h."tab_id" AND n."body" = h."body" WHERE h."tab_id" IS NULL`, `INSERT INTO "__delta_tab_view" ("_sign", "_sequence", "tab_id", "body") SELECT 1, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT INTO "__frontier_tab_view" ("_phase", "_sequence", "tab_id", "body") SELECT ?, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT INTO "__next_frontier_tab_view" ("_phase", "_sequence", "tab_id", "body") SELECT ?, "rowid" - 1, "tab_id", "body" FROM "__new_tab_view"`, `INSERT OR IGNORE INTO "tab_view" ("tab_id", "body", "__refcount") SELECT n."tab_id", n."body", n."__refcount" FROM "__support_next_tab_view" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."col1"), '$.args[0]') FROM "__frontier_demanded" d0, "tab_row" b0 WHERE d0."_phase" >= 0 AND json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."col1"), '$.fn') = 'tab' AND b0."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."col1"), '$.args[0]'))`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]') FROM "demanded" b0, "tab_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.fn') = 'tab' AND b1."tab_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."col1"), '$.args[0]'))`] },
 ];
 
-const EDGE_OPEN_TAB_0_PROJECT_SQL = `SELECT ?1 AS "session_id", ?2 AS "tab_id" WHERE NOT EXISTS (SELECT 1 FROM "live_tab" n0 WHERE n0."session_id" = ?1)`;
-const EDGE_OPEN_TAB_0_WRITE_SQL = `INSERT INTO "open_tab" ("session_id", "tab_id") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "tab_id" = excluded."tab_id"`;
-const EDGE_OPEN_TAB_0_HEAD_COLUMNS: readonly string[] = ["session_id", "tab_id"];
-const EDGE_OPEN_TAB_0_KEY_INDICES: readonly number[] = [0];
-
-const EDGE_QUEUE_NEXT_1_PROJECT_SQL = `SELECT ?1 AS "session_id", (b1."next" + 1) AS "next" FROM "live_tab" b0, "__pre_queue_next" b1 WHERE b0."session_id" = ?1 AND b1."session_id" = ?1`;
-const EDGE_QUEUE_NEXT_1_WRITE_SQL = `INSERT INTO "queue_next" ("session_id", "next") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "next" = excluded."next"`;
-const EDGE_QUEUE_NEXT_1_HEAD_COLUMNS: readonly string[] = ["session_id", "next"];
-const EDGE_QUEUE_NEXT_1_KEY_INDICES: readonly number[] = [0];
-
-const EDGE_QUEUE_SLOT_2_PROJECT_SQL = `SELECT ?1 AS "session_id", (b1."next" + 1) AS "next", ?2 AS "tab_id" FROM "live_tab" b0, "__pre_queue_next" b1 WHERE b0."session_id" = ?1 AND b1."session_id" = ?1`;
-const EDGE_QUEUE_SLOT_2_WRITE_SQL = `INSERT INTO "queue_slot" ("session_id", "next", "tab_id") VALUES (?, ?, ?) ON CONFLICT("session_id", "next") DO UPDATE SET "tab_id" = excluded."tab_id"`;
-const EDGE_QUEUE_SLOT_2_HEAD_COLUMNS: readonly string[] = ["session_id", "next", "tab_id"];
-const EDGE_QUEUE_SLOT_2_KEY_INDICES: readonly number[] = [0, 1];
-
-const EDGE_CLOSED_3_PROJECT_SQL = `SELECT ?1 AS "session_id", ?2 AS "tab_id"`;
-const EDGE_CLOSED_3_WRITE_SQL = `INSERT INTO "closed" ("session_id", "tab_id") VALUES (?, ?)`;
-const EDGE_CLOSED_3_HEAD_COLUMNS: readonly string[] = ["session_id", "tab_id"];
-
-const EDGE_DRAINED_4_PROJECT_SQL = `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1) AS "session_id", b0."ordinal" AS "ordinal" FROM "__pre_queue_head" b0 WHERE b0."session_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1)`;
-const EDGE_DRAINED_4_WRITE_SQL = `INSERT INTO "drained" ("session_id", "ordinal") VALUES (?, ?)`;
-const EDGE_DRAINED_4_HEAD_COLUMNS: readonly string[] = ["session_id", "ordinal"];
-const EDGE_DRAINED_4_INTERN_SQL: readonly string[] = [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ?1 FROM "__pre_queue_head" b0 WHERE b0."session_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1)`];
-const EDGE_DRAINED_4_DEPARTURE_SQL = `SELECT "session_id", "tab_id" FROM "__departure_frontier_live_tab" ORDER BY "_phase", "_sequence"`;
-const EDGE_DRAINED_4_TRIGGER_COLUMNS: readonly string[] = ["session_id", "tab_id"];
-
-const EDGE_OPEN_TAB_5_PROJECT_SQL = `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1) AS "session_id", b0."tab_id" AS "tab_id" FROM "__pre_queue_head_tab" b0 WHERE b0."session_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1)`;
-const EDGE_OPEN_TAB_5_WRITE_SQL = `INSERT INTO "open_tab" ("session_id", "tab_id") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "tab_id" = excluded."tab_id"`;
-const EDGE_OPEN_TAB_5_HEAD_COLUMNS: readonly string[] = ["session_id", "tab_id"];
-const EDGE_OPEN_TAB_5_KEY_INDICES: readonly number[] = [0];
-const EDGE_OPEN_TAB_5_INTERN_SQL: readonly string[] = [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ?1 FROM "__pre_queue_head_tab" b0 WHERE b0."session_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = ?1)`];
-const EDGE_OPEN_TAB_5_DEPARTURE_SQL = `SELECT "session_id", "tab_id" FROM "__departure_frontier_live_tab" ORDER BY "_phase", "_sequence"`;
-const EDGE_OPEN_TAB_5_TRIGGER_COLUMNS: readonly string[] = ["session_id", "tab_id"];
-
-function resolveOpenTab_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "open_request", before.open_request, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_TAB_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_OPEN_TAB_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_OPEN_TAB_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_TAB_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolveQueueNext_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "open_request", before.open_request, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_QUEUE_NEXT_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_QUEUE_NEXT_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_QUEUE_NEXT_1_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_QUEUE_NEXT_1_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolveQueueSlot_2Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "open_request", before.open_request, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_QUEUE_SLOT_2_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_QUEUE_SLOT_2_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_QUEUE_SLOT_2_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_QUEUE_SLOT_2_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolveClosed_3Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "close_request", before.close_request, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CLOSED_3_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_CLOSED_3_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_CLOSED_3_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function resolveDrained_4Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  void before;
-  void arrivals;
-  return departure_occurrences(seam, EDGE_DRAINED_4_DEPARTURE_SQL, EDGE_DRAINED_4_TRIGGER_COLUMNS).pipe(
-    concatMap((trigger_rows) => {
-      if (trigger_rows.length === 0) return of<readonly SqlStatement[]>([]);
-      return forkJoin(trigger_rows.map((departed_row) => seam.runner.execute(seam.db, { sql: EDGE_DRAINED_4_PROJECT_SQL, args: bind_args(departed_row) }))).pipe(
-        map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_DRAINED_4_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_DRAINED_4_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-        }),
-      );
-    }),
-  );
-}
-
-function resolveOpenTab_5Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  void before;
-  void arrivals;
-  return departure_occurrences(seam, EDGE_OPEN_TAB_5_DEPARTURE_SQL, EDGE_OPEN_TAB_5_TRIGGER_COLUMNS).pipe(
-    concatMap((trigger_rows) => {
-      if (trigger_rows.length === 0) return of<readonly SqlStatement[]>([]);
-      return forkJoin(trigger_rows.map((departed_row) => seam.runner.execute(seam.db, { sql: EDGE_OPEN_TAB_5_PROJECT_SQL, args: bind_args(departed_row) }))).pipe(
-        map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_OPEN_TAB_5_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_OPEN_TAB_5_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_TAB_5_WRITE_SQL, args: bind_args(row) }));
-        }),
-      );
-    }),
-  );
-}
-
 function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
   return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_queue_head";
 INSERT INTO "__pre_queue_head" ("session_id", "ordinal") SELECT "session_id", "ordinal" FROM "queue_head";
@@ -1049,26 +892,6 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
   };
 }
 
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolveOpenTab_0Writes(seam, before.stored, arrivals), resolveQueueNext_1Writes(seam, before.stored, arrivals), resolveQueueSlot_2Writes(seam, before.stored, arrivals), resolveClosed_3Writes(seam, before.stored, arrivals), resolveDrained_4Writes(seam, before.stored, arrivals), resolveOpenTab_5Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-    concatMap((deltas) => IncrementalRuntime.stage_departures(seam, INCREMENTAL_RELATIONS, deltas.rels).pipe(map(() => deltas))),
-  );
-  // concat_program_queue: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
 function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshots(seam).pipe(
     concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
@@ -1089,9 +912,7 @@ function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<I
   // concat_program_queue: ordered process_occurrences with evolving pre snapshots.
 }
 
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
 const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";
@@ -1129,7 +950,6 @@ function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDelt
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

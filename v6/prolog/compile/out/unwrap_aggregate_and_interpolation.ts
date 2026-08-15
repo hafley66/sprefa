@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -317,70 +316,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "diag", sql: `INSERT OR IGNORE INTO "diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT b0."path", b0."line_no", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'warning'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unwrap-budget'), (SELECT s."__id" FROM "__str" s WHERE s."content" = (b2."total" || ' non-test unwraps in a changed file')), b0."col", b0."end_col" FROM "unwrap_hit" b0, "changed_file" b1, "unwrap_count" b2 WHERE b1."path" = b0."path" AND b2."path" = b0."path" AND (b2."total" > 10)`, params: [] },
 ];
 
-type Snapshot = {
-  readonly changed_file: readonly IRow[];
-  readonly diag: readonly IRow[];
-  readonly unwrap_count: readonly IRow[];
-  readonly unwrap_hit: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    changed_file: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path" FROM "__txt_changed_file" t`, rel_columns.changed_file!, rel_column_types.changed_file!),
-    diag: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_no", CASE WHEN json_valid(t."col3") AND json_type(t."col3") = 'object' AND json_type(t."col3", '$.fn') = 'text' AND json_type(t."col3", '$.args') = 'array' THEN json_extract(t."col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col3", '$.args')), '') || ')' ELSE t."col3" END AS "col3", CASE WHEN json_valid(t."col4") AND json_type(t."col4") = 'object' AND json_type(t."col4", '$.fn') = 'text' AND json_type(t."col4", '$.args') = 'array' THEN json_extract(t."col4", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col4", '$.args')), '') || ')' ELSE t."col4" END AS "col4", CASE WHEN json_valid(t."col5") AND json_type(t."col5") = 'object' AND json_type(t."col5", '$.fn') = 'text' AND json_type(t."col5", '$.args') = 'array' THEN json_extract(t."col5", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col5", '$.args')), '') || ')' ELSE t."col5" END AS "col5", t."col", t."end_col" FROM "__txt_diag" t`, rel_columns.diag!, rel_column_types.diag!),
-    unwrap_count: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."total" FROM "__txt_unwrap_count" t`, rel_columns.unwrap_count!, rel_column_types.unwrap_count!),
-    unwrap_hit: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_no", t."col", t."end_col" FROM "__txt_unwrap_hit" t`, rel_columns.unwrap_hit!, rel_column_types.unwrap_hit!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    changed_file: select_rows(seam, `SELECT "path" FROM "changed_file"`, rel_columns.changed_file!, rel_column_types.changed_file!),
-    diag: select_rows(seam, `SELECT "path", "line_no", "col3", "col4", "col5", "col", "end_col" FROM "diag"`, rel_columns.diag!, rel_column_types.diag!),
-    unwrap_count: select_rows(seam, `SELECT "path", "total" FROM "unwrap_count"`, rel_columns.unwrap_count!, rel_column_types.unwrap_count!),
-    unwrap_hit: select_rows(seam, `SELECT "path", "line_no", "col", "end_col" FROM "unwrap_hit"`, rel_columns.unwrap_hit!, rel_column_types.unwrap_hit!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   changed_file: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path" FROM "__txt_changed_file" t`,
   diag: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_no", CASE WHEN json_valid(t."col3") AND json_type(t."col3") = 'object' AND json_type(t."col3", '$.fn') = 'text' AND json_type(t."col3", '$.args') = 'array' THEN json_extract(t."col3", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col3", '$.args')), '') || ')' ELSE t."col3" END AS "col3", CASE WHEN json_valid(t."col4") AND json_type(t."col4") = 'object' AND json_type(t."col4", '$.fn') = 'text' AND json_type(t."col4", '$.args') = 'array' THEN json_extract(t."col4", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col4", '$.args')), '') || ')' ELSE t."col4" END AS "col4", CASE WHEN json_valid(t."col5") AND json_type(t."col5") = 'object' AND json_type(t."col5", '$.fn') = 'text' AND json_type(t."col5", '$.args') = 'array' THEN json_extract(t."col5", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col5", '$.args')), '') || ')' ELSE t."col5" END AS "col5", t."col", t."end_col" FROM "__txt_diag" t`,
   unwrap_count: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."total" FROM "__txt_unwrap_count" t`,
   unwrap_hit: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line_no", t."col", t."end_col" FROM "__txt_unwrap_hit" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  changed_file: { kind: "set", add_sql: `INSERT OR IGNORE INTO "changed_file" ("path") VALUES (?)`, del_sql: `DELETE FROM "changed_file" WHERE "path" = ?` },
-  unwrap_hit: { kind: "set", add_sql: `INSERT OR IGNORE INTO "unwrap_hit" ("path", "line_no", "col", "end_col") VALUES (?, ?, ?, ?)`, del_sql: `DELETE FROM "unwrap_hit" WHERE "path" = ? AND "line_no" = ? AND "col" = ? AND "end_col" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`unwrap_aggregate_and_interpolation: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`unwrap_aggregate_and_interpolation: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`unwrap_aggregate_and_interpolation: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "changed_file", kind: "set", table_name: "changed_file", delta_table_name: "__delta_changed_file", frontier_table_name: "__frontier_changed_file", next_frontier_table_name: "__next_frontier_changed_file", columns: ["path"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "changed_file" ("path") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "path"`, arrival_del_sql: `DELETE FROM "changed_file" WHERE ("path") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "path"`, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_changed_file" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."_sign"`, rule_observers: ["diag/7", "unwrap_count/2"] },
@@ -400,49 +341,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b2."total" || ' non-t
 INSERT OR IGNORE INTO "diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT b0."path", b0."line_no", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'warning'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unwrap-budget'), (SELECT s."__id" FROM "__str" s WHERE s."content" = (b2."total" || ' non-test unwraps in a changed file')), b0."col", b0."end_col" FROM "unwrap_hit" b0, "changed_file" b1, "unwrap_count" b2 WHERE b1."path" = b0."path" AND b2."path" = b0."path" AND (b2."total" > 10)`, support_sql: [`DELETE FROM "__support_next_diag"`, `INSERT INTO "__support_next_diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col", "__refcount") SELECT "path", "line_no", "col3", "col4", "col5", "col", "end_col", sum("__refcount") FROM (SELECT b0."path" AS "path", b0."line_no" AS "line_no", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'warning') AS "col3", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unwrap-budget') AS "col4", (SELECT s."__id" FROM "__str" s WHERE s."content" = (b2."total" || ' non-test unwraps in a changed file')) AS "col5", b0."col" AS "col", b0."end_col" AS "end_col", count(*) AS "__refcount" FROM "unwrap_hit" b0, "changed_file" b1, "unwrap_count" b2 WHERE b1."path" = b0."path" AND b2."path" = b0."path" AND (b2."total" > 10) GROUP BY b0."path", b0."line_no", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'warning'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unwrap-budget'), (b2."total" || ' non-test unwraps in a changed file'), b0."col", b0."end_col") GROUP BY "path", "line_no", "col3", "col4", "col5", "col", "end_col"`, `UPDATE "diag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_diag" n WHERE n."path" = h."path" AND n."line_no" = h."line_no" AND n."col3" = h."col3" AND n."col4" = h."col4" AND n."col5" = h."col5" AND n."col" = h."col" AND n."end_col" = h."end_col"), 0)`, `INSERT INTO "__delta_diag" ("_sign", "_sequence", "path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT -1, row_number() OVER () - 1, "path", "line_no", "col3", "col4", "col5", "col", "end_col" FROM "diag" WHERE "__refcount" <= 0`, `DELETE FROM "diag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_diag"`, `INSERT INTO "__new_diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col", "__refcount") SELECT n."path", n."line_no", n."col3", n."col4", n."col5", n."col", n."end_col", n."__refcount" FROM "__support_next_diag" n LEFT JOIN "diag" h ON n."path" = h."path" AND n."line_no" = h."line_no" AND n."col3" = h."col3" AND n."col4" = h."col4" AND n."col5" = h."col5" AND n."col" = h."col" AND n."end_col" = h."end_col" WHERE h."path" IS NULL`, `INSERT INTO "__delta_diag" ("_sign", "_sequence", "path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT 1, "rowid" - 1, "path", "line_no", "col3", "col4", "col5", "col", "end_col" FROM "__new_diag"`, `INSERT INTO "__frontier_diag" ("_phase", "_sequence", "path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT ?, "rowid" - 1, "path", "line_no", "col3", "col4", "col5", "col", "end_col" FROM "__new_diag"`, `INSERT INTO "__next_frontier_diag" ("_phase", "_sequence", "path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT ?, "rowid" - 1, "path", "line_no", "col3", "col4", "col5", "col", "end_col" FROM "__new_diag"`, `INSERT OR IGNORE INTO "diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col", "__refcount") SELECT n."path", n."line_no", n."col3", n."col4", n."col5", n."col", n."end_col", n."__refcount" FROM "__support_next_diag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b1."total" || ' non-test unwraps in a changed file') FROM "__frontier_unwrap_hit" d0, "changed_file" b0, "unwrap_count" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."path" = d0."path" AND (b1."total" > 10)`, `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b1."total" || ' non-test unwraps in a changed file') FROM "__frontier_changed_file" d0, "unwrap_hit" b0, "unwrap_count" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."path" = d0."path" AND (b1."total" > 10)`, `INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (d0."total" || ' non-test unwraps in a changed file') FROM "__frontier_unwrap_count" d0, "unwrap_hit" b0, "changed_file" b1 WHERE d0."_phase" >= 0 AND b0."path" = d0."path" AND b1."path" = d0."path" AND (d0."total" > 10)`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b2."total" || ' non-test unwraps in a changed file') FROM "unwrap_hit" b0, "changed_file" b1, "unwrap_count" b2 WHERE b1."path" = b0."path" AND b2."path" = b0."path" AND (b2."total" > 10)`] },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "unwrap_count";
-INSERT OR IGNORE INTO "unwrap_count" ("path", "total") SELECT b0."path", count(*) FROM "unwrap_hit" b0, "changed_file" b1 WHERE b1."path" = b0."path" GROUP BY b0."path" HAVING count(*) > 0;
-DELETE FROM "diag";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT (b2."total" || ' non-test unwraps in a changed file') FROM "unwrap_hit" b0, "changed_file" b1, "unwrap_count" b2 WHERE b1."path" = b0."path" AND b2."path" = b0."path" AND (b2."total" > 10);
-INSERT OR IGNORE INTO "diag" ("path", "line_no", "col3", "col4", "col5", "col", "end_col") SELECT b0."path", b0."line_no", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'warning'), (SELECT s."__id" FROM "__str" s WHERE s."content" = 'unwrap-budget'), (SELECT s."__id" FROM "__str" s WHERE s."content" = (b2."total" || ' non-test unwraps in a changed file')), b0."col", b0."end_col" FROM "unwrap_hit" b0, "changed_file" b1, "unwrap_count" b2 WHERE b1."path" = b0."path" AND b2."path" = b0."path" AND (b2."total" > 10)`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const changed_file = multiset_diff(before.changed_file, after.changed_file);
-  const diag = multiset_diff(before.diag, after.diag);
-  const unwrap_count = multiset_diff(before.unwrap_count, after.unwrap_count);
-  const unwrap_hit = multiset_diff(before.unwrap_hit, after.unwrap_hit);
-  return {
-    rels: [
-      { rel: "changed_file", add: changed_file.add, del: changed_file.del },
-      { rel: "diag", add: diag.add, del: diag.del },
-      { rel: "unwrap_count", add: unwrap_count.add, del: unwrap_count.del },
-      { rel: "unwrap_hit", add: unwrap_hit.add, del: unwrap_hit.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // unwrap_aggregate_and_interpolation: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -471,14 +373,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

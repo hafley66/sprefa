@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -252,55 +251,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "element_type", sql: `INSERT OR IGNORE INTO "element_type" ("type_id", "level") SELECT b1."element_type_id", (b0."level" + 1) FROM "list_type" b0, "list_of" b1 WHERE b1."list_type_id" = b0."type_id"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly element_type: readonly IRow[];
-  readonly list_of: readonly IRow[];
-  readonly list_type: readonly IRow[];
-  readonly root_type: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    element_type: select_rows(seam, `SELECT t."type_id", t."level" FROM "element_type" t`, rel_columns.element_type!, rel_column_types.element_type!),
-    list_of: select_rows(seam, `SELECT t."list_type_id", t."element_type_id" FROM "list_of" t`, rel_columns.list_of!, rel_column_types.list_of!),
-    list_type: select_rows(seam, `SELECT t."type_id", t."level" FROM "list_type" t`, rel_columns.list_type!, rel_column_types.list_type!),
-    root_type: select_rows(seam, `SELECT t."type_id" FROM "root_type" t`, rel_columns.root_type!, rel_column_types.root_type!),
-  });
-}
-
 const final_select: Record<string, string> = {
   element_type: `SELECT t."type_id", t."level" FROM "element_type" t`,
   list_of: `SELECT t."list_type_id", t."element_type_id" FROM "list_of" t`,
   list_type: `SELECT t."type_id", t."level" FROM "list_type" t`,
   root_type: `SELECT t."type_id" FROM "root_type" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  list_of: { kind: "set", add_sql: `INSERT OR IGNORE INTO "list_of" ("list_type_id", "element_type_id") VALUES (?, ?)`, del_sql: `DELETE FROM "list_of" WHERE "list_type_id" = ? AND "element_type_id" = ?` },
-  root_type: { kind: "set", add_sql: `INSERT OR IGNORE INTO "root_type" ("type_id") VALUES (?)`, del_sql: `DELETE FROM "root_type" WHERE "type_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`typegen_list_element_ladder: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`typegen_list_element_ladder: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`typegen_list_element_ladder: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "element_type", kind: "set", table_name: "element_type", delta_table_name: "__delta_element_type", frontier_table_name: "__frontier_element_type", next_frontier_table_name: "__next_frontier_element_type", columns: ["type_id", "level"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."type_id", t."level", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_element_type" t WHERE t."_sign" IN (-1, 1) GROUP BY t."type_id", t."level", t."_sign"`, rule_observers: ["list_type/2"] },
@@ -320,56 +276,10 @@ INSERT OR IGNORE INTO "list_type" ("type_id", "level") SELECT b0."type_id", b0."
 INSERT OR IGNORE INTO "element_type" ("type_id", "level") SELECT b1."element_type_id", (b0."level" + 1) FROM "list_type" b0, "list_of" b1 WHERE b1."list_type_id" = b0."type_id"`, support_sql: [`DELETE FROM "__support_next_element_type"`, `INSERT INTO "__support_next_element_type" ("type_id", "level", "__refcount") SELECT "type_id", "level", sum("__refcount") FROM (SELECT b1."element_type_id" AS "type_id", (b0."level" + 1) AS "level", count(*) AS "__refcount" FROM "list_type" b0, "list_of" b1 WHERE b1."list_type_id" = b0."type_id" GROUP BY b1."element_type_id", (b0."level" + 1)) GROUP BY "type_id", "level"`, `UPDATE "element_type" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_element_type" n WHERE n."type_id" = h."type_id" AND n."level" = h."level"), 0)`, `INSERT INTO "__delta_element_type" ("_sign", "_sequence", "type_id", "level") SELECT -1, row_number() OVER () - 1, "type_id", "level" FROM "element_type" WHERE "__refcount" <= 0`, `DELETE FROM "element_type" WHERE "__refcount" <= 0`, `DELETE FROM "__new_element_type"`, `INSERT INTO "__new_element_type" ("type_id", "level", "__refcount") SELECT n."type_id", n."level", n."__refcount" FROM "__support_next_element_type" n LEFT JOIN "element_type" h ON n."type_id" = h."type_id" AND n."level" = h."level" WHERE h."type_id" IS NULL`, `INSERT INTO "__delta_element_type" ("_sign", "_sequence", "type_id", "level") SELECT 1, "rowid" - 1, "type_id", "level" FROM "__new_element_type"`, `INSERT INTO "__frontier_element_type" ("_phase", "_sequence", "type_id", "level") SELECT ?, "rowid" - 1, "type_id", "level" FROM "__new_element_type"`, `INSERT INTO "__next_frontier_element_type" ("_phase", "_sequence", "type_id", "level") SELECT ?, "rowid" - 1, "type_id", "level" FROM "__new_element_type"`, `INSERT OR IGNORE INTO "element_type" ("type_id", "level", "__refcount") SELECT n."type_id", n."level", n."__refcount" FROM "__support_next_element_type" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, recursion_group: { group: 0, round_cap: 1000, heads: "[element_type,list_type]" } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const delete_sql = `DELETE FROM "list_type";
-DELETE FROM "element_type"`;
-  const insert_sql = `INSERT OR IGNORE INTO "list_type" ("type_id", "level") SELECT b0."type_id", 0 FROM "root_type" b0;
-INSERT OR IGNORE INTO "list_type" ("type_id", "level") SELECT b0."type_id", b0."level" FROM "element_type" b0, "list_of" b1 WHERE b1."list_type_id" = b0."type_id";
-INSERT OR IGNORE INTO "element_type" ("type_id", "level") SELECT b1."element_type_id", (b0."level" + 1) FROM "list_type" b0, "list_of" b1 WHERE b1."list_type_id" = b0."type_id"`;
-  const count_sql = `SELECT (SELECT count(*) FROM "list_type") + (SELECT count(*) FROM "element_type")`;
-  return seam.runner.executeMultiple(seam.db, delete_sql).pipe(
-    map(() => -1),
-    expand((prior_rows) => seam.runner.executeMultiple(seam.db, insert_sql).pipe(
-      concatMap(() => seam.runner.scalar(seam.db, count_sql)),
-      concatMap((rows) => (rows === prior_rows ? EMPTY : of(rows))),
-    )),
-    last(),
-    map(() => undefined),
-  );
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const element_type = multiset_diff(before.element_type, after.element_type);
-  const list_of = multiset_diff(before.list_of, after.list_of);
-  const list_type = multiset_diff(before.list_type, after.list_type);
-  const root_type = multiset_diff(before.root_type, after.root_type);
-  return {
-    rels: [
-      { rel: "element_type", add: element_type.add, del: element_type.del },
-      { rel: "list_of", add: list_of.add, del: list_of.del },
-      { rel: "list_type", add: list_type.add, del: list_type.del },
-      { rel: "root_type", add: root_type.add, del: root_type.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // typegen_list_element_ladder: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -395,14 +305,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "recursive-cte-reseed",
   relations: INCREMENTAL_RELATIONS,

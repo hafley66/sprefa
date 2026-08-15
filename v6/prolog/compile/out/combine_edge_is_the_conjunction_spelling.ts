@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
   });
 }
 
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
-}
-
 const ddl: readonly string[] = [
   `CREATE TABLE "pair" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, UNIQUE ("left"))`,
   `CREATE TABLE "source_a" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, UNIQUE ("left"))`,
@@ -233,52 +213,11 @@ const arrival_targets: readonly string[] = ["source_a", "source_b"];
 const boot: readonly IBootStatement[] = [
 ];
 
-type Snapshot = {
-  readonly pair: readonly IRow[];
-  readonly source_a: readonly IRow[];
-  readonly source_b: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    pair: select_rows(seam, `SELECT t."left", t."right" FROM "pair" t`, rel_columns.pair!, rel_column_types.pair!),
-    source_a: select_rows(seam, `SELECT t."left" FROM "source_a" t`, rel_columns.source_a!, rel_column_types.source_a!),
-    source_b: select_rows(seam, `SELECT t."right" FROM "source_b" t`, rel_columns.source_b!, rel_column_types.source_b!),
-  });
-}
-
 const final_select: Record<string, string> = {
   pair: `SELECT t."left", t."right" FROM "pair" t`,
   source_a: `SELECT t."left" FROM "source_a" t`,
   source_b: `SELECT t."right" FROM "source_b" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  source_a: { kind: "set", add_sql: `INSERT OR IGNORE INTO "source_a" ("left") VALUES (?)`, del_sql: `DELETE FROM "source_a" WHERE "left" = ?` },
-  source_b: { kind: "set", add_sql: `INSERT OR IGNORE INTO "source_b" ("right") VALUES (?)`, del_sql: `DELETE FROM "source_b" WHERE "right" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`combine_edge_is_the_conjunction_spelling: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`combine_edge_is_the_conjunction_spelling: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`combine_edge_is_the_conjunction_spelling: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "pair", kind: "set", table_name: "pair", delta_table_name: "__delta_pair", frontier_table_name: "__frontier_pair", next_frontier_table_name: "__next_frontier_pair", columns: ["left", "right"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."left", t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pair" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."right", t."_sign"`, rule_observers: [] },
@@ -294,94 +233,10 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_PAIR_0_PROJECT_SQL = `SELECT ?1 AS "left", b0."right" AS "right" FROM "source_b" b0`;
-const EDGE_PAIR_0_WRITE_SQL = `INSERT INTO "pair" ("left", "right") VALUES (?, ?) ON CONFLICT("left") DO UPDATE SET "right" = excluded."right"`;
-const EDGE_PAIR_0_HEAD_COLUMNS: readonly string[] = ["left", "right"];
-const EDGE_PAIR_0_KEY_INDICES: readonly number[] = [0];
-
-const EDGE_PAIR_1_PROJECT_SQL = `SELECT b0."left" AS "left", ?1 AS "right" FROM "source_a" b0`;
-const EDGE_PAIR_1_WRITE_SQL = `INSERT INTO "pair" ("left", "right") VALUES (?, ?) ON CONFLICT("left") DO UPDATE SET "right" = excluded."right"`;
-const EDGE_PAIR_1_HEAD_COLUMNS: readonly string[] = ["left", "right"];
-const EDGE_PAIR_1_KEY_INDICES: readonly number[] = [0];
-
-function resolvePair_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("set", "source_a", before.source_a, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_PAIR_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_PAIR_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_PAIR_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_PAIR_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function resolvePair_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("set", "source_b", before.source_b, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_PAIR_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_PAIR_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_PAIR_1_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_PAIR_1_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  void seam;
-  return of(undefined);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const pair = multiset_diff(before.pair, after.pair);
-  const source_a = multiset_diff(before.source_a, after.source_a);
-  const source_b = multiset_diff(before.source_b, after.source_b);
-  return {
-    rels: [
-      { rel: "pair", add: pair.add, del: pair.del },
-      { rel: "source_a", add: source_a.add, del: source_a.del },
-      { rel: "source_b", add: source_b.add, del: source_b.del },
-    ],
-    carry_pending: pair.add.length > 0 || pair.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolvePair_0Writes(seam, before, arrivals), resolvePair_1Writes(seam, before, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // combine_edge_is_the_conjunction_spelling: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -409,14 +264,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

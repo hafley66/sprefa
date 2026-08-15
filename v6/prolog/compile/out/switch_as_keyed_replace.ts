@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -19,7 +18,7 @@
 
 import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 
-import { IncrementalRuntime, intern_then_execute } from "../runtime/1_incremental.ts";
+import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { SubscribeCone } from "../runtime/3_subscribe.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
     });
     return { ...arrival, row };
   });
-}
-
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
 }
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -328,40 +308,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "route_view", sql: `INSERT OR IGNORE INTO "route_view" ("route_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')), b1."body" FROM "demanded" b0, "route_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'route_data' AND b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'))`, params: [] },
 ];
 
-type Snapshot = {
-  readonly demanded: readonly IRow[];
-  readonly open_scope: readonly IRow[];
-  readonly route_change: readonly IRow[];
-  readonly route_row: readonly IRow[];
-  readonly route_view: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    demanded: select_rows(seam, `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id" FROM "__txt_demanded" t`, rel_columns.demanded!, rel_column_types.demanded!),
-    open_scope: select_rows(seam, `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target" FROM "__txt_open_scope" t`, rel_columns.open_scope!, rel_column_types.open_scope!),
-    route_change: select_rows(seam, `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."route_id") AND json_type(t."route_id") = 'object' AND json_type(t."route_id", '$.fn') = 'text' AND json_type(t."route_id", '$.args') = 'array' THEN json_extract(t."route_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."route_id", '$.args')), '') || ')' ELSE t."route_id" END AS "route_id" FROM "__txt_route_change" t`, rel_columns.route_change!, rel_column_types.route_change!),
-    route_row: select_rows(seam, `SELECT CASE WHEN json_valid(t."route_id") AND json_type(t."route_id") = 'object' AND json_type(t."route_id", '$.fn') = 'text' AND json_type(t."route_id", '$.args') = 'array' THEN json_extract(t."route_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."route_id", '$.args')), '') || ')' ELSE t."route_id" END AS "route_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_route_row" t`, rel_columns.route_row!, rel_column_types.route_row!),
-    route_view: select_rows(seam, `SELECT CASE WHEN json_valid(t."route_id") AND json_type(t."route_id") = 'object' AND json_type(t."route_id", '$.fn') = 'text' AND json_type(t."route_id", '$.args') = 'array' THEN json_extract(t."route_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."route_id", '$.args')), '') || ')' ELSE t."route_id" END AS "route_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_route_view" t`, rel_columns.route_view!, rel_column_types.route_view!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    demanded: select_rows(seam, `SELECT "target", "session_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
-    open_scope: select_rows(seam, `SELECT "session_id", "target" FROM "open_scope"`, rel_columns.open_scope!, rel_column_types.open_scope!),
-    route_change: select_rows(seam, `SELECT "session_id", "route_id" FROM "route_change"`, rel_columns.route_change!, rel_column_types.route_change!),
-    route_row: select_rows(seam, `SELECT "route_id", "body" FROM "route_row"`, rel_columns.route_row!, rel_column_types.route_row!),
-    route_view: select_rows(seam, `SELECT "route_id", "body" FROM "route_view"`, rel_columns.route_view!, rel_column_types.route_view!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   demanded: `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id" FROM "__txt_demanded" t`,
   open_scope: `SELECT CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target" FROM "__txt_open_scope" t`,
@@ -369,33 +315,6 @@ const final_select: Record<string, string> = {
   route_row: `SELECT CASE WHEN json_valid(t."route_id") AND json_type(t."route_id") = 'object' AND json_type(t."route_id", '$.fn') = 'text' AND json_type(t."route_id", '$.args') = 'array' THEN json_extract(t."route_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."route_id", '$.args')), '') || ')' ELSE t."route_id" END AS "route_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_route_row" t`,
   route_view: `SELECT CASE WHEN json_valid(t."route_id") AND json_type(t."route_id") = 'object' AND json_type(t."route_id", '$.fn') = 'text' AND json_type(t."route_id", '$.args') = 'array' THEN json_extract(t."route_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."route_id", '$.args')), '') || ')' ELSE t."route_id" END AS "route_id", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_route_view" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  route_change: { kind: "log", add_sql: `INSERT INTO "route_change" ("session_id", "route_id") VALUES (?, ?)`, del_sql: null },
-  route_row: { kind: "set", add_sql: `INSERT OR IGNORE INTO "route_row" ("route_id", "body") VALUES (?, ?)`, del_sql: `DELETE FROM "route_row" WHERE "route_id" = ? AND "body" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`switch_as_keyed_replace: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`switch_as_keyed_replace: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`switch_as_keyed_replace: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "demanded", kind: "set", table_name: "demanded", delta_table_name: "__delta_demanded", frontier_table_name: "__frontier_demanded", next_frontier_table_name: "__next_frontier_demanded", columns: ["target", "session_id"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."target") AND json_type(t."target") = 'object' AND json_type(t."target", '$.fn') = 'text' AND json_type(t."target", '$.args') = 'array' THEN json_extract(t."target", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."target", '$.args')), '') || ')' ELSE t."target" END AS "target", CASE WHEN json_valid(t."session_id") AND json_type(t."session_id") = 'object' AND json_type(t."session_id", '$.fn') = 'text' AND json_type(t."session_id", '$.args') = 'array' THEN json_extract(t."session_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."session_id", '$.args')), '') || ')' ELSE t."session_id" END AS "session_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_demanded" t WHERE t."_sign" IN (-1, 1) GROUP BY t."target", t."session_id", t."_sign"`, rule_observers: ["route_view/2"] },
@@ -417,82 +336,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s
 INSERT OR IGNORE INTO "route_view" ("route_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')), b1."body" FROM "demanded" b0, "route_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'route_data' AND b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'))`, support_sql: [`DELETE FROM "__support_next_route_view"`, `INSERT INTO "__support_next_route_view" ("route_id", "body", "__refcount") SELECT "route_id", "body", sum("__refcount") FROM (SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')) AS "route_id", b1."body" AS "body", count(*) AS "__refcount" FROM "demanded" b0, "route_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'route_data' AND b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')) GROUP BY json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'), b1."body") GROUP BY "route_id", "body"`, `UPDATE "route_view" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_route_view" n WHERE n."route_id" = h."route_id" AND n."body" = h."body"), 0)`, `INSERT INTO "__delta_route_view" ("_sign", "_sequence", "route_id", "body") SELECT -1, row_number() OVER () - 1, "route_id", "body" FROM "route_view" WHERE "__refcount" <= 0`, `DELETE FROM "route_view" WHERE "__refcount" <= 0`, `DELETE FROM "__new_route_view"`, `INSERT INTO "__new_route_view" ("route_id", "body", "__refcount") SELECT n."route_id", n."body", n."__refcount" FROM "__support_next_route_view" n LEFT JOIN "route_view" h ON n."route_id" = h."route_id" AND n."body" = h."body" WHERE h."route_id" IS NULL`, `INSERT INTO "__delta_route_view" ("_sign", "_sequence", "route_id", "body") SELECT 1, "rowid" - 1, "route_id", "body" FROM "__new_route_view"`, `INSERT INTO "__frontier_route_view" ("_phase", "_sequence", "route_id", "body") SELECT ?, "rowid" - 1, "route_id", "body" FROM "__new_route_view"`, `INSERT INTO "__next_frontier_route_view" ("_phase", "_sequence", "route_id", "body") SELECT ?, "rowid" - 1, "route_id", "body" FROM "__new_route_view"`, `INSERT OR IGNORE INTO "route_view" ("route_id", "body", "__refcount") SELECT n."route_id", n."body", n."__refcount" FROM "__support_next_route_view" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), '$.args[0]') FROM "__frontier_demanded" d0, "route_row" b0 WHERE d0."_phase" >= 0 AND json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), '$.fn') = 'route_data' AND b0."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."target"), '$.args[0]'))`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]') FROM "demanded" b0, "route_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'route_data' AND b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'))`] },
 ];
 
-const EDGE_OPEN_SCOPE_0_PROJECT_SQL = `SELECT ?1 AS "session_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = json_object('fn', 'route_data', 'args', json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = ?2)))) AS "target"`;
-const EDGE_OPEN_SCOPE_0_WRITE_SQL = `INSERT INTO "open_scope" ("session_id", "target") VALUES (?, ?) ON CONFLICT("session_id") DO UPDATE SET "target" = excluded."target"`;
-const EDGE_OPEN_SCOPE_0_HEAD_COLUMNS: readonly string[] = ["session_id", "target"];
-const EDGE_OPEN_SCOPE_0_KEY_INDICES: readonly number[] = [0];
-const EDGE_OPEN_SCOPE_0_INTERN_SQL: readonly string[] = [`INSERT OR IGNORE INTO "__str" ("content") SELECT json_object('fn', 'route_data', 'args', json_array((SELECT s."content" FROM "__str" s WHERE s."__id" = ?2)))`];
-
-function resolveOpenScope_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "route_change", before.route_change, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => intern_then_execute(seam, EDGE_OPEN_SCOPE_0_INTERN_SQL, { sql: EDGE_OPEN_SCOPE_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_OPEN_SCOPE_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_OPEN_SCOPE_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_OPEN_SCOPE_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "demanded";
-INSERT OR IGNORE INTO "demanded" ("target", "session_id") SELECT b0."target", b0."session_id" FROM "open_scope" b0;
-DELETE FROM "route_view";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]') FROM "demanded" b0, "route_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'route_data' AND b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'));
-INSERT OR IGNORE INTO "route_view" ("route_id", "body") SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]')), b1."body" FROM "demanded" b0, "route_row" b1 WHERE json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.fn') = 'route_data' AND b1."route_id" = (SELECT s."__id" FROM "__str" s WHERE s."content" = json_extract((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."target"), '$.args[0]'))`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const demanded = multiset_diff(before.demanded, after.demanded);
-  const open_scope = multiset_diff(before.open_scope, after.open_scope);
-  const route_change = multiset_diff(before.route_change, after.route_change);
-  const route_row = multiset_diff(before.route_row, after.route_row);
-  const route_view = multiset_diff(before.route_view, after.route_view);
-  return {
-    rels: [
-      { rel: "demanded", add: demanded.add, del: demanded.del },
-      { rel: "open_scope", add: open_scope.add, del: open_scope.del },
-      { rel: "route_change", add: route_change.add, del: route_change.del },
-      { rel: "route_row", add: route_row.add, del: route_row.del },
-      { rel: "route_view", add: route_view.add, del: route_view.del },
-    ],
-    carry_pending: open_scope.add.length > 0 || open_scope.del.length > 0,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      resolveOpenScope_0Writes(seam, before.stored, arrivals).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // switch_as_keyed_replace: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -522,14 +369,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

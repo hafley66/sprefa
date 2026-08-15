@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -237,61 +236,10 @@ const boot: readonly IBootStatement[] = [
 ' ORDER BY b0."line_ordinal") AS "__agg_2" FROM "mermaid_line" b0 GROUP BY b0."file_name" HAVING count(*) > 0)`, params: [] },
 ];
 
-type Snapshot = {
-  readonly mermaid_line: readonly IRow[];
-  readonly mermaid_text: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    mermaid_line: select_rows(seam, `SELECT CASE WHEN json_valid(t."file_name") AND json_type(t."file_name") = 'object' AND json_type(t."file_name", '$.fn') = 'text' AND json_type(t."file_name", '$.args') = 'array' THEN json_extract(t."file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_name", '$.args')), '') || ')' ELSE t."file_name" END AS "file_name", t."line_ordinal", CASE WHEN json_valid(t."line_text") AND json_type(t."line_text") = 'object' AND json_type(t."line_text", '$.fn') = 'text' AND json_type(t."line_text", '$.args') = 'array' THEN json_extract(t."line_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."line_text", '$.args')), '') || ')' ELSE t."line_text" END AS "line_text" FROM "__txt_mermaid_line" t`, rel_columns.mermaid_line!, rel_column_types.mermaid_line!),
-    mermaid_text: select_rows(seam, `SELECT CASE WHEN json_valid(t."file_name") AND json_type(t."file_name") = 'object' AND json_type(t."file_name", '$.fn') = 'text' AND json_type(t."file_name", '$.args') = 'array' THEN json_extract(t."file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_name", '$.args')), '') || ')' ELSE t."file_name" END AS "file_name", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_mermaid_text" t`, rel_columns.mermaid_text!, rel_column_types.mermaid_text!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    mermaid_line: select_rows(seam, `SELECT "file_name", "line_ordinal", "line_text" FROM "mermaid_line"`, rel_columns.mermaid_line!, rel_column_types.mermaid_line!),
-    mermaid_text: select_rows(seam, `SELECT "file_name", "col2" FROM "mermaid_text"`, rel_columns.mermaid_text!, rel_column_types.mermaid_text!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   mermaid_line: `SELECT CASE WHEN json_valid(t."file_name") AND json_type(t."file_name") = 'object' AND json_type(t."file_name", '$.fn') = 'text' AND json_type(t."file_name", '$.args') = 'array' THEN json_extract(t."file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_name", '$.args')), '') || ')' ELSE t."file_name" END AS "file_name", t."line_ordinal", CASE WHEN json_valid(t."line_text") AND json_type(t."line_text") = 'object' AND json_type(t."line_text", '$.fn') = 'text' AND json_type(t."line_text", '$.args') = 'array' THEN json_extract(t."line_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."line_text", '$.args')), '') || ')' ELSE t."line_text" END AS "line_text" FROM "__txt_mermaid_line" t`,
   mermaid_text: `SELECT CASE WHEN json_valid(t."file_name") AND json_type(t."file_name") = 'object' AND json_type(t."file_name", '$.fn') = 'text' AND json_type(t."file_name", '$.args') = 'array' THEN json_extract(t."file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_name", '$.args')), '') || ')' ELSE t."file_name" END AS "file_name", CASE WHEN json_valid(t."col2") AND json_type(t."col2") = 'object' AND json_type(t."col2", '$.fn') = 'text' AND json_type(t."col2", '$.args') = 'array' THEN json_extract(t."col2", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col2", '$.args')), '') || ')' ELSE t."col2" END AS "col2" FROM "__txt_mermaid_text" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  mermaid_line: { kind: "set", add_sql: `INSERT OR IGNORE INTO "mermaid_line" ("file_name", "line_ordinal", "line_text") VALUES (?, ?, ?)`, del_sql: `DELETE FROM "mermaid_line" WHERE "file_name" = ? AND "line_ordinal" = ? AND "line_text" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`ordered_mermaid_line_assembly: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`ordered_mermaid_line_assembly: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`ordered_mermaid_line_assembly: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "mermaid_line", kind: "set", table_name: "mermaid_line", delta_table_name: "__delta_mermaid_line", frontier_table_name: "__frontier_mermaid_line", next_frontier_table_name: "__next_frontier_mermaid_line", columns: ["file_name", "line_ordinal", "line_text"], column_types: ["text", "int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "mermaid_line" ("file_name", "line_ordinal", "line_text") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "file_name", "line_ordinal", "line_text"`, arrival_del_sql: `DELETE FROM "mermaid_line" WHERE ("file_name", "line_ordinal", "line_text") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "file_name", "line_ordinal", "line_text"`, boundary_sql: `SELECT CASE WHEN json_valid(t."file_name") AND json_type(t."file_name") = 'object' AND json_type(t."file_name", '$.fn') = 'text' AND json_type(t."file_name", '$.args') = 'array' THEN json_extract(t."file_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."file_name", '$.args')), '') || ')' ELSE t."file_name" END AS "file_name", t."line_ordinal", CASE WHEN json_valid(t."line_text") AND json_type(t."line_text") = 'object' AND json_type(t."line_text", '$.fn') = 'text' AND json_type(t."line_text", '$.args') = 'array' THEN json_extract(t."line_text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."line_text", '$.args')), '') || ')' ELSE t."line_text" END AS "line_text", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_mermaid_line" t WHERE t."_sign" IN (-1, 1) GROUP BY t."file_name", t."line_ordinal", t."line_text", t."_sign"`, rule_observers: ["mermaid_text/2"] },
@@ -311,45 +259,10 @@ INSERT OR IGNORE INTO "mermaid_text" ("file_name", "col2") SELECT "__agg_1", (SE
 ' ORDER BY b0."line_ordinal") FROM "mermaid_line" b0 WHERE (b0."file_name") IN (SELECT "file_name" FROM "__agg_scope_mermaid_text") GROUP BY b0."file_name" HAVING count(*) > 0`], delta_maintained: false } },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "mermaid_text";
-INSERT OR IGNORE INTO "__str" ("content") SELECT group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."line_text"), '
-' ORDER BY b0."line_ordinal") FROM "mermaid_line" b0 GROUP BY b0."file_name" HAVING count(*) > 0;
-INSERT OR IGNORE INTO "mermaid_text" ("file_name", "col2") SELECT "__agg_1", (SELECT s."__id" FROM "__str" s WHERE s."content" = "__agg_2") FROM (SELECT b0."file_name" AS "__agg_1", group_concat((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."line_text"), '
-' ORDER BY b0."line_ordinal") AS "__agg_2" FROM "mermaid_line" b0 GROUP BY b0."file_name" HAVING count(*) > 0)`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const mermaid_line = multiset_diff(before.mermaid_line, after.mermaid_line);
-  const mermaid_text = multiset_diff(before.mermaid_text, after.mermaid_text);
-  return {
-    rels: [
-      { rel: "mermaid_line", add: mermaid_line.add, del: mermaid_line.del },
-      { rel: "mermaid_text", add: mermaid_text.add, del: mermaid_text.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // ordered_mermaid_line_assembly: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -378,14 +291,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

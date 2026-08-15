@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -295,71 +294,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "flow_edge", sql: `INSERT OR IGNORE INTO "flow_edge" ("from", "to") SELECT b0."arg", b2."param" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly df_arg: readonly IRow[];
-  readonly df_param: readonly IRow[];
-  readonly flow_edge: readonly IRow[];
-  readonly resolved_call_edge: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    df_arg: select_rows(seam, `SELECT CASE WHEN json_valid(t."caller_path") AND json_type(t."caller_path") = 'object' AND json_type(t."caller_path", '$.fn') = 'text' AND json_type(t."caller_path", '$.args') = 'array' THEN json_extract(t."caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller_path", '$.args')), '') || ')' ELSE t."caller_path" END AS "caller_path", t."call_start", t."call_end", t."pos", CASE WHEN json_valid(t."arg") AND json_type(t."arg") = 'object' AND json_type(t."arg", '$.fn') = 'text' AND json_type(t."arg", '$.args') = 'array' THEN json_extract(t."arg", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."arg", '$.args')), '') || ')' ELSE t."arg" END AS "arg", t."arg_end" FROM "__txt_df_arg" t`, rel_columns.df_arg!, rel_column_types.df_arg!),
-    df_param: select_rows(seam, `SELECT CASE WHEN json_valid(t."callee_path") AND json_type(t."callee_path") = 'object' AND json_type(t."callee_path", '$.fn') = 'text' AND json_type(t."callee_path", '$.args') = 'array' THEN json_extract(t."callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee_path", '$.args')), '') || ')' ELSE t."callee_path" END AS "callee_path", CASE WHEN json_valid(t."param") AND json_type(t."param") = 'object' AND json_type(t."param", '$.fn') = 'text' AND json_type(t."param", '$.args') = 'array' THEN json_extract(t."param", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."param", '$.args')), '') || ')' ELSE t."param" END AS "param", t."pos", t."param_end" FROM "__txt_df_param" t`, rel_columns.df_param!, rel_column_types.df_param!),
-    flow_edge: select_rows(seam, `SELECT CASE WHEN json_valid(t."from") AND json_type(t."from") = 'object' AND json_type(t."from", '$.fn') = 'text' AND json_type(t."from", '$.args') = 'array' THEN json_extract(t."from", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."from", '$.args')), '') || ')' ELSE t."from" END AS "from", CASE WHEN json_valid(t."to") AND json_type(t."to") = 'object' AND json_type(t."to", '$.fn') = 'text' AND json_type(t."to", '$.args') = 'array' THEN json_extract(t."to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to", '$.args')), '') || ')' ELSE t."to" END AS "to" FROM "__txt_flow_edge" t`, rel_columns.flow_edge!, rel_column_types.flow_edge!),
-    resolved_call_edge: select_rows(seam, `SELECT CASE WHEN json_valid(t."caller_path") AND json_type(t."caller_path") = 'object' AND json_type(t."caller_path", '$.fn') = 'text' AND json_type(t."caller_path", '$.args') = 'array' THEN json_extract(t."caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller_path", '$.args')), '') || ')' ELSE t."caller_path" END AS "caller_path", t."call_start", t."call_end", CASE WHEN json_valid(t."callee_path") AND json_type(t."callee_path") = 'object' AND json_type(t."callee_path", '$.fn') = 'text' AND json_type(t."callee_path", '$.args') = 'array' THEN json_extract(t."callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee_path", '$.args')), '') || ')' ELSE t."callee_path" END AS "callee_path", CASE WHEN json_valid(t."callee_name") AND json_type(t."callee_name") = 'object' AND json_type(t."callee_name", '$.fn') = 'text' AND json_type(t."callee_name", '$.args') = 'array' THEN json_extract(t."callee_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee_name", '$.args')), '') || ')' ELSE t."callee_name" END AS "callee_name" FROM "__txt_resolved_call_edge" t`, rel_columns.resolved_call_edge!, rel_column_types.resolved_call_edge!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    df_arg: select_rows(seam, `SELECT "caller_path", "call_start", "call_end", "pos", "arg", "arg_end" FROM "df_arg"`, rel_columns.df_arg!, rel_column_types.df_arg!),
-    df_param: select_rows(seam, `SELECT "callee_path", "param", "pos", "param_end" FROM "df_param"`, rel_columns.df_param!, rel_column_types.df_param!),
-    flow_edge: select_rows(seam, `SELECT "from", "to" FROM "flow_edge"`, rel_columns.flow_edge!, rel_column_types.flow_edge!),
-    resolved_call_edge: select_rows(seam, `SELECT "caller_path", "call_start", "call_end", "callee_path", "callee_name" FROM "resolved_call_edge"`, rel_columns.resolved_call_edge!, rel_column_types.resolved_call_edge!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   df_arg: `SELECT CASE WHEN json_valid(t."caller_path") AND json_type(t."caller_path") = 'object' AND json_type(t."caller_path", '$.fn') = 'text' AND json_type(t."caller_path", '$.args') = 'array' THEN json_extract(t."caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller_path", '$.args')), '') || ')' ELSE t."caller_path" END AS "caller_path", t."call_start", t."call_end", t."pos", CASE WHEN json_valid(t."arg") AND json_type(t."arg") = 'object' AND json_type(t."arg", '$.fn') = 'text' AND json_type(t."arg", '$.args') = 'array' THEN json_extract(t."arg", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."arg", '$.args')), '') || ')' ELSE t."arg" END AS "arg", t."arg_end" FROM "__txt_df_arg" t`,
   df_param: `SELECT CASE WHEN json_valid(t."callee_path") AND json_type(t."callee_path") = 'object' AND json_type(t."callee_path", '$.fn') = 'text' AND json_type(t."callee_path", '$.args') = 'array' THEN json_extract(t."callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee_path", '$.args')), '') || ')' ELSE t."callee_path" END AS "callee_path", CASE WHEN json_valid(t."param") AND json_type(t."param") = 'object' AND json_type(t."param", '$.fn') = 'text' AND json_type(t."param", '$.args') = 'array' THEN json_extract(t."param", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."param", '$.args')), '') || ')' ELSE t."param" END AS "param", t."pos", t."param_end" FROM "__txt_df_param" t`,
   flow_edge: `SELECT CASE WHEN json_valid(t."from") AND json_type(t."from") = 'object' AND json_type(t."from", '$.fn') = 'text' AND json_type(t."from", '$.args') = 'array' THEN json_extract(t."from", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."from", '$.args')), '') || ')' ELSE t."from" END AS "from", CASE WHEN json_valid(t."to") AND json_type(t."to") = 'object' AND json_type(t."to", '$.fn') = 'text' AND json_type(t."to", '$.args') = 'array' THEN json_extract(t."to", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."to", '$.args')), '') || ')' ELSE t."to" END AS "to" FROM "__txt_flow_edge" t`,
   resolved_call_edge: `SELECT CASE WHEN json_valid(t."caller_path") AND json_type(t."caller_path") = 'object' AND json_type(t."caller_path", '$.fn') = 'text' AND json_type(t."caller_path", '$.args') = 'array' THEN json_extract(t."caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller_path", '$.args')), '') || ')' ELSE t."caller_path" END AS "caller_path", t."call_start", t."call_end", CASE WHEN json_valid(t."callee_path") AND json_type(t."callee_path") = 'object' AND json_type(t."callee_path", '$.fn') = 'text' AND json_type(t."callee_path", '$.args') = 'array' THEN json_extract(t."callee_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee_path", '$.args')), '') || ')' ELSE t."callee_path" END AS "callee_path", CASE WHEN json_valid(t."callee_name") AND json_type(t."callee_name") = 'object' AND json_type(t."callee_name", '$.fn') = 'text' AND json_type(t."callee_name", '$.args') = 'array' THEN json_extract(t."callee_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee_name", '$.args')), '') || ')' ELSE t."callee_name" END AS "callee_name" FROM "__txt_resolved_call_edge" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  df_arg: { kind: "set", add_sql: `INSERT OR IGNORE INTO "df_arg" ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") VALUES (?, ?, ?, ?, ?, ?)`, del_sql: `DELETE FROM "df_arg" WHERE "caller_path" = ? AND "call_start" = ? AND "call_end" = ? AND "pos" = ? AND "arg" = ? AND "arg_end" = ?` },
-  df_param: { kind: "set", add_sql: `INSERT OR IGNORE INTO "df_param" ("callee_path", "param", "pos", "param_end") VALUES (?, ?, ?, ?)`, del_sql: `DELETE FROM "df_param" WHERE "callee_path" = ? AND "param" = ? AND "pos" = ? AND "param_end" = ?` },
-  resolved_call_edge: { kind: "set", add_sql: `INSERT OR IGNORE INTO "resolved_call_edge" ("caller_path", "call_start", "call_end", "callee_path", "callee_name") VALUES (?, ?, ?, ?, ?)`, del_sql: `DELETE FROM "resolved_call_edge" WHERE "caller_path" = ? AND "call_start" = ? AND "call_end" = ? AND "callee_path" = ? AND "callee_name" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`flow_arg_param_hop_is_positional_and_site_pinned: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`flow_arg_param_hop_is_positional_and_site_pinned: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`flow_arg_param_hop_is_positional_and_site_pinned: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "df_arg", kind: "set", table_name: "df_arg", delta_table_name: "__delta_df_arg", frontier_table_name: "__frontier_df_arg", next_frontier_table_name: "__next_frontier_df_arg", columns: ["caller_path", "call_start", "call_end", "pos", "arg", "arg_end"], column_types: ["text", "int", "int", "int", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "df_arg" ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?) RETURNING "caller_path", "call_start", "call_end", "pos", "arg", "arg_end"`, arrival_del_sql: `DELETE FROM "df_arg" WHERE ("caller_path", "call_start", "call_end", "pos", "arg", "arg_end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]'), json_extract(value, '$[4]'), json_extract(value, '$[5]') FROM json_each(?)) RETURNING "caller_path", "call_start", "call_end", "pos", "arg", "arg_end"`, boundary_sql: `SELECT CASE WHEN json_valid(t."caller_path") AND json_type(t."caller_path") = 'object' AND json_type(t."caller_path", '$.fn') = 'text' AND json_type(t."caller_path", '$.args') = 'array' THEN json_extract(t."caller_path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."caller_path", '$.args')), '') || ')' ELSE t."caller_path" END AS "caller_path", t."call_start", t."call_end", t."pos", CASE WHEN json_valid(t."arg") AND json_type(t."arg") = 'object' AND json_type(t."arg", '$.fn') = 'text' AND json_type(t."arg", '$.args') = 'array' THEN json_extract(t."arg", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."arg", '$.args')), '') || ')' ELSE t."arg" END AS "arg", t."arg_end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_df_arg" t WHERE t."_sign" IN (-1, 1) GROUP BY t."caller_path", t."call_start", t."call_end", t."pos", t."arg", t."arg_end", t."_sign"`, rule_observers: ["flow_edge/2"] },
@@ -376,46 +316,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "flow_edge" ("from", "to") SELECT b0."arg", b2."param" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos"`, support_sql: [`DELETE FROM "__support_next_flow_edge"`, `INSERT INTO "__support_next_flow_edge" ("from", "to", "__refcount") SELECT "from", "to", sum("__refcount") FROM (SELECT b0."arg" AS "from", b2."param" AS "to", count(*) AS "__refcount" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos" GROUP BY b0."arg", b2."param") GROUP BY "from", "to"`, `UPDATE "flow_edge" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_flow_edge" n WHERE n."from" = h."from" AND n."to" = h."to"), 0)`, `INSERT INTO "__delta_flow_edge" ("_sign", "_sequence", "from", "to") SELECT -1, row_number() OVER () - 1, "from", "to" FROM "flow_edge" WHERE "__refcount" <= 0`, `DELETE FROM "flow_edge" WHERE "__refcount" <= 0`, `DELETE FROM "__new_flow_edge"`, `INSERT INTO "__new_flow_edge" ("from", "to", "__refcount") SELECT n."from", n."to", n."__refcount" FROM "__support_next_flow_edge" n LEFT JOIN "flow_edge" h ON n."from" = h."from" AND n."to" = h."to" WHERE h."from" IS NULL`, `INSERT INTO "__delta_flow_edge" ("_sign", "_sequence", "from", "to") SELECT 1, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT INTO "__frontier_flow_edge" ("_phase", "_sequence", "from", "to") SELECT ?, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT INTO "__next_frontier_flow_edge" ("_phase", "_sequence", "from", "to") SELECT ?, "rowid" - 1, "from", "to" FROM "__new_flow_edge"`, `INSERT OR IGNORE INTO "flow_edge" ("from", "to", "__refcount") SELECT n."from", n."to", n."__refcount" FROM "__support_next_flow_edge" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "flow_edge";
-INSERT OR IGNORE INTO "flow_edge" ("from", "to") SELECT b0."arg", b2."param" FROM "df_arg" b0, "resolved_call_edge" b1, "df_param" b2 WHERE b1."caller_path" = b0."caller_path" AND b1."call_start" = b0."call_start" AND b1."call_end" = b0."call_end" AND b2."callee_path" = b1."callee_path" AND b2."pos" = b0."pos"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const df_arg = multiset_diff(before.df_arg, after.df_arg);
-  const df_param = multiset_diff(before.df_param, after.df_param);
-  const flow_edge = multiset_diff(before.flow_edge, after.flow_edge);
-  const resolved_call_edge = multiset_diff(before.resolved_call_edge, after.resolved_call_edge);
-  return {
-    rels: [
-      { rel: "df_arg", add: df_arg.add, del: df_arg.del },
-      { rel: "df_param", add: df_param.add, del: df_param.del },
-      { rel: "flow_edge", add: flow_edge.add, del: flow_edge.del },
-      { rel: "resolved_call_edge", add: resolved_call_edge.add, del: resolved_call_edge.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // flow_arg_param_hop_is_positional_and_site_pinned: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -444,14 +348,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

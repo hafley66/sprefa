@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -257,66 +256,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "result_tag", sql: `INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'error') FROM "result_error" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly result_error: readonly IRow[];
-  readonly result_ok: readonly IRow[];
-  readonly result_tag: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    result_error: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."message") AND json_type(t."message") = 'object' AND json_type(t."message", '$.fn') = 'text' AND json_type(t."message", '$.args') = 'array' THEN json_extract(t."message", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."message", '$.args')), '') || ')' ELSE t."message" END AS "message" FROM "__txt_result_error" t`, rel_columns.result_error!, rel_column_types.result_error!),
-    result_ok: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_result_ok" t`, rel_columns.result_ok!, rel_column_types.result_ok!),
-    result_tag: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_result_tag" t`, rel_columns.result_tag!, rel_column_types.result_tag!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    result_error: select_rows(seam, `SELECT "id", "message" FROM "result_error"`, rel_columns.result_error!, rel_column_types.result_error!),
-    result_ok: select_rows(seam, `SELECT "id", "value" FROM "result_ok"`, rel_columns.result_ok!, rel_column_types.result_ok!),
-    result_tag: select_rows(seam, `SELECT "id", "tag" FROM "result_tag"`, rel_columns.result_tag!, rel_column_types.result_tag!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   result_error: `SELECT t."id", CASE WHEN json_valid(t."message") AND json_type(t."message") = 'object' AND json_type(t."message", '$.fn') = 'text' AND json_type(t."message", '$.args') = 'array' THEN json_extract(t."message", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."message", '$.args')), '') || ')' ELSE t."message" END AS "message" FROM "__txt_result_error" t`,
   result_ok: `SELECT t."id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_result_ok" t`,
   result_tag: `SELECT t."id", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag" FROM "__txt_result_tag" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  result_error: { kind: "set", add_sql: `INSERT INTO "result_error" ("id", "message") VALUES (?, ?) ON CONFLICT ("message") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "result_error" WHERE "id" = ? AND "message" = ?` },
-  result_ok: { kind: "set", add_sql: `INSERT INTO "result_ok" ("id", "value") VALUES (?, ?) ON CONFLICT ("value") DO UPDATE SET "id" = excluded."id"`, del_sql: `DELETE FROM "result_ok" WHERE "id" = ? AND "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`enum_decl_two_variants_union_in_tag_view: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`enum_decl_two_variants_union_in_tag_view: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`enum_decl_two_variants_union_in_tag_view: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "result_error", kind: "set", table_name: "result_error", delta_table_name: "__delta_result_error", frontier_table_name: "__frontier_result_error", next_frontier_table_name: "__next_frontier_result_error", columns: ["id", "message"], column_types: ["int", "text"], key_indices: [1], arrival_add_sql: `INSERT INTO "result_error" ("id", "message") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("message") DO UPDATE SET "id" = excluded."id" RETURNING "id", "message"`, arrival_del_sql: `DELETE FROM "result_error" WHERE ("id", "message") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "message"`, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."message") AND json_type(t."message") = 'object' AND json_type(t."message", '$.fn') = 'text' AND json_type(t."message", '$.args') = 'array' THEN json_extract(t."message", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."message", '$.args')), '') || ')' ELSE t."message" END AS "message", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_result_error" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."message", t."_sign"`, rule_observers: ["result_tag/2"] },
@@ -333,45 +277,10 @@ INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id
 INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'error') FROM "result_error" b0`, support_sql: [`DELETE FROM "__support_next_result_tag"`, `INSERT INTO "__support_next_result_tag" ("id", "tag", "__refcount") SELECT "id", "tag", sum("__refcount") FROM (SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ok') AS "tag", count(*) AS "__refcount" FROM "result_ok" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ok') UNION ALL SELECT b0."id" AS "id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'error') AS "tag", count(*) AS "__refcount" FROM "result_error" b0 GROUP BY b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'error')) GROUP BY "id", "tag"`, `UPDATE "result_tag" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_result_tag" n WHERE n."id" = h."id" AND n."tag" = h."tag"), 0)`, `INSERT INTO "__delta_result_tag" ("_sign", "_sequence", "id", "tag") SELECT -1, row_number() OVER () - 1, "id", "tag" FROM "result_tag" WHERE "__refcount" <= 0`, `DELETE FROM "result_tag" WHERE "__refcount" <= 0`, `DELETE FROM "__new_result_tag"`, `INSERT INTO "__new_result_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_result_tag" n LEFT JOIN "result_tag" h ON n."id" = h."id" AND n."tag" = h."tag" WHERE h."id" IS NULL`, `INSERT INTO "__delta_result_tag" ("_sign", "_sequence", "id", "tag") SELECT 1, "rowid" - 1, "id", "tag" FROM "__new_result_tag"`, `INSERT INTO "__frontier_result_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_result_tag"`, `INSERT INTO "__next_frontier_result_tag" ("_phase", "_sequence", "id", "tag") SELECT ?, "rowid" - 1, "id", "tag" FROM "__new_result_tag"`, `INSERT OR IGNORE INTO "result_tag" ("id", "tag", "__refcount") SELECT n."id", n."tag", n."__refcount" FROM "__support_next_result_tag" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "result_tag";
-INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'ok') FROM "result_ok" b0;
-INSERT OR IGNORE INTO "result_tag" ("id", "tag") SELECT b0."id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'error') FROM "result_error" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const result_error = multiset_diff(before.result_error, after.result_error);
-  const result_ok = multiset_diff(before.result_ok, after.result_ok);
-  const result_tag = multiset_diff(before.result_tag, after.result_tag);
-  return {
-    rels: [
-      { rel: "result_error", add: result_error.add, del: result_error.del },
-      { rel: "result_ok", add: result_ok.add, del: result_ok.del },
-      { rel: "result_tag", add: result_tag.add, del: result_tag.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // enum_decl_two_variants_union_in_tag_view: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -400,14 +309,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

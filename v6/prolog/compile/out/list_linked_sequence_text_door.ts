@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -279,40 +278,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "carry", sql: `INSERT OR IGNORE INTO "carry" ("id", "items") SELECT b0."id", b0."items" FROM "box" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35: readonly IRow[];
-  readonly __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link: readonly IRow[];
-  readonly __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member: readonly IRow[];
-  readonly box: readonly IRow[];
-  readonly carry: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35: select_rows(seam, `SELECT t."id" FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" t`, rel_columns.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35!, rel_column_types.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35!),
-    __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link: select_rows(seam, `SELECT t."before_member_id", t."after_member_id" FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link" t`, rel_columns.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link!, rel_column_types.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link!),
-    __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member: select_rows(seam, `SELECT t."member_id", t."list_id", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member" t`, rel_columns.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member!, rel_column_types.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member!),
-    box: select_rows(seam, `SELECT t."id", t."items" FROM "box" t`, rel_columns.box!, rel_column_types.box!),
-    carry: select_rows(seam, `SELECT t."id", t."items" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35: select_rows(seam, `SELECT "id" FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35"`, rel_columns.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35!, rel_column_types.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35!),
-    __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link: select_rows(seam, `SELECT "before_member_id", "after_member_id" FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link"`, rel_columns.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link!, rel_column_types.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link!),
-    __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member: select_rows(seam, `SELECT "member_id", "list_id", "value" FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member"`, rel_columns.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member!, rel_column_types.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member!),
-    box: select_rows(seam, `SELECT "id", "items" FROM "box"`, rel_columns.box!, rel_column_types.box!),
-    carry: select_rows(seam, `SELECT "id", "items" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35: `SELECT t."id" FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" t`,
   __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link: `SELECT t."before_member_id", t."after_member_id" FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link" t`,
@@ -320,35 +285,6 @@ const final_select: Record<string, string> = {
   box: `SELECT t."id", t."items" FROM "box" t`,
   carry: `SELECT t."id", t."items" FROM "carry" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" ("id") VALUES (?) ON CONFLICT ("id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" WHERE "id" = ?` },
-  __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link" ("before_member_id", "after_member_id") VALUES (?, ?) ON CONFLICT ("before_member_id", "after_member_id") DO NOTHING`, del_sql: `DELETE FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link" WHERE "before_member_id" = ? AND "after_member_id" = ?` },
-  __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member: { kind: "set", add_sql: `INSERT INTO "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member" ("member_id", "list_id", "value") VALUES (?, ?, ?) ON CONFLICT ("member_id") DO UPDATE SET "list_id" = excluded."list_id", "value" = excluded."value"`, del_sql: `DELETE FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member" WHERE "member_id" = ? AND "list_id" = ? AND "value" = ?` },
-  box: { kind: "set", add_sql: `INSERT INTO "box" ("id", "items") VALUES (?, ?) ON CONFLICT ("id") DO UPDATE SET "items" = excluded."items"`, del_sql: `DELETE FROM "box" WHERE "id" = ? AND "items" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`list_linked_sequence_text_door: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`list_linked_sequence_text_door: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`list_linked_sequence_text_door: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35", kind: "set", table_name: "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35", delta_table_name: "__delta___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35", frontier_table_name: "__frontier___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35", next_frontier_table_name: "__next_frontier___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35", columns: ["id"], column_types: ["int"], key_indices: [0], arrival_add_sql: `INSERT INTO "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" ("id") SELECT json_extract(value, '$[0]') FROM json_each(?) WHERE true ON CONFLICT ("id") DO NOTHING RETURNING "id"`, arrival_del_sql: `DELETE FROM "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" WHERE ("id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "id"`, boundary_sql: `SELECT t."id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta___gen__list_entity_linked_sequence_text_9e34f8b0a209ed35" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."_sign"`, rule_observers: [] },
@@ -366,48 +302,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "carry" ("id", "items") SELECT b0."id", b0."items" FROM "box" b0`, support_sql: [`DELETE FROM "__support_next_carry"`, `INSERT INTO "__support_next_carry" ("id", "items", "__refcount") SELECT "id", "items", sum("__refcount") FROM (SELECT b0."id" AS "id", b0."items" AS "items", count(*) AS "__refcount" FROM "box" b0 GROUP BY b0."id", b0."items") GROUP BY "id", "items"`, `UPDATE "carry" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_carry" n WHERE n."id" = h."id" AND n."items" = h."items"), 0)`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "items") SELECT -1, row_number() OVER () - 1, "id", "items" FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "carry" WHERE "__refcount" <= 0`, `DELETE FROM "__new_carry"`, `INSERT INTO "__new_carry" ("id", "items", "__refcount") SELECT n."id", n."items", n."__refcount" FROM "__support_next_carry" n LEFT JOIN "carry" h ON n."id" = h."id" AND n."items" = h."items" WHERE h."id" IS NULL`, `INSERT INTO "__delta_carry" ("_sign", "_sequence", "id", "items") SELECT 1, "rowid" - 1, "id", "items" FROM "__new_carry"`, `INSERT INTO "__frontier_carry" ("_phase", "_sequence", "id", "items") SELECT ?, "rowid" - 1, "id", "items" FROM "__new_carry"`, `INSERT INTO "__next_frontier_carry" ("_phase", "_sequence", "id", "items") SELECT ?, "rowid" - 1, "id", "items" FROM "__new_carry"`, `INSERT OR IGNORE INTO "carry" ("id", "items", "__refcount") SELECT n."id", n."items", n."__refcount" FROM "__support_next_carry" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "carry";
-INSERT OR IGNORE INTO "carry" ("id", "items") SELECT b0."id", b0."items" FROM "box" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35 = multiset_diff(before.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35, after.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35);
-  const __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link = multiset_diff(before.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link, after.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link);
-  const __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member = multiset_diff(before.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member, after.__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member);
-  const box = multiset_diff(before.box, after.box);
-  const carry = multiset_diff(before.carry, after.carry);
-  return {
-    rels: [
-      { rel: "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35", add: __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35.add, del: __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35.del },
-      { rel: "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link", add: __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link.add, del: __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__link.del },
-      { rel: "__gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member", add: __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member.add, del: __gen__list_entity_linked_sequence_text_9e34f8b0a209ed35__member.del },
-      { rel: "box", add: box.add, del: box.del },
-      { rel: "carry", add: carry.add, del: carry.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // list_linked_sequence_text_door: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -436,14 +334,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

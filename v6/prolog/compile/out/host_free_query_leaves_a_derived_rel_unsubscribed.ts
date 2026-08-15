@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -277,69 +276,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "watched", sql: `INSERT OR IGNORE INTO "watched" ("sensor") SELECT b0."sensor" FROM "reading" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly audit_trail: readonly IRow[];
-  readonly audited: readonly IRow[];
-  readonly reading: readonly IRow[];
-  readonly watched: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    audit_trail: select_rows(seam, `SELECT t."value" FROM "audit_trail" t`, rel_columns.audit_trail!, rel_column_types.audit_trail!),
-    audited: select_rows(seam, `SELECT t."value" FROM "audited" t`, rel_columns.audited!, rel_column_types.audited!),
-    reading: select_rows(seam, `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor", t."value" FROM "__txt_reading" t`, rel_columns.reading!, rel_column_types.reading!),
-    watched: select_rows(seam, `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor" FROM "__txt_watched" t`, rel_columns.watched!, rel_column_types.watched!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    audit_trail: select_rows(seam, `SELECT "value" FROM "audit_trail"`, rel_columns.audit_trail!, rel_column_types.audit_trail!),
-    audited: select_rows(seam, `SELECT "value" FROM "audited"`, rel_columns.audited!, rel_column_types.audited!),
-    reading: select_rows(seam, `SELECT "sensor", "value" FROM "reading"`, rel_columns.reading!, rel_column_types.reading!),
-    watched: select_rows(seam, `SELECT "sensor" FROM "watched"`, rel_columns.watched!, rel_column_types.watched!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   audit_trail: `SELECT t."value" FROM "audit_trail" t`,
   audited: `SELECT t."value" FROM "audited" t`,
   reading: `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor", t."value" FROM "__txt_reading" t`,
   watched: `SELECT CASE WHEN json_valid(t."sensor") AND json_type(t."sensor") = 'object' AND json_type(t."sensor", '$.fn') = 'text' AND json_type(t."sensor", '$.args') = 'array' THEN json_extract(t."sensor", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."sensor", '$.args')), '') || ')' ELSE t."sensor" END AS "sensor" FROM "__txt_watched" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  reading: { kind: "set", add_sql: `INSERT OR IGNORE INTO "reading" ("sensor", "value") VALUES (?, ?)`, del_sql: `DELETE FROM "reading" WHERE "sensor" = ? AND "value" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`host_free_query_leaves_a_derived_rel_unsubscribed: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`host_free_query_leaves_a_derived_rel_unsubscribed: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`host_free_query_leaves_a_derived_rel_unsubscribed: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "audit_trail", kind: "set", table_name: "audit_trail", delta_table_name: "__delta_audit_trail", frontier_table_name: "__frontier_audit_trail", next_frontier_table_name: "__next_frontier_audit_trail", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_audit_trail" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
@@ -360,50 +302,10 @@ INSERT OR IGNORE INTO "audit_trail" ("value") SELECT b0."value" FROM "audited" b
 INSERT OR IGNORE INTO "watched" ("sensor") SELECT b0."sensor" FROM "reading" b0`, support_sql: [`DELETE FROM "__support_next_watched"`, `INSERT INTO "__support_next_watched" ("sensor", "__refcount") SELECT "sensor", sum("__refcount") FROM (SELECT b0."sensor" AS "sensor", count(*) AS "__refcount" FROM "reading" b0 GROUP BY b0."sensor") GROUP BY "sensor"`, `UPDATE "watched" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_watched" n WHERE n."sensor" = h."sensor"), 0)`, `INSERT INTO "__delta_watched" ("_sign", "_sequence", "sensor") SELECT -1, row_number() OVER () - 1, "sensor" FROM "watched" WHERE "__refcount" <= 0`, `DELETE FROM "watched" WHERE "__refcount" <= 0`, `DELETE FROM "__new_watched"`, `INSERT INTO "__new_watched" ("sensor", "__refcount") SELECT n."sensor", n."__refcount" FROM "__support_next_watched" n LEFT JOIN "watched" h ON n."sensor" = h."sensor" WHERE h."sensor" IS NULL`, `INSERT INTO "__delta_watched" ("_sign", "_sequence", "sensor") SELECT 1, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT INTO "__frontier_watched" ("_phase", "_sequence", "sensor") SELECT ?, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT INTO "__next_frontier_watched" ("_phase", "_sequence", "sensor") SELECT ?, "rowid" - 1, "sensor" FROM "__new_watched"`, `INSERT OR IGNORE INTO "watched" ("sensor", "__refcount") SELECT n."sensor", n."__refcount" FROM "__support_next_watched" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "audited";
-INSERT OR IGNORE INTO "audited" ("value") SELECT b0."value" FROM "reading" b0;
-DELETE FROM "audit_trail";
-INSERT OR IGNORE INTO "audit_trail" ("value") SELECT b0."value" FROM "audited" b0;
-DELETE FROM "watched";
-INSERT OR IGNORE INTO "watched" ("sensor") SELECT b0."sensor" FROM "reading" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const audit_trail = multiset_diff(before.audit_trail, after.audit_trail);
-  const audited = multiset_diff(before.audited, after.audited);
-  const reading = multiset_diff(before.reading, after.reading);
-  const watched = multiset_diff(before.watched, after.watched);
-  return {
-    rels: [
-      { rel: "audit_trail", add: audit_trail.add, del: audit_trail.del },
-      { rel: "audited", add: audited.add, del: audited.del },
-      { rel: "reading", add: reading.add, del: reading.del },
-      { rel: "watched", add: watched.add, del: watched.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // host_free_query_leaves_a_derived_rel_unsubscribed: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -432,14 +334,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

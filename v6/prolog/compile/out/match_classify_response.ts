@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -292,69 +291,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "fetch_result_unchanged", sql: `INSERT OR IGNORE INTO "fetch_result_unchanged" ("endpoint") SELECT b0."endpoint" FROM "resp_raw" b0 WHERE (b0."status" IS 304)`, params: [] },
 ];
 
-type Snapshot = {
-  readonly fetch_result_error: readonly IRow[];
-  readonly fetch_result_fresh: readonly IRow[];
-  readonly fetch_result_unchanged: readonly IRow[];
-  readonly resp_raw: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    fetch_result_error: select_rows(seam, `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint", t."status" FROM "__txt_fetch_result_error" t`, rel_columns.fetch_result_error!, rel_column_types.fetch_result_error!),
-    fetch_result_fresh: select_rows(seam, `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_fetch_result_fresh" t`, rel_columns.fetch_result_fresh!, rel_column_types.fetch_result_fresh!),
-    fetch_result_unchanged: select_rows(seam, `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint" FROM "__txt_fetch_result_unchanged" t`, rel_columns.fetch_result_unchanged!, rel_column_types.fetch_result_unchanged!),
-    resp_raw: select_rows(seam, `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint", t."status", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_resp_raw" t`, rel_columns.resp_raw!, rel_column_types.resp_raw!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    fetch_result_error: select_rows(seam, `SELECT "endpoint", "status" FROM "fetch_result_error"`, rel_columns.fetch_result_error!, rel_column_types.fetch_result_error!),
-    fetch_result_fresh: select_rows(seam, `SELECT "endpoint", "tag", "body" FROM "fetch_result_fresh"`, rel_columns.fetch_result_fresh!, rel_column_types.fetch_result_fresh!),
-    fetch_result_unchanged: select_rows(seam, `SELECT "endpoint" FROM "fetch_result_unchanged"`, rel_columns.fetch_result_unchanged!, rel_column_types.fetch_result_unchanged!),
-    resp_raw: select_rows(seam, `SELECT "endpoint", "status", "tag", "body" FROM "resp_raw"`, rel_columns.resp_raw!, rel_column_types.resp_raw!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   fetch_result_error: `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint", t."status" FROM "__txt_fetch_result_error" t`,
   fetch_result_fresh: `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_fetch_result_fresh" t`,
   fetch_result_unchanged: `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint" FROM "__txt_fetch_result_unchanged" t`,
   resp_raw: `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint", t."status", CASE WHEN json_valid(t."tag") AND json_type(t."tag") = 'object' AND json_type(t."tag", '$.fn') = 'text' AND json_type(t."tag", '$.args') = 'array' THEN json_extract(t."tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."tag", '$.args')), '') || ')' ELSE t."tag" END AS "tag", CASE WHEN json_valid(t."body") AND json_type(t."body") = 'object' AND json_type(t."body", '$.fn') = 'text' AND json_type(t."body", '$.args') = 'array' THEN json_extract(t."body", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."body", '$.args')), '') || ')' ELSE t."body" END AS "body" FROM "__txt_resp_raw" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  resp_raw: { kind: "log", add_sql: `INSERT INTO "resp_raw" ("endpoint", "status", "tag", "body") VALUES (?, ?, ?, ?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`match_classify_response: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`match_classify_response: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`match_classify_response: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "fetch_result_error", kind: "set", table_name: "fetch_result_error", delta_table_name: "__delta_fetch_result_error", frontier_table_name: "__frontier_fetch_result_error", next_frontier_table_name: "__next_frontier_fetch_result_error", columns: ["endpoint", "status"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."endpoint") AND json_type(t."endpoint") = 'object' AND json_type(t."endpoint", '$.fn') = 'text' AND json_type(t."endpoint", '$.args') = 'array' THEN json_extract(t."endpoint", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."endpoint", '$.args')), '') || ')' ELSE t."endpoint" END AS "endpoint", t."status", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_fetch_result_error" t WHERE t."_sign" IN (-1, 1) GROUP BY t."endpoint", t."status", t."_sign"`, rule_observers: [] },
@@ -375,50 +317,10 @@ INSERT OR IGNORE INTO "fetch_result_fresh" ("endpoint", "tag", "body") SELECT b0
 INSERT OR IGNORE INTO "fetch_result_unchanged" ("endpoint") SELECT b0."endpoint" FROM "resp_raw" b0 WHERE (b0."status" IS 304)`, support_sql: [`DELETE FROM "__support_next_fetch_result_unchanged"`, `INSERT INTO "__support_next_fetch_result_unchanged" ("endpoint", "__refcount") SELECT "endpoint", sum("__refcount") FROM (SELECT b0."endpoint" AS "endpoint", count(*) AS "__refcount" FROM "resp_raw" b0 WHERE (b0."status" IS 304) GROUP BY b0."endpoint") GROUP BY "endpoint"`, `UPDATE "fetch_result_unchanged" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_fetch_result_unchanged" n WHERE n."endpoint" = h."endpoint"), 0)`, `INSERT INTO "__delta_fetch_result_unchanged" ("_sign", "_sequence", "endpoint") SELECT -1, row_number() OVER () - 1, "endpoint" FROM "fetch_result_unchanged" WHERE "__refcount" <= 0`, `DELETE FROM "fetch_result_unchanged" WHERE "__refcount" <= 0`, `DELETE FROM "__new_fetch_result_unchanged"`, `INSERT INTO "__new_fetch_result_unchanged" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_fetch_result_unchanged" n LEFT JOIN "fetch_result_unchanged" h ON n."endpoint" = h."endpoint" WHERE h."endpoint" IS NULL`, `INSERT INTO "__delta_fetch_result_unchanged" ("_sign", "_sequence", "endpoint") SELECT 1, "rowid" - 1, "endpoint" FROM "__new_fetch_result_unchanged"`, `INSERT INTO "__frontier_fetch_result_unchanged" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_fetch_result_unchanged"`, `INSERT INTO "__next_frontier_fetch_result_unchanged" ("_phase", "_sequence", "endpoint") SELECT ?, "rowid" - 1, "endpoint" FROM "__new_fetch_result_unchanged"`, `INSERT OR IGNORE INTO "fetch_result_unchanged" ("endpoint", "__refcount") SELECT n."endpoint", n."__refcount" FROM "__support_next_fetch_result_unchanged" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "fetch_result_error";
-INSERT OR IGNORE INTO "fetch_result_error" ("endpoint", "status") SELECT b0."endpoint", b0."status" FROM "resp_raw" b0 WHERE (b0."status" >= 400);
-DELETE FROM "fetch_result_fresh";
-INSERT OR IGNORE INTO "fetch_result_fresh" ("endpoint", "tag", "body") SELECT b0."endpoint", b0."tag", b0."body" FROM "resp_raw" b0 WHERE (b0."status" IS 200);
-DELETE FROM "fetch_result_unchanged";
-INSERT OR IGNORE INTO "fetch_result_unchanged" ("endpoint") SELECT b0."endpoint" FROM "resp_raw" b0 WHERE (b0."status" IS 304)`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const fetch_result_error = multiset_diff(before.fetch_result_error, after.fetch_result_error);
-  const fetch_result_fresh = multiset_diff(before.fetch_result_fresh, after.fetch_result_fresh);
-  const fetch_result_unchanged = multiset_diff(before.fetch_result_unchanged, after.fetch_result_unchanged);
-  const resp_raw = multiset_diff(before.resp_raw, after.resp_raw);
-  return {
-    rels: [
-      { rel: "fetch_result_error", add: fetch_result_error.add, del: fetch_result_error.del },
-      { rel: "fetch_result_fresh", add: fetch_result_fresh.add, del: fetch_result_fresh.del },
-      { rel: "fetch_result_unchanged", add: fetch_result_unchanged.add, del: fetch_result_unchanged.del },
-      { rel: "resp_raw", add: resp_raw.add, del: resp_raw.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // match_classify_response: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -447,14 +349,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

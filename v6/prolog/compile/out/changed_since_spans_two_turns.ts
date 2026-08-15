@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -141,25 +140,6 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
     });
     return { ...arrival, row };
   });
-}
-
-function trigger_occurrences(
-  kind: "log" | "set",
-  rel_name: string,
-  before_rows: readonly IRow[],
-  arrivals: IArrivalBatch,
-): IArrivalBatch {
-  if (kind === "log") return arrivals.filter((arrival) => arrival.rel === rel_name && arrival.sign === "add");
-  const seen = new Set<string>(before_rows.map((row) => JSON.stringify(row)));
-  const occurrences: IArrivalRow[] = [];
-  for (const arrival of arrivals) {
-    if (arrival.rel !== rel_name || arrival.sign !== "add") continue;
-    const key = JSON.stringify(arrival.row);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    occurrences.push(arrival);
-  }
-  return occurrences;
 }
 
 export const TEXT_INTERN_PLAN: ITextInternPlan = {
@@ -316,40 +296,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "changed_since", sql: `INSERT OR IGNORE INTO "changed_since" ("turn_id", "path") SELECT b0."turn_id", b1."path" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick")`, params: [] },
 ];
 
-type Snapshot = {
-  readonly agent_turn: readonly IRow[];
-  readonly change_event: readonly IRow[];
-  readonly changed_since: readonly IRow[];
-  readonly turn_marker: readonly IRow[];
-  readonly worktree_edit: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    agent_turn: select_rows(seam, `SELECT CASE WHEN json_valid(t."turn_id") AND json_type(t."turn_id") = 'object' AND json_type(t."turn_id", '$.fn') = 'text' AND json_type(t."turn_id", '$.args') = 'array' THEN json_extract(t."turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."turn_id", '$.args')), '') || ')' ELSE t."turn_id" END AS "turn_id", t."tick" FROM "__txt_agent_turn" t`, rel_columns.agent_turn!, rel_column_types.agent_turn!),
-    change_event: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest", t."tick" FROM "__txt_change_event" t`, rel_columns.change_event!, rel_column_types.change_event!),
-    changed_since: select_rows(seam, `SELECT CASE WHEN json_valid(t."turn_id") AND json_type(t."turn_id") = 'object' AND json_type(t."turn_id", '$.fn') = 'text' AND json_type(t."turn_id", '$.args') = 'array' THEN json_extract(t."turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."turn_id", '$.args')), '') || ')' ELSE t."turn_id" END AS "turn_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path" FROM "__txt_changed_since" t`, rel_columns.changed_since!, rel_column_types.changed_since!),
-    turn_marker: select_rows(seam, `SELECT CASE WHEN json_valid(t."turn_id") AND json_type(t."turn_id") = 'object' AND json_type(t."turn_id", '$.fn') = 'text' AND json_type(t."turn_id", '$.args') = 'array' THEN json_extract(t."turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."turn_id", '$.args')), '') || ')' ELSE t."turn_id" END AS "turn_id" FROM "__txt_turn_marker" t`, rel_columns.turn_marker!, rel_column_types.turn_marker!),
-    worktree_edit: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_worktree_edit" t`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    agent_turn: select_rows(seam, `SELECT "turn_id", "tick" FROM "agent_turn"`, rel_columns.agent_turn!, rel_column_types.agent_turn!),
-    change_event: select_rows(seam, `SELECT "path", "digest", "tick" FROM "change_event"`, rel_columns.change_event!, rel_column_types.change_event!),
-    changed_since: select_rows(seam, `SELECT "turn_id", "path" FROM "changed_since"`, rel_columns.changed_since!, rel_column_types.changed_since!),
-    turn_marker: select_rows(seam, `SELECT "turn_id" FROM "turn_marker"`, rel_columns.turn_marker!, rel_column_types.turn_marker!),
-    worktree_edit: select_rows(seam, `SELECT "path", "digest" FROM "worktree_edit"`, rel_columns.worktree_edit!, rel_column_types.worktree_edit!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   agent_turn: `SELECT CASE WHEN json_valid(t."turn_id") AND json_type(t."turn_id") = 'object' AND json_type(t."turn_id", '$.fn') = 'text' AND json_type(t."turn_id", '$.args') = 'array' THEN json_extract(t."turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."turn_id", '$.args')), '') || ')' ELSE t."turn_id" END AS "turn_id", t."tick" FROM "__txt_agent_turn" t`,
   change_event: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest", t."tick" FROM "__txt_change_event" t`,
@@ -357,33 +303,6 @@ const final_select: Record<string, string> = {
   turn_marker: `SELECT CASE WHEN json_valid(t."turn_id") AND json_type(t."turn_id") = 'object' AND json_type(t."turn_id", '$.fn') = 'text' AND json_type(t."turn_id", '$.args') = 'array' THEN json_extract(t."turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."turn_id", '$.args')), '') || ')' ELSE t."turn_id" END AS "turn_id" FROM "__txt_turn_marker" t`,
   worktree_edit: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."digest") AND json_type(t."digest") = 'object' AND json_type(t."digest", '$.fn') = 'text' AND json_type(t."digest", '$.args') = 'array' THEN json_extract(t."digest", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."digest", '$.args')), '') || ')' ELSE t."digest" END AS "digest" FROM "__txt_worktree_edit" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  turn_marker: { kind: "log", add_sql: `INSERT INTO "turn_marker" ("turn_id") VALUES (?)`, del_sql: null },
-  worktree_edit: { kind: "log", add_sql: `INSERT INTO "worktree_edit" ("path", "digest") VALUES (?, ?)`, del_sql: null },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`changed_since_spans_two_turns: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`changed_since_spans_two_turns: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`changed_since_spans_two_turns: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "agent_turn", kind: "log", table_name: "agent_turn", delta_table_name: "__delta_agent_turn", frontier_table_name: "__frontier_agent_turn", next_frontier_table_name: "__next_frontier_agent_turn", columns: ["turn_id", "tick"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."turn_id") AND json_type(t."turn_id") = 'object' AND json_type(t."turn_id", '$.fn') = 'text' AND json_type(t."turn_id", '$.args') = 'array' THEN json_extract(t."turn_id", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."turn_id", '$.args')), '') || ')' ELSE t."turn_id" END AS "turn_id", t."tick", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_agent_turn" t WHERE t."_sign" IN (-1, 1) GROUP BY t."turn_id", t."tick", t."_sign"`, rule_observers: ["changed_since/2"] },
@@ -403,102 +322,14 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "changed_since" ("turn_id", "path") SELECT b0."turn_id", b1."path" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick")`, support_sql: [`DELETE FROM "__support_next_changed_since"`, `INSERT INTO "__support_next_changed_since" ("turn_id", "path", "__refcount") SELECT "turn_id", "path", sum("__refcount") FROM (SELECT b0."turn_id" AS "turn_id", b1."path" AS "path", count(*) AS "__refcount" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick") GROUP BY b0."turn_id", b1."path") GROUP BY "turn_id", "path"`, `UPDATE "changed_since" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_changed_since" n WHERE n."turn_id" = h."turn_id" AND n."path" = h."path"), 0)`, `INSERT INTO "__delta_changed_since" ("_sign", "_sequence", "turn_id", "path") SELECT -1, row_number() OVER () - 1, "turn_id", "path" FROM "changed_since" WHERE "__refcount" <= 0`, `DELETE FROM "changed_since" WHERE "__refcount" <= 0`, `DELETE FROM "__new_changed_since"`, `INSERT INTO "__new_changed_since" ("turn_id", "path", "__refcount") SELECT n."turn_id", n."path", n."__refcount" FROM "__support_next_changed_since" n LEFT JOIN "changed_since" h ON n."turn_id" = h."turn_id" AND n."path" = h."path" WHERE h."turn_id" IS NULL`, `INSERT INTO "__delta_changed_since" ("_sign", "_sequence", "turn_id", "path") SELECT 1, "rowid" - 1, "turn_id", "path" FROM "__new_changed_since"`, `INSERT INTO "__frontier_changed_since" ("_phase", "_sequence", "turn_id", "path") SELECT ?, "rowid" - 1, "turn_id", "path" FROM "__new_changed_since"`, `INSERT INTO "__next_frontier_changed_since" ("_phase", "_sequence", "turn_id", "path") SELECT ?, "rowid" - 1, "turn_id", "path" FROM "__new_changed_since"`, `INSERT OR IGNORE INTO "changed_since" ("turn_id", "path", "__refcount") SELECT n."turn_id", n."path", n."__refcount" FROM "__support_next_changed_since" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-const EDGE_CHANGE_EVENT_0_PROJECT_SQL = `SELECT ?1 AS "path", ?2 AS "digest", (SELECT "n" FROM "__tick") AS "tick"`;
-const EDGE_CHANGE_EVENT_0_WRITE_SQL = `INSERT INTO "change_event" ("path", "digest", "tick") VALUES (?, ?, ?)`;
-const EDGE_CHANGE_EVENT_0_HEAD_COLUMNS: readonly string[] = ["path", "digest", "tick"];
-
-const EDGE_AGENT_TURN_1_PROJECT_SQL = `SELECT ?1 AS "turn_id", (SELECT "n" FROM "__tick") AS "tick"`;
-const EDGE_AGENT_TURN_1_WRITE_SQL = `INSERT INTO "agent_turn" ("turn_id", "tick") VALUES (?, ?)`;
-const EDGE_AGENT_TURN_1_HEAD_COLUMNS: readonly string[] = ["turn_id", "tick"];
-
-function resolveChangeEvent_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "worktree_edit", before.worktree_edit, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_CHANGE_EVENT_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_CHANGE_EVENT_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_CHANGE_EVENT_0_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function resolveAgentTurn_1Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "turn_marker", before.turn_marker, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_AGENT_TURN_1_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const written: SqlStatement[] = [];
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_AGENT_TURN_1_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          written.push({ sql: EDGE_AGENT_TURN_1_WRITE_SQL, args: bind_args(projected_row) });
-        }
-      }
-      return written;
-    }),
-  );
-}
-
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "changed_since";
-INSERT OR IGNORE INTO "changed_since" ("turn_id", "path") SELECT b0."turn_id", b1."path" FROM "agent_turn" b0, "change_event" b1 WHERE (b1."tick" > b0."tick")`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const agent_turn = multiset_diff(before.agent_turn, after.agent_turn);
-  const change_event = multiset_diff(before.change_event, after.change_event);
-  const changed_since = multiset_diff(before.changed_since, after.changed_since);
-  const turn_marker = multiset_diff(before.turn_marker, after.turn_marker);
-  const worktree_edit = multiset_diff(before.worktree_edit, after.worktree_edit);
-  return {
-    rels: [
-      { rel: "agent_turn", add: agent_turn.add, del: agent_turn.del },
-      { rel: "change_event", add: change_event.add, del: change_event.del },
-      { rel: "changed_since", add: changed_since.add, del: changed_since.del },
-      { rel: "turn_marker", add: turn_marker.add, del: turn_marker.del },
-      { rel: "worktree_edit", add: worktree_edit.add, del: worktree_edit.del },
-    ],
-    carry_pending: agent_turn.add.length > 0 || agent_turn.del.length > 0 || change_event.add.length > 0 || change_event.del.length > 0,
-  };
-}
-
 function advance_tick(seam: ISqlSeam): Observable<void> {
   return seam.runner.execute(seam.db, `UPDATE "__tick" SET "n" = "n" + 1`).pipe(map(() => undefined));
 }
 
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => advance_tick(seam).pipe(map(() => before))),
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      forkJoin([resolveChangeEvent_0Writes(seam, before.stored, arrivals), resolveAgentTurn_1Writes(seam, before.stored, arrivals)]).pipe(map((groups) => groups.flat())).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // changed_since_spans_two_turns: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -529,14 +360,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

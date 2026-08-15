@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -315,29 +314,6 @@ const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
-const EDGE_METRIC_DOC_0_PROJECT_SQL = `SELECT ?1 AS "session", json_patch(json(b0."snapshot"), json(?2)) AS "snapshot" FROM "__pre_metric_doc" b0 WHERE b0."session" = ?1`;
-const EDGE_METRIC_DOC_0_WRITE_SQL = `INSERT INTO "metric_doc" ("session", "snapshot") VALUES (?, ?) ON CONFLICT("session") DO UPDATE SET "snapshot" = excluded."snapshot"`;
-const EDGE_METRIC_DOC_0_HEAD_COLUMNS: readonly string[] = ["session", "snapshot"];
-const EDGE_METRIC_DOC_0_KEY_INDICES: readonly number[] = [0];
-
-function resolveMetricDoc_0Writes(seam: ISqlSeam, before: Snapshot, arrivals: IArrivalBatch): Observable<readonly SqlStatement[]> {
-  const trigger_rows = trigger_occurrences("log", "metric_sample", before.metric_sample, arrivals);
-  if (trigger_rows.length === 0) return of([]);
-  return forkJoin(trigger_rows.map((arrival) => seam.runner.execute(seam.db, { sql: EDGE_METRIC_DOC_0_PROJECT_SQL, args: bind_args(arrival.row) }))).pipe(
-    map((results) => {
-      const resolved = new Map<string, IRow>();
-      for (const result of results) {
-        const projected_rows = result.rows.map((row) => EDGE_METRIC_DOC_0_HEAD_COLUMNS.map((column) => row[column] as IRowValue) as IRow);
-        for (const projected_row of projected_rows) {
-          const key = JSON.stringify(EDGE_METRIC_DOC_0_KEY_INDICES.map((index) => projected_row[index]));
-          resolved.set(key, projected_row);
-        }
-      }
-      return [...resolved.values()].map((row): SqlStatement => ({ sql: EDGE_METRIC_DOC_0_WRITE_SQL, args: bind_args(row) }));
-    }),
-  );
-}
-
 function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
   return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_metric_doc";
 INSERT INTO "__pre_metric_doc" ("session", "snapshot") SELECT "session", "snapshot" FROM "metric_doc"`);
@@ -493,25 +469,6 @@ function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
   };
 }
 
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshots(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) =>
-      resolveMetricDoc_0Writes(seam, before.stored, arrivals).pipe(
-        concatMap((statements) => seam.runner.batch(seam.db, statements)),
-        map(() => before),
-      ),
-    ),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before.decoded, after)))),
-  );
-  // json_patch_null_value_sets_key: engine.pl process_occurrences -> level_closure -> boundary_deltas.
-}
-
 function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   return read_snapshots(seam).pipe(
     concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
@@ -531,9 +488,7 @@ function run_ordered_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<I
   // json_patch_null_value_sets_key: ordered process_occurrences with evolving pre snapshots.
 }
 
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
 const SUBSCRIBE_PRUNE_TICK_PATH: string = "ordered";
@@ -570,7 +525,6 @@ function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDelt
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

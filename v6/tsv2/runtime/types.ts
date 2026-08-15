@@ -282,7 +282,6 @@ export interface IIncrementalRetentionStatement {
 }
 
 export interface IIncrementalProgramPlan {
-  readonly safe: boolean;
   readonly reconcile_every_tick: boolean;
   readonly retraction_guard: "plain-count-acyclic" | "recursive-cte-reseed";
   readonly relations: readonly IIncrementalRelationPlan[];

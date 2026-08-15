@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -267,54 +266,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "flagged", sql: `INSERT OR IGNORE INTO "flagged" ("orchard_id") SELECT 1 FROM "orchard__flag" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly flagged: readonly IRow[];
-  readonly orchard: readonly IRow[];
-  readonly orchard__flag: readonly IRow[];
-  readonly planted: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    flagged: select_rows(seam, `SELECT t."orchard_id" FROM "flagged" t`, rel_columns.flagged!, rel_column_types.flagged!),
-    orchard: select_rows(seam, `SELECT t."orchard_id" FROM "orchard" t`, rel_columns.orchard!, rel_column_types.orchard!),
-    orchard__flag: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = t."parent") AS "parent" FROM "orchard__flag" t`, rel_columns.orchard__flag!, rel_column_types.orchard__flag!),
-    planted: select_rows(seam, `SELECT t."orchard_id", t."tree_id" FROM "planted" t`, rel_columns.planted!, rel_column_types.planted!),
-  });
-}
-
 const final_select: Record<string, string> = {
   flagged: `SELECT t."orchard_id" FROM "flagged" t`,
   orchard: `SELECT t."orchard_id" FROM "orchard" t`,
   orchard__flag: `SELECT (SELECT d."__rendered" FROM "__ref_orchard" d WHERE d."__id" = t."parent") AS "parent" FROM "orchard__flag" t`,
   planted: `SELECT t."orchard_id", t."tree_id" FROM "planted" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  planted: { kind: "set", add_sql: `INSERT OR IGNORE INTO "planted" ("orchard_id", "tree_id") VALUES (?, ?)`, del_sql: `DELETE FROM "planted" WHERE "orchard_id" = ? AND "tree_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`nested_zero_column_child_is_one_row_per_parent: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`nested_zero_column_child_is_one_row_per_parent: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`nested_zero_column_child_is_one_row_per_parent: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "flagged", kind: "set", table_name: "flagged", delta_table_name: "__delta_flagged", frontier_table_name: "__frontier_flagged", next_frontier_table_name: "__next_frontier_flagged", columns: ["orchard_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."orchard_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_flagged" t WHERE t."_sign" IN (-1, 1) GROUP BY t."orchard_id", t."_sign"`, rule_observers: [] },
@@ -335,51 +292,10 @@ INSERT OR IGNORE INTO "orchard__flag" ("parent") SELECT b0."__id" FROM "orchard"
 INSERT OR IGNORE INTO "flagged" ("orchard_id") SELECT 1 FROM "orchard__flag" b0`, support_sql: [`DELETE FROM "__support_next_flagged"`, `INSERT INTO "__support_next_flagged" ("orchard_id", "__refcount") SELECT "orchard_id", sum("__refcount") FROM (SELECT 1 AS "orchard_id", count(*) AS "__refcount" FROM "orchard__flag" b0 GROUP BY (1 + 0)) GROUP BY "orchard_id"`, `UPDATE "flagged" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_flagged" n WHERE n."orchard_id" = h."orchard_id"), 0)`, `INSERT INTO "__delta_flagged" ("_sign", "_sequence", "orchard_id") SELECT -1, row_number() OVER () - 1, "orchard_id" FROM "flagged" WHERE "__refcount" <= 0`, `DELETE FROM "flagged" WHERE "__refcount" <= 0`, `DELETE FROM "__new_flagged"`, `INSERT INTO "__new_flagged" ("orchard_id", "__refcount") SELECT n."orchard_id", n."__refcount" FROM "__support_next_flagged" n LEFT JOIN "flagged" h ON n."orchard_id" = h."orchard_id" WHERE h."orchard_id" IS NULL`, `INSERT INTO "__delta_flagged" ("_sign", "_sequence", "orchard_id") SELECT 1, "rowid" - 1, "orchard_id" FROM "__new_flagged"`, `INSERT INTO "__frontier_flagged" ("_phase", "_sequence", "orchard_id") SELECT ?, "rowid" - 1, "orchard_id" FROM "__new_flagged"`, `INSERT INTO "__next_frontier_flagged" ("_phase", "_sequence", "orchard_id") SELECT ?, "rowid" - 1, "orchard_id" FROM "__new_flagged"`, `INSERT OR IGNORE INTO "flagged" ("orchard_id", "__refcount") SELECT n."orchard_id", n."__refcount" FROM "__support_next_flagged" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "orchard";
-INSERT OR IGNORE INTO "orchard" ("orchard_id") SELECT b0."orchard_id" FROM "planted" b0;
-DELETE FROM "orchard__flag";
-INSERT OR IGNORE INTO "orchard__flag" ("parent") SELECT b0."__id" FROM "orchard" b0, "planted" b1 WHERE b1."orchard_id" = b0."orchard_id";
-DELETE FROM "flagged";
-INSERT OR IGNORE INTO "flagged" ("orchard_id") SELECT 1 FROM "orchard__flag" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const flagged = multiset_diff(before.flagged, after.flagged);
-  const orchard = multiset_diff(before.orchard, after.orchard);
-  const orchard__flag = multiset_diff(before.orchard__flag, after.orchard__flag);
-  const planted = multiset_diff(before.planted, after.planted);
-  return {
-    rels: [
-      { rel: "flagged", add: flagged.add, del: flagged.del },
-      { rel: "orchard", add: orchard.add, del: orchard.del },
-      { rel: "orchard__flag", add: orchard__flag.add, del: orchard__flag.del },
-      { rel: "planted", add: planted.add, del: planted.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets),
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // nested_zero_column_child_is_one_row_per_parent: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -408,14 +324,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

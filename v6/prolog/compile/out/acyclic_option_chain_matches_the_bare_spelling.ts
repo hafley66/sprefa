@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -250,66 +249,11 @@ const boot: readonly IBootStatement[] = [
   { rel: "parent_name", sql: `INSERT OR IGNORE INTO "parent_name" ("child_name", "parent_name") SELECT b0."name", b2."name" FROM "node" b0, "node__parent" b1, "node" b2 WHERE b1."node_id" = b0."node_id" AND b2."node_id" = b1."parent_node_id"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly node: readonly IRow[];
-  readonly node__parent: readonly IRow[];
-  readonly parent_name: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    node: select_rows(seam, `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_node" t`, rel_columns.node!, rel_column_types.node!),
-    node__parent: select_rows(seam, `SELECT t."node_id", t."parent_node_id" FROM "node__parent" t`, rel_columns.node__parent!, rel_column_types.node__parent!),
-    parent_name: select_rows(seam, `SELECT CASE WHEN json_valid(t."child_name") AND json_type(t."child_name") = 'object' AND json_type(t."child_name", '$.fn') = 'text' AND json_type(t."child_name", '$.args') = 'array' THEN json_extract(t."child_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."child_name", '$.args')), '') || ')' ELSE t."child_name" END AS "child_name", CASE WHEN json_valid(t."parent_name") AND json_type(t."parent_name") = 'object' AND json_type(t."parent_name", '$.fn') = 'text' AND json_type(t."parent_name", '$.args') = 'array' THEN json_extract(t."parent_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."parent_name", '$.args')), '') || ')' ELSE t."parent_name" END AS "parent_name" FROM "__txt_parent_name" t`, rel_columns.parent_name!, rel_column_types.parent_name!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    node: select_rows(seam, `SELECT "node_id", "name" FROM "node"`, rel_columns.node!, rel_column_types.node!),
-    node__parent: select_rows(seam, `SELECT "node_id", "parent_node_id" FROM "node__parent"`, rel_columns.node__parent!, rel_column_types.node__parent!),
-    parent_name: select_rows(seam, `SELECT "child_name", "parent_name" FROM "parent_name"`, rel_columns.parent_name!, rel_column_types.parent_name!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   node: `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_node" t`,
   node__parent: `SELECT t."node_id", t."parent_node_id" FROM "node__parent" t`,
   parent_name: `SELECT CASE WHEN json_valid(t."child_name") AND json_type(t."child_name") = 'object' AND json_type(t."child_name", '$.fn') = 'text' AND json_type(t."child_name", '$.args') = 'array' THEN json_extract(t."child_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."child_name", '$.args')), '') || ')' ELSE t."child_name" END AS "child_name", CASE WHEN json_valid(t."parent_name") AND json_type(t."parent_name") = 'object' AND json_type(t."parent_name", '$.fn') = 'text' AND json_type(t."parent_name", '$.args') = 'array' THEN json_extract(t."parent_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."parent_name", '$.args')), '') || ')' ELSE t."parent_name" END AS "parent_name" FROM "__txt_parent_name" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  node: { kind: "set", add_sql: `INSERT INTO "node" ("node_id", "name") VALUES (?, ?) ON CONFLICT ("node_id") DO UPDATE SET "name" = excluded."name"`, del_sql: `DELETE FROM "node" WHERE "node_id" = ? AND "name" = ?` },
-  node__parent: { kind: "set", add_sql: `INSERT INTO "node__parent" ("node_id", "parent_node_id") VALUES (?, ?) ON CONFLICT ("node_id") DO UPDATE SET "parent_node_id" = excluded."parent_node_id"`, del_sql: `DELETE FROM "node__parent" WHERE "node_id" = ? AND "parent_node_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`acyclic_option_chain_matches_the_bare_spelling: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`acyclic_option_chain_matches_the_bare_spelling: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`acyclic_option_chain_matches_the_bare_spelling: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "node", kind: "set", table_name: "node", delta_table_name: "__delta_node", frontier_table_name: "__frontier_node", next_frontier_table_name: "__next_frontier_node", columns: ["node_id", "name"], column_types: ["int", "text"], key_indices: [0], arrival_add_sql: `INSERT INTO "node" ("node_id", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) WHERE true ON CONFLICT ("node_id") DO UPDATE SET "name" = excluded."name" RETURNING "node_id", "name"`, arrival_del_sql: `DELETE FROM "node" WHERE ("node_id", "name") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "node_id", "name"`, boundary_sql: `SELECT t."node_id", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_node" t WHERE t."_sign" IN (-1, 1) GROUP BY t."node_id", t."name", t."_sign"`, rule_observers: ["parent_name/2"] },
@@ -325,44 +269,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "parent_name" ("child_name", "parent_name") SELECT b0."name", b2."name" FROM "node" b0, "node__parent" b1, "node" b2 WHERE b1."node_id" = b0."node_id" AND b2."node_id" = b1."parent_node_id"`, support_sql: [`DELETE FROM "__support_next_parent_name"`, `INSERT INTO "__support_next_parent_name" ("child_name", "parent_name", "__refcount") SELECT "child_name", "parent_name", sum("__refcount") FROM (SELECT b0."name" AS "child_name", b2."name" AS "parent_name", count(*) AS "__refcount" FROM "node" b0, "node__parent" b1, "node" b2 WHERE b1."node_id" = b0."node_id" AND b2."node_id" = b1."parent_node_id" GROUP BY b0."name", b2."name") GROUP BY "child_name", "parent_name"`, `UPDATE "parent_name" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_parent_name" n WHERE n."child_name" = h."child_name" AND n."parent_name" = h."parent_name"), 0)`, `INSERT INTO "__delta_parent_name" ("_sign", "_sequence", "child_name", "parent_name") SELECT -1, row_number() OVER () - 1, "child_name", "parent_name" FROM "parent_name" WHERE "__refcount" <= 0`, `DELETE FROM "parent_name" WHERE "__refcount" <= 0`, `DELETE FROM "__new_parent_name"`, `INSERT INTO "__new_parent_name" ("child_name", "parent_name", "__refcount") SELECT n."child_name", n."parent_name", n."__refcount" FROM "__support_next_parent_name" n LEFT JOIN "parent_name" h ON n."child_name" = h."child_name" AND n."parent_name" = h."parent_name" WHERE h."child_name" IS NULL`, `INSERT INTO "__delta_parent_name" ("_sign", "_sequence", "child_name", "parent_name") SELECT 1, "rowid" - 1, "child_name", "parent_name" FROM "__new_parent_name"`, `INSERT INTO "__frontier_parent_name" ("_phase", "_sequence", "child_name", "parent_name") SELECT ?, "rowid" - 1, "child_name", "parent_name" FROM "__new_parent_name"`, `INSERT INTO "__next_frontier_parent_name" ("_phase", "_sequence", "child_name", "parent_name") SELECT ?, "rowid" - 1, "child_name", "parent_name" FROM "__new_parent_name"`, `INSERT OR IGNORE INTO "parent_name" ("child_name", "parent_name", "__refcount") SELECT n."child_name", n."parent_name", n."__refcount" FROM "__support_next_parent_name" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "parent_name";
-INSERT OR IGNORE INTO "parent_name" ("child_name", "parent_name") SELECT b0."name", b2."name" FROM "node" b0, "node__parent" b1, "node" b2 WHERE b1."node_id" = b0."node_id" AND b2."node_id" = b1."parent_node_id"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const node = multiset_diff(before.node, after.node);
-  const node__parent = multiset_diff(before.node__parent, after.node__parent);
-  const parent_name = multiset_diff(before.parent_name, after.parent_name);
-  return {
-    rels: [
-      { rel: "node", add: node.add, del: node.del },
-      { rel: "node__parent", add: node__parent.add, del: node__parent.del },
-      { rel: "parent_name", add: parent_name.add, del: parent_name.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // acyclic_option_chain_matches_the_bare_spelling: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -391,14 +301,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

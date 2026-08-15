@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -365,43 +364,6 @@ const boot: readonly IBootStatement[] = [
   { rel: "coord", sql: `INSERT OR IGNORE INTO "coord" ("path_name", "start", "end") SELECT b1."name", b0."start", b0."end" FROM "span" b0, "__ref_fpath" b1, "__ref_file" b2 WHERE b2."__id" = b0."file" AND b2."at" = b1."__id"`, params: [] },
 ];
 
-type Snapshot = {
-  readonly coord: readonly IRow[];
-  readonly file: readonly IRow[];
-  readonly fpath: readonly IRow[];
-  readonly raw: readonly IRow[];
-  readonly repo: readonly IRow[];
-  readonly span: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    coord: select_rows(seam, `SELECT CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", t."start", t."end" FROM "__txt_coord" t`, rel_columns.coord!, rel_column_types.coord!),
-    file: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = t."repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = t."at") AS "at" FROM "file" t`, rel_columns.file!, rel_column_types.file!),
-    fpath: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_fpath" t`, rel_columns.fpath!, rel_column_types.fpath!),
-    raw: select_rows(seam, `SELECT CASE WHEN json_valid(t."repo_name") AND json_type(t."repo_name") = 'object' AND json_type(t."repo_name", '$.fn') = 'text' AND json_type(t."repo_name", '$.args') = 'array' THEN json_extract(t."repo_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."repo_name", '$.args')), '') || ')' ELSE t."repo_name" END AS "repo_name", CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", t."start", t."end" FROM "__txt_raw" t`, rel_columns.raw!, rel_column_types.raw!),
-    repo: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_repo" t`, rel_columns.repo!, rel_column_types.repo!),
-    span: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = t."file") AS "file", t."start", t."end" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    coord: select_rows(seam, `SELECT "path_name", "start", "end" FROM "coord"`, rel_columns.coord!, rel_column_types.coord!),
-    file: select_rows(seam, `SELECT "repo", "at" FROM "file"`, rel_columns.file!, rel_column_types.file!),
-    fpath: select_rows(seam, `SELECT "name" FROM "fpath"`, rel_columns.fpath!, rel_column_types.fpath!),
-    raw: select_rows(seam, `SELECT "repo_name", "path_name", "start", "end" FROM "raw"`, rel_columns.raw!, rel_column_types.raw!),
-    repo: select_rows(seam, `SELECT "name" FROM "repo"`, rel_columns.repo!, rel_column_types.repo!),
-    span: select_rows(seam, `SELECT "file", "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   coord: `SELECT CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", t."start", t."end" FROM "__txt_coord" t`,
   file: `SELECT (SELECT d."__rendered" FROM "__ref_repo" d WHERE d."__id" = t."repo") AS "repo", (SELECT d."__rendered" FROM "__ref_fpath" d WHERE d."__id" = t."at") AS "at" FROM "file" t`,
@@ -410,32 +372,6 @@ const final_select: Record<string, string> = {
   repo: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_repo" t`,
   span: `SELECT (SELECT d."__rendered" FROM "__ref_file" d WHERE d."__id" = t."file") AS "file", t."start", t."end" FROM "span" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  raw: { kind: "set", add_sql: `INSERT OR IGNORE INTO "raw" ("repo_name", "path_name", "start", "end") VALUES (?, ?, ?, ?)`, del_sql: `DELETE FROM "raw" WHERE "repo_name" = ? AND "path_name" = ? AND "start" = ? AND "end" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`relation_depth2_construct_and_read: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`relation_depth2_construct_and_read: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`relation_depth2_construct_and_read: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "coord", kind: "set", table_name: "coord", delta_table_name: "__delta_coord", frontier_table_name: "__frontier_coord", next_frontier_table_name: "__next_frontier_coord", columns: ["path_name", "start", "end"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."path_name") AND json_type(t."path_name") = 'object' AND json_type(t."path_name", '$.fn') = 'text' AND json_type(t."path_name", '$.args') = 'array' THEN json_extract(t."path_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path_name", '$.args')), '') || ')' ELSE t."path_name" END AS "path_name", t."start", t."end", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_coord" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path_name", t."start", t."end", t."_sign"`, rule_observers: [] },
@@ -462,61 +398,10 @@ INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT b1."__id", b0."star
 INSERT OR IGNORE INTO "coord" ("path_name", "start", "end") SELECT b1."name", b0."start", b0."end" FROM "span" b0, "__ref_fpath" b1, "__ref_file" b2 WHERE b2."__id" = b0."file" AND b2."at" = b1."__id"`, support_sql: [`DELETE FROM "__support_next_coord"`, `INSERT INTO "__support_next_coord" ("path_name", "start", "end", "__refcount") SELECT "path_name", "start", "end", sum("__refcount") FROM (SELECT b1."name" AS "path_name", b0."start" AS "start", b0."end" AS "end", count(*) AS "__refcount" FROM "span" b0, "__ref_fpath" b1, "__ref_file" b2 WHERE b2."__id" = b0."file" AND b2."at" = b1."__id" GROUP BY b1."name", b0."start", b0."end") GROUP BY "path_name", "start", "end"`, `UPDATE "coord" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_coord" n WHERE n."path_name" = h."path_name" AND n."start" = h."start" AND n."end" = h."end"), 0)`, `INSERT INTO "__delta_coord" ("_sign", "_sequence", "path_name", "start", "end") SELECT -1, row_number() OVER () - 1, "path_name", "start", "end" FROM "coord" WHERE "__refcount" <= 0`, `DELETE FROM "coord" WHERE "__refcount" <= 0`, `DELETE FROM "__new_coord"`, `INSERT INTO "__new_coord" ("path_name", "start", "end", "__refcount") SELECT n."path_name", n."start", n."end", n."__refcount" FROM "__support_next_coord" n LEFT JOIN "coord" h ON n."path_name" = h."path_name" AND n."start" = h."start" AND n."end" = h."end" WHERE h."path_name" IS NULL`, `INSERT INTO "__delta_coord" ("_sign", "_sequence", "path_name", "start", "end") SELECT 1, "rowid" - 1, "path_name", "start", "end" FROM "__new_coord"`, `INSERT INTO "__frontier_coord" ("_phase", "_sequence", "path_name", "start", "end") SELECT ?, "rowid" - 1, "path_name", "start", "end" FROM "__new_coord"`, `INSERT INTO "__next_frontier_coord" ("_phase", "_sequence", "path_name", "start", "end") SELECT ?, "rowid" - 1, "path_name", "start", "end" FROM "__new_coord"`, `INSERT OR IGNORE INTO "coord" ("path_name", "start", "end", "__refcount") SELECT n."path_name", n."start", n."end", n."__refcount" FROM "__support_next_coord" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "fpath";
-INSERT OR IGNORE INTO "fpath" ("name") SELECT b0."path_name" FROM "raw" b0;
-DELETE FROM "repo";
-INSERT OR IGNORE INTO "repo" ("name") SELECT b0."repo_name" FROM "raw" b0;
-DELETE FROM "file";
-INSERT OR IGNORE INTO "file" ("repo", "at") SELECT b1."__id", b2."__id" FROM "raw" b0, "repo" b1, "fpath" b2 WHERE b1."name" = b0."repo_name" AND b2."name" = b0."path_name";
-DELETE FROM "span";
-INSERT OR IGNORE INTO "span" ("file", "start", "end") SELECT b1."__id", b0."start", b0."end" FROM "raw" b0, "file" b1, "__ref_repo" b2, "__ref_fpath" b3 WHERE b2."__id" = b1."repo" AND b2."name" = b0."repo_name" AND b3."__id" = b1."at" AND b3."name" = b0."path_name";
-DELETE FROM "coord";
-INSERT OR IGNORE INTO "coord" ("path_name", "start", "end") SELECT b1."name", b0."start", b0."end" FROM "span" b0, "__ref_fpath" b1, "__ref_file" b2 WHERE b2."__id" = b0."file" AND b2."at" = b1."__id"`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const coord = multiset_diff(before.coord, after.coord);
-  const file = multiset_diff(before.file, after.file);
-  const fpath = multiset_diff(before.fpath, after.fpath);
-  const raw = multiset_diff(before.raw, after.raw);
-  const repo = multiset_diff(before.repo, after.repo);
-  const span = multiset_diff(before.span, after.span);
-  return {
-    rels: [
-      { rel: "coord", add: coord.add, del: coord.del },
-      { rel: "file", add: file.add, del: file.del },
-      { rel: "fpath", add: fpath.add, del: fpath.del },
-      { rel: "raw", add: raw.add, del: raw.del },
-      { rel: "repo", add: repo.add, del: repo.del },
-      { rel: "span", add: span.add, del: span.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => StructPlane.intern(seam, STRUCT_TYPES, STRUCT_REF_COLUMNS, arrivals,
-      (targets) => apply_arrivals(seam, targets), TEXT_INTERN_PLAN,
-    ).pipe(map((normalized) => { arrivals = normalized; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // relation_depth2_construct_and_read: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -548,14 +433,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

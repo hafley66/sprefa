@@ -82,11 +82,9 @@ test("the tick advance is one statement per tick, flat in arrivals", async () =>
   const advance = emitted_advance_sql(source);
   assert.equal(advance, `UPDATE "__tick" SET "n" = "n" + 1`);
   assert.ok(!advance.includes(";"), "the tick advance must be exactly one statement");
-  for (const pipeline of ["run_naive_tick", "run_incremental_tick"]) {
-    const body = source.match(new RegExp(`function ${pipeline}[\\s\\S]*?\\n}`))![0];
-    const calls = body.match(/advance_tick\(seam\)/g) ?? [];
-    assert.equal(calls.length, 1, `${pipeline} must advance the tick exactly once`);
-  }
+  const body = source.match(/function run_incremental_tick[\s\S]*?\n}/)![0];
+  const calls = body.match(/advance_tick\(seam\)/g) ?? [];
+  assert.equal(calls.length, 1, "run_incremental_tick must advance the tick exactly once");
 });
 
 test("now() reads the counter as a scalar subquery, never a joined row", async () => {

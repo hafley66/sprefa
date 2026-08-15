@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -289,70 +288,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "unused", sql: `INSERT OR IGNORE INTO "unused" ("name") SELECT b0."name" FROM "def" b0 WHERE NOT EXISTS (SELECT 1 FROM "call" n0 WHERE n0."callee" = b0."name")`, params: [] },
 ];
 
-type Snapshot = {
-  readonly call: readonly IRow[];
-  readonly def: readonly IRow[];
-  readonly node_fact: readonly IRow[];
-  readonly unused: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    call: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."callee") AND json_type(t."callee") = 'object' AND json_type(t."callee", '$.fn') = 'text' AND json_type(t."callee", '$.args') = 'array' THEN json_extract(t."callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee", '$.args')), '') || ')' ELSE t."callee" END AS "callee" FROM "__txt_call" t`, rel_columns.call!, rel_column_types.call!),
-    def: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_def" t`, rel_columns.def!, rel_column_types.def!),
-    node_fact: select_rows(seam, `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."record") AND json_type(t."record") = 'object' AND json_type(t."record", '$.fn') = 'text' AND json_type(t."record", '$.args') = 'array' THEN json_extract(t."record", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."record", '$.args')), '') || ')' ELSE t."record" END AS "record", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_node_fact" t`, rel_columns.node_fact!, rel_column_types.node_fact!),
-    unused: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_unused" t`, rel_columns.unused!, rel_column_types.unused!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    call: select_rows(seam, `SELECT "path", "callee" FROM "call"`, rel_columns.call!, rel_column_types.call!),
-    def: select_rows(seam, `SELECT "path", "name", "kind" FROM "def"`, rel_columns.def!, rel_column_types.def!),
-    node_fact: select_rows(seam, `SELECT "path", "record", "kind", "name" FROM "node_fact"`, rel_columns.node_fact!, rel_column_types.node_fact!),
-    unused: select_rows(seam, `SELECT "name" FROM "unused"`, rel_columns.unused!, rel_column_types.unused!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   call: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."callee") AND json_type(t."callee") = 'object' AND json_type(t."callee", '$.fn') = 'text' AND json_type(t."callee", '$.args') = 'array' THEN json_extract(t."callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee", '$.args')), '') || ')' ELSE t."callee" END AS "callee" FROM "__txt_call" t`,
   def: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind" FROM "__txt_def" t`,
   node_fact: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."record") AND json_type(t."record") = 'object' AND json_type(t."record", '$.fn') = 'text' AND json_type(t."record", '$.args') = 'array' THEN json_extract(t."record", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."record", '$.args')), '') || ')' ELSE t."record" END AS "record", CASE WHEN json_valid(t."kind") AND json_type(t."kind") = 'object' AND json_type(t."kind", '$.fn') = 'text' AND json_type(t."kind", '$.args') = 'array' THEN json_extract(t."kind", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."kind", '$.args')), '') || ')' ELSE t."kind" END AS "kind", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_node_fact" t`,
   unused: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_unused" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  call: { kind: "set", add_sql: `INSERT OR IGNORE INTO "call" ("path", "callee") VALUES (?, ?)`, del_sql: `DELETE FROM "call" WHERE "path" = ? AND "callee" = ?` },
-  node_fact: { kind: "set", add_sql: `INSERT OR IGNORE INTO "node_fact" ("path", "record", "kind", "name") VALUES (?, ?, ?, ?)`, del_sql: `DELETE FROM "node_fact" WHERE "path" = ? AND "record" = ? AND "kind" = ? AND "name" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`callgraph_unused_inverts_with_the_call_set: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`callgraph_unused_inverts_with_the_call_set: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`callgraph_unused_inverts_with_the_call_set: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "call", kind: "set", table_name: "call", delta_table_name: "__delta_call", frontier_table_name: "__frontier_call", next_frontier_table_name: "__next_frontier_call", columns: ["path", "callee"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "call" ("path", "callee") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "path", "callee"`, arrival_del_sql: `DELETE FROM "call" WHERE ("path", "callee") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "path", "callee"`, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."callee") AND json_type(t."callee") = 'object' AND json_type(t."callee", '$.fn') = 'text' AND json_type(t."callee", '$.args') = 'array' THEN json_extract(t."callee", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."callee", '$.args')), '') || ')' ELSE t."callee" END AS "callee", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_call" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."callee", t."_sign"`, rule_observers: [] },
@@ -371,48 +312,10 @@ INSERT OR IGNORE INTO "def" ("path", "name", "kind") SELECT b0."path", b0."name"
 INSERT OR IGNORE INTO "unused" ("name") SELECT b0."name" FROM "def" b0 WHERE NOT EXISTS (SELECT 1 FROM "call" n0 WHERE n0."callee" = b0."name")`, support_sql: [`DELETE FROM "__support_next_unused"`, `INSERT INTO "__support_next_unused" ("name", "__refcount") SELECT "name", sum("__refcount") FROM (SELECT b0."name" AS "name", count(*) AS "__refcount" FROM "def" b0 WHERE NOT EXISTS (SELECT 1 FROM "call" n0 WHERE n0."callee" = b0."name") GROUP BY b0."name") GROUP BY "name"`, `UPDATE "unused" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_unused" n WHERE n."name" = h."name"), 0)`, `INSERT INTO "__delta_unused" ("_sign", "_sequence", "name") SELECT -1, row_number() OVER () - 1, "name" FROM "unused" WHERE "__refcount" <= 0`, `DELETE FROM "unused" WHERE "__refcount" <= 0`, `DELETE FROM "__new_unused"`, `INSERT INTO "__new_unused" ("name", "__refcount") SELECT n."name", n."__refcount" FROM "__support_next_unused" n LEFT JOIN "unused" h ON n."name" = h."name" WHERE h."name" IS NULL`, `INSERT INTO "__delta_unused" ("_sign", "_sequence", "name") SELECT 1, "rowid" - 1, "name" FROM "__new_unused"`, `INSERT INTO "__frontier_unused" ("_phase", "_sequence", "name") SELECT ?, "rowid" - 1, "name" FROM "__new_unused"`, `INSERT INTO "__next_frontier_unused" ("_phase", "_sequence", "name") SELECT ?, "rowid" - 1, "name" FROM "__new_unused"`, `INSERT OR IGNORE INTO "unused" ("name", "__refcount") SELECT n."name", n."__refcount" FROM "__support_next_unused" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "def";
-INSERT OR IGNORE INTO "def" ("path", "name", "kind") SELECT b0."path", b0."name", b0."kind" FROM "node_fact" b0 WHERE b0."record" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'node');
-DELETE FROM "unused";
-INSERT OR IGNORE INTO "unused" ("name") SELECT b0."name" FROM "def" b0 WHERE NOT EXISTS (SELECT 1 FROM "call" n0 WHERE n0."callee" = b0."name")`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const call = multiset_diff(before.call, after.call);
-  const def = multiset_diff(before.def, after.def);
-  const node_fact = multiset_diff(before.node_fact, after.node_fact);
-  const unused = multiset_diff(before.unused, after.unused);
-  return {
-    rels: [
-      { rel: "call", add: call.add, del: call.del },
-      { rel: "def", add: def.add, del: def.del },
-      { rel: "node_fact", add: node_fact.add, del: node_fact.del },
-      { rel: "unused", add: unused.add, del: unused.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // callgraph_unused_inverts_with_the_call_set: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = true;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -441,14 +344,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -222,61 +221,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "doc_out", sql: `INSERT OR IGNORE INTO "doc_out" ("col1") SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) FROM "seed" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly doc_out: readonly IRow[];
-  readonly seed: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    doc_out: select_rows(seam, `SELECT t."col1" FROM "doc_out" t`, rel_columns.doc_out!, rel_column_types.doc_out!),
-    seed: select_rows(seam, `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_seed" t`, rel_columns.seed!, rel_column_types.seed!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    doc_out: select_rows(seam, `SELECT "col1" FROM "doc_out"`, rel_columns.doc_out!, rel_column_types.doc_out!),
-    seed: select_rows(seam, `SELECT "name" FROM "seed"`, rel_columns.seed!, rel_column_types.seed!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   doc_out: `SELECT t."col1" FROM "doc_out" t`,
   seed: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_seed" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  seed: { kind: "set", add_sql: `INSERT OR IGNORE INTO "seed" ("name") VALUES (?)`, del_sql: `DELETE FROM "seed" WHERE "name" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`braces_in_head_position: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`braces_in_head_position: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`braces_in_head_position: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "doc_out", kind: "set", table_name: "doc_out", delta_table_name: "__delta_doc_out", frontier_table_name: "__frontier_doc_out", next_frontier_table_name: "__next_frontier_doc_out", columns: ["col1"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_doc_out" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
@@ -291,42 +239,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "doc_out" ("col1") SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) FROM "seed" b0`, support_sql: [`DELETE FROM "__support_next_doc_out"`, `INSERT INTO "__support_next_doc_out" ("col1", "__refcount") SELECT "col1", sum("__refcount") FROM (SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) AS "col1", count(*) AS "__refcount" FROM "seed" b0 GROUP BY json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name"))) GROUP BY "col1"`, `UPDATE "doc_out" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_doc_out" n WHERE n."col1" = h."col1"), 0)`, `INSERT INTO "__delta_doc_out" ("_sign", "_sequence", "col1") SELECT -1, row_number() OVER () - 1, "col1" FROM "doc_out" WHERE "__refcount" <= 0`, `DELETE FROM "doc_out" WHERE "__refcount" <= 0`, `DELETE FROM "__new_doc_out"`, `INSERT INTO "__new_doc_out" ("col1", "__refcount") SELECT n."col1", n."__refcount" FROM "__support_next_doc_out" n LEFT JOIN "doc_out" h ON n."col1" = h."col1" WHERE h."col1" IS NULL`, `INSERT INTO "__delta_doc_out" ("_sign", "_sequence", "col1") SELECT 1, "rowid" - 1, "col1" FROM "__new_doc_out"`, `INSERT INTO "__frontier_doc_out" ("_phase", "_sequence", "col1") SELECT ?, "rowid" - 1, "col1" FROM "__new_doc_out"`, `INSERT INTO "__next_frontier_doc_out" ("_phase", "_sequence", "col1") SELECT ?, "rowid" - 1, "col1" FROM "__new_doc_out"`, `INSERT OR IGNORE INTO "doc_out" ("col1", "__refcount") SELECT n."col1", n."__refcount" FROM "__support_next_doc_out" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "doc_out";
-INSERT OR IGNORE INTO "doc_out" ("col1") SELECT json_object('repo', (SELECT s."content" FROM "__str" s WHERE s."__id" = b0."name")) FROM "seed" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const doc_out = multiset_diff(before.doc_out, after.doc_out);
-  const seed = multiset_diff(before.seed, after.seed);
-  return {
-    rels: [
-      { rel: "doc_out", add: doc_out.add, del: doc_out.del },
-      { rel: "seed", add: seed.add, del: seed.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // braces_in_head_position: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -355,14 +271,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

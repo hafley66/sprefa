@@ -66,11 +66,10 @@
  *   assertion 1 catches. That is precisely the class end-state equality is
  *   blind to, and the reason the hop count is asserted at all.
  *
- * NAMED BLIND SPOT: `support_sql`, `recomputeSql` and the naive-mode arm of the
- * SAME rules are not planned here. They are built from the same rewritten rule
- * body by the same compiler, and the sweep grades both modes for row equality,
- * but nothing in this file would notice if only the incremental insert kept
- * its indexes.
+ * NAMED BLIND SPOT: `support_sql` and `recomputeSql` for the SAME rules are
+ * not planned here. They are built from the same rewritten rule body by the
+ * same compiler, but nothing in this file would notice if only the
+ * incremental insert kept its indexes.
  */
 
 import assert from "node:assert/strict";

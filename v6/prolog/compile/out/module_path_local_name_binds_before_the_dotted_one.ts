@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -246,55 +245,12 @@ const boot: readonly IBootStatement[] = [
   { rel: "path_pick", sql: `INSERT OR IGNORE INTO "path_pick" ("tree_id") SELECT b0."tree_id" FROM "orchard__tree" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly local_pick: readonly IRow[];
-  readonly orchard__tree: readonly IRow[];
-  readonly path_pick: readonly IRow[];
-  readonly tree: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    local_pick: select_rows(seam, `SELECT t."tree_id" FROM "local_pick" t`, rel_columns.local_pick!, rel_column_types.local_pick!),
-    orchard__tree: select_rows(seam, `SELECT t."tree_id" FROM "orchard__tree" t`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
-    path_pick: select_rows(seam, `SELECT t."tree_id" FROM "path_pick" t`, rel_columns.path_pick!, rel_column_types.path_pick!),
-    tree: select_rows(seam, `SELECT t."tree_id" FROM "tree" t`, rel_columns.tree!, rel_column_types.tree!),
-  });
-}
-
 const final_select: Record<string, string> = {
   local_pick: `SELECT t."tree_id" FROM "local_pick" t`,
   orchard__tree: `SELECT t."tree_id" FROM "orchard__tree" t`,
   path_pick: `SELECT t."tree_id" FROM "path_pick" t`,
   tree: `SELECT t."tree_id" FROM "tree" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  orchard__tree: { kind: "set", add_sql: `INSERT OR IGNORE INTO "orchard__tree" ("tree_id") VALUES (?)`, del_sql: `DELETE FROM "orchard__tree" WHERE "tree_id" = ?` },
-  tree: { kind: "set", add_sql: `INSERT OR IGNORE INTO "tree" ("tree_id") VALUES (?)`, del_sql: `DELETE FROM "tree" WHERE "tree_id" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`module_path_local_name_binds_before_the_dotted_one: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`module_path_local_name_binds_before_the_dotted_one: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`module_path_local_name_binds_before_the_dotted_one: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "local_pick", kind: "set", table_name: "local_pick", delta_table_name: "__delta_local_pick", frontier_table_name: "__frontier_local_pick", next_frontier_table_name: "__next_frontier_local_pick", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_local_pick" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: [] },
@@ -313,46 +269,10 @@ INSERT OR IGNORE INTO "local_pick" ("tree_id") SELECT b0."tree_id" FROM "tree" b
 INSERT OR IGNORE INTO "path_pick" ("tree_id") SELECT b0."tree_id" FROM "orchard__tree" b0`, support_sql: [`DELETE FROM "__support_next_path_pick"`, `INSERT INTO "__support_next_path_pick" ("tree_id", "__refcount") SELECT "tree_id", sum("__refcount") FROM (SELECT b0."tree_id" AS "tree_id", count(*) AS "__refcount" FROM "orchard__tree" b0 GROUP BY b0."tree_id") GROUP BY "tree_id"`, `UPDATE "path_pick" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_path_pick" n WHERE n."tree_id" = h."tree_id"), 0)`, `INSERT INTO "__delta_path_pick" ("_sign", "_sequence", "tree_id") SELECT -1, row_number() OVER () - 1, "tree_id" FROM "path_pick" WHERE "__refcount" <= 0`, `DELETE FROM "path_pick" WHERE "__refcount" <= 0`, `DELETE FROM "__new_path_pick"`, `INSERT INTO "__new_path_pick" ("tree_id", "__refcount") SELECT n."tree_id", n."__refcount" FROM "__support_next_path_pick" n LEFT JOIN "path_pick" h ON n."tree_id" = h."tree_id" WHERE h."tree_id" IS NULL`, `INSERT INTO "__delta_path_pick" ("_sign", "_sequence", "tree_id") SELECT 1, "rowid" - 1, "tree_id" FROM "__new_path_pick"`, `INSERT INTO "__frontier_path_pick" ("_phase", "_sequence", "tree_id") SELECT ?, "rowid" - 1, "tree_id" FROM "__new_path_pick"`, `INSERT INTO "__next_frontier_path_pick" ("_phase", "_sequence", "tree_id") SELECT ?, "rowid" - 1, "tree_id" FROM "__new_path_pick"`, `INSERT OR IGNORE INTO "path_pick" ("tree_id", "__refcount") SELECT n."tree_id", n."__refcount" FROM "__support_next_path_pick" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "local_pick";
-INSERT OR IGNORE INTO "local_pick" ("tree_id") SELECT b0."tree_id" FROM "tree" b0;
-DELETE FROM "path_pick";
-INSERT OR IGNORE INTO "path_pick" ("tree_id") SELECT b0."tree_id" FROM "orchard__tree" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const local_pick = multiset_diff(before.local_pick, after.local_pick);
-  const orchard__tree = multiset_diff(before.orchard__tree, after.orchard__tree);
-  const path_pick = multiset_diff(before.path_pick, after.path_pick);
-  const tree = multiset_diff(before.tree, after.tree);
-  return {
-    rels: [
-      { rel: "local_pick", add: local_pick.add, del: local_pick.del },
-      { rel: "orchard__tree", add: orchard__tree.add, del: orchard__tree.del },
-      { rel: "path_pick", add: path_pick.add, del: path_pick.del },
-      { rel: "tree", add: tree.add, del: tree.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // module_path_local_name_binds_before_the_dotted_one: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -378,14 +298,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

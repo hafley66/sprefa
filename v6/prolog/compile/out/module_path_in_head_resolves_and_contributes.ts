@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -211,48 +210,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "orchard__tree", sql: `INSERT OR IGNORE INTO "orchard__tree" ("tree_id", "picked") SELECT b0."tree_id", b0."picked" FROM "harvest" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly harvest: readonly IRow[];
-  readonly orchard__tree: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    harvest: select_rows(seam, `SELECT t."tree_id", t."picked" FROM "harvest" t`, rel_columns.harvest!, rel_column_types.harvest!),
-    orchard__tree: select_rows(seam, `SELECT t."tree_id", t."picked" FROM "orchard__tree" t`, rel_columns.orchard__tree!, rel_column_types.orchard__tree!),
-  });
-}
-
 const final_select: Record<string, string> = {
   harvest: `SELECT t."tree_id", t."picked" FROM "harvest" t`,
   orchard__tree: `SELECT t."tree_id", t."picked" FROM "orchard__tree" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  harvest: { kind: "set", add_sql: `INSERT OR IGNORE INTO "harvest" ("tree_id", "picked") VALUES (?, ?)`, del_sql: `DELETE FROM "harvest" WHERE "tree_id" = ? AND "picked" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`module_path_in_head_resolves_and_contributes: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`module_path_in_head_resolves_and_contributes: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`module_path_in_head_resolves_and_contributes: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "harvest", kind: "set", table_name: "harvest", delta_table_name: "__delta_harvest", frontier_table_name: "__frontier_harvest", next_frontier_table_name: "__next_frontier_harvest", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "harvest" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "harvest" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT t."tree_id", t."picked", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_harvest" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."picked", t."_sign"`, rule_observers: ["orchard__tree/2"] },
@@ -267,40 +228,10 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 INSERT OR IGNORE INTO "orchard__tree" ("tree_id", "picked") SELECT b0."tree_id", b0."picked" FROM "harvest" b0`, support_sql: [`DELETE FROM "__support_next_orchard__tree"`, `INSERT INTO "__support_next_orchard__tree" ("tree_id", "picked", "__refcount") SELECT "tree_id", "picked", sum("__refcount") FROM (SELECT b0."tree_id" AS "tree_id", b0."picked" AS "picked", count(*) AS "__refcount" FROM "harvest" b0 GROUP BY b0."tree_id", b0."picked") GROUP BY "tree_id", "picked"`, `UPDATE "orchard__tree" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_orchard__tree" n WHERE n."tree_id" = h."tree_id" AND n."picked" = h."picked"), 0)`, `INSERT INTO "__delta_orchard__tree" ("_sign", "_sequence", "tree_id", "picked") SELECT -1, row_number() OVER () - 1, "tree_id", "picked" FROM "orchard__tree" WHERE "__refcount" <= 0`, `DELETE FROM "orchard__tree" WHERE "__refcount" <= 0`, `DELETE FROM "__new_orchard__tree"`, `INSERT INTO "__new_orchard__tree" ("tree_id", "picked", "__refcount") SELECT n."tree_id", n."picked", n."__refcount" FROM "__support_next_orchard__tree" n LEFT JOIN "orchard__tree" h ON n."tree_id" = h."tree_id" AND n."picked" = h."picked" WHERE h."tree_id" IS NULL`, `INSERT INTO "__delta_orchard__tree" ("_sign", "_sequence", "tree_id", "picked") SELECT 1, "rowid" - 1, "tree_id", "picked" FROM "__new_orchard__tree"`, `INSERT INTO "__frontier_orchard__tree" ("_phase", "_sequence", "tree_id", "picked") SELECT ?, "rowid" - 1, "tree_id", "picked" FROM "__new_orchard__tree"`, `INSERT INTO "__next_frontier_orchard__tree" ("_phase", "_sequence", "tree_id", "picked") SELECT ?, "rowid" - 1, "tree_id", "picked" FROM "__new_orchard__tree"`, `INSERT OR IGNORE INTO "orchard__tree" ("tree_id", "picked", "__refcount") SELECT n."tree_id", n."picked", n."__refcount" FROM "__support_next_orchard__tree" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "orchard__tree";
-INSERT OR IGNORE INTO "orchard__tree" ("tree_id", "picked") SELECT b0."tree_id", b0."picked" FROM "harvest" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const harvest = multiset_diff(before.harvest, after.harvest);
-  const orchard__tree = multiset_diff(before.orchard__tree, after.orchard__tree);
-  return {
-    rels: [
-      { rel: "harvest", add: harvest.add, del: harvest.del },
-      { rel: "orchard__tree", add: orchard__tree.add, del: orchard__tree.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // module_path_in_head_resolves_and_contributes: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -326,14 +257,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,

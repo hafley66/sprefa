@@ -471,8 +471,8 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
        retentions: Retentions,
        uses_tick: UsesTick,
        reconcile_every_tick: ReconcileEveryTick,
-       % This door has no naive fallback to route to; emit_ts.pl's flag is
-       % likewise unconditionally true (incremental_program_safe/4).
+       % Constant true: no fallback tick path exists on either door; the field
+       % stays only because engine-rs program.rs deserializes it.
        incremental_safe: true,
        host_plans: HostPlanDicts },
     json_write_string(ProgramDict, ProgramJson),

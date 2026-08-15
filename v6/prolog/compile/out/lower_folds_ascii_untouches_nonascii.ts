@@ -8,8 +8,7 @@
 // executes emitted frontier-side joins for positive level rules, promotes
 // edge and post-write level growth across drain ticks, and computes boundary
 // changes from the staged stream. Retractions and negative bodies use emitted
-// support-count reconciliation. The snapshot path remains selectable with
-// SPREFA_TSV2_EMITTER_MODE=naive as a byte-identity referee.
+// support-count reconciliation.
 //
 // IGenProgram has no slot for boot-time work (seeding Initial rows before
 // tick 1). `boot` is an extra field added beyond the five pinned names
@@ -234,61 +233,10 @@ const boot: readonly IBootStatement[] = [
   { rel: "mumbled", sql: `INSERT OR IGNORE INTO "mumbled" ("text", "out") SELECT b0."text", (SELECT s."__id" FROM "__str" s WHERE s."content" = lower((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text"))) FROM "text" b0`, params: [] },
 ];
 
-type Snapshot = {
-  readonly mumbled: readonly IRow[];
-  readonly text: readonly IRow[];
-};
-
-function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    mumbled: select_rows(seam, `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", CASE WHEN json_valid(t."out") AND json_type(t."out") = 'object' AND json_type(t."out", '$.fn') = 'text' AND json_type(t."out", '$.args') = 'array' THEN json_extract(t."out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."out", '$.args')), '') || ')' ELSE t."out" END AS "out" FROM "__txt_mumbled" t`, rel_columns.mumbled!, rel_column_types.mumbled!),
-    text: select_rows(seam, `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_text" t`, rel_columns.text!, rel_column_types.text!),
-  });
-}
-
-type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
-
-function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
-  return forkJoin({
-    mumbled: select_rows(seam, `SELECT "text", "out" FROM "mumbled"`, rel_columns.mumbled!, rel_column_types.mumbled!),
-    text: select_rows(seam, `SELECT "text" FROM "text"`, rel_columns.text!, rel_column_types.text!),
-  });
-}
-
-function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
-  return forkJoin({ decoded: read_snapshot(seam), stored: read_stored_snapshot(seam) });
-}
-
 const final_select: Record<string, string> = {
   mumbled: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", CASE WHEN json_valid(t."out") AND json_type(t."out") = 'object' AND json_type(t."out", '$.fn') = 'text' AND json_type(t."out", '$.args') = 'array' THEN json_extract(t."out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."out", '$.args')), '') || ')' ELSE t."out" END AS "out" FROM "__txt_mumbled" t`,
   text: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text" FROM "__txt_text" t`,
 };
-
-const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  text: { kind: "set", add_sql: `INSERT OR IGNORE INTO "text" ("text") VALUES (?)`, del_sql: `DELETE FROM "text" WHERE "text" = ?` },
-};
-
-function arrival_statement(arrival: IArrivalRow): SqlStatement {
-  const template = ARRIVAL_STATEMENTS[arrival.rel];
-  if (template === undefined) {
-    throw new Error(`lower_folds_ascii_untouches_nonascii: tick received an arrival for undeclared rel '${arrival.rel}'`);
-  }
-  if (arrival.sign === "del") {
-    if (template.kind === "log") {
-      throw new Error(`lower_folds_ascii_untouches_nonascii: retract from log rel '${arrival.rel}' (engine.pl retract_from_log)`);
-    }
-    if (template.del_sql === null) {
-      throw new Error(`lower_folds_ascii_untouches_nonascii: rel '${arrival.rel}' has no delete statement`);
-    }
-    return { sql: template.del_sql, args: bind_args(arrival.row) };
-  }
-  return { sql: template.add_sql, args: bind_args(arrival.row) };
-}
-
-function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unknown> {
-  const statements: SqlStatement[] = arrivals.map(arrival_statement);
-  return seam.runner.batch(seam.db, statements);
-}
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "mumbled", kind: "set", table_name: "mumbled", delta_table_name: "__delta_mumbled", frontier_table_name: "__frontier_mumbled", next_frontier_table_name: "__next_frontier_mumbled", columns: ["text", "out"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."text") AND json_type(t."text") = 'object' AND json_type(t."text", '$.fn') = 'text' AND json_type(t."text", '$.args') = 'array' THEN json_extract(t."text", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."text", '$.args')), '') || ')' ELSE t."text" END AS "text", CASE WHEN json_valid(t."out") AND json_type(t."out") = 'object' AND json_type(t."out", '$.fn') = 'text' AND json_type(t."out", '$.args') = 'array' THEN json_extract(t."out", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."out", '$.args')), '') || ')' ELSE t."out" END AS "out", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_mumbled" t WHERE t."_sign" IN (-1, 1) GROUP BY t."text", t."out", t."_sign"`, rule_observers: [] },
@@ -304,43 +252,10 @@ INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT lower((SELECT s."conte
 INSERT OR IGNORE INTO "mumbled" ("text", "out") SELECT b0."text", (SELECT s."__id" FROM "__str" s WHERE s."content" = lower((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text"))) FROM "text" b0`, support_sql: [`DELETE FROM "__support_next_mumbled"`, `INSERT INTO "__support_next_mumbled" ("text", "out", "__refcount") SELECT "text", "out", sum("__refcount") FROM (SELECT b0."text" AS "text", (SELECT s."__id" FROM "__str" s WHERE s."content" = lower((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text"))) AS "out", count(*) AS "__refcount" FROM "text" b0 GROUP BY b0."text", lower((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text"))) GROUP BY "text", "out"`, `UPDATE "mumbled" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_mumbled" n WHERE n."text" = h."text" AND n."out" = h."out"), 0)`, `INSERT INTO "__delta_mumbled" ("_sign", "_sequence", "text", "out") SELECT -1, row_number() OVER () - 1, "text", "out" FROM "mumbled" WHERE "__refcount" <= 0`, `DELETE FROM "mumbled" WHERE "__refcount" <= 0`, `DELETE FROM "__new_mumbled"`, `INSERT INTO "__new_mumbled" ("text", "out", "__refcount") SELECT n."text", n."out", n."__refcount" FROM "__support_next_mumbled" n LEFT JOIN "mumbled" h ON n."text" = h."text" AND n."out" = h."out" WHERE h."text" IS NULL`, `INSERT INTO "__delta_mumbled" ("_sign", "_sequence", "text", "out") SELECT 1, "rowid" - 1, "text", "out" FROM "__new_mumbled"`, `INSERT INTO "__frontier_mumbled" ("_phase", "_sequence", "text", "out") SELECT ?, "rowid" - 1, "text", "out" FROM "__new_mumbled"`, `INSERT INTO "__next_frontier_mumbled" ("_phase", "_sequence", "text", "out") SELECT ?, "rowid" - 1, "text", "out" FROM "__new_mumbled"`, `INSERT OR IGNORE INTO "mumbled" ("text", "out", "__refcount") SELECT n."text", n."out", n."__refcount" FROM "__support_next_mumbled" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT lower((SELECT s."content" FROM "__str" s WHERE s."__id" = d0."text")) FROM "__frontier_text" d0 WHERE d0."_phase" >= 0`], support_intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT lower((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text")) FROM "text" b0`] },
 ];
 
-function recompute_levels(seam: ISqlSeam): Observable<void> {
-  const sql = `DELETE FROM "mumbled";
-INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT lower((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text")) FROM "text" b0;
-INSERT OR IGNORE INTO "mumbled" ("text", "out") SELECT b0."text", (SELECT s."__id" FROM "__str" s WHERE s."content" = lower((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."text"))) FROM "text" b0`;
-  return seam.runner.executeMultiple(seam.db, sql);
-}
-
-function build_deltas(before: Snapshot, after: Snapshot): ITickDeltas {
-  const mumbled = multiset_diff(before.mumbled, after.mumbled);
-  const text = multiset_diff(before.text, after.text);
-  return {
-    rels: [
-      { rel: "mumbled", add: mumbled.add, del: mumbled.del },
-      { rel: "text", add: text.add, del: text.del },
-    ],
-    carry_pending: false,
-  };
-}
-
-function run_naive_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
-  return read_snapshot(seam).pipe(
-    concatMap((before) => TextPlane.intern(seam, TEXT_INTERN_PLAN, arrivals)
-      .pipe(map((interned) => { arrivals = interned; return before; }))),
-    concatMap((before) => apply_arrivals(seam, arrivals).pipe(map(() => before))),
-  ).pipe(
-    concatMap((before) => recompute_levels(seam).pipe(map(() => before))),
-    concatMap((before) => read_snapshot(seam).pipe(map((after) => build_deltas(before, after)))),
-  );
-  // lower_folds_ascii_untouches_nonascii: no edge rules -- absorb arrivals, recompute levels, diff.
-}
-
-const INCREMENTAL_PROGRAM_SAFE = true;
 const RECONCILE_EVERY_TICK = false;
-const EMITTER_MODE = process.env.SPREFA_TSV2_EMITTER_MODE === "naive" ? "naive" : "incremental";
 
 const SUBSCRIBE_PRUNE = SubscribeCone.mode();
-const SUBSCRIBE_PRUNE_TICK_PATH: string = EMITTER_MODE;
+const SUBSCRIBE_PRUNE_TICK_PATH: string = "incremental";
 if (SUBSCRIBE_PRUNE === "on" && SUBSCRIBE_PRUNE_TICK_PATH !== "incremental") {
   throw new Error(`subscribe_prune_unsupported_tick_path ${SUBSCRIBE_PRUNE_TICK_PATH}`);
 }
@@ -369,14 +284,10 @@ function run_incremental_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observab
 
 function run_tick(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<ITickDeltas> {
   arrivals = validate_arrivals(arrivals);
-  if (EMITTER_MODE === "naive" || !INCREMENTAL_PROGRAM_SAFE) {
-    return run_naive_tick(seam, arrivals);
-  }
   return run_incremental_tick(seam, arrivals);
 }
 
 export const incremental_plan: IIncrementalProgramPlan = {
-  safe: INCREMENTAL_PROGRAM_SAFE,
   reconcile_every_tick: RECONCILE_EVERY_TICK,
   retraction_guard: "plain-count-acyclic",
   relations: INCREMENTAL_RELATIONS,
