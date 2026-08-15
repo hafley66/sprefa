@@ -2,7 +2,10 @@
   "$defs": {
     "left_parts": {
       "additionalProperties":false,
-      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "properties": {
+        "name": {"type":"string"},
+        "parts": {"items": {"type":"string"},"type":"array"}
+      },
       "required": ["name", "parts" ],
       "type":"object"
     },
@@ -14,7 +17,10 @@
     },
     "right_parts": {
       "additionalProperties":false,
-      "properties": {"name": {"type":"string"},"parts": {"type":"integer"}},
+      "properties": {
+        "name": {"type":"string"},
+        "parts": {"items": {"type":"string"},"type":"array"}
+      },
       "required": ["name", "parts" ],
       "type":"object"
     },

@@ -1495,8 +1495,8 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     length(PrimitiveRows, PrimitiveCount),
     ListStartId is PrimitiveCount + 1,
     catalog_list_types(CatalogRelPlans, ListTypes),
-    catalog_list_rows(ListTypes, [], ListStartId, ListRowRows, ListIdMap),
-    length(ListRowRows, ListCount),
+    catalog_list_id_map(ListTypes, ListStartId, ListIdMap),
+    length(ListTypes, ListCount),
     ModuleId is ListStartId + ListCount,
     ModuleRow = row(ModuleId, 0, 0, ModuleName, module, 0, 0, ModuleId, ModuleHash, '', ''),
     SpliceStartId is ModuleId + 1,
@@ -1508,6 +1508,9 @@ catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, AllRows, Context) :-
     rel_module_map(Decls, HashIdMap, RelModuleMap),
     Modules = modules(ModuleHash, ModuleId, RelModuleMap),
     catalog_rel_id_map(CatalogRelPlans, FirstRelId, [], RelIdMap),
+    % A relational list element can BE a rel, so the row's element id is only
+    % resolvable once the rel ids exist; the id layout came from the count.
+    catalog_list_rows(ListTypes, ListIdMap, RelIdMap, ListStartId, ListRowRows),
     catalog_rel_block_end(CatalogRelPlans, FirstRelId, RelBlockEnd),
     catalog_path_tree(Decls, RelIdMap, ModuleId, ModuleHash, RelBlockEnd,
                       NestMap, RoomRows, IdAfterRooms),
@@ -1770,6 +1773,8 @@ metadata_argument_rows([Argument | Rest], InstanceId, RelIdMap, ListIdMap,
 
 catalog_source_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
     ( list_row_id(ListIdMap, json_list(Element), TypeId) -> true ; TypeId = 0 ).
+catalog_source_type_id(list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
+    ( list_row_id(ListIdMap, list(Element), TypeId) -> true ; TypeId = 0 ).
 catalog_source_type_id(Type, RelIdMap, _ListIdMap, TypeId) :-
     atom(Type),
     ( catalog_type_id(Type, PrimitiveId), PrimitiveId =\= 0
@@ -1849,6 +1854,8 @@ catalog_declared_column(Name-bool, col(Name, declared(bool), bool)).
 catalog_declared_column(Name-json, col(Name, declared(json), json)).
 catalog_declared_column(Name-json_list(Element),
                         col(Name, declared(json_list(Element)), json_list(Element))).
+catalog_declared_column(Name-list(Element),
+                        col(Name, declared(list(Element)), list(Element))).
 catalog_declared_column(Name-Type, col(Name, declared(Type), ref(Type))).
 
 catalog_rel_module_ids([], _HashIdMap, []).
@@ -1941,8 +1948,8 @@ catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
     NextId is Id + 1,
     catalog_primitive_rows(NextId, Rest, [row(Id, 0, 0, Name, primitive, 0, 0, 0, '', '', '') | Acc], Rows).
 
-% Distinct json_list(Element) column types, in first-appearance order, inner before
-% outer so a nested list's own row id exists before the outer row references it.
+% Distinct list column types of both spellings, in first-appearance order, inner
+% before outer so a nested list's row id exists before the outer row cites it.
 catalog_list_types(RelPlans, OrderedTypes) :-
     findall(ListType,
             ( member(RelPlan, RelPlans),
@@ -1956,9 +1963,10 @@ catalog_list_types(RelPlans, OrderedTypes) :-
     keysort(Keyed, Sorted),
     pairs_values(Sorted, OrderedTypes).
 
-% Every json_list(...) type a column is or nests, inner-most last in the tail, so
-% nested json_list/json_list(text) reaches the catalog as its own row before the column.
+% Every list type a column is or nests, inner-most last in the tail, so a
+% nested list reaches the catalog as its own row before the column.
 list_subtypes(json_list(Element), [json_list(Element) | More]) :- list_subtypes(Element, More).
+list_subtypes(list(Element), [list(Element) | More]) :- list_subtypes(Element, More).
 list_subtypes(_, []).
 
 distinct_order([], _, []).
@@ -1969,25 +1977,45 @@ distinct_order([X | Rest], Seen0, Out) :-
     ).
 
 list_type_depth(json_list(Inner), Depth) :- !, list_type_depth(Inner, InnerDepth), Depth is InnerDepth + 1.
+list_type_depth(list(Inner), Depth) :- !, list_type_depth(Inner, InnerDepth), Depth is InnerDepth + 1.
 list_type_depth(_, 0).
 
+% One id per list type, assigned by position so the block's width is known
+% before the element ids are resolvable.
+catalog_list_id_map([], _Id, []).
+catalog_list_id_map([ListType | Rest], Id, [ListType-Id | More]) :-
+    NextId is Id + 1,
+    catalog_list_id_map(Rest, NextId, More).
+
 % A list row's type_id is the ELEMENT's id: a nested list resolves through the
-% already-built list id map, anything else through the primitive table.
-catalog_list_rows([], ListIdMap, _Id, [], ListIdMap).
-catalog_list_rows([ListType | Rest], ListIdMap0, Id, [Row | MoreRows], ListIdMap) :-
-    ListType = json_list(Element),
-    list_element_type_id(Element, ListIdMap0, ElementId),
+% list id map, a rel element through the rel id map, anything else through the
+% primitive table.
+catalog_list_rows([], _ListIdMap, _RelIdMap, _Id, []).
+catalog_list_rows([ListType | Rest], ListIdMap, RelIdMap, Id, [Row | MoreRows]) :-
+    list_row_kind(ListType, Kind, Element),
+    list_element_type_id(Element, ListIdMap, RelIdMap, ElementId),
     format(atom(LocalName), '~w', [ListType]),
     NextId is Id + 1,
-    Row = row(Id, 0, 0, LocalName, json_list, ElementId, 0, 0, '', '', ''),
-    catalog_list_rows(Rest, [ListType-Id | ListIdMap0], NextId, MoreRows, ListIdMap).
+    Row = row(Id, 0, 0, LocalName, Kind, ElementId, 0, 0, '', '', ''),
+    catalog_list_rows(Rest, ListIdMap, RelIdMap, NextId, MoreRows).
+
+list_row_kind(json_list(Element), json_list, Element).
+list_row_kind(list(Element), list, Element).
 
 list_row_id(ListIdMap, ListType, Id) :- memberchk(ListType-Id, ListIdMap).
 
-list_element_type_id(json_list(Inner), ListIdMap, TypeId) :- !,
+list_element_type_id(json_list(Inner), ListIdMap, _RelIdMap, TypeId) :- !,
     list_row_id(ListIdMap, json_list(Inner), TypeId).
-list_element_type_id(Element, _ListIdMap, TypeId) :-
-    catalog_type_id(Element, TypeId).
+list_element_type_id(list(Inner), ListIdMap, _RelIdMap, TypeId) :- !,
+    list_row_id(ListIdMap, list(Inner), TypeId).
+list_element_type_id(Element, _ListIdMap, RelIdMap, TypeId) :-
+    catalog_type_id(Element, PrimitiveId),
+    (   PrimitiveId =\= 0
+    ->  TypeId = PrimitiveId
+    ;   rel_row_id(RelIdMap, Element, TypeId)
+    ->  true
+    ;   TypeId = 0
+    ).
 
 % Pass A: rel names and their ids, assigned by position, each rel consuming one
 % row plus one row per column exactly as pass B emits them.
@@ -2144,9 +2172,8 @@ catalog_column_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
     list_row_id(ListIdMap, json_list(Element), TypeId).
 catalog_column_type_id(ref(Name), RelIdMap, _ListIdMap, TypeId) :- !,
     rel_row_id(RelIdMap, Name, TypeId).
-% The stored id is an int until the catalog mints a `list` type row.
-catalog_column_type_id(list(_), _RelIdMap, _ListIdMap, TypeId) :- !,
-    catalog_type_id(int, TypeId).
+catalog_column_type_id(list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
+    list_row_id(ListIdMap, list(Element), TypeId).
 catalog_column_type_id(ColumnType, _RelIdMap, _ListIdMap, TypeId) :-
     catalog_type_id(ColumnType, TypeId).
 

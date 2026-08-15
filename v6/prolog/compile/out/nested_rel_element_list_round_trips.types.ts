@@ -5,5 +5,5 @@ export interface FighterSummary {
 
 export interface Squad {
   id: number;
-  members: number;
+  members: Array<Array<FighterSummary>>;
 }

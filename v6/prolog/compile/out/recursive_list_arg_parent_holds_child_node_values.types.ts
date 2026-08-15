@@ -1,4 +1,4 @@
 export interface Node {
   name: string;
-  children: number;
+  children: Array<Node>;
 }

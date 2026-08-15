@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BoxList {
     pub tree_id: i64,
-    pub items: i64,
+    pub items: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

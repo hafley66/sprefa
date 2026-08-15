@@ -1,6 +1,6 @@
 export interface BoxList {
   tree_id: number;
-  items: number;
+  items: Array<string>;
 }
 
 export interface Patch {

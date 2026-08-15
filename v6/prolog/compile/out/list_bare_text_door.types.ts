@@ -1,9 +1,9 @@
 export interface Box {
   id: number;
-  items: number;
+  items: Array<string>;
 }
 
 export interface Carry {
   id: number;
-  items: number;
+  items: Array<string>;
 }

@@ -2,7 +2,10 @@
   "$defs": {
     "node": {
       "additionalProperties":false,
-      "properties": {"children": {"type":"integer"},"name": {"type":"string"}},
+      "properties": {
+        "children": {"items": {"$ref":"#/$defs/node"},"type":"array"},
+        "name": {"type":"string"}
+      },
       "required": ["name", "children" ],
       "type":"object"
     }

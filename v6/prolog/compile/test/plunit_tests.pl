@@ -87,6 +87,8 @@
 :- use_module('../../lower', [ boot_statements/7 ]).
 :- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3 ]).
 :- use_module('../../compile/5_emit_openapi', [ openapi_text/3 ]).
+:- use_module('../../compile/7_emit_ts_types', [ ts_types_text/3 ]).
+:- use_module('../../compile/8_emit_rust_types', [ rust_types_text/3 ]).
 
 % Body-walk characterization (rank R1) reaches the traversals on BOTH sides of
 % the oracle/compiler split, because the review's central claim is that
@@ -9011,6 +9013,67 @@ test(the_boundary_expression_is_still_the_bare_column) :-
     Expr == '"parts"'.
 
 :- end_tests(list_column_spelling).
+
+% The type plane's own row for a list column, and the four emitters that read
+% it. The stored id is still an INTEGER; what a consumer is told is the array.
+:- begin_tests(list_type_plane).
+
+list_parts_catalog_rows(Rows) :-
+    Program = prog([ col_type(row_parts/2, name, text),
+                     col_type(row_parts/2, parts, list(text)),
+                     keyed(row_parts/2, [1]) ],
+                   []),
+    program_plan(fixture(list_type_plane, Program, [], [], [])-[],
+                 [intern(direct)],
+                 plan(_, prog(Decls, Rules), _, RelPlans, _, _, _, _, _)),
+    catalog_decl_rows(list_type_plane, Rules, RelPlans, Decls, Rows, _).
+
+% FAIL-PRE-FIX: the catalog minted no row for a list column and the column
+% cited int's primitive id, so every emitter downstream said `number`.
+test(the_catalog_mints_a_list_row_the_column_cites) :-
+    list_parts_catalog_rows(Rows),
+    memberchk(row(TextId, 0, 0, text, primitive, _, _, _, _, _, _), Rows),
+    memberchk(row(ListId, 0, 0, 'list(text)', list, TextId, _, _, _, _, _), Rows),
+    memberchk(row(_, _, 2, parts, column, ListId, _, _, _, _, _), Rows).
+
+test(typegen_renders_the_element_array) :-
+    list_parts_catalog_rows(Rows),
+    once(ts_types_text(list_type_plane, Rows, TsText)),
+    sub_string(TsText, _, _, _, "parts: Array<string>;"),
+    once(rust_types_text(list_type_plane, Rows, RustText)),
+    sub_string(RustText, _, _, _, "pub parts: Vec<String>,").
+
+test(jsonschema_and_openapi_render_an_array_of_the_element) :-
+    list_parts_catalog_rows(Rows),
+    jsonschema_text(list_type_plane, Rows, SchemaText),
+    sub_atom(SchemaText, _, _, _,
+             '"parts": {"items": {"type":"string"},"type":"array"}'),
+    openapi_text(list_type_plane, Rows, OpenapiText),
+    sub_atom(OpenapiText, _, _, _,
+             '"parts": {"items": {"type":"string"},"type":"array"}').
+
+% The element can BE a rel, so the row's element id is a rel id and the list
+% block's width has to be known before those ids are assigned.
+test(a_rel_element_list_cites_the_rel_row) :-
+    Written = [ type_decl(fighter_summary, [col(name, text), col(url, text)]),
+                col_type(fighter_summary/2, name, text),
+                col_type(fighter_summary/2, url, text),
+                col_type(squad/2, id, int),
+                col_type(squad/2, members, list(fighter_summary)),
+                keyed(squad/2, [1]) ],
+    program_plan(fixture(rel_element_list, prog(Written, []), [], [], [])-[],
+                 [intern(direct)],
+                 plan(_, prog(Decls, Rules), _, RelPlans, _, _, _, _, _)),
+    catalog_decl_rows(rel_element_list, Rules, RelPlans, Decls, Rows, _),
+    memberchk(row(FighterId, _, _, fighter_summary, rel, _, _, _, _, _, _), Rows),
+    memberchk(row(ListId, 0, 0, 'list(fighter_summary)', list, FighterId,
+                  _, _, _, _, _),
+              Rows),
+    memberchk(row(_, _, 2, members, column, ListId, _, _, _, _, _), Rows),
+    once(ts_types_text(rel_element_list, Rows, TsText)),
+    sub_string(TsText, _, _, _, "members: Array<FighterSummary>;").
+
+:- end_tests(list_type_plane).
 
 % File level, so both the access-path unit above and the acyclic guard below
 % read the planner's own answer rather than asserting one.

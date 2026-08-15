@@ -9,7 +9,7 @@ export interface Sym {
 
 export interface SymParts {
   name: string;
-  parts: number;
+  parts: Array<string>;
 }
 
 export interface SymWord {

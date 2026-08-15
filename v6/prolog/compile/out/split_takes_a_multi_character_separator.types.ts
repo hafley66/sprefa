@@ -5,5 +5,5 @@ export interface Line {
 
 export interface LineParts {
   name: string;
-  parts: number;
+  parts: Array<string>;
 }

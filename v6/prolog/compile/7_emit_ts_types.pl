@@ -124,6 +124,11 @@ ts_kind(_Rows, _CollisionTypeNames, _TypeRow, Name, type_parameter, _ElementId, 
 ts_kind(Rows, CollisionTypeNames, _TypeRow, _Name, json_list, ElementId, Type) :-
     ts_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), 'Array<~w>', [Element]).
+% The relational list crosses the boundary as its elements, so the two list
+% spellings render one TS type.
+ts_kind(Rows, CollisionTypeNames, _TypeRow, _Name, list, ElementId, Type) :-
+    ts_type(Rows, CollisionTypeNames, ElementId, Element),
+    format(string(Type), 'Array<~w>', [Element]).
 ts_kind(Rows, CollisionTypeNames, _TypeRow, _Name, option, ElementId, Type) :-
     ts_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), '~w | null', [Element]).

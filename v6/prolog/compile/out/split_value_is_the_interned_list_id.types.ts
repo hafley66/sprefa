@@ -1,6 +1,6 @@
 export interface RowParts {
   name: string;
-  parts: number;
+  parts: Array<string>;
 }
 
 export interface RowText {

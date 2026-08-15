@@ -1,7 +1,7 @@
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LeftParts {
     pub name: String,
-    pub parts: i64,
+    pub parts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -13,7 +13,7 @@ pub struct LeftText {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RightParts {
     pub name: String,
-    pub parts: i64,
+    pub parts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

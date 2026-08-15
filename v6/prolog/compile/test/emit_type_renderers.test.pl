@@ -23,19 +23,19 @@ type_rows([
     row(17, 9, 7, child, column, 8, 0, 1, '', '', ''),
     row(18, 8, 0, id, column, 1, 0, 1, '', '', ''),
     row(19, 0, 0, 'list(int)', list, 1, 0, 0, '', '', ''),
-    row(20, 0, 0, skipped, rel, 0, 1, 1, '', '', ''),
+    row(20, 0, 0, holder, rel, 0, 1, 1, '', '', ''),
     row(21, 20, 0, values, column, 19, 0, 1, '', '', '')
 ]).
 
 test(ts_types) :-
     type_rows(Rows),
     once(ts_types_text(main, Rows, Text)),
-    Text == "export interface Child {\n  id: number;\n}\n\nexport interface Parent {\n  count: number;\n  ratio: number;\n  name: string;\n  active: boolean;\n  value: unknown;\n  values: Array<number>;\n  note: string | null;\n  child: Child;\n}\n".
+    Text == "export interface Child {\n  id: number;\n}\n\nexport interface Parent {\n  count: number;\n  ratio: number;\n  name: string;\n  active: boolean;\n  value: unknown;\n  values: Array<number>;\n  note: string | null;\n  child: Child;\n}\n\nexport interface Holder {\n  values: Array<number>;\n}\n".
 
 test(rust_types) :-
     type_rows(Rows),
     once(rust_types_text(main, Rows, Text)),
-    Text == "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Child {\n    pub id: i64,\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Parent {\n    pub count: i64,\n    pub ratio: f64,\n    pub name: String,\n    pub active: bool,\n    pub value: serde_json::Value,\n    pub values: Vec<i64>,\n    pub note: Option<String>,\n    pub child: Child,\n}\n".
+    Text == "#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Child {\n    pub id: i64,\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Parent {\n    pub count: i64,\n    pub ratio: f64,\n    pub name: String,\n    pub active: bool,\n    pub value: serde_json::Value,\n    pub values: Vec<i64>,\n    pub note: Option<String>,\n    pub child: Child,\n}\n\n#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct Holder {\n    pub values: Vec<i64>,\n}\n".
 
 generic_rows([
     row(1, 0, 0, int, primitive, 0, 0, 0, '', '', ''),

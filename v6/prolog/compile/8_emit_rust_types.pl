@@ -124,6 +124,11 @@ rust_kind(_Rows, _CollisionTypeNames, _TypeRow, Name, type_parameter, _ElementId
 rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, json_list, ElementId, Type) :-
     rust_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), 'Vec<~w>', [Element]).
+% The relational list crosses the boundary as its elements, so the two list
+% spellings render one Rust type.
+rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, list, ElementId, Type) :-
+    rust_type(Rows, CollisionTypeNames, ElementId, Element),
+    format(string(Type), 'Vec<~w>', [Element]).
 rust_kind(Rows, CollisionTypeNames, _TypeRow, _Name, option, ElementId, Type) :-
     rust_type(Rows, CollisionTypeNames, ElementId, Element),
     format(string(Type), 'Option<~w>', [Element]).
