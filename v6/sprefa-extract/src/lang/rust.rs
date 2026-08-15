@@ -1196,13 +1196,11 @@ fn flow_fn_body(
     for arg in &sig.inputs {
         if let syn::FnArg::Typed(pt) = arg {
             if let syn::Pat::Ident(pi) = &*pt.pat {
-                let start = pi.ident.span().start();
                 let node = df_push(
                     sink,
                     strings,
                     line_starts,
-                    start.line as u32,
-                    start.column as u32,
+                    pi.ident.span(),
                     DfNodeKind::Param,
                     Some(&pi.ident.to_string()),
                 );
@@ -1212,7 +1210,7 @@ fn flow_fn_body(
             pos += 1;
         }
     }
-    if let Some((tail, line, col)) = flow_block(
+    if let Some((tail, tail_span)) = flow_block(
         block,
         fn_sym,
         line_starts,
@@ -1221,14 +1219,13 @@ fn flow_fn_body(
         sink,
         loop_breaks,
     ) {
-        let ret = df_push(sink, strings, line_starts, line, col, DfNodeKind::Ret, None);
+        let ret = df_push(sink, strings, line_starts, tail_span, DfNodeKind::Ret, None);
         df_edge(sink, tail, ret);
     }
 }
 
-/// Walk a block. Returns the (node, line, col) of the block's tail value (the
-/// last statement when it is a no-semicolon expression) so a caller can treat it
-/// as an implicit return. Port of v5 `flow_block`.
+/// Walk a block. Returns the (node, span) of the tail value (a last statement
+/// with no semicolon) so a caller can treat it as an implicit return.
 #[allow(clippy::too_many_arguments)]
 fn flow_block(
     block: &syn::Block,
@@ -1238,7 +1235,7 @@ fn flow_block(
     scope: &mut Scope,
     sink: &mut FamilyBundle<DfF>,
     loop_breaks: &mut LoopBreaks,
-) -> Option<(NodeRef, u32, u32)> {
+) -> Option<(NodeRef, proc_macro2::Span)> {
     let mut tail = None;
     let statement_count = block.stmts.len();
     for (idx, stmt) in block.stmts.iter().enumerate() {
@@ -1262,10 +1259,10 @@ fn flow_block(
                 }
             }
             syn::Stmt::Expr(expr, semi) => {
-                let start = expr.span().start();
+                let stmt_span = expr.span();
                 let node = flow_expr(expr, fn_sym, line_starts, strings, scope, sink, loop_breaks);
                 if idx + 1 == statement_count && semi.is_none() {
-                    tail = Some((node, start.line as u32, start.column as u32));
+                    tail = Some((node, stmt_span));
                 }
             }
             syn::Stmt::Item(_) | syn::Stmt::Macro(_) => {}
@@ -1303,7 +1300,8 @@ fn flow_expr(
     sink: &mut FamilyBundle<DfF>,
     loop_breaks: &mut LoopBreaks,
 ) -> NodeRef {
-    let start = expr.span().start();
+    let node_span = expr.span();
+    let start = node_span.start();
     let (line, col) = (start.line as u32, start.column as u32);
     match expr {
         // A read of a variable: flow from its binding slot to this read.
@@ -1318,8 +1316,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::VarRead,
                 Some(&name),
             );
@@ -1331,7 +1328,7 @@ fn flow_expr(
         syn::Expr::Lit(lit_expr) => {
             // (v5 records string-lit text in `lits` aux; dropped here.)
             let _ = lit_expr;
-            df_push(sink, strings, line_starts, line, col, DfNodeKind::Lit, None)
+            df_push(sink, strings, line_starts, node_span, DfNodeKind::Lit, None)
         }
         // f(args): each argument flows into the call result. A capitalized last
         // path segment is a tuple-struct / enum-variant constructor -> a `new`
@@ -1359,8 +1356,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 kind,
                 constructor.as_deref(),
             );
@@ -1398,13 +1394,11 @@ fn flow_expr(
                     loop_breaks,
                 ));
             }
-            let method_start = call.method.span().start();
             let node = df_push(
                 sink,
                 strings,
                 line_starts,
-                method_start.line as u32,
-                method_start.column as u32,
+                call.method.span(),
                 DfNodeKind::CallRes,
                 None,
             );
@@ -1452,8 +1446,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::New,
                 Some(type_name.as_str()),
             );
@@ -1485,8 +1478,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Member,
                 Some(&name),
             );
@@ -1516,8 +1508,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Borrow,
                 None,
             );
@@ -1547,8 +1538,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Binop,
                 None,
             );
@@ -1570,8 +1560,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Unop,
                 None,
             );
@@ -1590,7 +1579,7 @@ fn flow_expr(
         ),
         // `return EXPR`: the returned value flows into the fn's `ret` node.
         syn::Expr::Return(return_expr) => {
-            let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::Ret, None);
+            let node = df_push(sink, strings, line_starts, node_span, DfNodeKind::Ret, None);
             if let Some(inner) = &return_expr.expr {
                 let value = flow_expr(
                     inner,
@@ -1613,8 +1602,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Break,
                 None,
             );
@@ -1679,8 +1667,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Loop,
                 Some(&loop_var),
             )
@@ -1712,8 +1699,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Loop,
                 None,
             )
@@ -1745,8 +1731,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Loop,
                 None,
             );
@@ -1779,8 +1764,8 @@ fn flow_expr(
             let else_tail = if_expr.else_branch.as_ref().map(|(_, els)| {
                 flow_expr(els, fn_sym, line_starts, strings, scope, sink, loop_breaks)
             });
-            let node = df_push(sink, strings, line_starts, line, col, DfNodeKind::If, None);
-            if let Some((tail, _, _)) = then_tail {
+            let node = df_push(sink, strings, line_starts, node_span, DfNodeKind::If, None);
+            if let Some((tail, _)) = then_tail {
                 df_edge(sink, tail, node);
             }
             if let Some(else_tail) = else_tail {
@@ -1830,8 +1815,7 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Match,
                 None,
             );
@@ -1855,12 +1839,11 @@ fn flow_expr(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Block,
                 None,
             );
-            if let Some((tail, _, _)) = tail {
+            if let Some((tail, _)) = tail {
                 df_edge(sink, tail, node);
             }
             node
@@ -1879,13 +1862,11 @@ fn flow_expr(
                     other => other,
                 };
                 if let syn::Pat::Ident(ident) = ident_pat {
-                    let param_start = ident.ident.span().start();
                     let node = df_push(
                         sink,
                         strings,
                         line_starts,
-                        param_start.line as u32,
-                        param_start.column as u32,
+                        ident.ident.span(),
                         DfNodeKind::Param,
                         Some(&ident.ident.to_string()),
                     );
@@ -1912,7 +1893,7 @@ fn flow_expr(
                     &mut closure_loop_breaks,
                 ),
                 other => {
-                    let other_start = other.span().start();
+                    let other_span = other.span();
                     let value = flow_expr(
                         other,
                         &lam_sym,
@@ -1922,27 +1903,18 @@ fn flow_expr(
                         sink,
                         &mut closure_loop_breaks,
                     );
-                    Some((value, other_start.line as u32, other_start.column as u32))
+                    Some((value, other_span))
                 }
             };
-            if let Some((value, ret_line, ret_col)) = body_val {
-                let ret = df_push(
-                    sink,
-                    strings,
-                    line_starts,
-                    ret_line,
-                    ret_col,
-                    DfNodeKind::Ret,
-                    None,
-                );
+            if let Some((value, ret_span)) = body_val {
+                let ret = df_push(sink, strings, line_starts, ret_span, DfNodeKind::Ret, None);
                 df_edge(sink, value, ret);
             }
             df_push(
                 sink,
                 strings,
                 line_starts,
-                line,
-                col,
+                node_span,
                 DfNodeKind::Closure,
                 Some(&lam_sym),
             )
@@ -1970,8 +1942,7 @@ fn flow_expr(
                         sink,
                         strings,
                         line_starts,
-                        line,
-                        col,
+                        node_span,
                         DfNodeKind::VarWrite,
                         Some(&name),
                     );
@@ -1988,8 +1959,7 @@ fn flow_expr(
             sink,
             strings,
             line_starts,
-            line,
-            col,
+            node_span,
             DfNodeKind::Expr,
             None,
         ),
@@ -2022,13 +1992,11 @@ fn bind_pat_rec(
 ) {
     match pattern {
         syn::Pat::Ident(ident) => {
-            let start = ident.ident.span().start();
             let binding = df_push(
                 sink,
                 strings,
                 line_starts,
-                start.line as u32,
-                start.column as u32,
+                ident.ident.span(),
                 DfNodeKind::LetBind,
                 Some(&ident.ident.to_string()),
             );
@@ -2063,28 +2031,18 @@ fn bind_pat_rec(
     }
 }
 
-/// Push one df node, returning its `NodeRef` (the dense index edges reference).
-/// The span is start-only (len 0): df node identity is `(span.start, kind)`,
-/// matching v5's `(line, col, kind)`; the length is unused (df nodes are not
-/// containment hosts). Port of v5 `push_node` (minus fn_sym/file/aux).
+/// Push one df node at its FULL syntactic extent: `FlatFact::Edge` carries
+/// endpoint spans only, so a start-only anchor merges distinct value nodes.
 fn df_push(
     sink: &mut FamilyBundle<DfF>,
     strings: &mut Strings,
     line_starts: &[u32],
-    line: u32,
-    col: u32,
+    node_span: proc_macro2::Span,
     kind: DfNodeKind,
     name: Option<&str>,
 ) -> NodeRef {
     let node_ref = NodeRef(sink.nodes.len() as u32);
-    let byte = line_col_to_byte(line_starts, line, col);
-    let mut node = Node::new(
-        Span {
-            start: byte,
-            len: 0,
-        },
-        kind,
-    );
+    let mut node = Node::new(syn_span(line_starts, node_span), kind);
     if let Some(name) = name.filter(|candidate| !candidate.is_empty()) {
         node = node.with_name(strings.intern(name));
     }

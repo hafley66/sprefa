@@ -77,11 +77,15 @@ fn flatten_cst(bundle: &FamilyBundle<CstF>, strings: &Strings) -> Vec<FlatFact> 
         let kind = match edge.kind {
             CstEdgeKind::Child => "child",
         };
+        // A cst edge is a tree child link: the parent/child roles already
+        // separate two nodes that share a span, so no endpoint kinds.
         out.push(FlatFact::Edge {
             family: CstF::TAG,
             kind: kind.to_string(),
             from: SpanOut::new(from.span.start, from.span.end()),
+            from_kind: None,
             to: SpanOut::new(to.span.start, to.span.end()),
+            to_kind: None,
         });
     }
     out
@@ -246,7 +250,9 @@ fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
             family: DfF::TAG,
             kind: edge.kind.as_str().to_string(),
             from: SpanOut::new(from.span.start, from.span.end()),
+            from_kind: Some(from.kind.as_str().to_string()),
             to: SpanOut::new(to.span.start, to.span.end()),
+            to_kind: Some(to.kind.as_str().to_string()),
         });
     }
     for param in &bundle.aux.params {
