@@ -43,11 +43,24 @@ minted_rel(Name) <-
   Position := instr(Name, '__'),
   Position > 0.
 
+# A concrete_type row's parent is the rel id it instantiates; that rel reaches
+# the file even when minted, mirroring 7_emit_ts_types.pl's concrete_rel/2.
+rel concrete_type_row(id: int, rel_id: int).
+concrete_type_row(Id, RelId) <- type_row(Id, RelId, _, _, 'concrete_type', _, _).
+
+rel concrete_rel(rel_id: int).
+concrete_rel(RelId) <- concrete_type_row(_, RelId).
+
 # The rels that reach the file, with the PascalCase name each one asks for.
 rel renderable_rel(rel_id: int, bare_type: text, module_id: int).
 renderable_rel(RelId, BareType, ModuleId) <-
   type_row(RelId, _, _, RelName, 'rel', _, ModuleId),
   not(minted_rel(RelName)),
+  BareType := replace(initcap(RelName), '_', '').
+renderable_rel(RelId, BareType, ModuleId) <-
+  type_row(RelId, _, _, RelName, 'rel', _, ModuleId),
+  minted_rel(RelName),
+  concrete_rel(RelId),
   BareType := replace(initcap(RelName), '_', '').
 
 # Two rels asking for one name collide; the id inequality names each pair once.
@@ -57,14 +70,29 @@ colliding_type_name(BareType) <-
   renderable_rel(RightRelId, BareType, _),
   LeftRelId < RightRelId.
 
-# @comment-ok: the sanitizer bound; initcap plus a fixed separator set, no regex.
-# Separators the module plane can carry: '_', '.', '-', '/'. initcap uppercases
-# the character after each of them, and the replaces then delete them.
-rel module_type_stem(module_id: int, stem: text).
-module_type_stem(ModuleId, Stem) <-
+# @comment-ok: sanitizer bound; initcap_words lower-cases non-boundary chars,
+# mangling camelCase ("myModule" -> "Mymodule"), so this caps only each split word's first character, mirroring module_type_name/2.
+rel module_name_normalized(module_id: int, normalized: text).
+module_name_normalized(ModuleId, Normalized) <-
   type_row(ModuleId, _, _, ModuleName, 'module', _, _),
-  Stem := replace(replace(replace(replace(initcap(ModuleName), '_', ''),
-                                  '.', ''), '-', ''), '/', '').
+  Normalized := replace(replace(replace(ModuleName, '.', '_'), '-', '_'), '/', '_').
+
+rel module_name_parts(module_id: int, parts: list(text)).
+module_name_parts(ModuleId, Parts) <-
+  module_name_normalized(ModuleId, Normalized),
+  Parts := split(Normalized, '_').
+
+# A split word carries no internal separator, so capping only substr(.,1,1)
+# preserves the rest verbatim instead of lower-casing it like initcap_words.
+rel module_name_word(module_id: int, word: text).
+module_name_word(ModuleId, Word) <-
+  module_name_parts(ModuleId, Parts),
+  decode(Parts, spread(Part)),
+  Word := concat([upper(substr(Part, 1, 1)), substr(Part, 2)]).
+
+rel module_type_stem(module_id: int, stem: text).
+module_type_stem(ModuleId, group_concat(Word, '')) <-
+  module_name_word(ModuleId, Word).
 
 # A TS identifier cannot open on a digit, so a digit-leading stem takes an 'M'.
 rel module_prefix(module_id: int, prefix: text).
@@ -108,9 +136,8 @@ rel list_row(id: int, element_id: int).
 list_row(Id, ElemId) <- type_row(Id, _, _, _, 'json_list', ElemId, _).
 list_row(Id, ElemId) <- type_row(Id, _, _, _, 'list', ElemId, _).
 
-# @comment-ok: the nesting bound; a self-recursive stratum settles a tick late.
-# Nesting unrolls to four levels, one stratum per level. A recursive list_type
-# loads and derives one level per tick, so a single arrival batch renders short.
+# @comment-ok: nesting bound; a self-recursive stratum settles a tick late.
+# Nesting unrolls to five levels; a recursive list_type derives one level per tick, so a single arrival batch renders short.
 rel list_depth_one(id: int, text: text).
 list_depth_one(Id, Text) <-
   list_row(Id, ElemId),
@@ -135,11 +162,18 @@ list_depth_four(Id, Text) <-
   list_depth_three(ElemId, Element),
   Text := concat(['Array<', Element, '>']).
 
+rel list_depth_five(id: int, text: text).
+list_depth_five(Id, Text) <-
+  list_row(Id, ElemId),
+  list_depth_four(ElemId, Element),
+  Text := concat(['Array<', Element, '>']).
+
 rel list_type(id: int, text: text).
 list_type(Id, Text) <- list_depth_one(Id, Text).
 list_type(Id, Text) <- list_depth_two(Id, Text).
 list_type(Id, Text) <- list_depth_three(Id, Text).
 list_type(Id, Text) <- list_depth_four(Id, Text).
+list_type(Id, Text) <- list_depth_five(Id, Text).
 
 # What an option wraps: a leaf, or a list of any rendered depth.
 rel element_type(id: int, text: text).

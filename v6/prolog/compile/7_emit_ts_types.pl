@@ -167,8 +167,11 @@ prefix_digit_type(Type0, Type) :-
     atom_concat('M', Type0, Type).
 prefix_digit_type(Type, Type).
 
+% A double underscore splits to an empty part; capitalized/2 cannot
+% destructure '', so an unfiltered split dropped the rel with no solution.
 type_name(Name, Type) :-
-    atomic_list_concat(Parts, '_', Name),
+    atomic_list_concat(Parts0, '_', Name),
+    exclude(empty_atom, Parts0, Parts),
     maplist(capitalized, Parts, Capitals),
     atomic_list_concat(Capitals, '', Type).
 
