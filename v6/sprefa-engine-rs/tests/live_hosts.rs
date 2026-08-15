@@ -130,7 +130,9 @@ async fn scripted_replay_still_runs_without_executing_hosts() {
     let program = fixture_program("live_shell_probe");
     let seam = SqliteSeam::in_memory().expect("seam");
     let schedule = vec![vec![add("source_file", vec![text("nope.rs")])]];
-    let fold = run_schedule(&program, &seam, &schedule, 100).await;
+    let fold = run_schedule(&program, &seam, &schedule, 100)
+        .await
+        .expect("schedule fold");
     assert_eq!(fold.lines.len(), 1);
     assert_eq!(
         table_rows(&program, &seam, "spanned"),

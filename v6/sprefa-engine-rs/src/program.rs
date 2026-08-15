@@ -11,8 +11,9 @@ use futures::Stream;
 use crate::incremental;
 use crate::sql::{SqlRunner, SqliteSeam};
 use crate::types::{
-    Arrival, ArrivalTemplate, BootStatement, IncrementalEdgeStatement, IncrementalLevelStatement,
-    IncrementalRelationPlan, IncrementalRetentionStatement, InternMode, ProgramJson, TickDeltas,
+    Arrival, ArrivalTemplate, BootStatement, BoundaryResult, IncrementalEdgeStatement,
+    IncrementalLevelStatement, IncrementalRelationPlan, IncrementalRetentionStatement, InternMode,
+    ProgramJson, TickDeltas,
 };
 #[derive(Clone)]
 pub struct GenProgram {
@@ -76,11 +77,11 @@ impl GenProgram {
         &'a self,
         seam: &'a SqliteSeam,
         arrivals: Vec<Arrival>,
-    ) -> Pin<Box<dyn Stream<Item = TickDeltas> + 'a>> {
+    ) -> Pin<Box<dyn Stream<Item = BoundaryResult<TickDeltas>> + 'a>> {
         Box::pin(stream::once(async move { self.run_tick(seam, &arrivals) }))
     }
 
-    pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> TickDeltas {
+    pub fn run_tick(&self, seam: &SqliteSeam, arrivals: &[Arrival]) -> BoundaryResult<TickDeltas> {
         if self.ordered_program {
             return crate::ordered::run_tick(self, seam, arrivals);
         }
@@ -89,7 +90,7 @@ impl GenProgram {
             incremental::advance_tick(seam);
         }
         let interned = match &self.text_intern_plan {
-            Some(plan) => crate::text_plane::intern(seam, plan, arrivals),
+            Some(plan) => crate::text_plane::intern(seam, plan, arrivals)?,
             None => arrivals.to_vec(),
         };
         let normalized = crate::struct_plane::intern(
@@ -99,10 +100,10 @@ impl GenProgram {
             &interned,
             &self.relations,
             self.text_intern_plan.as_ref(),
-        );
+        )?;
         let arrivals = normalized.as_slice();
-        incremental::apply_arrivals(seam, arrivals, &self.relations);
-        incremental::apply_levels_before_edges(seam, &self.levels, &self.relations);
+        incremental::apply_arrivals(seam, arrivals, &self.relations)?;
+        incremental::apply_levels_before_edges(seam, &self.levels, &self.relations)?;
         if !self.edges.is_empty() {
             incremental::recompute_levels_before_edges(
                 seam,
@@ -111,24 +112,24 @@ impl GenProgram {
                 self.reconcile_every_tick,
                 arrivals.len(),
             );
-            incremental::apply_edges(seam, &self.edges, &self.relations);
+            incremental::apply_edges(seam, &self.edges, &self.relations)?;
             incremental::merge_next_into_current(seam, &self.relations);
-            incremental::apply_levels_after_edges(seam, &self.levels, &self.relations);
+            incremental::apply_levels_after_edges(seam, &self.levels, &self.relations)?;
         }
-        incremental::apply_retention(seam, &self.retentions, &self.relations);
+        incremental::apply_retention(seam, &self.retentions, &self.relations)?;
         incremental::recompute_levels_after_edges(
             seam,
             &self.levels,
             &self.relations,
             self.reconcile_every_tick,
-        );
-        let rels = incremental::read_boundary(seam, &self.relations);
-        incremental::stage_departures(seam, &self.relations, &rels);
+        )?;
+        let rels = incremental::read_boundary(seam, &self.relations)?;
+        incremental::stage_departures(seam, &self.relations, &rels)?;
         let carry_pending = incremental::promote_frontiers(seam, &self.relations);
-        TickDeltas {
+        Ok(TickDeltas {
             rels,
             carry_pending,
-        }
+        })
     }
 }
 

@@ -659,7 +659,11 @@ impl<'p> HostLiveRunner<'p> {
 
     // The one place a demand row's values become template arguments, so the
     // one place a list column wired into a host input is named.
-    fn demand_of(&self, plan: &'p HostPlanData, row: &[Value]) -> Result<HostDemand<'p>, HostError> {
+    fn demand_of(
+        &self,
+        plan: &'p HostPlanData,
+        row: &[Value],
+    ) -> Result<HostDemand<'p>, HostError> {
         let columns = self
             .rel_columns
             .get(&plan.demand_rel)
@@ -676,8 +680,8 @@ impl<'p> HostLiveRunner<'p> {
                 .position(|column| *column == input.name)
                 .and_then(|index| row.get(index).cloned())
                 .unwrap_or(Value::Text(String::new()));
-            let scalar = ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument)
-                .map_err(&named)?;
+            let scalar =
+                ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument).map_err(&named)?;
             inputs.insert(input.name.clone(), scalar);
         }
         let witness = columns

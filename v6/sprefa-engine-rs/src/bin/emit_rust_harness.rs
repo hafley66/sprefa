@@ -106,6 +106,7 @@ fn main() {
             .unwrap_or_else(|failure| panic!("{failure}"))
     } else {
         rt.block_on(run_schedule(&gen_program, &seam, &schedule, 100))
+            .unwrap_or_else(|failure| panic!("{failure}"))
     };
     for line in fold.lines {
         println!("{}", line);

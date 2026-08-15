@@ -10,7 +10,7 @@ use rusqlite::functions::FunctionFlags;
 use rusqlite::{params_from_iter, Connection, OptionalExtension, Row};
 use std::sync::Arc;
 
-use crate::types::{QueryResult, SqlStatement, Value};
+use crate::types::{BoundaryError, BoundaryResult, QueryResult, ScalarValue, SqlStatement, Value};
 
 pub type Error = rusqlite::Error;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -70,13 +70,12 @@ fn install_regexp(conn: &Connection) -> Result<()> {
     )
 }
 
-fn to_param(value: &Value) -> rusqlite::types::Value {
+fn to_param(value: &ScalarValue) -> rusqlite::types::Value {
     match value {
-        Value::Integer(v) => rusqlite::types::Value::Integer(*v),
-        Value::Real(v) => rusqlite::types::Value::Real(*v),
-        Value::Bool(b) => rusqlite::types::Value::Integer(if *b { 1 } else { 0 }),
-        Value::Text(v) => rusqlite::types::Value::Text(v.clone()),
-        Value::List(_) => panic!("a list value reached a SQL parameter"),
+        ScalarValue::Integer(v) => rusqlite::types::Value::Integer(*v),
+        ScalarValue::Real(v) => rusqlite::types::Value::Real(*v),
+        ScalarValue::Bool(b) => rusqlite::types::Value::Integer(if *b { 1 } else { 0 }),
+        ScalarValue::Text(v) => rusqlite::types::Value::Text(v.clone()),
     }
 }
 
@@ -151,7 +150,7 @@ pub fn result_rows(
     result: &QueryResult,
     columns: &[String],
     column_types: &[crate::types::RowColumnType],
-) -> Vec<Vec<Value>> {
+) -> BoundaryResult<Vec<Vec<Value>>> {
     result
         .rows
         .iter()
@@ -172,29 +171,35 @@ pub fn result_rows(
         .collect()
 }
 
-fn normalize_boundary_value(value: Value, ty: Option<crate::types::RowColumnType>) -> Value {
+fn normalize_boundary_value(
+    value: Value,
+    ty: Option<crate::types::RowColumnType>,
+) -> BoundaryResult<Value> {
     match (ty, value) {
-        (Some(crate::types::RowColumnType::Bool), Value::Integer(v)) => Value::Bool(v != 0),
+        (Some(crate::types::RowColumnType::Bool), Value::Integer(v)) => Ok(Value::Bool(v != 0)),
         (Some(crate::types::RowColumnType::Float), Value::Real(v)) => {
             if !v.is_finite() {
                 panic!("float column crossed SQLite with non-finite value");
             }
             if v == 0.0 {
-                Value::Real(0.0)
+                Ok(Value::Real(0.0))
             } else {
-                Value::Real(v)
+                Ok(Value::Real(v))
             }
         }
-        (Some(crate::types::RowColumnType::Float), Value::Integer(v)) => Value::Real(v as f64),
+        (Some(crate::types::RowColumnType::Float), Value::Integer(v)) => Ok(Value::Real(v as f64)),
         // F3: the consumer gets Vec<T>, never the array TEXT the `__list_`
         // view aggregated and never the interned entity id.
         (Some(crate::types::RowColumnType::List), Value::Text(text)) => {
             match serde_json::from_str::<Vec<serde_json::Value>>(&text) {
-                Ok(items) => Value::List(items),
-                Err(error) => panic!("list column crossed SQLite with non-array text {text}: {error}"),
+                Ok(items) => Ok(Value::List(items)),
+                Err(error) => Err(BoundaryError::ListColumnNotAnArray {
+                    text,
+                    detail: error.to_string(),
+                }),
             }
         }
-        (_, value) => value,
+        (_, value) => Ok(value),
     }
 }
 

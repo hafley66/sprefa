@@ -77,6 +77,7 @@ fn decoded_rows(
         &program.rel_columns[relation],
         &program.rel_column_types[relation],
     )
+    .expect("boundary rows")
 }
 
 fn worktree_entry(root: &std::path::Path) -> soopy::SourceEntry {

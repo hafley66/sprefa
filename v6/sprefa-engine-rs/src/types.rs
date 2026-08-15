@@ -160,7 +160,7 @@ pub struct TickDeltas {
 pub struct BootStatement {
     pub rel: String,
     pub sql: String,
-    pub params: Vec<Value>,
+    pub params: Vec<ScalarValue>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -183,7 +183,7 @@ impl InternMode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SqlStatement {
     pub sql: String,
-    pub args: Vec<Value>,
+    pub args: Vec<ScalarValue>,
 }
 
 #[derive(Debug, Clone)]

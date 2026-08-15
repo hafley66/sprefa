@@ -134,7 +134,9 @@ async fn skeleton_one_level_fixture_byte_identical() {
         sign: ArrivalSign::Add,
         row: int_row(&[1]),
     }]];
-    let fold = run_schedule(&program, &seam, &schedule, 100).await;
+    let fold = run_schedule(&program, &seam, &schedule, 100)
+        .await
+        .expect("schedule fold");
     assert_eq!(fold.lines.len(), 1, "one schedule tick, no drain");
     let expected =
         "{\"tick\":1,\"deltas\":{\"seen\":{\"add\":[[1]],\"del\":[]},\"source\":{\"add\":[[1]],\"del\":[]}}}";

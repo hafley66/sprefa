@@ -8,10 +8,40 @@ use futures::StreamExt;
 use crate::program::{run_boot, GenProgram};
 use crate::sql::SqliteSeam;
 use crate::ticklog::tick_line;
-use crate::types::{Arrival, TickDeltas};
+use crate::types::{Arrival, BoundaryError, BoundaryResult, TickDeltas};
 
 pub struct TickFold {
     pub lines: Vec<String>,
+}
+
+// The two ways a live-host fold stops: the runtime boundary, or the host.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RunError {
+    Boundary(BoundaryError),
+    Host(crate::hosts::HostError),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunError::Boundary(error) => write!(f, "{error}"),
+            RunError::Host(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl std::error::Error for RunError {}
+
+impl From<BoundaryError> for RunError {
+    fn from(error: BoundaryError) -> RunError {
+        RunError::Boundary(error)
+    }
+}
+
+impl From<crate::hosts::HostError> for RunError {
+    fn from(error: crate::hosts::HostError) -> RunError {
+        RunError::Host(error)
+    }
 }
 
 pub fn format_deltas(program: &GenProgram, tick: usize, deltas: &TickDeltas) -> String {
@@ -28,7 +58,7 @@ pub async fn run_schedule(
     seam: &SqliteSeam,
     schedule: &[Vec<Arrival>],
     drain_cap: usize,
-) -> TickFold {
+) -> BoundaryResult<TickFold> {
     seam.run_ddl(&program.ddl).expect("DDL execution failed");
     run_boot(seam, &program.boot);
     let mut lines = Vec::new();
@@ -48,7 +78,7 @@ pub async fn run_schedule(
                 program.name, drain_cap
             );
         }
-        let deltas = drive_tick(program, seam, arrivals).await;
+        let deltas = drive_tick(program, seam, arrivals).await?;
         tick_number += 1;
         if drains {
             drains_used += 1;
@@ -56,7 +86,7 @@ pub async fn run_schedule(
         carry_pending = deltas.carry_pending;
         lines.push(format_deltas(program, tick_number, &deltas));
     }
-    TickFold { lines }
+    Ok(TickFold { lines })
 }
 
 // Live-host variant: each tick's demand +deltas execute and the projected
@@ -66,7 +96,7 @@ pub async fn run_schedule_live(
     seam: &SqliteSeam,
     schedule: &[Vec<Arrival>],
     drain_cap: usize,
-) -> Result<TickFold, crate::hosts::HostError> {
+) -> Result<TickFold, RunError> {
     seam.run_ddl(&program.ddl).expect("DDL execution failed");
     run_boot(seam, &program.boot);
     let mut runner = crate::hosts::HostLiveRunner::new(&program.host_plans, &program.rel_columns)?;
@@ -97,7 +127,7 @@ pub async fn run_schedule_live(
                 );
             }
         }
-        let deltas = drive_tick(program, seam, arrivals).await;
+        let deltas = drive_tick(program, seam, arrivals).await?;
         tick_number += 1;
         carry_pending = deltas.carry_pending;
         lines.push(format_deltas(program, tick_number, &deltas));
@@ -115,7 +145,7 @@ pub async fn drive_tick(
     program: &GenProgram,
     seam: &SqliteSeam,
     arrivals: Vec<Arrival>,
-) -> TickDeltas {
+) -> BoundaryResult<TickDeltas> {
     let mut stream = program.tick(seam, arrivals);
     stream.next().await.expect("tick stream produced no item")
 }

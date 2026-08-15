@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use crate::sql::{result_rows, SqlRunner, SqliteSeam};
 use crate::types::{
-    Arrival, ArrivalSign, IncrementalRelationPlan, RelationKind, Row, SqlStatement, Value,
+    Arrival, ArrivalSign, BoundaryResult, IncrementalRelationPlan, RelationKind, Row, ScalarSeam,
+    ScalarValue, SqlStatement, Value,
 };
 
 #[derive(Clone)]
@@ -28,35 +29,41 @@ fn values_sql(row_count: usize, column_count: usize) -> String {
     vec![row; row_count].join(", ")
 }
 
-pub fn json_array_text(items: &[Value]) -> String {
-    let parts: Vec<String> = items.iter().map(value_to_json).collect();
-    format!("[{}]", parts.join(","))
+pub fn json_array_text(items: &[Value]) -> BoundaryResult<String> {
+    let parts: Vec<String> = items
+        .iter()
+        .map(value_to_json)
+        .collect::<BoundaryResult<Vec<_>>>()?;
+    Ok(format!("[{}]", parts.join(",")))
 }
 
-fn value_to_json(value: &Value) -> String {
-    match value {
-        Value::Integer(v) => format!("{}", v),
-        Value::Real(v) => crate::ticklog::js_float_text(*v),
-        Value::Bool(b) => (if *b { "true" } else { "false" }).to_string(),
-        Value::Text(v) => crate::ticklog::json_string(v),
-        Value::List(_) => panic!("a list value reached an arrival payload"),
-    }
+fn value_to_json(value: &Value) -> BoundaryResult<String> {
+    Ok(
+        match ScalarValue::at_seam(value, ScalarSeam::ArrivalPayload)? {
+            ScalarValue::Integer(v) => format!("{}", v),
+            ScalarValue::Real(v) => crate::ticklog::js_float_text(v),
+            ScalarValue::Bool(b) => (if b { "true" } else { "false" }).to_string(),
+            ScalarValue::Text(v) => crate::ticklog::json_string(&v),
+        },
+    )
 }
 
-fn bind_args(values: &[Value]) -> Vec<Value> {
+fn bind_args(values: &[Value]) -> BoundaryResult<Vec<ScalarValue>> {
     values
         .iter()
-        .map(|value| match value {
-            Value::Bool(b) => Value::Integer(if *b { 1 } else { 0 }),
-            other => other.clone(),
-        })
+        .map(
+            |value| match ScalarValue::at_seam(value, ScalarSeam::SqlParameter)? {
+                ScalarValue::Bool(b) => Ok(ScalarValue::Integer(if b { 1 } else { 0 })),
+                other => Ok(other),
+            },
+        )
         .collect()
 }
 
 fn boundary_stage_statement(
     relation: &IncrementalRelationPlan,
     events: &[DeltaEvent],
-) -> SqlStatement {
+) -> BoundaryResult<SqlStatement> {
     let mut columns = vec!["_sign".to_string(), "_sequence".to_string()];
     columns.extend(relation.columns.clone());
     let columns_text: Vec<String> = columns.iter().map(|c| quote_identifier(c)).collect();
@@ -74,17 +81,17 @@ fn boundary_stage_statement(
             entry.extend(event.row.clone());
             json_array_text(&entry)
         })
-        .collect::<Vec<_>>()
+        .collect::<BoundaryResult<Vec<_>>>()?
         .join(",");
-    SqlStatement {
+    Ok(SqlStatement {
         sql: format!(
             "INSERT INTO {} ({}) SELECT {} FROM json_each(?)",
             quote_identifier(&relation.delta_table_name),
             columns_text.join(", "),
             value_expressions.join(", ")
         ),
-        args: vec![Value::Text(format!("[{}]", encoded))],
-    }
+        args: vec![ScalarValue::Text(format!("[{}]", encoded))],
+    })
 }
 
 fn frontier_stage_statement(
@@ -92,7 +99,7 @@ fn frontier_stage_statement(
     table_name: &str,
     phase: i64,
     events: &[DeltaEvent],
-) -> SqlStatement {
+) -> BoundaryResult<SqlStatement> {
     let mut columns = vec!["_phase".to_string(), "_sequence".to_string()];
     columns.extend(relation.columns.clone());
     let columns_text: Vec<String> = columns.iter().map(|c| quote_identifier(c)).collect();
@@ -108,17 +115,17 @@ fn frontier_stage_statement(
             entry.extend(event.row.clone());
             json_array_text(&entry)
         })
-        .collect::<Vec<_>>()
+        .collect::<BoundaryResult<Vec<_>>>()?
         .join(",");
-    SqlStatement {
+    Ok(SqlStatement {
         sql: format!(
             "INSERT INTO {} ({}) SELECT {} FROM json_each(?)",
             quote_identifier(table_name),
             columns_text.join(", "),
             value_expressions.join(", ")
         ),
-        args: vec![Value::Text(format!("[{}]", encoded))],
-    }
+        args: vec![ScalarValue::Text(format!("[{}]", encoded))],
+    })
 }
 
 pub fn stage_events(
@@ -126,9 +133,9 @@ pub fn stage_events(
     relations: &[IncrementalRelationPlan],
     events: &[DeltaEvent],
     frontier_copies: &[(String, i64)],
-) {
+) -> BoundaryResult<()> {
     if events.is_empty() {
-        return;
+        return Ok(());
     }
     let relation_by_name: HashMap<&str, &IncrementalRelationPlan> =
         relations.iter().map(|r| (r.rel.as_str(), r)).collect();
@@ -145,16 +152,17 @@ pub fn stage_events(
             .get(rel)
             .expect("incremental delta relation missing");
         let additions: Vec<DeltaEvent> = grouped.iter().filter(|e| e.sign == 1).cloned().collect();
-        statements.push(boundary_stage_statement(relation, grouped));
+        statements.push(boundary_stage_statement(relation, grouped)?);
         if !additions.is_empty() {
             for (table_name, phase) in frontier_copies {
                 statements.push(frontier_stage_statement(
                     relation, table_name, *phase, &additions,
-                ));
+                )?);
             }
         }
     }
     seam.batch(&statements).expect("stage_events batch failed");
+    Ok(())
 }
 
 fn storage_row(relation: &IncrementalRelationPlan, row: &Row) -> Row {
@@ -174,19 +182,19 @@ fn storage_row(relation: &IncrementalRelationPlan, row: &Row) -> Row {
         .collect()
 }
 
-fn row_key(row: &Row, indices: &[usize]) -> String {
+fn row_key(row: &Row, indices: &[usize]) -> BoundaryResult<String> {
     let values: Vec<String> = indices
         .iter()
         .map(|index| value_to_json(&row[*index]))
-        .collect();
-    format!("[{}]", values.join(","))
+        .collect::<BoundaryResult<Vec<_>>>()?;
+    Ok(format!("[{}]", values.join(",")))
 }
 
 fn keyed_arrival_rows_statement(
     relation: &IncrementalRelationPlan,
     entries: &[(u64, Row)],
     key_indices: &[usize],
-) -> SqlStatement {
+) -> BoundaryResult<SqlStatement> {
     let columns_text: Vec<String> = relation
         .columns
         .iter()
@@ -206,11 +214,11 @@ fn keyed_arrival_rows_statement(
             distinct_keys.push(key);
         }
     }
-    let args: Vec<Value> = distinct_keys
-        .iter()
-        .flat_map(|key| bind_args(key))
-        .collect();
-    SqlStatement {
+    let mut args: Vec<ScalarValue> = Vec::new();
+    for key in &distinct_keys {
+        args.extend(bind_args(key)?);
+    }
+    Ok(SqlStatement {
         sql: format!(
             "SELECT {} FROM {} WHERE ({}) IN ({})",
             columns_text.join(", "),
@@ -219,7 +227,7 @@ fn keyed_arrival_rows_statement(
             values_sql(distinct_keys.len(), key_columns_text.len())
         ),
         args,
-    }
+    })
 }
 
 // Port of IncrementalRuntime.apply_arrivals. Groups consecutive same-rel/sign
@@ -228,9 +236,9 @@ pub fn apply_arrivals(
     seam: &SqliteSeam,
     arrivals: &[Arrival],
     relations: &[IncrementalRelationPlan],
-) {
+) -> BoundaryResult<()> {
     if arrivals.is_empty() {
-        return;
+        return Ok(());
     }
     let relation_by_name: HashMap<&str, &IncrementalRelationPlan> =
         relations.iter().map(|r| (r.rel.as_str(), r)).collect();
@@ -270,11 +278,11 @@ pub fn apply_arrivals(
         let encoded_rows: String = entries
             .iter()
             .map(|(_, row)| json_array_text(row))
-            .collect::<Vec<_>>()
+            .collect::<BoundaryResult<Vec<_>>>()?
             .join(",");
         let write_statement = SqlStatement {
             sql,
-            args: vec![Value::Text(format!("[{}]", encoded_rows))],
+            args: vec![ScalarValue::Text(format!("[{}]", encoded_rows))],
         };
         let key_indices = relation.key_indices.clone();
         if relation.kind == RelationKind::Set && sign == 1 && !key_indices.is_empty() {
@@ -283,17 +291,17 @@ pub fn apply_arrivals(
                     relation,
                     &entries,
                     &key_indices,
-                ))
+                )?)
                 .expect("keyed arrival rows lookup failed");
             let before_rows =
-                result_rows(&before_result, &relation.columns, &relation.column_types);
-            let mut current_by_key: HashMap<String, Row> = before_rows
-                .iter()
-                .map(|row| (row_key(row, &key_indices), row.clone()))
-                .collect();
+                result_rows(&before_result, &relation.columns, &relation.column_types)?;
+            let mut current_by_key: HashMap<String, Row> = HashMap::new();
+            for row in &before_rows {
+                current_by_key.insert(row_key(row, &key_indices)?, row.clone());
+            }
             let mut events = Vec::new();
             for (sequence, row) in &entries {
-                let key = row_key(row, &key_indices);
+                let key = row_key(row, &key_indices)?;
                 let before = current_by_key.get(&key);
                 let same = before.map(|b| rows_equal(b, row)).unwrap_or(false);
                 if same {
@@ -324,7 +332,7 @@ pub fn apply_arrivals(
                 relations,
                 &events,
                 &[(relation.frontier_table_name.clone(), 1)],
-            );
+            )?;
             continue;
         }
         let result = seam
@@ -345,17 +353,17 @@ pub fn apply_arrivals(
                 relations,
                 &events,
                 &[(relation.frontier_table_name.clone(), 1)],
-            );
+            )?;
             continue;
         }
-        let changed_rows = result_rows(&result, &relation.columns, &relation.column_types);
+        let changed_rows = result_rows(&result, &relation.columns, &relation.column_types)?;
         let mut staged_rows: Vec<String> = Vec::new();
         for (index, (sequence, _)) in entries.iter().enumerate() {
             let stored_row = changed_rows.get(index);
             let Some(stored_row) = stored_row else {
                 continue;
             };
-            let row_text = json_array_text(stored_row);
+            let row_text = json_array_text(stored_row)?;
             if staged_rows.contains(&row_text) {
                 continue;
             }
@@ -372,8 +380,9 @@ pub fn apply_arrivals(
             relations,
             &events,
             &[(relation.frontier_table_name.clone(), 1)],
-        );
+        )?;
     }
+    Ok(())
 }
 
 fn rows_equal(left: &Row, right: &Row) -> bool {
@@ -410,7 +419,7 @@ pub fn prepare_tick(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
 pub fn boundary_delta(
     relation: &IncrementalRelationPlan,
     result: &crate::types::QueryResult,
-) -> crate::types::RelDelta {
+) -> BoundaryResult<crate::types::RelDelta> {
     let sign_index = result.columns.iter().position(|c| c == "__sign");
     let count_index = result.columns.iter().position(|c| c == "__count");
     let mut weights: Vec<(Row, i64)> = Vec::new();
@@ -424,7 +433,7 @@ pub fn boundary_delta(
             values.push(normalize_boundary(
                 value,
                 relation.column_types.get(index).copied(),
-            ));
+            )?);
         }
         let sign = sign_index
             .and_then(|i| row.get(i))
@@ -454,39 +463,45 @@ pub fn boundary_delta(
             del.push(row.clone());
         }
     }
-    crate::types::RelDelta {
+    Ok(crate::types::RelDelta {
         rel: relation.rel.clone(),
         add,
         del,
-    }
+    })
 }
 
-fn normalize_boundary(value: Value, ty: Option<crate::types::RowColumnType>) -> Value {
+fn normalize_boundary(
+    value: Value,
+    ty: Option<crate::types::RowColumnType>,
+) -> BoundaryResult<Value> {
     match (ty, value) {
-        (Some(crate::types::RowColumnType::Bool), Value::Integer(v)) => Value::Bool(v != 0),
-        (Some(crate::types::RowColumnType::Bool), v) => v,
+        (Some(crate::types::RowColumnType::Bool), Value::Integer(v)) => Ok(Value::Bool(v != 0)),
+        (Some(crate::types::RowColumnType::Bool), v) => Ok(v),
         (Some(crate::types::RowColumnType::Float), Value::Real(v)) => {
             if !v.is_finite() {
                 panic!("float column crossed SQLite with non-finite value");
             }
-            Value::Real(if v == 0.0 { 0.0 } else { v })
+            Ok(Value::Real(if v == 0.0 { 0.0 } else { v }))
         }
         // F3 mirror of the SELECT boundary in sql.rs: a list column hands the
         // consumer Vec<Value>, never the array text.
         (Some(crate::types::RowColumnType::List), Value::Text(text)) => {
             match serde_json::from_str::<Vec<serde_json::Value>>(&text) {
-                Ok(items) => Value::List(items),
-                Err(error) => panic!("list column crossed SQLite with non-array text {text}: {error}"),
+                Ok(items) => Ok(Value::List(items)),
+                Err(error) => Err(crate::types::BoundaryError::ListColumnNotAnArray {
+                    text,
+                    detail: error.to_string(),
+                }),
             }
         }
-        (_, v) => v,
+        (_, v) => Ok(v),
     }
 }
 
 pub fn read_boundary(
     seam: &SqliteSeam,
     relations: &[IncrementalRelationPlan],
-) -> Vec<crate::types::RelDelta> {
+) -> BoundaryResult<Vec<crate::types::RelDelta>> {
     relations
         .iter()
         .map(|relation| {
@@ -505,7 +520,7 @@ pub fn stage_departures(
     seam: &SqliteSeam,
     relations: &[IncrementalRelationPlan],
     deltas: &[crate::types::RelDelta],
-) {
+) -> BoundaryResult<()> {
     let mut statements = Vec::new();
     for relation in relations {
         let Some(table_name) = &relation.departure_frontier_table_name else {
@@ -542,7 +557,7 @@ pub fn stage_departures(
                 staged.extend(row.clone());
                 json_array_text(&staged)
             })
-            .collect::<Vec<_>>()
+            .collect::<BoundaryResult<Vec<_>>>()?
             .join(",");
         statements.push(SqlStatement {
             sql: format!(
@@ -551,19 +566,20 @@ pub fn stage_departures(
                 quoted_columns.join(", "),
                 value_expressions.join(", ")
             ),
-            args: vec![Value::Text(format!("[{}]", encoded))],
+            args: vec![ScalarValue::Text(format!("[{}]", encoded))],
         });
     }
     if !statements.is_empty() {
         seam.batch(&statements).expect("departure staging failed");
     }
+    Ok(())
 }
 
 pub fn stage_ordered_frontiers(
     seam: &SqliteSeam,
     relations: &[IncrementalRelationPlan],
     additions: &[crate::types::RelDelta],
-) -> bool {
+) -> BoundaryResult<bool> {
     let mut events_by_rel: HashMap<&str, Vec<DeltaEvent>> = HashMap::new();
     let mut sequence = 0;
     for delta in additions {
@@ -606,13 +622,13 @@ pub fn stage_ordered_frontiers(
             &relation.frontier_table_name,
             0,
             events,
-        ));
+        )?);
     }
     if !statements.is_empty() {
         seam.batch(&statements)
             .expect("ordered frontier staging failed");
     }
-    carry_pending
+    Ok(carry_pending)
 }
 
 // Port of promote_frontiers: read carry, promote next into current.
@@ -772,7 +788,7 @@ fn apply_level_statement(
     relations: &[IncrementalRelationPlan],
     after_edges: bool,
     next_sequence: &mut dyn FnMut() -> u64,
-) -> usize {
+) -> BoundaryResult<usize> {
     let relation = relations
         .iter()
         .find(|r| r.rel == statement.head_rel)
@@ -785,8 +801,8 @@ fn apply_level_statement(
             relation,
             after_edges,
             next_sequence,
-        );
-        return 0;
+        )?;
+        return Ok(0);
     }
     let insert_sql = statement
         .insert_sql
@@ -804,9 +820,9 @@ fn apply_level_statement(
         &result,
         &statement.head_columns,
         &statement.head_column_types,
-    );
+    )?;
     if rows.is_empty() {
-        return 0;
+        return Ok(0);
     }
     let events: Vec<DeltaEvent> = rows
         .iter()
@@ -818,8 +834,8 @@ fn apply_level_statement(
         })
         .collect();
     let copies = level_frontier_copies(relation, after_edges);
-    stage_events(seam, std::slice::from_ref(relation), &events, &copies);
-    rows.len()
+    stage_events(seam, std::slice::from_ref(relation), &events, &copies)?;
+    Ok(rows.len())
 }
 
 // The DELETE and every INSERT return only the rows of the AFFECTED GROUPS, so
@@ -831,7 +847,7 @@ fn apply_aggregate_level_statement(
     relation: &IncrementalRelationPlan,
     after_edges: bool,
     next_sequence: &mut dyn FnMut() -> u64,
-) {
+) -> BoundaryResult<()> {
     // The intern arm reads the scope table, so it follows the seed inside the
     // same ordered batch and precedes the insert that looks its ids back up.
     let mut scope_texts = vec![aggregate.scope_clear_sql.clone()];
@@ -849,7 +865,7 @@ fn apply_aggregate_level_statement(
         &delete_result,
         &statement.head_columns,
         &statement.head_column_types,
-    );
+    )?;
     let insert_results = seam
         .batch(&to_statements(&aggregate.insert_scoped_sql))
         .expect("aggregate scoped insert failed");
@@ -867,7 +883,7 @@ fn apply_aggregate_level_statement(
             insert_result,
             &statement.head_columns,
             &statement.head_column_types,
-        ) {
+        )? {
             events.push(DeltaEvent {
                 rel: statement.head_rel.clone(),
                 sign: 1,
@@ -877,17 +893,17 @@ fn apply_aggregate_level_statement(
         }
     }
     if events.is_empty() {
-        return;
+        return Ok(());
     }
     let copies = level_frontier_copies(relation, after_edges);
-    stage_events(seam, std::slice::from_ref(relation), &events, &copies);
+    stage_events(seam, std::slice::from_ref(relation), &events, &copies)
 }
 
 pub fn apply_retention(
     seam: &SqliteSeam,
     statements: &[crate::types::IncrementalRetentionStatement],
     relations: &[IncrementalRelationPlan],
-) {
+) -> BoundaryResult<()> {
     let mut sequence = 0u64;
     for statement in statements {
         let relation = relations
@@ -900,7 +916,7 @@ pub fn apply_retention(
                 args: vec![],
             })
             .expect("retention delete failed");
-        let rows = result_rows(&result, &relation.columns, &relation.column_types);
+        let rows = result_rows(&result, &relation.columns, &relation.column_types)?;
         if rows.is_empty() {
             continue;
         }
@@ -917,8 +933,9 @@ pub fn apply_retention(
                 }
             })
             .collect();
-        stage_events(seam, std::slice::from_ref(relation), &events, &[]);
+        stage_events(seam, std::slice::from_ref(relation), &events, &[])?;
     }
+    Ok(())
 }
 
 // After the edge boundary a level row must reach BOTH the current frontier
@@ -943,9 +960,9 @@ pub fn apply_levels_before_edges(
     seam: &SqliteSeam,
     statements: &[crate::types::IncrementalLevelStatement],
     relations: &[IncrementalRelationPlan],
-) {
+) -> BoundaryResult<()> {
     if statements.is_empty() {
-        return;
+        return Ok(());
     }
     let feeds_another_round = recursive_heads(statements, relations);
     let mut sequence = 0u64;
@@ -965,9 +982,10 @@ pub fn apply_levels_before_edges(
                 .collect();
             reconcile_ref_count_statement(seam, statement, relations, &copies);
         } else {
-            apply_level_statement(seam, statement, relations, false, &mut next_sequence);
+            apply_level_statement(seam, statement, relations, false, &mut next_sequence)?;
         }
     }
+    Ok(())
 }
 
 // ═══ edge phases (port of 1_incremental.ts apply_edges + merge/after) ═══════
@@ -1002,7 +1020,7 @@ fn edge_keyed_rows_sql(
 fn edge_keyed_write_statement(
     statement: &crate::types::IncrementalEdgeStatement,
     rows: &[Row],
-) -> SqlStatement {
+) -> BoundaryResult<SqlStatement> {
     let columns = edge_columns_text(statement);
     let key_columns: Vec<String> = statement
         .key_indices
@@ -1028,7 +1046,7 @@ fn edge_keyed_write_statement(
             sets.join(", ")
         )
     };
-    SqlStatement {
+    Ok(SqlStatement {
         sql: format!(
             "INSERT INTO {} ({}) VALUES {} {}",
             quote_identifier(&statement.head_table_name),
@@ -1036,24 +1054,32 @@ fn edge_keyed_write_statement(
             values_sql(rows.len(), columns.len()),
             conflict
         ),
-        args: rows.iter().flat_map(|row| bind_args(row)).collect(),
+        args: flat_bind_args(rows)?,
+    })
+}
+
+fn flat_bind_args(rows: &[Row]) -> BoundaryResult<Vec<ScalarValue>> {
+    let mut args = Vec::new();
+    for row in rows {
+        args.extend(bind_args(row)?);
     }
+    Ok(args)
 }
 
 fn edge_log_write_statement(
     statement: &crate::types::IncrementalEdgeStatement,
     rows: &[Row],
-) -> SqlStatement {
+) -> BoundaryResult<SqlStatement> {
     let columns = edge_columns_text(statement);
-    SqlStatement {
+    Ok(SqlStatement {
         sql: format!(
             "INSERT INTO {} ({}) VALUES {}",
             quote_identifier(&statement.head_table_name),
             columns.join(", "),
             values_sql(rows.len(), columns.len())
         ),
-        args: rows.iter().flat_map(|row| bind_args(row)).collect(),
-    }
+        args: flat_bind_args(rows)?,
+    })
 }
 
 fn apply_log_edge(
@@ -1061,9 +1087,9 @@ fn apply_log_edge(
     statement: &crate::types::IncrementalEdgeStatement,
     relation: &IncrementalRelationPlan,
     rows: &[Row],
-) {
+) -> BoundaryResult<()> {
     if rows.is_empty() {
-        return;
+        return Ok(());
     }
     let events: Vec<DeltaEvent> = rows
         .iter()
@@ -1075,14 +1101,14 @@ fn apply_log_edge(
             row: row.clone(),
         })
         .collect();
-    seam.execute(&edge_log_write_statement(statement, rows))
+    seam.execute(&edge_log_write_statement(statement, rows)?)
         .expect("edge log write failed");
     stage_events(
         seam,
         std::slice::from_ref(relation),
         &events,
         &[(relation.next_frontier_table_name.clone(), 0)],
-    );
+    )
 }
 
 fn apply_keyed_edge(
@@ -1090,10 +1116,10 @@ fn apply_keyed_edge(
     statement: &crate::types::IncrementalEdgeStatement,
     relation: &IncrementalRelationPlan,
     projected_rows: &[Row],
-) {
+) -> BoundaryResult<()> {
     let mut resolved: Vec<(String, Row)> = Vec::new();
     for row in projected_rows {
-        let key = row_key(row, &statement.key_indices);
+        let key = row_key(row, &statement.key_indices)?;
         match resolved.iter_mut().find(|(existing, _)| existing == &key) {
             Some(entry) => entry.1 = row.clone(),
             None => resolved.push((key, row.clone())),
@@ -1101,19 +1127,17 @@ fn apply_keyed_edge(
     }
     let rows: Vec<Row> = resolved.into_iter().map(|(_, row)| row).collect();
     if rows.is_empty() {
-        return;
+        return Ok(());
     }
-    let key_args: Vec<Value> = rows
-        .iter()
-        .flat_map(|row| {
-            let key: Row = statement
-                .key_indices
-                .iter()
-                .map(|index| row[*index].clone())
-                .collect();
-            bind_args(&key)
-        })
-        .collect();
+    let mut key_args: Vec<ScalarValue> = Vec::new();
+    for row in &rows {
+        let key: Row = statement
+            .key_indices
+            .iter()
+            .map(|index| row[*index].clone())
+            .collect();
+        key_args.extend(bind_args(&key)?);
+    }
     let before_result = seam
         .execute(&SqlStatement {
             sql: edge_keyed_rows_sql(statement, rows.len()),
@@ -1121,26 +1145,27 @@ fn apply_keyed_edge(
         })
         .expect("edge keyed rows lookup failed");
     let head_types = relation.column_types.clone();
-    let before_rows = result_rows(&before_result, &statement.head_columns, &head_types);
+    let before_rows = result_rows(&before_result, &statement.head_columns, &head_types)?;
     let mut before_by_key: HashMap<String, Row> = HashMap::new();
     for row in &before_rows {
-        before_by_key.insert(row_key(row, &statement.key_indices), row.clone());
+        before_by_key.insert(row_key(row, &statement.key_indices)?, row.clone());
     }
-    let changed_rows: Vec<Row> = rows
-        .into_iter()
-        .filter(
-            |row| match before_by_key.get(&row_key(row, &statement.key_indices)) {
-                None => true,
-                Some(before) => !rows_equal(before, row),
-            },
-        )
-        .collect();
+    let mut changed_rows: Vec<Row> = Vec::new();
+    for row in rows {
+        let unchanged = match before_by_key.get(&row_key(&row, &statement.key_indices)?) {
+            None => false,
+            Some(before) => rows_equal(before, &row),
+        };
+        if !unchanged {
+            changed_rows.push(row);
+        }
+    }
     if changed_rows.is_empty() {
-        return;
+        return Ok(());
     }
     let mut events = Vec::new();
     for (sequence, row) in changed_rows.iter().enumerate() {
-        let key = row_key(row, &statement.key_indices);
+        let key = row_key(row, &statement.key_indices)?;
         if let Some(before) = before_by_key.get(&key) {
             events.push(DeltaEvent {
                 rel: statement.head_rel.clone(),
@@ -1156,21 +1181,21 @@ fn apply_keyed_edge(
             row: row.clone(),
         });
     }
-    seam.execute(&edge_keyed_write_statement(statement, &changed_rows))
+    seam.execute(&edge_keyed_write_statement(statement, &changed_rows)?)
         .expect("edge keyed write failed");
     stage_events(
         seam,
         std::slice::from_ref(relation),
         &events,
         &[(relation.next_frontier_table_name.clone(), 0)],
-    );
+    )
 }
 
 pub fn apply_edges(
     seam: &SqliteSeam,
     statements: &[crate::types::IncrementalEdgeStatement],
     relations: &[IncrementalRelationPlan],
-) {
+) -> BoundaryResult<()> {
     for statement in statements {
         let relation = relations
             .iter()
@@ -1184,12 +1209,13 @@ pub fn apply_edges(
                 args: vec![],
             },
         );
-        let rows = result_rows(&result, &statement.head_columns, &relation.column_types);
+        let rows = result_rows(&result, &statement.head_columns, &relation.column_types)?;
         match statement.head_kind {
-            RelationKind::Log => apply_log_edge(seam, statement, relation, &rows),
-            RelationKind::Set => apply_keyed_edge(seam, statement, relation, &rows),
+            RelationKind::Log => apply_log_edge(seam, statement, relation, &rows)?,
+            RelationKind::Set => apply_keyed_edge(seam, statement, relation, &rows)?,
         }
     }
+    Ok(())
 }
 
 pub fn merge_next_into_current(seam: &SqliteSeam, relations: &[IncrementalRelationPlan]) {
@@ -1220,7 +1246,7 @@ pub fn apply_levels_after_edges(
     seam: &SqliteSeam,
     statements: &[crate::types::IncrementalLevelStatement],
     relations: &[IncrementalRelationPlan],
-) {
+) -> BoundaryResult<()> {
     let mut sequence = 0u64;
     let mut next_sequence = || {
         let current = sequence;
@@ -1228,8 +1254,9 @@ pub fn apply_levels_after_edges(
         current
     };
     for statement in statements {
-        apply_level_statement(seam, statement, relations, true, &mut next_sequence);
+        apply_level_statement(seam, statement, relations, true, &mut next_sequence)?;
     }
+    Ok(())
 }
 
 // The frozen mid-tick level plane: a level row an arrival retracted this tick
@@ -1341,7 +1368,7 @@ fn reconcile_ref_count_statement(
         };
         tail.push(SqlStatement {
             sql: stage,
-            args: vec![Value::Integer(*phase)],
+            args: vec![ScalarValue::Integer(*phase)],
         });
     }
     tail.push(SqlStatement {
@@ -1392,13 +1419,13 @@ pub fn recompute_levels_after_edges(
     statements: &[crate::types::IncrementalLevelStatement],
     relations: &[IncrementalRelationPlan],
     reconcile_every_tick: bool,
-) {
+) -> BoundaryResult<()> {
     if statements.is_empty() {
-        return;
+        return Ok(());
     }
     // No frontier copies on either arm: a reconcile row is a correction inside
     // the same closure, never post-write growth, so it must not carry.
-    let reconcile = |seam: &SqliteSeam| {
+    let reconcile = |seam: &SqliteSeam| -> BoundaryResult<()> {
         let mut sequence = 0u64;
         let mut next_sequence = || {
             let current = sequence;
@@ -1421,22 +1448,23 @@ pub fn recompute_levels_after_edges(
                     relation,
                     false,
                     &mut next_sequence,
-                );
+                )?;
                 continue;
             }
             reconcile_ref_count_statement(seam, statement, relations, &[]);
         }
+        Ok(())
     };
     if reconcile_every_tick {
-        reconcile(seam);
-        return;
+        return reconcile(seam);
     }
     if relations.is_empty() {
-        return;
+        return Ok(());
     }
     let guard = retraction_guard_sql(relations);
     let has_retraction = seam.scalar(&guard).expect("retraction guard read failed") == 1;
     if has_retraction {
-        reconcile(seam);
+        return reconcile(seam);
     }
+    Ok(())
 }
