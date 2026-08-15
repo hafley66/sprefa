@@ -116,6 +116,7 @@ fn fixture_program() -> GenProgram {
             expand_sql: None,
             dred_sql: None,
             aggregate_sql: None,
+            recursion_group: None,
         }],
         retentions: vec![],
         uses_tick: false,
