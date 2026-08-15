@@ -1,0 +1,55 @@
+vars: { d2-config: { layout-engine: dagre; theme-id: 0; pad: 20 } }
+direction: right
+
+s1: 1. source {
+  dl6: "program .dl6 (text door)"
+  fixtures: "conformance .pl fixtures"
+}
+
+s2: 2. front end (swipl) {
+  parse: "parse_dl_dcg.pl (only door)\n-> use_resolve.pl modules"
+}
+
+s3: 3. expanders {
+  generic: "0_generic_expand\nmonomorphize templates,\nmint list entity+member"
+  option: "0_option_expand\noption companions"
+  typeplane: "0_type_plane\nstorage kinds: ref/list/json"
+}
+
+s4: "4. lower.pl" {
+  relplan: "relplan: typed columns,\nlist(T) survives to here"
+  planes: "statement planes:\nboot / delta / expand"
+  views: "TEMP views: __txt,\n__dict, __list_<entity>"
+  cap: "fixpoint_round_cap 1000\nrecursion_group (SCC heads)"
+}
+
+s5: 5. emitters {
+  ts: "emit_ts.pl\n-> gen module .ts"
+  rust: "emit_rust.pl\n-> PROGRAM_JSON"
+  types: "7_/8_emit types + jsonschema\n-> .types.ts / .types.rs"
+  dl6door: "typegen_export -> type_row JSONL\n-> render_ts.dl6 (dl6 door)"
+}
+
+s6: 6. judges {
+  oracle: "level_eval.pl oracle\n(joint least fixpoint)"
+  gates: "sweep / grade.sh /\ntypegen + golden-flex goldens"
+}
+
+s1.dl6 -> s2.parse
+s1.fixtures -> s2.parse
+s2.parse -> s3.generic
+s3.generic -> s3.option
+s3.option -> s3.typeplane
+s3.typeplane -> s4.relplan
+s4.relplan -> s4.planes
+s4.planes -> s4.views
+s4.planes -> s4.cap
+s4.relplan -> s5.types
+s4.planes -> s5.ts
+s4.planes -> s5.rust
+s4.relplan -> s5.dl6door
+s5.ts -> s6.gates: both doors judged
+s5.rust -> s6.gates
+s5.dl6door -> s6.gates
+s1.fixtures -> s6.oracle: same program
+s6.oracle -> s6.gates: byte diff
