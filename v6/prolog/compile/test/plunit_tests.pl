@@ -9057,3 +9057,24 @@ test(a_cross_rel_option_mints_no_guard) :-
          sub_atom(Statement, 0, _, _, 'CREATE TRIGGER') ).
 
 :- end_tests(acyclic_guard).
+
+:- begin_tests(list_mint_order).
+
+% World rows sort by NAME (store_rows/2 msorts), so the source rel's
+% derivation order is alpha, bravo, charlie regardless of Initial's list
+% order; the mint order must instead follow the split parts' content TEXT:
+% ["a","b"] < ["m","n"] < ["z","y"], i.e. bravo, charlie, alpha.
+test(oracle_mints_list_ids_in_content_sorted_order) :-
+    Prog = prog([ col_type(fruit_text/2, name, text),
+                  col_type(fruit_text/2, body, text),
+                  col_type(fruit_parts/2, name, text),
+                  col_type(fruit_parts/2, parts, list(text)) ],
+                [ (fruit_parts(Name, Parts) <- fruit_text(Name, Body),
+                      Parts := split(Body, '/')) ]),
+    Initial = [ fruit_text(alpha, 'z/y'), fruit_text(bravo, 'a/b'),
+                fruit_text(charlie, 'm/n') ],
+    once(run_program(Prog, Initial, [], FinalAll, _)),
+    findall(Id-Name, member(fruit_parts(Name, Id), FinalAll), ByName),
+    msort(ByName, [1-bravo, 2-charlie, 3-alpha]).
+
+:- end_tests(list_mint_order).
