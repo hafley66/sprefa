@@ -70,12 +70,8 @@ colliding_type_name(BareType) <-
   renderable_rel(RightRelId, BareType, _),
   LeftRelId < RightRelId.
 
-# @comment-ok: the sanitizer bound; split plus cap-first-char, no regex.
-# initcap_words (SQL INITCAP) lowers every non-boundary character, mangling a
-# camelCase segment ("myModule" -> "Mymodule"). The prolog door's
-# module_type_name/2 instead upcases only each split word's first character
-# and leaves the rest untouched; this mirrors that by normalizing the four
-# separators to '_', splitting, and capping each part's first character only.
+# @comment-ok: sanitizer bound; initcap_words lower-cases non-boundary chars,
+# mangling camelCase ("myModule" -> "Mymodule"), so this caps only each split word's first character, mirroring module_type_name/2.
 rel module_name_normalized(module_id: int, normalized: text).
 module_name_normalized(ModuleId, Normalized) <-
   type_row(ModuleId, _, _, ModuleName, 'module', _, _),
@@ -140,9 +136,8 @@ rel list_row(id: int, element_id: int).
 list_row(Id, ElemId) <- type_row(Id, _, _, _, 'json_list', ElemId, _).
 list_row(Id, ElemId) <- type_row(Id, _, _, _, 'list', ElemId, _).
 
-# @comment-ok: the nesting bound; a self-recursive stratum settles a tick late.
-# Nesting unrolls to five levels, one stratum per level. A recursive list_type
-# loads and derives one level per tick, so a single arrival batch renders short.
+# @comment-ok: nesting bound; a self-recursive stratum settles a tick late.
+# Nesting unrolls to five levels; a recursive list_type derives one level per tick, so a single arrival batch renders short.
 rel list_depth_one(id: int, text: text).
 list_depth_one(Id, Text) <-
   list_row(Id, ElemId),
