@@ -1,6 +1,6 @@
 export interface FruitParts {
   name: string;
-  parts: number;
+  parts: Array<string>;
 }
 
 export interface FruitText {
