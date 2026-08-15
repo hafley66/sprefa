@@ -10,89 +10,91 @@ spawned and `$DL_EXTRACT_BIN` was never resolved.
 | files | 33 |
 | callable definitions | 498 |
 | type entities | 641 |
-| df value nodes | 21830 |
-| df Direct edges | 21872 |
+| df value nodes | 22047 |
+| df Direct edges | 22185 |
 
 ## Corpus inventory
 
 | file | procs | types | df nodes | df edges |
 |---|--:|--:|--:|--:|
-| `v6/sprefa-extract/src/0_query.rs` | 13 | 14 | 600 | 548 |
-| `v6/sprefa-extract/src/bin/extract.rs` | 13 | 15 | 574 | 482 |
+| `v6/sprefa-extract/src/0_query.rs` | 13 | 14 | 603 | 553 |
+| `v6/sprefa-extract/src/bin/extract.rs` | 13 | 15 | 574 | 489 |
 | `v6/sprefa-extract/src/bin/extract/help.rs` | 0 | 14 | 0 | 0 |
-| `v6/sprefa-extract/src/deps.rs` | 15 | 18 | 626 | 546 |
+| `v6/sprefa-extract/src/deps.rs` | 15 | 18 | 637 | 557 |
 | `v6/sprefa-extract/src/dispatch.rs` | 1 | 1 | 15 | 14 |
 | `v6/sprefa-extract/src/family.rs` | 0 | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/lang/astgrep.rs` | 9 | 14 | 271 | 246 |
-| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 23 | 24 | 922 | 887 |
+| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 23 | 24 | 933 | 911 |
 | `v6/sprefa-extract/src/lang/dl6/mod.rs` | 0 | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/go.rs` | 40 | 41 | 2607 | 2639 |
-| `v6/sprefa-extract/src/lang/kotlin.rs` | 30 | 31 | 1673 | 1667 |
+| `v6/sprefa-extract/src/lang/go.rs` | 40 | 41 | 2622 | 2663 |
+| `v6/sprefa-extract/src/lang/kotlin.rs` | 30 | 31 | 1685 | 1682 |
 | `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 7 | 8 | 220 | 194 |
 | `v6/sprefa-extract/src/lang/markdown/mod.rs` | 0 | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/lang/mod.rs` | 2 | 2 | 15 | 12 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 37 | 40 | 1503 | 1539 |
+| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 37 | 40 | 1519 | 1559 |
 | `v6/sprefa-extract/src/lang/prolog/mod.rs` | 0 | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/rust.rs` | 50 | 55 | 3193 | 3493 |
-| `v6/sprefa-extract/src/lang/ts.rs` | 89 | 99 | 4362 | 4720 |
+| `v6/sprefa-extract/src/lang/rust.rs` | 50 | 55 | 3189 | 3483 |
+| `v6/sprefa-extract/src/lang/ts.rs` | 89 | 99 | 4428 | 4814 |
 | `v6/sprefa-extract/src/lib.rs` | 0 | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/project.rs` | 27 | 35 | 799 | 786 |
+| `v6/sprefa-extract/src/project.rs` | 27 | 35 | 809 | 804 |
 | `v6/sprefa-extract/src/rows.rs` | 0 | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/schema.rs` | 0 | 1 | 0 | 0 |
-| `v6/sprefa-extract/src/scip.rs` | 16 | 19 | 626 | 537 |
+| `v6/sprefa-extract/src/scip.rs` | 16 | 19 | 628 | 546 |
 | `v6/sprefa-extract/src/scip/scip_proto.rs` | 16 | 38 | 580 | 548 |
-| `v6/sprefa-extract/src/scip_decode.rs` | 7 | 7 | 359 | 360 |
-| `v6/sprefa-extract/src/scip_ensure.rs` | 20 | 26 | 622 | 542 |
-| `v6/sprefa-extract/src/scip_rows.rs` | 10 | 11 | 550 | 561 |
-| `v6/sprefa-extract/src/scip_v5_rels.rs` | 12 | 13 | 565 | 469 |
+| `v6/sprefa-extract/src/scip_decode.rs` | 7 | 7 | 359 | 362 |
+| `v6/sprefa-extract/src/scip_ensure.rs` | 20 | 26 | 623 | 546 |
+| `v6/sprefa-extract/src/scip_rows.rs` | 10 | 11 | 558 | 570 |
+| `v6/sprefa-extract/src/scip_v5_rels.rs` | 12 | 13 | 571 | 477 |
 | `v6/sprefa-extract/src/seams.rs` | 0 | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/shape.rs` | 0 | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/source.rs` | 0 | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/types.rs` | 53 | 107 | 555 | 439 |
-| `v6/sprefa-extract/src/wire.rs` | 8 | 8 | 593 | 643 |
+| `v6/sprefa-extract/src/types.rs` | 53 | 107 | 565 | 459 |
+| `v6/sprefa-extract/src/wire.rs` | 8 | 8 | 643 | 696 |
 
 ## Value-flow reachability
 
 Transitive closure over `df_edge`, computed by the mutual `df_reach` /
-`df_hop` pair. Every edge is intra-procedural, so a component never
-crosses a callable. `self-reaching` counts nodes with a path back to
-themselves: 2548 of them over 89463 reachable pairs.
+`df_hop` pair, keyed on the whole `(span, kind)` node identity. Every edge
+is intra-procedural, so a component never crosses a callable.
+`self-reaching` counts nodes with a path back to themselves: 0
+of them over 109771 reachable pairs. Value flow inside one callable is
+a DAG, so any row above zero is a defect, not a measurement.
 
 | file | df edges | reachable pairs | self-reaching nodes |
 |---|--:|--:|--:|
-| `v6/sprefa-extract/src/0_query.rs` | 548 | 2923 | 83 |
-| `v6/sprefa-extract/src/bin/extract.rs` | 482 | 1800 | 60 |
+| `v6/sprefa-extract/src/0_query.rs` | 553 | 3520 | 0 |
+| `v6/sprefa-extract/src/bin/extract.rs` | 489 | 2092 | 0 |
 | `v6/sprefa-extract/src/bin/extract/help.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/deps.rs` | 546 | 1733 | 89 |
-| `v6/sprefa-extract/src/dispatch.rs` | 14 | 32 | 4 |
+| `v6/sprefa-extract/src/deps.rs` | 557 | 2126 | 0 |
+| `v6/sprefa-extract/src/dispatch.rs` | 14 | 33 | 0 |
 | `v6/sprefa-extract/src/family.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/astgrep.rs` | 246 | 1808 | 27 |
-| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 887 | 3975 | 111 |
+| `v6/sprefa-extract/src/lang/astgrep.rs` | 246 | 2005 | 0 |
+| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 911 | 4439 | 0 |
 | `v6/sprefa-extract/src/lang/dl6/mod.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/go.rs` | 2639 | 12426 | 193 |
-| `v6/sprefa-extract/src/lang/kotlin.rs` | 1667 | 7758 | 129 |
-| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 194 | 495 | 19 |
+| `v6/sprefa-extract/src/lang/go.rs` | 2663 | 13605 | 0 |
+| `v6/sprefa-extract/src/lang/kotlin.rs` | 1682 | 8469 | 0 |
+| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 194 | 526 | 0 |
 | `v6/sprefa-extract/src/lang/markdown/mod.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/mod.rs` | 12 | 33 | 7 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 1539 | 5913 | 129 |
+| `v6/sprefa-extract/src/lang/mod.rs` | 12 | 26 | 0 |
+| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 1559 | 6653 | 0 |
 | `v6/sprefa-extract/src/lang/prolog/mod.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/rust.rs` | 3493 | 14452 | 344 |
-| `v6/sprefa-extract/src/lang/ts.rs` | 4720 | 18454 | 507 |
+| `v6/sprefa-extract/src/lang/rust.rs` | 3483 | 17479 | 0 |
+| `v6/sprefa-extract/src/lang/ts.rs` | 4814 | 24266 | 0 |
 | `v6/sprefa-extract/src/lib.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/project.rs` | 786 | 3663 | 150 |
+| `v6/sprefa-extract/src/project.rs` | 804 | 5007 | 0 |
 | `v6/sprefa-extract/src/rows.rs` | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/schema.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/scip.rs` | 537 | 2530 | 72 |
-| `v6/sprefa-extract/src/scip/scip_proto.rs` | 548 | 720 | 16 |
-| `v6/sprefa-extract/src/scip_decode.rs` | 360 | 1228 | 73 |
-| `v6/sprefa-extract/src/scip_ensure.rs` | 542 | 2379 | 100 |
-| `v6/sprefa-extract/src/scip_rows.rs` | 561 | 1831 | 101 |
-| `v6/sprefa-extract/src/scip_v5_rels.rs` | 469 | 1856 | 82 |
+| `v6/sprefa-extract/src/scip.rs` | 546 | 2892 | 0 |
+| `v6/sprefa-extract/src/scip/scip_proto.rs` | 548 | 1244 | 0 |
+| `v6/sprefa-extract/src/scip_decode.rs` | 362 | 1682 | 0 |
+| `v6/sprefa-extract/src/scip_ensure.rs` | 546 | 2550 | 0 |
+| `v6/sprefa-extract/src/scip_rows.rs` | 570 | 2567 | 0 |
+| `v6/sprefa-extract/src/scip_v5_rels.rs` | 477 | 2598 | 0 |
 | `v6/sprefa-extract/src/seams.rs` | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/shape.rs` | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/source.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/types.rs` | 439 | 1008 | 108 |
-| `v6/sprefa-extract/src/wire.rs` | 643 | 2446 | 144 |
+| `v6/sprefa-extract/src/types.rs` | 459 | 1574 | 0 |
+| `v6/sprefa-extract/src/wire.rs` | 696 | 4418 | 0 |
 
 ## Widest callables
 
@@ -102,103 +104,129 @@ contains it. `chain depth` is the capped ladder; see the next section.
 
 | file | callable | df nodes | df edges | chain depth |
 |---|---|--:|--:|--:|
-| `v6/sprefa-extract/src/lang/rust.rs` | `flow_expr` | 930 | 1297 | 8 |
-| `v6/sprefa-extract/src/lang/go.rs` | `flow_go` | 763 | 885 | 8 |
-| `v6/sprefa-extract/src/lang/ts.rs` | `df_flow_expr` | 640 | 938 | 8 |
-| `v6/sprefa-extract/src/lang/kotlin.rs` | `flow_kt` | 578 | 638 | 8 |
-| `v6/sprefa-extract/src/scip_v5_rels.rs` | `v5_rel_rows` | 309 | 294 | 8 |
-| `v6/sprefa-extract/src/lang/ts.rs` | `df_flow_body_stmt` | 291 | 399 | 8 |
-| `v6/sprefa-extract/src/scip/scip_proto.rs` | `from_str_name` | 226 | 225 | 8 |
-| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | `project_calls` | 205 | 223 | 8 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | `walk_df` | 177 | 190 | 8 |
-| `v6/sprefa-extract/src/lang/go.rs` | `go_edge_candidates` | 155 | 162 | 8 |
-| `v6/sprefa-extract/src/bin/extract.rs` | `main` | 153 | 146 | 8 |
-| `v6/sprefa-extract/src/scip.rs` | `byte_range` | 153 | 158 | 8 |
-| `v6/sprefa-extract/src/lang/rust.rs` | `project_call` | 150 | 180 | 8 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | `walk_goals_refs` | 147 | 173 | 8 |
-| `v6/sprefa-extract/src/lang/rust.rs` | `item_entity` | 134 | 179 | 8 |
-| `v6/sprefa-extract/src/lang/go.rs` | `walk_go_entities` | 129 | 150 | 8 |
-| `v6/sprefa-extract/src/scip_decode.rs` | `diet` | 128 | 181 | 8 |
-| `v6/sprefa-extract/src/lang/ts.rs` | `class_edge_candidates` | 126 | 143 | 8 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | `walk_goals` | 125 | 157 | 8 |
-| `v6/sprefa-extract/src/lang/rust.rs` | `item_edge_candidates` | 122 | 164 | 8 |
-| `v6/sprefa-extract/src/scip_rows.rs` | `occurrence_rows` | 121 | 162 | 8 |
-| `v6/sprefa-extract/src/lang/go.rs` | `fn_sigs` | 117 | 114 | 8 |
-| `v6/sprefa-extract/src/lang/kotlin.rs` | `kt_walk_call_defs` | 117 | 144 | 8 |
-| `v6/sprefa-extract/src/lang/astgrep.rs` | `query_patterns` | 116 | 122 | 8 |
-| `v6/sprefa-extract/src/lang/ts.rs` | `module_specifiers` | 114 | 161 | 8 |
-| `v6/sprefa-extract/src/lang/ts.rs` | `df_flow_stmt` | 114 | 136 | 8 |
+| `v6/sprefa-extract/src/lang/rust.rs` | `flow_expr` | 968 | 1259 | 20 |
+| `v6/sprefa-extract/src/lang/go.rs` | `flow_go` | 799 | 889 | 17 |
+| `v6/sprefa-extract/src/lang/ts.rs` | `df_flow_expr` | 691 | 944 | 21 |
+| `v6/sprefa-extract/src/lang/kotlin.rs` | `flow_kt` | 610 | 643 | 22 |
+| `v6/sprefa-extract/src/scip_v5_rels.rs` | `v5_rel_rows` | 348 | 300 | 18 |
+| `v6/sprefa-extract/src/lang/ts.rs` | `df_flow_body_stmt` | 321 | 399 | 14 |
+| `v6/sprefa-extract/src/scip/scip_proto.rs` | `from_str_name` | 227 | 225 | 3 |
+| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | `project_calls` | 220 | 225 | 23 |
+| `v6/sprefa-extract/src/lang/rust.rs` | `project_call` | 185 | 188 | 15 |
+| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | `walk_df` | 184 | 190 | 14 |
+| `v6/sprefa-extract/src/scip.rs` | `byte_range` | 175 | 160 | 15 |
+| `v6/sprefa-extract/src/bin/extract.rs` | `main` | 171 | 146 | 9 |
+| `v6/sprefa-extract/src/scip_decode.rs` | `diet` | 171 | 183 | 13 |
+| `v6/sprefa-extract/src/lang/go.rs` | `go_edge_candidates` | 166 | 162 | 28 |
+| `v6/sprefa-extract/src/lang/rust.rs` | `item_entity` | 161 | 185 | 10 |
+| `v6/sprefa-extract/src/wire.rs` | `flatten_df` | 160 | 181 | 15 |
+| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | `walk_goals_refs` | 149 | 173 | 9 |
+| `v6/sprefa-extract/src/wire.rs` | `flatten_call` | 148 | 165 | 11 |
+| `v6/sprefa-extract/src/lang/ts.rs` | `class_edge_candidates` | 147 | 147 | 17 |
+| `v6/sprefa-extract/src/lang/ts.rs` | `module_specifiers` | 147 | 172 | 21 |
+| `v6/sprefa-extract/src/scip_rows.rs` | `occurrence_rows` | 142 | 163 | 10 |
+| `v6/sprefa-extract/src/lang/rust.rs` | `item_edge_candidates` | 137 | 164 | 13 |
+| `v6/sprefa-extract/src/scip_rows.rs` | `symbol_rows` | 134 | 141 | 11 |
+| `v6/sprefa-extract/src/lang/go.rs` | `walk_go_entities` | 132 | 150 | 19 |
+| `v6/sprefa-extract/src/lang/go.rs` | `resolve` | 131 | 138 | 17 |
+| `v6/sprefa-extract/src/lang/rust.rs` | `resolve` | 131 | 138 | 17 |
+| `v6/sprefa-extract/src/lang/ts.rs` | `resolve` | 131 | 138 | 17 |
 
 ## Chain-depth histogram
 
-The ladder stops at 8. A callable reporting depth 8 is SATURATED, not
-measured: its value chain either is at least that long or runs through a
-cycle. The cycles are an artifact, and the next section prices them.
+Longest chain from a root (a value node no edge targets) to each node a
+callable owns. The ladder carries a `Level < 32` termination guard; the
+graph is acyclic, so it converges below the guard and a reported depth is
+the measured chain, not a saturation floor.
 
 | chain depth | callables |
 |--:|--:|
-| 0 | 10 |
-| 1 | 5 |
-| 2 | 10 |
-| 3 | 3 |
-| 4 | 1 |
-| 5 | 1 |
-| 6 | 2 |
-| 8 | 430 |
+| 0 | 3 |
+| 1 | 24 |
+| 2 | 48 |
+| 3 | 45 |
+| 4 | 47 |
+| 5 | 35 |
+| 6 | 45 |
+| 7 | 25 |
+| 8 | 30 |
+| 9 | 29 |
+| 10 | 23 |
+| 11 | 20 |
+| 12 | 20 |
+| 13 | 12 |
+| 14 | 18 |
+| 15 | 10 |
+| 16 | 8 |
+| 17 | 14 |
+| 18 | 5 |
+| 19 | 5 |
+| 20 | 3 |
+| 21 | 4 |
+| 22 | 4 |
+| 23 | 1 |
+| 24 | 1 |
+| 25 | 1 |
+| 26 | 1 |
+| 28 | 1 |
+| 30 | 1 |
 
-## Span identity lost at the wire
+## Span identity across the wire
 
-`src/lang/rust.rs:2067` states df node identity as `(span.start, kind)`
-and pushes every df node with `len: 0`. `FlatFact::Edge` carries only
-`from` and `to` spans, with no kind, so a consumer keyed on the span
-cannot separate two nodes that share a start. `aliased spans` counts the
-starts carrying more than one kind: 2144 over the corpus.
-Those are the merges that manufacture the cycles above. Filed as
-`issues/df-span-identity-aliasing`.
+A df node is `(span, kind)`. `src/lang/rust.rs` df_push stores each value
+node's full extent and `FlatFact::Edge` names `from_kind`/`to_kind`
+beside the endpoint spans, so both halves cross the wire and every rel in
+this rail keys on both.
+
+`aliased spans` counts spans carrying more than one kind: 581
+over the corpus. An implicit `ret` covers the tail expression it returns,
+which is what those are; the kind separates them and the closure above
+stays acyclic. A span-only consumer would merge exactly these.
 
 `df node rows` is the `df_node` REL, which is a set, so two facts that agree
 on span and kind are already one row here.
 
 | file | df node rows | distinct spans | aliased spans |
 |---|--:|--:|--:|
-| `v6/sprefa-extract/src/0_query.rs` | 600 | 528 | 66 |
-| `v6/sprefa-extract/src/bin/extract.rs` | 574 | 512 | 53 |
+| `v6/sprefa-extract/src/0_query.rs` | 603 | 578 | 25 |
+| `v6/sprefa-extract/src/bin/extract.rs` | 574 | 555 | 19 |
 | `v6/sprefa-extract/src/bin/extract/help.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/deps.rs` | 626 | 556 | 69 |
-| `v6/sprefa-extract/src/dispatch.rs` | 15 | 13 | 2 |
+| `v6/sprefa-extract/src/deps.rs` | 637 | 615 | 22 |
+| `v6/sprefa-extract/src/dispatch.rs` | 15 | 15 | 0 |
 | `v6/sprefa-extract/src/family.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/astgrep.rs` | 271 | 247 | 24 |
-| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 922 | 821 | 85 |
+| `v6/sprefa-extract/src/lang/astgrep.rs` | 271 | 259 | 12 |
+| `v6/sprefa-extract/src/lang/dl6/_0_source.rs` | 933 | 907 | 26 |
 | `v6/sprefa-extract/src/lang/dl6/mod.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/go.rs` | 2607 | 2431 | 148 |
-| `v6/sprefa-extract/src/lang/kotlin.rs` | 1673 | 1561 | 96 |
-| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 220 | 203 | 16 |
+| `v6/sprefa-extract/src/lang/go.rs` | 2622 | 2555 | 67 |
+| `v6/sprefa-extract/src/lang/kotlin.rs` | 1685 | 1642 | 43 |
+| `v6/sprefa-extract/src/lang/markdown/_0_source.rs` | 220 | 214 | 6 |
 | `v6/sprefa-extract/src/lang/markdown/mod.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/mod.rs` | 15 | 12 | 3 |
-| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 1503 | 1390 | 102 |
+| `v6/sprefa-extract/src/lang/mod.rs` | 15 | 14 | 1 |
+| `v6/sprefa-extract/src/lang/prolog/_0_source.rs` | 1519 | 1483 | 36 |
 | `v6/sprefa-extract/src/lang/prolog/mod.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/lang/rust.rs` | 3193 | 2857 | 312 |
-| `v6/sprefa-extract/src/lang/ts.rs` | 4362 | 3834 | 492 |
+| `v6/sprefa-extract/src/lang/rust.rs` | 3189 | 3138 | 51 |
+| `v6/sprefa-extract/src/lang/ts.rs` | 4428 | 4353 | 75 |
 | `v6/sprefa-extract/src/lib.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/project.rs` | 799 | 670 | 118 |
+| `v6/sprefa-extract/src/project.rs` | 809 | 775 | 34 |
 | `v6/sprefa-extract/src/rows.rs` | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/schema.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/scip.rs` | 626 | 558 | 60 |
+| `v6/sprefa-extract/src/scip.rs` | 628 | 602 | 26 |
 | `v6/sprefa-extract/src/scip/scip_proto.rs` | 580 | 564 | 16 |
-| `v6/sprefa-extract/src/scip_decode.rs` | 359 | 284 | 68 |
-| `v6/sprefa-extract/src/scip_ensure.rs` | 622 | 559 | 55 |
-| `v6/sprefa-extract/src/scip_rows.rs` | 550 | 457 | 88 |
-| `v6/sprefa-extract/src/scip_v5_rels.rs` | 565 | 497 | 60 |
+| `v6/sprefa-extract/src/scip_decode.rs` | 359 | 340 | 19 |
+| `v6/sprefa-extract/src/scip_ensure.rs` | 623 | 605 | 18 |
+| `v6/sprefa-extract/src/scip_rows.rs` | 558 | 546 | 12 |
+| `v6/sprefa-extract/src/scip_v5_rels.rs` | 571 | 551 | 20 |
 | `v6/sprefa-extract/src/seams.rs` | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/shape.rs` | 0 | 0 | 0 |
 | `v6/sprefa-extract/src/source.rs` | 0 | 0 | 0 |
-| `v6/sprefa-extract/src/types.rs` | 555 | 444 | 89 |
-| `v6/sprefa-extract/src/wire.rs` | 593 | 466 | 122 |
+| `v6/sprefa-extract/src/types.rs` | 565 | 521 | 44 |
+| `v6/sprefa-extract/src/wire.rs` | 643 | 634 | 9 |
 
 ## Not built yet
 
 | construct | where | state |
 |---|---|---|
-| interprocedural value flow | `sprefa-extract/src/types.rs` `DfEdgeKind` | TODO. Only `Direct` exists; the `Flow` union (arg to param, ret to call_res, higher-order) is commented out and marked PENDING. All 21872 edges in this report are intra-procedural. |
-| df node kind on an edge endpoint | `types.rs` `FlatFact::Edge` | TODO. Carries spans only, so `(span.start, kind)` identity does not survive the wire. Filed as `issues/df-span-identity-aliasing`. |
+| interprocedural value flow | `sprefa-extract/src/types.rs` `DfEdgeKind` | TODO. Only `Direct` exists; the `Flow` union (arg to param, ret to call_res, higher-order) is commented out and marked PENDING. All 22185 edges in this report are intra-procedural. |
+| full-extent df spans for go and kotlin | `src/lang/go.rs` / `src/lang/kotlin.rs` df_push | TODO. Both still push `len: 0`, so a .go or .kt corpus merges value nodes at one offset the way the Rust lift did before `issues/df-span-identity-aliasing`. |
+| endpoint kinds on the df arg/param arms | `types.rs` `FlatFact::DfArg` / `FlatFact::DfParam` | TODO. The edge arm names `from_kind`/`to_kind`; the aux arms name spans only, so a consumer joining an argument slot back to a node has the same merge. |
 | a file written from dl6 | fs effects | TODO. This document is written by `v6/dl/dataflow/report-extract.sh`, which queries `report_markdown` in section order. |

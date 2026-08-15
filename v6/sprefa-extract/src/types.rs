@@ -1409,11 +1409,17 @@ pub enum FlatFact {
         kind: String,
         name: Option<String>,
     },
+    /// `from_kind`/`to_kind` spell the endpoints' node kinds, so a consumer
+    /// keyed on the wire alone carries the whole `(span, kind)` node identity.
     Edge {
         family: FamilyTag,
         kind: String,
         from: SpanOut,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        from_kind: Option<String>,
         to: SpanOut,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        to_kind: Option<String>,
     },
     /// DfF parameter slot bridge: one parameter node and its typed-parameter
     /// position. The receiver/self is omitted from the position count.
