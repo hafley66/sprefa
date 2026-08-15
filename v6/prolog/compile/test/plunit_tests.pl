@@ -8842,6 +8842,10 @@ member_rel_name(MemberName) :-
     canonical_type_name(list(text), EntityName),
     atomic_list_concat([EntityName, member], '__', MemberName).
 
+:- end_tests(list_value_position).
+
+% File level, so both the access-path unit above and the acyclic guard below
+% read the planner's own answer rather than asserting one.
 explain_query_plan(Ddl, Sql, Plan) :-
     atomic_list_concat(Ddl, ';\n', DdlText),
     format(atom(Script), '~w;\nEXPLAIN QUERY PLAN ~w;\n', [DdlText, Sql]),
@@ -8853,8 +8857,6 @@ explain_query_plan(Ddl, Sql, Plan) :-
     close(Output),
     process_wait(Pid, exit(0)),
     atom_string(Plan, Text).
-
-:- end_tests(list_value_position).
 
 % A column typed option(<its own rel>) is the parent-chain shape. Both
 % companion endpoints were named '<rel>_id', which SQLite rejects at CREATE.
@@ -9005,3 +9007,53 @@ bare_node_program(
          [])).
 
 :- end_tests(acyclic_surface).
+
+% Default-on: a column typed option(<its own rel>) carries the chain guard
+% with no syntax (rulings.pl acyclic_guard_spelling).
+:- begin_tests(acyclic_guard).
+
+% FAIL-PRE-FIX: nothing walked the chain, so a companion row closing a loop
+% was stored and every later read diverged.
+test(the_guard_ddl_walks_the_companions_unique_index) :-
+    Program = prog([ col_type(node/3, node_id, int),
+                     col_type(node/3, name, text),
+                     col_type(node/3, parent, option(node)),
+                     keyed(node/3, [1]) ],
+                   []),
+    program_plan(fixture(guard_ddl, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TRIGGER "__acyclic_node__parent" BEFORE INSERT ON "node__parent" WHEN EXISTS (WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT NEW."parent_node_id" UNION SELECT g."parent_node_id" FROM "node__parent" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = NEW."node_id") BEGIN SELECT RAISE(ABORT, \'parent_cycle(node, parent)\'); END', Ddl).
+
+% The guard reaches SQLite as a keyed search, not a scan of the companion.
+test(the_guard_walk_searches_rather_than_scans) :-
+    Program = prog([ col_type(node/3, node_id, int),
+                     col_type(node/3, name, text),
+                     col_type(node/3, parent, option(node)),
+                     keyed(node/3, [1]) ],
+                   []),
+    program_plan(fixture(guard_plan, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    Walk = 'WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT 1 UNION SELECT g."parent_node_id" FROM "node__parent" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = 2',
+    explain_query_plan(Ddl, Walk, QueryPlan),
+    once(sub_atom(QueryPlan, _, _, _,
+                  'SEARCH g USING INDEX sqlite_autoindex_node__parent_1 (node_id=?)')),
+    \+ sub_atom(QueryPlan, _, _, _, 'SCAN g').
+
+% A cross-rel option forms no chain, so it mints no guard.
+test(a_cross_rel_option_mints_no_guard) :-
+    Program = prog([ col_type(person/2, person_id, int),
+                     col_type(person/2, name, text),
+                     keyed(person/2, [1]),
+                     col_type(commit/2, commit_id, int),
+                     col_type(commit/2, reviewed_by, option(person)),
+                     keyed(commit/2, [1]) ],
+                   []),
+    program_plan(fixture(no_guard, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    \+ ( member(Statement, Ddl),
+         sub_atom(Statement, 0, _, _, 'CREATE TRIGGER') ).
+
+:- end_tests(acyclic_guard).

@@ -77,6 +77,7 @@
                 normalize_relation_reference_rows/3
               ]).
 :- use_module('../0_relation_pattern', [expand_relation_values/2]).
+:- use_module('../0_option_expand', [acyclic_companion/5]).
 :- use_module('../1_host_expand', [prepare_program/5]).
 :- use_module(rulings).
 :- use_module(body).
@@ -342,7 +343,8 @@ absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrenc
         ;   absorb_set_arrival(Decls, Row, Store0, Store1, Changed),
             ( Changed == false
             -> Occurrences = More, Seq1 = Seq0
-            ;  Seq1 is Seq0 + 1,
+            ;  check_parent_chain(Decls, Row, Store1),
+               Seq1 is Seq0 + 1,
                Occurrences = [occ(st(Tick, Seq0), Row) | More] ) )
     ;   Signed = -Row,
         rel_ref(Row, Ref),
@@ -352,6 +354,29 @@ absorb_arrivals(Prog, Tick, [Signed | Rest], Store0, Seq0, Store, Seq, Occurrenc
         Seq1 = Seq0, Occurrences = More
     ),
     absorb_arrivals(Prog, Tick, Rest, Store1, Seq1, Store, Seq, More).
+
+% The emitted door's BEFORE INSERT trigger, walked in prolog: out-degree is 1
+% by the companion's key, so the chain from the arriving row is a simple path.
+check_parent_chain(Decls, Row, Store) :-
+    rel_ref(Row, Ref),
+    (   acyclic_companion(Decls, Ref, _, _, _),
+        Row =.. [_, Node, Parent],
+        parent_chain_to(Store, Ref, Node, Parent, [Node], Path)
+    ->  throw(parent_cycle(Node, path(Path)))
+    ;   true
+    ).
+
+parent_chain_to(Store, Ref, Node, Parent, Seen, Path) :-
+    (   Parent == Node
+    ->  reverse([Parent | Seen], Path)
+    ;   \+ memberchk(Parent, Seen),
+        parent_edge(Store, Ref, Parent, Grandparent),
+        parent_chain_to(Store, Ref, Node, Grandparent, [Parent | Seen], Path)
+    ).
+
+parent_edge(Store, Name/2, From, To) :-
+    Row =.. [Name, From, To],
+    memberchk(srow(Row), Store).
 
 absorb_set_arrival(_, Row, Store, Store, false) :-
     memberchk(srow(Row), Store),

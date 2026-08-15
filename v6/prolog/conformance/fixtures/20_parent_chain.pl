@@ -87,3 +87,65 @@ fixture(acyclic_over_another_rels_option_is_named,
     [ throws(unsupported_construct(
                acyclic_not_a_self_option(commit/2, reviewed_by,
                                          option(person)))) ]).
+
+% Divergence gets DETECTED (ruling acyclic_guard_spelling, "no, detect it").
+% The walk starts at the arriving row's owner and follows the companion's
+% keyed edge; reaching the start again is the cycle.
+%
+% rx lowering: expand over the parent join until none.
+fixture(a_self_loop_parent_is_rejected,
+    prog(
+        [col_type(node/3, node_id, int),
+         col_type(node/3, name, text),
+         col_type(node/3, parent, option(node)),
+         keyed(node/3, [1])],
+        []),
+    [],
+    [
+        [+node(1, "root")],
+        [+node__parent(1, 1)]
+    ],
+    [ throws(parent_cycle(1, path([1, 1]))) ]).
+
+% Two rows, each the other's parent: the second arrival closes the loop and
+% names the whole path, not just the offending endpoint.
+%
+% rx lowering: expand over the parent join until none.
+fixture(a_two_row_parent_cycle_is_rejected,
+    prog(
+        [col_type(node/3, node_id, int),
+         col_type(node/3, name, text),
+         col_type(node/3, parent, option(node)),
+         keyed(node/3, [1])],
+        []),
+    [],
+    [
+        [+node(1, "upper"), +node(2, "lower")],
+        [+node__parent(1, 2)],
+        [+node__parent(2, 1)]
+    ],
+    [ throws(parent_cycle(2, path([2, 1, 2]))) ]).
+
+% The guard reads the CURRENT chain, so retracting the edge that would close
+% the loop makes the reverse edge legal on the next tick.
+%
+% rx lowering: expand over the parent join until none.
+fixture(a_retracted_edge_frees_the_reverse_parent,
+    prog(
+        [col_type(node/3, node_id, int),
+         col_type(node/3, name, text),
+         col_type(node/3, parent, option(node)),
+         keyed(node/3, [1])],
+        []),
+    [],
+    [
+        [+node(1, "upper"), +node(2, "lower")],
+        [+node__parent(2, 1)],
+        [-node__parent(2, 1)],
+        [+node__parent(1, 2)]
+    ],
+    [
+        final(node/2, [node(1, "upper"), node(2, "lower")]),
+        final(node__parent/2, [node__parent(1, 2)]),
+        ticks(4)
+    ]).

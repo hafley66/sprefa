@@ -7,6 +7,7 @@
             option_enum_name/2,
             option_enum_decl/2,
             companion_rel_name/3,
+            acyclic_companion/5,
             scalar_element/1 ]).
 
 :- use_module(library(lists)).
@@ -161,6 +162,15 @@ renumber_key_position(DroppedPosition, Position, Renumbered) :-
 
 companion_rel_name(ParentName, Column, CompanionName) :-
     atomic_list_concat([ParentName, '__', Column], CompanionName).
+
+% Default-on: a column typed option(<its own rel>) is a parent chain and its
+% companion split rel carries the guard whether or not acyclic was spelled.
+acyclic_companion(Decls, CompanionName/2, declared_at(ParentName, Column),
+                  OwnerColumn, TargetColumn) :-
+    member(option_column(ParentName/_, Column, ParentName), Decls),
+    companion_rel_name(ParentName, Column, CompanionName),
+    atom_concat(ParentName, '_id', OwnerColumn),
+    companion_element_column(ParentName, Column, ParentName, TargetColumn).
 
 companion_rel_decls(ParentName, Column, Element,
                     [ col_type(CompanionRef, ParentIdColumn, int),

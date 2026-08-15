@@ -152,6 +152,7 @@ const ddl: readonly string[] = [
   `CREATE TABLE "node__parent" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))`,
   `CREATE TABLE "parent_name" ("__id" INTEGER PRIMARY KEY, "child_name" INTEGER NOT NULL, "parent_name" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("child_name", "parent_name"))`,
   `CREATE TEMP VIEW "__txt_parent_name" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."child_name") AS "child_name", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."parent_name") AS "parent_name", t."__refcount" AS "__refcount" FROM "parent_name" t`,
+  `CREATE TRIGGER "__acyclic_node__parent" BEFORE INSERT ON "node__parent" WHEN EXISTS (WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT NEW."parent_node_id" UNION SELECT g."parent_node_id" FROM "node__parent" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = NEW."node_id") BEGIN SELECT RAISE(ABORT, 'parent_cycle(node, parent)'); END`,
   `CREATE TEMP TABLE "__delta_node" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "node_id" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_node_sign" ON "__delta_node" ("_sign")`,
   `CREATE INDEX "__delta_node_group" ON "__delta_node" ("node_id", "name")`,

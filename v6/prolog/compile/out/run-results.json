@@ -553,6 +553,27 @@
     "final_detail": ""
   },
   {
+    "name": "a_self_loop_parent_is_rejected",
+    "bucket": "rejection",
+    "detail": "SQLITE_CONSTRAINT: parent_cycle(node, parent)",
+    "final_bucket": "no_oracle_final",
+    "final_detail": "oracle threw on this schedule too; no final state to diff"
+  },
+  {
+    "name": "a_two_row_parent_cycle_is_rejected",
+    "bucket": "rejection",
+    "detail": "SQLITE_CONSTRAINT: parent_cycle(node, parent)",
+    "final_bucket": "no_oracle_final",
+    "final_detail": "oracle threw on this schedule too; no final state to diff"
+  },
+  {
+    "name": "a_retracted_edge_frees_the_reverse_parent",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "extraction_fork_callgraph",
     "bucket": "identical",
     "detail": "",
