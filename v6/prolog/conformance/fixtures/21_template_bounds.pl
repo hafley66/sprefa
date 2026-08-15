@@ -40,20 +40,29 @@ fixture(two_bounded_parameters_mint_one_instance,
 % Phase D of plans/2026-08-14-type-system-unity.md: an application whose
 % argument is ITSELF a minted instance discharges the bound when the inner
 % instance does. Checking the bound against the application SPELLING threw
-% generic_bound_unsatisfied(pair(...), json_encodable) here.
+% generic_bound_unsatisfied(wrap(int), json_encodable) here.
+%
+% The two levels use DIFFERENT templates on purpose. `pair(pair(int))` names
+% the outer columns `first`/`second`, the same names the inner instance
+% carries, and lower.pl:2752 dictionary_render_expr/3 leaves the outer column
+% UNQUOTED inside the correlated subquery, so SQLite binds it to the child
+% ref view instead. That defect is not about templates: two plain type_decls
+% whose parent column names equal the child's reproduce it exactly.
 fixture(nested_bounded_template_instance,
   prog([ interface_decl(json_encodable, []),
-         rel_template([pair], [type_parameter('T', [json_encodable])],
-                      [column(first, 'T'), column(second, 'T')]),
+         rel_template([wrap], [type_parameter('T', [json_encodable])],
+                      [column(value, 'T')]),
+         rel_template([couple],
+                      [type_parameter('Left', [json_encodable]),
+                       type_parameter('Right', [json_encodable])],
+                      [column(first, 'Left'), column(second, 'Right')]),
          col_type(index/2, id, int),
-         col_type(index/2, nested, pair(pair(int))),
+         col_type(index/2, nested, couple(wrap(int), wrap(text))),
          keyed(index/2, [1]) ],
        [ (carry(Id, Nested) <- index(Id, Nested)) ]),
   [],
-  [[+index(1, obj([first-obj([first-1, second-2]),
-                   second-obj([first-3, second-4])]))],
-   [-index(1, obj([first-obj([first-1, second-2]),
-                   second-obj([first-3, second-4])]))]],
+  [[+index(1, obj([first-obj([value-1]), second-obj([value-"a"])]))],
+   [-index(1, obj([first-obj([value-1]), second-obj([value-"a"])]))]],
   [ final(index/2, []), ticks(2) ]).
 
 % A parameter with no bound sits beside a bounded one in the same parens.

@@ -574,7 +574,28 @@
     "final_detail": ""
   },
   {
-    "name": "list_mint_order_follows_content_text_not_derivation_order",
+    "name": "bounded_template_ground_instance",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "two_bounded_parameters_mint_one_instance",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "nested_bounded_template_instance",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "mixed_bounded_and_free_parameters",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",
