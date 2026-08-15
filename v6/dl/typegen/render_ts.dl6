@@ -69,26 +69,27 @@ type_of(Id, Text) <- leaf_type(Id, Text).
 type_of(Id, Text) <- list_type(Id, Text).
 type_of(Id, Text) <- option_type(Id, Text).
 
-# @comment-ok: the renderable-rel filter; TypeName = PascalCase of the owner rel.
-# One field line per renderable column: "  Name: Type;". Compiler-minted `__`
-# rels are filtered; TypeName is the PascalCase of the owning rel's name.
-rel field_line(type_name: text, ordinal: int, line_text: text).
-field_line(TypeName, Ordinal, LineText) <-
+# Two rels can mint one PascalCase name, so the owner rel id is the key here
+# and the name is joined on only at the wrap.
+rel field_line(rel_id: int, ordinal: int, line_text: text).
+field_line(RelId, Ordinal, LineText) <-
   type_row(_ColumnId, RelId, Ordinal, ColumnName, 'column', TypeId, _),
   type_row(RelId, _, _, RelName, 'rel', _, _),
   not(minted_rel(RelName)),
-  TypeName := replace(initcap(RelName), '_', ''),
   type_of(TypeId, Type),
   LineText := concat(['  ', ColumnName, ': ', Type, ';']).
 
 # The interface body: field lines joined in ordinal order by newline.
-rel body_text(type_name: text, body: text).
-body_text(TypeName, group_concat(LineText, '\n', Ordinal)) <-
-  field_line(TypeName, Ordinal, LineText).
+rel body_text(rel_id: int, body: text).
+body_text(RelId, group_concat(LineText, '\n', Ordinal)) <-
+  field_line(RelId, Ordinal, LineText).
 
-# The wrapped interface text; Body carries no trailing newline, so the closing
-# brace lands on its own line, byte-matching the prolog emitter.
-rel rendered_type(type_name: text, file_text: text).
-rendered_type(TypeName, FileText) <-
-  body_text(TypeName, Body),
+# Body carries no trailing newline, so the closing brace lands on its own line.
+# Assembly order is (part_ordinal, source_id): interfaces 0, generic rels 1, rels 2.
+rel rendered_type(type_name: text, part_ordinal: int, source_id: int,
+                  file_text: text).
+rendered_type(TypeName, 2, RelId, FileText) <-
+  body_text(RelId, Body),
+  type_row(RelId, _, _, RelName, 'rel', _, _),
+  TypeName := replace(initcap(RelName), '_', ''),
   FileText := concat(['export interface ', TypeName, ' {\n', Body, '\n}\n']).

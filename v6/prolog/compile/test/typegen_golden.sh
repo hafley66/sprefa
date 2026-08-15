@@ -29,6 +29,10 @@ PINNED=(
   "split_initcap_and_fold_render_pascal_case:15_string_split.pl"
 )
 
+# Constructs the current type-plane door mints for no fixture; rows checked in
+# at typegen_golden/<name>.type_rows.jsonl, one golden judged for both doors.
+SHAPES=()
+
 swipl_run() { # goal ; runs from v6/prolog so conformance/... paths resolve
   ( cd "$PROLOG_DIR" && swipl -q -l "$COMPILE_DIR/typegen_export.pl" -g "$1" -g halt 2>/dev/null )
 }
@@ -72,8 +76,8 @@ json.dump({'batch':arrs}, open('$WORK/$name.arrivals.json','w'))
         python3 -c "
 import json
 d=json.load(open('$WORK/$name.rendered.json'))
-rows=sorted(d['rows'], key=lambda r: r[0])
-open('$WORK/$name.types.ts','w').write('\n'.join(r[1] for r in rows))
+rows=sorted(d['rows'], key=lambda r: (r[1], r[2]))
+open('$WORK/$name.types.ts','w').write('\n'.join(r[3] for r in rows))
 "
         ok=1
       fi
@@ -83,6 +87,40 @@ open('$WORK/$name.types.ts','w').write('\n'.join(r[1] for r in rows))
   kill -9 "$server_pid" 2>/dev/null
   wait "$server_pid" 2>/dev/null
   [ "$ok" = 1 ]
+}
+
+render_prolog() { # name -> writes $WORK/<name>.prolog.ts from the same JSONL
+  local name="$1"
+  swipl_run "write_prolog_types('$WORK/$name.jsonl', '$WORK/$name.prolog.ts')"
+  [ -s "$WORK/$name.prolog.ts" ]
+}
+
+judge() { # name -> diffs the dl6 render and the prolog render against one golden
+  local name="$1"
+  local golden="$GOLDEN_DIR/$name.types.ts"
+  if ! render_fixture "$name"; then
+    echo "FAIL  $name: render_ts.dl6 did not run on tsv2"
+    FAILED=1
+    return
+  fi
+  if ! diff -u "$golden" "$WORK/$name.types.ts" >"$WORK/$name.diff" 2>&1; then
+    echo "FAIL  $name: dl6 rendered text differs from golden"
+    cat "$WORK/$name.diff"
+    FAILED=1
+    return
+  fi
+  if ! render_prolog "$name"; then
+    echo "FAIL  $name: write_prolog_types failed"
+    FAILED=1
+    return
+  fi
+  if ! diff -u "$golden" "$WORK/$name.prolog.ts" >"$WORK/$name.parity.diff" 2>&1; then
+    echo "FAIL  $name: prolog emitter text differs from golden"
+    cat "$WORK/$name.parity.diff"
+    FAILED=1
+    return
+  fi
+  echo "PASS  $name"
 }
 
 main() {
@@ -95,19 +133,12 @@ main() {
       FAILED=1
       continue
     fi
-    if ! render_fixture "$name"; then
-      echo "FAIL  $name: render_ts.dl6 did not run on tsv2"
-      FAILED=1
-      continue
-    fi
-    local golden="$GOLDEN_DIR/$name.types.ts"
-    if ! diff -u "$golden" "$WORK/$name.types.ts" >"$WORK/$name.diff" 2>&1; then
-      echo "FAIL  $name: rendered text differs from golden"
-      cat "$WORK/$name.diff"
-      FAILED=1
-    else
-      echo "PASS  $name"
-    fi
+    judge "$name"
+  done
+
+  for name in ${SHAPES[@]+"${SHAPES[@]}"}; do
+    cp "$GOLDEN_DIR/$name.type_rows.jsonl" "$WORK/$name.jsonl"
+    judge "$name"
   done
 
   if [ "$FAILED" = 1 ]; then
