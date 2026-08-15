@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "carry": {
+      "additionalProperties":false,
+      "properties": {
+        "extent": {"$ref":"#/$defs/__gen__span_int_text_e5126de851365aff"},
+        "id": {"type":"integer"}
+      },
+      "required": ["id", "extent" ],
+      "type":"object"
+    },
+    "marker": {
+      "additionalProperties":false,
+      "properties": {
+        "extent": {"$ref":"#/$defs/__gen__span_int_text_e5126de851365aff"},
+        "id": {"type":"integer"}
+      },
+      "required": ["id", "extent" ],
+      "type":"object"
+    }
+  },
+  "$id":"two_bounded_parameters_mint_one_instance#fab8dbc66384e671",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "carry": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "nested": {"$ref":"#/$defs/__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e"}
+      },
+      "required": ["id", "nested" ],
+      "type":"object"
+    },
+    "index": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "nested": {"$ref":"#/$defs/__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e"}
+      },
+      "required": ["id", "nested" ],
+      "type":"object"
+    }
+  },
+  "$id":"nested_bounded_template_instance#416c169e536a325d",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__gen__span_int_text_e5126de851365aff":{"add":[[5,"head"]],"del":[]},"carry":{"add":[[1,{"label":"head","start":5}]],"del":[]},"marker":{"add":[[1,{"label":"head","start":5}]],"del":[]}}}
+{"tick":2,"deltas":{"carry":{"add":[],"del":[[1,{"label":"head","start":5}]]},"marker":{"add":[],"del":[[1,{"label":"head","start":5}]]}}}

@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__gen__couple_wrap_int_wrap_text_fea7bde20e4f244e":{"add":[[{"value":1},{"value":"a"}]],"del":[]},"__gen__wrap_int_74568235536ee9d4":{"add":[[1]],"del":[]},"__gen__wrap_text_2bd6acc46ade78fd":{"add":[["a"]],"del":[]},"carry":{"add":[[1,{"first":{"value":1},"second":{"value":"a"}}]],"del":[]},"index":{"add":[[1,{"first":{"value":1},"second":{"value":"a"}}]],"del":[]}}}
+{"tick":2,"deltas":{"carry":{"add":[],"del":[[1,{"first":{"value":1},"second":{"value":"a"}}]]},"index":{"add":[],"del":[[1,{"first":{"value":1},"second":{"value":"a"}}]]}}}
