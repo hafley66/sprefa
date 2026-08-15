@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__gen__pair_int_8b7ec0fa0e1f9d69":{"add":[[10,20]],"del":[]},"carry":{"add":[[1,{"first":10,"second":20}]],"del":[]},"edge":{"add":[[1,{"first":10,"second":20}]],"del":[]}}}
+{"tick":2,"deltas":{"carry":{"add":[],"del":[[1,{"first":10,"second":20}]]},"edge":{"add":[],"del":[[1,{"first":10,"second":20}]]}}}

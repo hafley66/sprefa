@@ -19,6 +19,7 @@ bool_identity_comparison_filters	clean	byte-clean
 bool_literals_round_trip	clean	byte-clean
 bool_rejects_text_ingress	unsupported	type_arrival_shape_mismatch(flag/1,value,bool,field_not_bool(true))
 bool_relation_negation_is_two_valued	clean	byte-clean
+bounded_template_ground_instance	clean	byte-clean
 braces_in_head_position	clean	byte-clean
 braces_literal_canonicalizes	clean	byte-clean
 callgraph_derivation_over_extraction	clean	byte-clean
@@ -224,6 +225,7 @@ match_enum_nonexhaustive_is_refused	unsupported	match_nonexhaustive(body,redirec
 merge_batches_per_tick	clean	byte-clean
 merge_never_retracts	clean	byte-clean
 merge_policy	clean	byte-clean
+mixed_bounded_and_free_parameters	clean	byte-clean
 module_path_and_option_column_coexist	clean	byte-clean
 module_path_in_body_reads_the_flat_rel	clean	byte-clean
 module_path_in_head_resolves_and_contributes	clean	byte-clean
@@ -235,6 +237,7 @@ native_ts_query_term	clean	byte-clean
 negated_identity_guard_flips_to_complement	clean	byte-clean
 negated_ordered_guard_flips_to_complement	clean	byte-clean
 nested_body_atom_reads_every_partition	clean	byte-clean
+nested_bounded_template_instance	clean	byte-clean
 nested_child_and_an_option_column_coexist	clean	byte-clean
 nested_child_carries_the_parent_reference	clean	byte-clean
 nested_head_without_a_parent_atom_refuses	unsupported	nested_parent_unbound(orchard__tree)
@@ -405,14 +408,17 @@ tightened_baseline_catches_regrowth	clean	byte-clean
 trigger_marker_is_what_stops_backlog_replay	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 trim_charset_strips_both_ends	clean	byte-clean
 trim_default_strips_only_space	clean	byte-clean
+two_bounded_parameters_mint_one_instance	clean	byte-clean
 two_pins_dedup_to_one_demand_row	clean	byte-clean
 two_producers_share_one_interned_list_id	clean	byte-clean
 typed_int_contradicts_text_witness	unsupported	type_arrival_shape_mismatch(typed_conflict/1,value,int,field_not_int(text_value))
 typed_int_without_literal_witness	clean	byte-clean
+unknown_bound_interface_is_named	unsupported	interface_unknown(missing_capability)
 unmarked_chain_replays_to_late_subscriber	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 unmarked_edge_replays_backlog	clean	byte-clean
 unmarked_first_stage_refires_on_late_watch	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_)),stars_of(_,_)))
 unordered_program_level_fold_reaches_three_links	clean	byte-clean
+unsatisfied_bound_names_the_path	unsupported	generic_bound_unsatisfied(file,addressable,path([template(box),application(box(file)),argument(1,file)]))
 unsubscribe_is_a_named_unsupported	unsupported	lifecycle_arm(unsubscribe)
 unwrap_aggregate_and_interpolation	clean	byte-clean
 unwrap_below_budget_silent	clean	byte-clean

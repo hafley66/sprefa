@@ -1,0 +1,5 @@
+interface json_encodable.
+rel pair(T: json_encodable)(first: T, second: T).
+rel edge(id: int, endpoints: pair(int)) key(1).
+
+carry(Id, Endpoints) <- edge(Id, Endpoints).

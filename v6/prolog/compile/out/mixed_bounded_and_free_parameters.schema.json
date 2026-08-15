@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "carry": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "slot": {"$ref":"#/$defs/__gen__entry_text_int_a6c3f6c7e60e6b95"}
+      },
+      "required": ["id", "slot" ],
+      "type":"object"
+    },
+    "cell": {
+      "additionalProperties":false,
+      "properties": {
+        "id": {"type":"integer"},
+        "slot": {"$ref":"#/$defs/__gen__entry_text_int_a6c3f6c7e60e6b95"}
+      },
+      "required": ["id", "slot" ],
+      "type":"object"
+    }
+  },
+  "$id":"mixed_bounded_and_free_parameters#808d28c868fbcca1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

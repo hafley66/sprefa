@@ -1,0 +1,24 @@
+{
+  "$defs": {
+    "carry": {
+      "additionalProperties":false,
+      "properties": {
+        "endpoints": {"$ref":"#/$defs/__gen__pair_int_8b7ec0fa0e1f9d69"},
+        "id": {"type":"integer"}
+      },
+      "required": ["id", "endpoints" ],
+      "type":"object"
+    },
+    "edge": {
+      "additionalProperties":false,
+      "properties": {
+        "endpoints": {"$ref":"#/$defs/__gen__pair_int_8b7ec0fa0e1f9d69"},
+        "id": {"type":"integer"}
+      },
+      "required": ["id", "endpoints" ],
+      "type":"object"
+    }
+  },
+  "$id":"bounded_template_ground_instance#f62bd912949b35f6",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

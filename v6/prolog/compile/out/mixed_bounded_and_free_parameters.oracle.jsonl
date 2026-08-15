@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"__gen__entry_text_int_a6c3f6c7e60e6b95":{"add":[["alpha",7]],"del":[]},"carry":{"add":[[1,{"key":"alpha","value":7}]],"del":[]},"cell":{"add":[[1,{"key":"alpha","value":7}]],"del":[]}}}
+{"tick":2,"deltas":{"carry":{"add":[],"del":[[1,{"key":"alpha","value":7}]]},"cell":{"add":[],"del":[[1,{"key":"alpha","value":7}]]}}}
