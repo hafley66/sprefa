@@ -22,6 +22,7 @@ import { concatMap, forkJoin, map, of, type Observable } from "rxjs";
 import { IncrementalRuntime } from "../runtime/1_incremental.ts";
 import { multiset_diff } from "../runtime/diff.ts";
 import { select_rows } from "../runtime/rows.ts";
+import { list_at_scalar_seam } from "../runtime/boundary.ts";
 import type {
   IArrivalBatch,
   IArrivalRow,
@@ -63,7 +64,7 @@ function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
     if (typeof value === "boolean") return BigInt(value ? 1 : 0);
     if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
     if (typeof value === "string") return value;
-    throw new Error("a list value reached a SQL parameter");
+    throw list_at_scalar_seam("sql_parameter");
   });
 }
 
