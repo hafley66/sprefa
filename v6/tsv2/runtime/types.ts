@@ -220,6 +220,9 @@ export interface IExpandSeedPlan {
   readonly hop_ba_sql: string;
   readonly absorb_a_sql: string;
   readonly absorb_b_sql: string;
+  /** lower.pl:fixpoint_round_cap/1. Hops, not rows: past it the head has no
+   *  finite least model and the tick aborts with a DivergingMeasureRecursion. */
+  readonly round_cap: number;
 }
 
 /** Head maintenance with no beside-table: head-row presence IS the truth

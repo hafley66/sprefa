@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "link": {
+      "additionalProperties":false,
+      "properties": {"from_node": {"type":"integer"},"to_node": {"type":"integer"}},
+      "required": ["from_node", "to_node" ],
+      "type":"object"
+    },
+    "reachable": {
+      "additionalProperties":false,
+      "properties": {"from_node": {"type":"integer"},"to_node": {"type":"integer"}},
+      "required": ["from_node", "to_node" ],
+      "type":"object"
+    }
+  },
+  "$id":"bounded_measure_recursion_still_closes#c60aeccb5e1e7c57",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

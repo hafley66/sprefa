@@ -1338,7 +1338,7 @@ catalog_one_level_stmt_planes(HeadRef, RelId, RelHId, ModuleId, Columns,
         RefPairs = [refcount-RefCountTable, refcount_staging-NewTable],
         (   RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _,
                                       ExpandPlan, DredPlan, _, _),
-            ExpandPlan = expandplan(_, _, _, _, _, _, _)
+            ExpandPlan = expandplan(_, _, _, _, _, _, _, _)
         ->  expand_table_name(HeadRef, a, TableA),
             expand_table_name(HeadRef, b, TableB),
             ExpandPairs = [expand-TableA, expand-TableB],
@@ -4540,11 +4540,17 @@ recursive_ref_count_seed_sql(Mode, RelPlans, HeadRef, Rules, QuotedRefCountTable
             HeadColumnsSql, RecursiveUnionSql, HeadColumnsSql,
             QuotedHeadTable]).
 
+% Bounds HOPS, not rows: a closure is bounded by graph depth, a growing
+% measure passes any depth. Both doors read this number out of the plan.
+fixpoint_round_cap(1000).
+
 % rx `expand` spelling of the recursive seed: same fixpoint as the CTE, and
 % the refCount table's WITHOUT ROWID key keeps downstream scan order identical.
 level_expand_plan(Mode, RelPlans, HeadRef, Rules,
                   expandplan(ClearASql, ClearBSql, SeedSqls,
-                             HopABSql, HopBASql, AbsorbASql, AbsorbBSql)) :-
+                             HopABSql, HopBASql, AbsorbASql, AbsorbBSql,
+                             RoundCap)) :-
+    fixpoint_round_cap(RoundCap),
     partition(rule_reads_head(HeadRef), Rules, RecursiveRules, BaseRules),
     expand_table_name(HeadRef, a, TableA),
     expand_table_name(HeadRef, b, TableB),
@@ -6146,7 +6152,7 @@ ref_count_ddl(_, _, levelstmt(_, _, _, _, none, _, _), []) :- !.
 ref_count_ddl(Mode, RelPlans, levelstmt(HeadRef, _, _, _, RefCountSql, _, _), DdlList) :-
     ref_count_head_ddl(Mode, RelPlans, HeadRef, [Ddl, NewDdl, ZeroIndexDdl]),
     ( RefCountSql = refcountsql(_, _, _, _, _, _, _, _, _, _, _, ExpandPlan, DredPlan, _, _),
-      ExpandPlan = expandplan(_, _, _, _, _, _, _)
+      ExpandPlan = expandplan(_, _, _, _, _, _, _, _)
     -> expand_wave_ddl(Mode, RelPlans, HeadRef, WaveDdl),
        dred_wave_ddl(Mode, RelPlans, HeadRef, DredPlan, DredDdl),
        append([[Ddl, NewDdl, ZeroIndexDdl], WaveDdl, DredDdl], DdlList)

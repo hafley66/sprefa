@@ -74,11 +74,13 @@ impl ScalarSeam {
     }
 }
 
-// The two ways a `list` column's value can be wrong at a runtime boundary.
+// The two ways a `list` column's value can be wrong at a runtime boundary,
+// plus the recursive head that has no finite least model to reach.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BoundaryError {
     ListAtScalarSeam(ScalarSeam),
     ListColumnNotAnArray { text: String, detail: String },
+    DivergingMeasureRecursion { rel: String, round_cap: u64 },
 }
 
 impl std::fmt::Display for BoundaryError {
@@ -91,6 +93,10 @@ impl std::fmt::Display for BoundaryError {
                 f,
                 "list column crossed SQLite with non-array text {text}: {detail}"
             ),
+            // Same bytes the ts door raises (1_incremental.ts:bounded_wave).
+            BoundaryError::DivergingMeasureRecursion { rel, round_cap } => {
+                write!(f, "diverging_measure_recursion({rel}, {round_cap})")
+            }
         }
     }
 }
@@ -287,6 +293,8 @@ pub struct ExpandPlan {
     pub hop_ba_sql: String,
     pub absorb_a_sql: String,
     pub absorb_b_sql: String,
+    // lower.pl:fixpoint_round_cap/1. Hops, not rows.
+    pub round_cap: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

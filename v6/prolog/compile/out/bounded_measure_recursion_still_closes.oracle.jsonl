@@ -1,0 +1,2 @@
+{"tick":1,"deltas":{"link":{"add":[[1,2]],"del":[]},"reachable":{"add":[[1,2]],"del":[]}}}
+{"tick":2,"deltas":{"link":{"add":[[2,3]],"del":[]},"reachable":{"add":[[1,3],[2,3]],"del":[]}}}

@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "counter": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    },
+    "seed_number": {
+      "additionalProperties":false,
+      "properties": {"value": {"type":"integer"}},
+      "required": ["value" ],
+      "type":"object"
+    }
+  },
+  "$id":"diverging_measure_recursion_is_bounded_and_loud#00130a9f1279c618",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

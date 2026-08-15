@@ -296,11 +296,12 @@ refcount_fields(refcountsql(ClearSql, SeedSql, UpdateSql, StageRetractSql,
 
 expand_field(none, null) :- !.
 expand_field(expandplan(ClearASql, ClearBSql, SeedSqls, HopABSql, HopBASql,
-                        AbsorbASql, AbsorbBSql),
+                        AbsorbASql, AbsorbBSql, RoundCap),
              Dict) :-
     Dict = _{ clear_a_sql: ClearASql, clear_b_sql: ClearBSql,
               seed_sqls: SeedSqls, hop_ab_sql: HopABSql, hop_ba_sql: HopBASql,
-              absorb_a_sql: AbsorbASql, absorb_b_sql: AbsorbBSql }.
+              absorb_a_sql: AbsorbASql, absorb_b_sql: AbsorbBSql,
+              round_cap: RoundCap }.
 
 dred_field(none, null) :- !.
 dred_field(dredplan(ClearPing, ClearPong, ClearCone, AssertSeeds,

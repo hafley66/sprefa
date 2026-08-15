@@ -630,6 +630,20 @@
     "final_detail": ""
   },
   {
+    "name": "diverging_measure_recursion_is_bounded_and_loud",
+    "bucket": "rejection",
+    "detail": "diverging_measure_recursion(counter, 1000)",
+    "final_bucket": "no_oracle_final",
+    "final_detail": "oracle threw on this schedule too; no final state to diff"
+  },
+  {
+    "name": "bounded_measure_recursion_still_closes",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "extraction_fork_callgraph",
     "bucket": "identical",
     "detail": "",

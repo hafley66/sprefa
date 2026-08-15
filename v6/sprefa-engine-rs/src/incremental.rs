@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use crate::sql::{result_rows, SqlRunner, SqliteSeam};
 use crate::types::{
-    Arrival, ArrivalSign, BoundaryResult, IncrementalRelationPlan, RelationKind, Row, ScalarSeam,
-    ScalarValue, SqlStatement, Value,
+    Arrival, ArrivalSign, BoundaryError, BoundaryResult, IncrementalRelationPlan, RelationKind, Row,
+    ScalarSeam, ScalarValue, SqlStatement, Value,
 };
 
 #[derive(Clone)]
@@ -980,7 +980,7 @@ pub fn apply_levels_before_edges(
                 .filter(|r| r.rel == statement.head_rel)
                 .map(|r| (r.frontier_table_name.clone(), 2))
                 .collect();
-            reconcile_ref_count_statement(seam, statement, relations, &copies);
+            reconcile_ref_count_statement(seam, statement, relations, &copies)?;
         } else {
             apply_level_statement(seam, statement, relations, false, &mut next_sequence)?;
         }
@@ -1267,18 +1267,18 @@ pub fn recompute_levels_before_edges(
     relations: &[IncrementalRelationPlan],
     reconcile_every_tick: bool,
     arrival_count: usize,
-) {
+) -> BoundaryResult<()> {
     if arrival_count == 0 || relations.is_empty() {
-        return;
+        return Ok(());
     }
     let ref_count_statements: Vec<&crate::types::IncrementalLevelStatement> = statements
         .iter()
         .filter(|statement| statement.aggregate_sql.is_none())
         .collect();
     if ref_count_statements.is_empty() {
-        return;
+        return Ok(());
     }
-    let reconcile = |seam: &SqliteSeam| {
+    let reconcile = |seam: &SqliteSeam| -> BoundaryResult<()> {
         for statement in &ref_count_statements {
             let relation = relations
                 .iter()
@@ -1289,17 +1289,18 @@ pub fn recompute_levels_before_edges(
                 statement,
                 relations,
                 &[(relation.frontier_table_name.clone(), 2)],
-            );
+            )?;
         }
+        Ok(())
     };
     if reconcile_every_tick {
-        reconcile(seam);
-        return;
+        return reconcile(seam);
     }
     let guard = retraction_guard_sql(relations);
     if seam.scalar(&guard).expect("retraction guard read failed") == 1 {
-        reconcile(seam);
+        return reconcile(seam);
     }
+    Ok(())
 }
 
 fn retraction_guard_sql(relations: &[IncrementalRelationPlan]) -> String {
@@ -1330,7 +1331,7 @@ fn reconcile_ref_count_statement(
     statement: &crate::types::IncrementalLevelStatement,
     relations: &[IncrementalRelationPlan],
     frontier_copies: &[(String, i64)],
-) {
+) -> BoundaryResult<()> {
     let support_sql = statement
         .support_sql
         .as_ref()
@@ -1376,7 +1377,7 @@ fn reconcile_ref_count_statement(
         args: vec![],
     });
 
-    if statement.expand_sql.is_none() {
+    let Some(expand) = &statement.expand_sql else {
         let mut head = Vec::new();
         head.push(SqlStatement {
             sql: clear.clone(),
@@ -1384,32 +1385,65 @@ fn reconcile_ref_count_statement(
         });
         head.extend(to_statements(&support_interns));
         head.push(SqlStatement {
-            sql: statement.support_sql.as_ref().unwrap()[1].clone(),
+            sql: support_sql[1].clone(),
             args: vec![],
         });
         head.extend(tail);
         seam.batch(&head).expect("reconcile batch failed");
-        return;
-    }
-    // The expand (wavefront) path joins in a later widening step. Until then a
-    // plain support close keeps the plan correct for additive deps.
-    let mut head = Vec::new();
-    head.push(SqlStatement {
+        return Ok(());
+    };
+    // Port of the rx expand wavefront (1_incremental.ts:610). The CTE seed
+    // reaches the same fixpoint inside SQLite, where no round is countable.
+    let mut seed_wave = vec![SqlStatement {
         sql: clear.clone(),
         args: vec![],
-    });
-    head.extend(to_statements(&support_interns));
-    head.push(SqlStatement {
-        sql: statement.support_sql.as_ref().unwrap()[1].clone(),
+    }];
+    seed_wave.extend(to_statements(&support_interns));
+    seed_wave.extend(to_statements(&[
+        expand.clear_a_sql.clone(),
+        expand.clear_b_sql.clone(),
+    ]));
+    seed_wave.extend(to_statements(&expand.seed_sqls));
+    seed_wave.push(SqlStatement {
+        sql: expand.absorb_a_sql.clone(),
         args: vec![],
     });
-    head.extend(to_statements(&tail_texts));
-    head.push(SqlStatement {
+    seam.batch(&seed_wave).expect("expand seed batch failed");
+    let round = |fills_b: bool| -> i64 {
+        let texts = if fills_b {
+            [&expand.clear_b_sql, &expand.hop_ab_sql, &expand.absorb_b_sql]
+        } else {
+            [&expand.clear_a_sql, &expand.hop_ba_sql, &expand.absorb_a_sql]
+        };
+        let statements: Vec<SqlStatement> = texts
+            .iter()
+            .map(|text| SqlStatement {
+                sql: (*text).clone(),
+                args: vec![],
+            })
+            .collect();
+        seam.batch(&statements).expect("expand hop batch failed")[1].rows_affected
+    };
+    let mut fills_b = true;
+    for index in 0..expand.round_cap {
+        if round(fills_b) == 0 {
+            break;
+        }
+        if index + 1 >= expand.round_cap {
+            return Err(BoundaryError::DivergingMeasureRecursion {
+                rel: statement.head_rel.clone(),
+                round_cap: expand.round_cap,
+            });
+        }
+        fills_b = !fills_b;
+    }
+    let mut close = to_statements(&tail_texts);
+    close.push(SqlStatement {
         sql: insert_new.clone(),
         args: vec![],
     });
-    seam.batch(&head)
-        .expect("reconcile expand-placeholder failed");
+    seam.batch(&close).expect("expand close batch failed");
+    Ok(())
 }
 
 // Port of recompute_levels_after_edges (1_incremental.ts:1243). Guarded by the
@@ -1451,7 +1485,7 @@ pub fn recompute_levels_after_edges(
                 )?;
                 continue;
             }
-            reconcile_ref_count_statement(seam, statement, relations, &[]);
+            reconcile_ref_count_statement(seam, statement, relations, &[])?;
         }
         Ok(())
     };
