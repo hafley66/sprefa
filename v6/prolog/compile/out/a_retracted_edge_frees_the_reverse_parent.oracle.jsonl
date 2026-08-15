@@ -1,0 +1,4 @@
+{"tick":1,"deltas":{"node":{"add":[[1,"upper"],[2,"lower"]],"del":[]}}}
+{"tick":2,"deltas":{"node__parent":{"add":[[2,1]],"del":[]}}}
+{"tick":3,"deltas":{"node__parent":{"add":[],"del":[[2,1]]}}}
+{"tick":4,"deltas":{"node__parent":{"add":[[1,2]],"del":[]}}}

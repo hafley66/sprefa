@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "node": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"node_id": {"type":"integer"}},
+      "required": ["node_id", "name" ],
+      "type":"object"
+    },
+    "parent_name": {
+      "additionalProperties":false,
+      "properties": {"child_name": {"type":"string"},"parent_name": {"type":"string"}},
+      "required": ["child_name", "parent_name" ],
+      "type":"object"
+    }
+  },
+  "$id":"self_ref_option_chain_reads_through_the_companion#0123a339ab4dbea9",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

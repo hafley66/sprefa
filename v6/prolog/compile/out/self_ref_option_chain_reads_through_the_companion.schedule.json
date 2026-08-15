@@ -1,0 +1,1 @@
+[[{"rel":"node","sign":"add","row":[1,"root"]},{"rel":"node","sign":"add","row":[2,"mid"]},{"rel":"node","sign":"add","row":[3,"leaf"]}],[{"rel":"node__parent","sign":"add","row":[2,1]}],[{"rel":"node__parent","sign":"add","row":[3,2]}],[{"rel":"node__parent","sign":"del","row":[3,2]}]]

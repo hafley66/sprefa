@@ -45,6 +45,7 @@
                 relplan_origins/2 ]).
 :- use_module('../../0_dot_expand', [ expand_dot_in_context/3 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
+:- use_module('../../0_option_expand', [ expand_option_program/2 ]).
 :- use_module('../../0_generic_expand',
               [ expand_generic_program/2, expand_generic_program_raw/2,
                 canonical_type_name/2, generic_type_ir/2 ]).
@@ -8841,6 +8842,10 @@ member_rel_name(MemberName) :-
     canonical_type_name(list(text), EntityName),
     atomic_list_concat([EntityName, member], '__', MemberName).
 
+:- end_tests(list_value_position).
+
+% File level, so both the access-path unit above and the acyclic guard below
+% read the planner's own answer rather than asserting one.
 explain_query_plan(Ddl, Sql, Plan) :-
     atomic_list_concat(Ddl, ';\n', DdlText),
     format(atom(Script), '~w;\nEXPLAIN QUERY PLAN ~w;\n', [DdlText, Sql]),
@@ -8853,4 +8858,202 @@ explain_query_plan(Ddl, Sql, Plan) :-
     process_wait(Pid, exit(0)),
     atom_string(Plan, Text).
 
-:- end_tests(list_value_position).
+% A column typed option(<its own rel>) is the parent-chain shape. Both
+% companion endpoints were named '<rel>_id', which SQLite rejects at CREATE.
+:- begin_tests(self_ref_option_column).
+
+self_ref_node_program(
+    prog([ col_type(node/3, node_id, int),
+           col_type(node/3, name, text),
+           col_type(node/3, parent, option(node)),
+           keyed(node/3, [1]) ],
+         [])).
+
+% FAIL-PRE-FIX: companion_rel_decls/4 concatenated '_id' onto the owner rel
+% and onto the element rel, one atom when the element IS the owner.
+test(a_self_typed_option_names_two_distinct_endpoint_columns) :-
+    self_ref_node_program(Program),
+    expand_option_program(Program, prog(Decls, _)),
+    findall(ColumnName,
+            member(col_type(node__parent/2, ColumnName, int), Decls),
+            ColumnNames),
+    ColumnNames == [node_id, parent_node_id].
+
+test(a_self_typed_option_emits_a_creatable_companion_table) :-
+    self_ref_node_program(Program),
+    program_plan(fixture(self_ref_option, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TABLE "node__parent" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))', Ddl).
+
+% The qualifying rule fires ONLY when the element rel is the owner rel; every
+% other option(<rel>) column keeps the element-named endpoint.
+test(a_cross_rel_option_keeps_its_element_named_endpoint) :-
+    Program = prog([ col_type(person/2, person_id, int),
+                     col_type(person/2, name, text),
+                     keyed(person/2, [1]),
+                     col_type(commit/2, commit_id, int),
+                     col_type(commit/2, reviewed_by, option(person)),
+                     keyed(commit/2, [1]) ],
+                   []),
+    expand_option_program(Program, prog(Decls, _)),
+    findall(ColumnName,
+            member(col_type(commit__reviewed_by/2, ColumnName, int), Decls),
+            ColumnNames),
+    ColumnNames == [commit_id, person_id].
+
+% The degenerate spelling: the column name matches the rel name, so the
+% qualified endpoint is 'node_node_id' and still differs from the owner.
+test(a_self_typed_option_named_after_its_rel_still_disambiguates) :-
+    Program = prog([ col_type(node/3, node_id, int),
+                     col_type(node/3, name, text),
+                     col_type(node/3, node, option(node)),
+                     keyed(node/3, [1]) ],
+                   []),
+    expand_option_program(Program, prog(Decls, _)),
+    findall(ColumnName,
+            member(col_type(node__node/2, ColumnName, int), Decls),
+            ColumnNames),
+    ColumnNames == [node_id, node_node_id].
+
+:- end_tests(self_ref_option_column).
+
+% acyclic(option(<own rel>)) is the explicit spelling of the parent-chain
+% guard (rulings.pl acyclic_guard_spelling). Storage is the inner option.
+:- begin_tests(acyclic_surface).
+
+% The parser has no acyclic clause; type_base's compound arm carries it.
+test(the_surface_parses_as_an_ordinary_compound) :-
+    string_codes(
+        "rel node(node_id: int, name: text, parent: acyclic(option(node))) key(1).\n",
+        Codes),
+    parse_dl(Codes, prog(Decls, _), _, []),
+    memberchk(col_type(node/3, parent, acyclic(option(node))), Decls).
+
+test(the_surface_round_trips_byte_identically) :-
+    Text = "rel node(node_id: int, name: text, parent: acyclic(option(node))) key(1).\n",
+    string_codes(Text, Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    print_dl_program(Program, Bindings, Printed),
+    atom_string(Printed, Text),
+    atom_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, RoundTripped, _, []),
+    Program =@= RoundTripped.
+
+% FAIL-PRE-FIX: the wrapper reached lower.pl untouched and stopped as
+% column_type_unknown(acyclic(option(node))).
+test(the_wrapper_strips_to_the_inner_option_and_leaves_a_marker) :-
+    bare_node_program(BareProgram),
+    acyclic_node_program(Program),
+    expand_option_program(Program, prog(Decls, _)),
+    expand_option_program(BareProgram, prog(BareDecls, _)),
+    memberchk(acyclic_column(node/3, parent), Decls),
+    selectchk(acyclic_column(node/3, parent), Decls, WithoutMarker),
+    WithoutMarker == BareDecls.
+
+test(the_explicit_spelling_emits_the_bare_spellings_companion_table) :-
+    acyclic_node_program(Program),
+    program_plan(fixture(acyclic_surface, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TABLE "node__parent" ("__id" INTEGER PRIMARY KEY, "node_id" INTEGER NOT NULL, "parent_node_id" INTEGER NOT NULL, UNIQUE ("node_id"))', Ddl).
+
+% A chain to walk is what the guard needs, so acyclic over anything that is
+% not an option of the DECLARING rel is named rather than silently dropped.
+test(acyclic_over_another_rels_option_is_named,
+     [throws(unsupported_construct(
+               acyclic_not_a_self_option(commit/2, reviewed_by,
+                                         option(person))))]) :-
+    Program = prog([ col_type(person/2, person_id, int),
+                     col_type(person/2, name, text),
+                     keyed(person/2, [1]),
+                     col_type(commit/2, commit_id, int),
+                     col_type(commit/2, reviewed_by, acyclic(option(person))),
+                     keyed(commit/2, [1]) ],
+                   []),
+    expand_option_program(Program, _).
+
+test(acyclic_over_a_scalar_is_named,
+     [throws(unsupported_construct(
+               acyclic_not_a_self_option(node/2, name, text)))]) :-
+    Program = prog([ col_type(node/2, node_id, int),
+                     col_type(node/2, name, acyclic(text)),
+                     keyed(node/2, [1]) ],
+                   []),
+    expand_option_program(Program, _).
+
+test(acyclic_over_a_bare_self_rel_is_named,
+     [throws(unsupported_construct(
+               acyclic_not_a_self_option(node/3, parent, node)))]) :-
+    Program = prog([ col_type(node/3, node_id, int),
+                     col_type(node/3, name, text),
+                     col_type(node/3, parent, acyclic(node)),
+                     keyed(node/3, [1]) ],
+                   []),
+    expand_option_program(Program, _).
+
+acyclic_node_program(
+    prog([ col_type(node/3, node_id, int),
+           col_type(node/3, name, text),
+           col_type(node/3, parent, acyclic(option(node))),
+           keyed(node/3, [1]) ],
+         [])).
+
+bare_node_program(
+    prog([ col_type(node/3, node_id, int),
+           col_type(node/3, name, text),
+           col_type(node/3, parent, option(node)),
+           keyed(node/3, [1]) ],
+         [])).
+
+:- end_tests(acyclic_surface).
+
+% Default-on: a column typed option(<its own rel>) carries the chain guard
+% with no syntax (rulings.pl acyclic_guard_spelling).
+:- begin_tests(acyclic_guard).
+
+% FAIL-PRE-FIX: nothing walked the chain, so a companion row closing a loop
+% was stored and every later read diverged.
+test(the_guard_ddl_walks_the_companions_unique_index) :-
+    Program = prog([ col_type(node/3, node_id, int),
+                     col_type(node/3, name, text),
+                     col_type(node/3, parent, option(node)),
+                     keyed(node/3, [1]) ],
+                   []),
+    program_plan(fixture(guard_ddl, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    memberchk('CREATE TRIGGER "__acyclic_node__parent" BEFORE INSERT ON "node__parent" WHEN EXISTS (WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT NEW."parent_node_id" UNION SELECT g."parent_node_id" FROM "node__parent" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = NEW."node_id") BEGIN SELECT RAISE(ABORT, \'parent_cycle(node, parent)\'); END', Ddl).
+
+% The guard reaches SQLite as a keyed search, not a scan of the companion.
+test(the_guard_walk_searches_rather_than_scans) :-
+    Program = prog([ col_type(node/3, node_id, int),
+                     col_type(node/3, name, text),
+                     col_type(node/3, parent, option(node)),
+                     keyed(node/3, [1]) ],
+                   []),
+    program_plan(fixture(guard_plan, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    Walk = 'WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT 1 UNION SELECT g."parent_node_id" FROM "node__parent" g JOIN "__parent_chain" ON g."node_id" = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = 2',
+    explain_query_plan(Ddl, Walk, QueryPlan),
+    once(sub_atom(QueryPlan, _, _, _,
+                  'SEARCH g USING INDEX sqlite_autoindex_node__parent_1 (node_id=?)')),
+    \+ sub_atom(QueryPlan, _, _, _, 'SCAN g').
+
+% A cross-rel option forms no chain, so it mints no guard.
+test(a_cross_rel_option_mints_no_guard) :-
+    Program = prog([ col_type(person/2, person_id, int),
+                     col_type(person/2, name, text),
+                     keyed(person/2, [1]),
+                     col_type(commit/2, commit_id, int),
+                     col_type(commit/2, reviewed_by, option(person)),
+                     keyed(commit/2, [1]) ],
+                   []),
+    program_plan(fixture(no_guard, Program, [], [], [])-[],
+                 [intern(direct)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    \+ ( member(Statement, Ddl),
+         sub_atom(Statement, 0, _, _, 'CREATE TRIGGER') ).
+
+:- end_tests(acyclic_guard).

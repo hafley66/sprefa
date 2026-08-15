@@ -1,0 +1,18 @@
+{
+  "$defs": {
+    "node": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"node_id": {"type":"integer"}},
+      "required": ["node_id", "name" ],
+      "type":"object"
+    },
+    "parent_name": {
+      "additionalProperties":false,
+      "properties": {"child_name": {"type":"string"},"parent_name": {"type":"string"}},
+      "required": ["child_name", "parent_name" ],
+      "type":"object"
+    }
+  },
+  "$id":"acyclic_option_chain_matches_the_bare_spelling#184a3326464f608c",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

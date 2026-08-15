@@ -1,3 +1,8 @@
+a_retracted_edge_frees_the_reverse_parent	clean	byte-clean
+a_self_loop_parent_is_rejected	compiled	no oracle tick log
+a_two_row_parent_cycle_is_rejected	compiled	no oracle tick log
+acyclic_option_chain_matches_the_bare_spelling	clean	byte-clean
+acyclic_over_another_rels_option_is_named	unsupported	acyclic_not_a_self_option(commit/2,reviewed_by,option(person))
 aggregate_count_min_max_track_arrivals_and_retraction	clean	byte-clean
 aggregate_in_edge_head_rejected	unsupported	aggregate_in_edge_head(total/1)
 aggregate_min_recomputes_when_the_minimum_is_retracted	clean	byte-clean
@@ -296,7 +301,7 @@ quote_in_literal_doubles_the_escape	clean	byte-clean
 range_join_over_arithmetic	clean	byte-clean
 recursive_enum_acyclic_tree_round_trips	clean	byte-clean
 recursive_enum_cyclic_values_store_and_render	clean	byte-clean
-recursive_list_arg_parent_holds_child_node_values	unsupported	type_arrival_shape_mismatch('__gen__list_node_b0871c875897'/1,content,text,field_not_text(100))
+recursive_list_arg_parent_holds_child_node_values	clean	byte-clean
 reference_target_emptied_by_option_split_is_named	unsupported	reference_target_has_no_columns(squad/0)
 regexp_non_match	clean	byte-clean
 regexp_operand_not_text	unsupported	regexp_operand_not_text(source/1,value,int)
@@ -347,6 +352,7 @@ seeded_one_arm_fold_matches_two_arms	clean	byte-clean
 seeded_pre_multicolumn_fee_stats_fold	clean	byte-clean
 seeded_pre_reads_a_body_bound_value	clean	byte-clean
 seeded_pre_text_breadcrumb_fold	clean	byte-clean
+self_ref_option_chain_reads_through_the_companion	clean	byte-clean
 seq_wire_hand	clean	byte-clean
 seq_wire_surface	clean	byte-clean
 set_dedups_log_stacks	clean	byte-clean

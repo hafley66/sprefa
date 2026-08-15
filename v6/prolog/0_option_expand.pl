@@ -7,6 +7,7 @@
             option_enum_name/2,
             option_enum_decl/2,
             companion_rel_name/3,
+            acyclic_companion/5,
             scalar_element/1 ]).
 
 :- use_module(library(lists)).
@@ -21,11 +22,33 @@ expand_option_program(prog(Decls0, Rules), prog(Decls, Rules)) :-
     expand_option_decls(Decls0, Decls).
 
 expand_option_decls(Decls0, Decls) :-
+    strip_acyclic_wrappers(Decls0, Decls1),
+    desugar_option_columns(Decls1, Decls).
+
+desugar_option_columns(Decls0, Decls) :-
     ( member(col_type(Ref, Column, option(Element)), Decls0)
     -> desugar_option_column(Decls0, Ref, Column, Element, Decls1),
-       expand_option_decls(Decls1, Decls)
+       desugar_option_columns(Decls1, Decls)
     ; Decls = Decls0
     ).
+
+% acyclic(...) is a constraint the storage plane never sees: the inner type
+% stays, and acyclic_column/2 records that the author spelled the guard out.
+strip_acyclic_wrappers(Decls0, Decls) :-
+    (   selectchk(col_type(Ref, Column, acyclic(Inner)), Decls0,
+                  col_type(Ref, Column, Inner), Decls1)
+    ->  check_acyclic_target(Ref, Column, Inner),
+        append(Decls1, [acyclic_column(Ref, Column)], Decls2),
+        strip_acyclic_wrappers(Decls2, Decls)
+    ;   Decls = Decls0
+    ).
+
+% The guard walks the chain the column itself forms, so the only type it can
+% wrap is an option of the rel that declares it.
+check_acyclic_target(Name/_, _, option(Name)) :- !.
+check_acyclic_target(Ref, Column, Inner) :-
+    throw(unsupported_construct(acyclic_not_a_self_option(Ref, Column,
+                                                          Inner))).
 
 desugar_option_column(Decls0, Ref, Column, Element, Decls) :-
     ( option_column_position(Decls0, Ref, Column, Position)
@@ -140,6 +163,15 @@ renumber_key_position(DroppedPosition, Position, Renumbered) :-
 companion_rel_name(ParentName, Column, CompanionName) :-
     atomic_list_concat([ParentName, '__', Column], CompanionName).
 
+% Default-on: a column typed option(<its own rel>) is a parent chain and its
+% companion split rel carries the guard whether or not acyclic was spelled.
+acyclic_companion(Decls, CompanionName/2, declared_at(ParentName, Column),
+                  OwnerColumn, TargetColumn) :-
+    member(option_column(ParentName/_, Column, ParentName), Decls),
+    companion_rel_name(ParentName, Column, CompanionName),
+    atom_concat(ParentName, '_id', OwnerColumn),
+    companion_element_column(ParentName, Column, ParentName, TargetColumn).
+
 companion_rel_decls(ParentName, Column, Element,
                     [ col_type(CompanionRef, ParentIdColumn, int),
                       col_type(CompanionRef, ElementIdColumn, int),
@@ -147,4 +179,12 @@ companion_rel_decls(ParentName, Column, Element,
     companion_rel_name(ParentName, Column, CompanionName),
     CompanionRef = CompanionName/2,
     atom_concat(ParentName, '_id', ParentIdColumn),
+    companion_element_column(ParentName, Column, Element, ElementIdColumn).
+
+% A self-typed column names both endpoints after the same rel and one CREATE
+% TABLE cannot carry the atom twice, so the column name qualifies the target.
+companion_element_column(ParentName, Column, ParentName, ElementIdColumn) :-
+    !,
+    atomic_list_concat([Column, '_', ParentName, '_id'], ElementIdColumn).
+companion_element_column(_, _, Element, ElementIdColumn) :-
     atom_concat(Element, '_id', ElementIdColumn).

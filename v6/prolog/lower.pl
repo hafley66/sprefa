@@ -159,6 +159,7 @@
 :- use_module('0_rel_record').
 :- use_module('0_generic_expand', [canonical_type_name/2]).
 :- use_module('0_type_ids', [id_kind_name/3]).
+:- use_module('0_option_expand', [acyclic_companion/5]).
 :- use_module('compile/registry', [expression/5, surface/5, body_surface_for_term/6]).
 :- use_module('0_type_plane',
               [ type_definition/4, column_storage/3,
@@ -995,6 +996,33 @@ option_some_index_ddl(Table, IndexDdl) :-
     format(atom(IndexDdl),
            'CREATE UNIQUE INDEX ~w ON ~w ("id")',
            [QuotedIndexName, QuotedTable]).
+
+% The parent-chain guard, default-on for every option(<own rel>) column. It
+% rides the DDL because arrival runs one statement and cannot carry a check.
+acyclic_guard_ddl(Decls, RelPlans, Ddls) :-
+    findall(Ddl,
+            ( acyclic_companion(Decls, Ref, Source, OwnerColumn, TargetColumn),
+              once(( member(RelPlan, RelPlans),
+                     relplan_parts(RelPlan, Ref, _, _, _, _) )),
+              acyclic_guard_statement(Ref, Source, OwnerColumn, TargetColumn,
+                                      Ddl) ),
+            Unsorted),
+    sort(Unsorted, Ddls).
+
+% BEFORE INSERT alone covers the upsert too: the arrival's DO UPDATE sets the
+% target from excluded, so NEW already carries the row the update would land.
+acyclic_guard_statement(Ref, declared_at(RelName, Column), OwnerColumn,
+                        TargetColumn, Ddl) :-
+    table_name(Ref, Table), quote_ident(Table, QuotedTable),
+    atom_concat('__acyclic_', Table, TriggerName),
+    quote_ident(TriggerName, QuotedTriggerName),
+    quote_ident(OwnerColumn, QuotedOwnerColumn),
+    quote_ident(TargetColumn, QuotedTargetColumn),
+    format(atom(Ddl),
+           'CREATE TRIGGER ~w BEFORE INSERT ON ~w WHEN EXISTS (WITH RECURSIVE "__parent_chain" ("__node") AS (SELECT NEW.~w UNION SELECT g.~w FROM ~w g JOIN "__parent_chain" ON g.~w = "__parent_chain"."__node") SELECT 1 FROM "__parent_chain" WHERE "__node" = NEW.~w) BEGIN SELECT RAISE(ABORT, \'parent_cycle(~w, ~w)\'); END',
+           [QuotedTriggerName, QuotedTable, QuotedTargetColumn,
+            QuotedTargetColumn, QuotedTable, QuotedOwnerColumn,
+            QuotedOwnerColumn, RelName, Column]).
 
 % The CREATE TABLE comes from the ordinary rel_ddl/6 path, because compile.pl
 % injects the contract's col_type decls; only the child-walk index is minted here.
@@ -6303,7 +6331,8 @@ lower_program(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans, ArrivalTar
     % whose columns point into it.
     program_intern_ddl(Mode, RelPlans, InternDdl),
     maplist(delta_statement(Mode), RelPlans, DeltaStatements),
-    append([RelationDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl,
+    acyclic_guard_ddl(Decls, RelPlans, AcyclicDdl),
+    append([RelationDdl, AcyclicDdl, DeltaDdl, RefCountDdl, AggregateScopeDdl,
             PreDdl, TickDdl, CatalogTableDdl, CatalogRowDdl], BodyDdl),
     literal_seed_ddl(Mode,
                      seeded(BodyDdl, ArrivalStatements, EdgeStatements,

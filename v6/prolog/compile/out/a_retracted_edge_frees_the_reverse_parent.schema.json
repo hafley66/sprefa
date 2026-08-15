@@ -1,0 +1,12 @@
+{
+  "$defs": {
+    "node": {
+      "additionalProperties":false,
+      "properties": {"name": {"type":"string"},"node_id": {"type":"integer"}},
+      "required": ["node_id", "name" ],
+      "type":"object"
+    }
+  },
+  "$id":"a_retracted_edge_frees_the_reverse_parent#74a6f753391f3f48",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
