@@ -2356,9 +2356,11 @@ list_intern_statement(FromSql, WhereSql, list_intern(ElementType, ArraySql),
     list_intern_where(WhereSql, Where),
     member_intern_from(FromSql, ArraySql, MemberFrom),
     intern_write_sql([ArraySql], FromSql, WhereSql, ContentInternSql),
+    % Order by ArraySql (raw text), never ContentIdSql: the "__str" id orders
+    % by string-arrival, not content, and would desync from the oracle's sort.
     format(atom(EntityInternSql),
-           'INSERT OR IGNORE INTO ~w ("content") SELECT DISTINCT ~w~w~w',
-           [QuotedEntity, ContentIdSql, From, Where]),
+           'INSERT OR IGNORE INTO ~w ("content") SELECT DISTINCT ~w~w~w ORDER BY ~w',
+           [QuotedEntity, ContentIdSql, From, Where, ArraySql]),
     format(atom(MemberValueInternSql),
            'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT i.value FROM ~w~w',
            [MemberFrom, Where]),

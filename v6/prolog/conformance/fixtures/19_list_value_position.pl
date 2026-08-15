@@ -4,10 +4,6 @@
 % The elements rest in the minted member rel keyed (list_id, idx); the column
 % holds the entity's id; two rules computing the same content share one entity
 % row and therefore one id. json is transport, never the resting shape.
-%
-% INITIAL ROWS ARE SORTED, the 15_string_split.pl contract: the emitted entity
-% mints ids in the source rel's rowid order and the oracle mints in its own
-% msort order, so the two doors agree only where the two orders coincide.
 
 :- op(1150, xfx, <-).
 :- op(700,  xfx, :=).

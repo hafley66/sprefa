@@ -12,11 +12,6 @@
 % with no separator gives itself. An EMPTY separator does not walk characters;
 % it answers the whole text as a single part, because a character walk would
 % make the separator scan non-terminating.
-%
-% INITIAL ROWS ARE SORTED IN EVERY FIXTURE HERE, and that is a contract, not a
-% style: the emitted entity mints list ids in the source rel's rowid order
-% (arrival order) while the oracle mints in its own msort order, so the two
-% doors agree on an id only when the two orders coincide.
 
 :- op(1150, xfx, <-).
 :- op(700,  xfx, :=).

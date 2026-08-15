@@ -202,6 +202,7 @@ list_interned_set_end_to_end	clean	byte-clean
 list_interned_set_relation_element_refused	unsupported	list_interned_set_relation_element(fighter_summary)
 list_interned_set_text_door	clean	byte-clean
 list_linked_sequence_text_door	clean	byte-clean
+list_mint_order_follows_content_text_not_derivation_order	clean	byte-clean
 list_of_json_documents_round_trips	clean	byte-clean
 list_of_relation_refs_still_refused	unsupported	list_of_relation_refs(span)
 live_nonzero_exit_keeps_rows	clean	byte-clean

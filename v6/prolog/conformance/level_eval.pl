@@ -199,13 +199,33 @@ plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Known0, Level) :-
     ; plain_fixpoint_(Plane, PlainLevel, BaseIndex, Tick, Merged, Level) ).
 
 % ── list(T) in head position: the value IS the interned list id ─────────────
-% Derivation order, never findall order over a set: the counter this walks
-% must land on the same id the emitted entity's autoincrement "__id" does.
+% Canonical order, matching the emitted door's ORDER BY <array text>: every
+% content text new to this batch is minted in sorted order BEFORE the
+% substitution walk, so walk order can never leak into which id lands where.
 
-mint_heads(_, [], [], []).
-mint_heads(Decls, [Derived | Rest], [Head | Heads], Rows) :-
+mint_heads(Decls, Derived, Heads, Rows) :-
+    findall(ContentText, batch_list_content_text(Decls, Derived, ContentText),
+            ContentTexts),
+    sort(ContentTexts, DistinctContentTexts),
+    forall(member(ContentText, DistinctContentTexts), list_mint_id(ContentText, _)),
+    mint_heads_(Decls, Derived, Heads, Rows).
+
+batch_list_content_text(Decls, Derived, ContentText) :-
+    member(Head, Derived),
+    head_list_content_text(Decls, Head, ContentText).
+
+head_list_content_text(Decls, Head, ContentText) :-
+    Head =.. [Name | Values],
+    length(Values, Arity),
+    list_column_element_types(Decls, Name/Arity, ElementTypes),
+    nth0(Index, ElementTypes, Element), Element \== none,
+    nth0(Index, Values, Value), is_list(Value),
+    canonical_json_text(Value, ContentText).
+
+mint_heads_(_, [], [], []).
+mint_heads_(Decls, [Derived | Rest], [Head | Heads], Rows) :-
     mint_head(Decls, Derived, Head, HereRows),
-    mint_heads(Decls, Rest, Heads, MoreRows),
+    mint_heads_(Decls, Rest, Heads, MoreRows),
     append(HereRows, MoreRows, Rows).
 
 mint_head(Decls, Derived, Head, Rows) :-
