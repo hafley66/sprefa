@@ -2789,12 +2789,14 @@ dictionary_storage_kind(Types, DeclaredType, Storage) :-
 %
 % EXPLAIN receipt (v6/tsv2/tests/structPlane.test.ts): the inner query plans as
 % `SEARCH d USING INTEGER PRIMARY KEY (rowid=?)`, never a SCAN.
+% Bare, the outer column binds to the CHILD view whenever the two share a
+% column name, and the row renders null (docs/failure-modes.md entry 52).
 dictionary_render_expr(TypeName, Column, Expr) :-
     dictionary_table_name(TypeName, Table),
     quote_ident(Table, QuotedTable),
     quote_ident(Column, QuotedColumn),
     format(atom(Expr),
-           '(SELECT d."__rendered" FROM ~w d WHERE d."__id" = ~w) AS ~w',
+           '(SELECT d."__rendered" FROM ~w d WHERE d."__id" = t.~w) AS ~w',
            [QuotedTable, QuotedColumn, QuotedColumn]).
 
 % The per-type plan the emitter hands the runtime, in TOPOLOGICAL order:
@@ -5917,7 +5919,9 @@ delta_statement(Mode, RelPlan,
     quote_ident(ReadTable, QuotedTable),
     maplist(canonical_column_expr, Columns, ColumnTypes, ColumnExprs),
     atomic_list_concat(ColumnExprs, ', ', ColumnsSql),
-    format(atom(SelectSql), 'SELECT ~w FROM ~w', [ColumnsSql, QuotedTable]),
+    % Alias `t`: canonical_column_expr/3's render subqueries qualify the outer
+    % row with it, so both reads below must supply it.
+    format(atom(SelectSql), 'SELECT ~w FROM ~w t', [ColumnsSql, QuotedTable]),
     delta_table_name(Ref, DeltaTable),
     text_read_table(Mode, DeltaTable, ColumnTypes, DeltaReadTable),
     quote_ident(DeltaReadTable, QuotedDeltaTable),
@@ -5927,7 +5931,7 @@ delta_statement(Mode, RelPlan,
     format(atom(StoredSelectSql), 'SELECT ~w FROM ~w',
            [GroupColumnsSql, QuotedStoredTable]),
     format(atom(BoundarySql),
-           'SELECT ~w, "_sign" AS "__sign", count(*) AS "__count" FROM ~w WHERE "_sign" IN (-1, 1) GROUP BY ~w, "_sign"',
+           'SELECT ~w, "_sign" AS "__sign", count(*) AS "__count" FROM ~w t WHERE "_sign" IN (-1, 1) GROUP BY ~w, "_sign"',
            [ColumnsSql, QuotedDeltaTable, GroupColumnsSql]).
 
 retention_statement(RelPlans, keep(Ref, count(Limit)),

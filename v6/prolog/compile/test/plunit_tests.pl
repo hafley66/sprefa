@@ -541,6 +541,22 @@ test(canonical_column_expr_shape) :-
     Expr ==
       'CASE WHEN json_valid("target") AND json_type("target") = \'object\' AND json_type("target", \'$.fn\') = \'text\' AND json_type("target", \'$.args\') = \'array\' THEN json_extract("target", \'$.fn\') || \'(\' || coalesce((SELECT group_concat(value, \',\') FROM json_each("target", \'$.args\')), \'\') || \')\' ELSE "target" END AS "target"'.
 
+% FAIL-PRE-FIX (docs/failure-modes.md entry 52): the outer column was written
+% BARE here, so `d."__id" = "first"` bound `"first"` to the child `__ref_` view
+% whenever parent and child shared a column name and the row rendered null.
+% Fixture receipt: conformance/fixtures/22_ref_column_collision.pl.
+test(ref_render_expr_qualifies_the_outer_column) :-
+    lower:canonical_column_expr(first, ref(inner_pair), Expr),
+    Expr == '(SELECT d."__rendered" FROM "__ref_inner_pair" d WHERE d."__id" = t."first") AS "first"'.
+
+% The qualifier is only sound because both delta reads name the outer row `t`.
+test(both_delta_reads_supply_the_render_alias) :-
+    interning_lowered(direct, switch_as_keyed_replace, Lowered),
+    Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),
+    memberchk(deltastmt(open_scope/2, SelectSql, _, BoundarySql, _), DeltaStatements),
+    once(sub_atom(SelectSql, _, _, _, 'FROM "open_scope" t')),
+    once(sub_atom(BoundarySql, _, _, _, 'FROM "__delta_open_scope" t')).
+
 test(switch_as_keyed_replace_delta_sql_open_scope) :-
     interning_lowered(direct, switch_as_keyed_replace, Lowered),
     Lowered = lowered(_, _, _, _, _, DeltaStatements, _, _),

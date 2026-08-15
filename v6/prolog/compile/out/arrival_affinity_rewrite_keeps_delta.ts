@@ -204,14 +204,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    probe_in: select_rows(seam, `SELECT "probe_value" FROM "probe_in"`, rel_columns.probe_in!, rel_column_types.probe_in!),
-    probe_out: select_rows(seam, `SELECT "probe_value" FROM "probe_out"`, rel_columns.probe_out!, rel_column_types.probe_out!),
+    probe_in: select_rows(seam, `SELECT "probe_value" FROM "probe_in" t`, rel_columns.probe_in!, rel_column_types.probe_in!),
+    probe_out: select_rows(seam, `SELECT "probe_value" FROM "probe_out" t`, rel_columns.probe_out!, rel_column_types.probe_out!),
   });
 }
 
 const final_select: Record<string, string> = {
-  probe_in: `SELECT "probe_value" FROM "probe_in"`,
-  probe_out: `SELECT "probe_value" FROM "probe_out"`,
+  probe_in: `SELECT "probe_value" FROM "probe_in" t`,
+  probe_out: `SELECT "probe_value" FROM "probe_out" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -241,8 +241,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "probe_in", kind: "log", table_name: "probe_in", delta_table_name: "__delta_probe_in", frontier_table_name: "__frontier_probe_in", next_frontier_table_name: "__next_frontier_probe_in", columns: ["probe_value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "probe_in" ("probe_value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "probe_value"`, arrival_del_sql: null, boundary_sql: `SELECT "probe_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_probe_in" WHERE "_sign" IN (-1, 1) GROUP BY "probe_value", "_sign"`, rule_observers: ["probe_out/1"] },
-  { rel: "probe_out", kind: "set", table_name: "probe_out", delta_table_name: "__delta_probe_out", frontier_table_name: "__frontier_probe_out", next_frontier_table_name: "__next_frontier_probe_out", columns: ["probe_value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "probe_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_probe_out" WHERE "_sign" IN (-1, 1) GROUP BY "probe_value", "_sign"`, rule_observers: [] },
+  { rel: "probe_in", kind: "log", table_name: "probe_in", delta_table_name: "__delta_probe_in", frontier_table_name: "__frontier_probe_in", next_frontier_table_name: "__next_frontier_probe_in", columns: ["probe_value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "probe_in" ("probe_value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "probe_value"`, arrival_del_sql: null, boundary_sql: `SELECT "probe_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_probe_in" t WHERE "_sign" IN (-1, 1) GROUP BY "probe_value", "_sign"`, rule_observers: ["probe_out/1"] },
+  { rel: "probe_out", kind: "set", table_name: "probe_out", delta_table_name: "__delta_probe_out", frontier_table_name: "__frontier_probe_out", next_frontier_table_name: "__next_frontier_probe_out", columns: ["probe_value"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "probe_value", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_probe_out" t WHERE "_sign" IN (-1, 1) GROUP BY "probe_value", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

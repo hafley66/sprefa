@@ -211,14 +211,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    batch: select_rows(seam, `SELECT "id", "payloads" FROM "batch"`, rel_columns.batch!, rel_column_types.batch!),
-    carry: select_rows(seam, `SELECT "id", "payloads" FROM "carry"`, rel_columns.carry!, rel_column_types.carry!),
+    batch: select_rows(seam, `SELECT "id", "payloads" FROM "batch" t`, rel_columns.batch!, rel_column_types.batch!),
+    carry: select_rows(seam, `SELECT "id", "payloads" FROM "carry" t`, rel_columns.carry!, rel_column_types.carry!),
   });
 }
 
 const final_select: Record<string, string> = {
-  batch: `SELECT "id", "payloads" FROM "batch"`,
-  carry: `SELECT "id", "payloads" FROM "carry"`,
+  batch: `SELECT "id", "payloads" FROM "batch" t`,
+  carry: `SELECT "id", "payloads" FROM "carry" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -248,8 +248,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "batch", kind: "set", table_name: "batch", delta_table_name: "__delta_batch", frontier_table_name: "__frontier_batch", next_frontier_table_name: "__next_frontier_batch", columns: ["id", "payloads"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "batch" ("id", "payloads") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payloads"`, arrival_del_sql: `DELETE FROM "batch" WHERE ("id", "payloads") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "payloads"`, boundary_sql: `SELECT "id", "payloads", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_batch" WHERE "_sign" IN (-1, 1) GROUP BY "id", "payloads", "_sign"`, rule_observers: ["carry/2"] },
-  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "payloads"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", "payloads", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" WHERE "_sign" IN (-1, 1) GROUP BY "id", "payloads", "_sign"`, rule_observers: [] },
+  { rel: "batch", kind: "set", table_name: "batch", delta_table_name: "__delta_batch", frontier_table_name: "__frontier_batch", next_frontier_table_name: "__next_frontier_batch", columns: ["id", "payloads"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "batch" ("id", "payloads") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payloads"`, arrival_del_sql: `DELETE FROM "batch" WHERE ("id", "payloads") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "id", "payloads"`, boundary_sql: `SELECT "id", "payloads", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_batch" t WHERE "_sign" IN (-1, 1) GROUP BY "id", "payloads", "_sign"`, rule_observers: ["carry/2"] },
+  { rel: "carry", kind: "set", table_name: "carry", delta_table_name: "__delta_carry", frontier_table_name: "__frontier_carry", next_frontier_table_name: "__next_frontier_carry", columns: ["id", "payloads"], column_types: ["int", "json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "id", "payloads", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_carry" t WHERE "_sign" IN (-1, 1) GROUP BY "id", "payloads", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

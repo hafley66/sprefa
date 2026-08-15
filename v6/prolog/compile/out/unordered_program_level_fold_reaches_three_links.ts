@@ -225,14 +225,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dispatch_leg: select_rows(seam, `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos" FROM "dispatch_leg"`, rel_columns.dispatch_leg!, rel_column_types.dispatch_leg!),
-    leg_total: select_rows(seam, `SELECT "leg_id", "dispatch_id", "kilos" FROM "leg_total"`, rel_columns.leg_total!, rel_column_types.leg_total!),
+    dispatch_leg: select_rows(seam, `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos" FROM "dispatch_leg" t`, rel_columns.dispatch_leg!, rel_column_types.dispatch_leg!),
+    leg_total: select_rows(seam, `SELECT "leg_id", "dispatch_id", "kilos" FROM "leg_total" t`, rel_columns.leg_total!, rel_column_types.leg_total!),
   });
 }
 
 const final_select: Record<string, string> = {
-  dispatch_leg: `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos" FROM "dispatch_leg"`,
-  leg_total: `SELECT "leg_id", "dispatch_id", "kilos" FROM "leg_total"`,
+  dispatch_leg: `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos" FROM "dispatch_leg" t`,
+  leg_total: `SELECT "leg_id", "dispatch_id", "kilos" FROM "leg_total" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -262,8 +262,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "dispatch_leg", kind: "set", table_name: "dispatch_leg", delta_table_name: "__delta_dispatch_leg", frontier_table_name: "__frontier_dispatch_leg", next_frontier_table_name: "__next_frontier_dispatch_leg", columns: ["leg_id", "dispatch_id", "previous_leg", "kilos"], column_types: ["int", "int", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_leg" ("leg_id", "dispatch_id", "previous_leg", "kilos") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "leg_id", "dispatch_id", "previous_leg", "kilos"`, arrival_del_sql: `DELETE FROM "dispatch_leg" WHERE ("leg_id", "dispatch_id", "previous_leg", "kilos") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "leg_id", "dispatch_id", "previous_leg", "kilos"`, boundary_sql: `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_leg" WHERE "_sign" IN (-1, 1) GROUP BY "leg_id", "dispatch_id", "previous_leg", "kilos", "_sign"`, rule_observers: ["leg_total/3"] },
-  { rel: "leg_total", kind: "set", table_name: "leg_total", delta_table_name: "__delta_leg_total", frontier_table_name: "__frontier_leg_total", next_frontier_table_name: "__next_frontier_leg_total", columns: ["leg_id", "dispatch_id", "kilos"], column_types: ["int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "leg_id", "dispatch_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_leg_total" WHERE "_sign" IN (-1, 1) GROUP BY "leg_id", "dispatch_id", "kilos", "_sign"`, rule_observers: [] },
+  { rel: "dispatch_leg", kind: "set", table_name: "dispatch_leg", delta_table_name: "__delta_dispatch_leg", frontier_table_name: "__frontier_dispatch_leg", next_frontier_table_name: "__next_frontier_dispatch_leg", columns: ["leg_id", "dispatch_id", "previous_leg", "kilos"], column_types: ["int", "int", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_leg" ("leg_id", "dispatch_id", "previous_leg", "kilos") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?) RETURNING "leg_id", "dispatch_id", "previous_leg", "kilos"`, arrival_del_sql: `DELETE FROM "dispatch_leg" WHERE ("leg_id", "dispatch_id", "previous_leg", "kilos") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]'), json_extract(value, '$[3]') FROM json_each(?)) RETURNING "leg_id", "dispatch_id", "previous_leg", "kilos"`, boundary_sql: `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_leg" t WHERE "_sign" IN (-1, 1) GROUP BY "leg_id", "dispatch_id", "previous_leg", "kilos", "_sign"`, rule_observers: ["leg_total/3"] },
+  { rel: "leg_total", kind: "set", table_name: "leg_total", delta_table_name: "__delta_leg_total", frontier_table_name: "__frontier_leg_total", next_frontier_table_name: "__next_frontier_leg_total", columns: ["leg_id", "dispatch_id", "kilos"], column_types: ["int", "int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "leg_id", "dispatch_id", "kilos", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_leg_total" t WHERE "_sign" IN (-1, 1) GROUP BY "leg_id", "dispatch_id", "kilos", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

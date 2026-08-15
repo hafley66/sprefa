@@ -209,14 +209,14 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    orchard__fruit: select_rows(seam, `SELECT "tree_id", "picked" FROM "orchard__fruit"`, rel_columns.orchard__fruit!, rel_column_types.orchard__fruit!),
-    ripe: select_rows(seam, `SELECT "tree_id" FROM "ripe"`, rel_columns.ripe!, rel_column_types.ripe!),
+    orchard__fruit: select_rows(seam, `SELECT "tree_id", "picked" FROM "orchard__fruit" t`, rel_columns.orchard__fruit!, rel_column_types.orchard__fruit!),
+    ripe: select_rows(seam, `SELECT "tree_id" FROM "ripe" t`, rel_columns.ripe!, rel_column_types.ripe!),
   });
 }
 
 const final_select: Record<string, string> = {
-  orchard__fruit: `SELECT "tree_id", "picked" FROM "orchard__fruit"`,
-  ripe: `SELECT "tree_id" FROM "ripe"`,
+  orchard__fruit: `SELECT "tree_id", "picked" FROM "orchard__fruit" t`,
+  ripe: `SELECT "tree_id" FROM "ripe" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -246,8 +246,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "orchard__fruit", kind: "set", table_name: "orchard__fruit", delta_table_name: "__delta_orchard__fruit", frontier_table_name: "__frontier_orchard__fruit", next_frontier_table_name: "__next_frontier_orchard__fruit", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "orchard__fruit" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "orchard__fruit" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT "tree_id", "picked", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__fruit" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "picked", "_sign"`, rule_observers: ["ripe/1"] },
-  { rel: "ripe", kind: "set", table_name: "ripe", delta_table_name: "__delta_ripe", frontier_table_name: "__frontier_ripe", next_frontier_table_name: "__next_frontier_ripe", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ripe" WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "_sign"`, rule_observers: [] },
+  { rel: "orchard__fruit", kind: "set", table_name: "orchard__fruit", delta_table_name: "__delta_orchard__fruit", frontier_table_name: "__frontier_orchard__fruit", next_frontier_table_name: "__next_frontier_orchard__fruit", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "orchard__fruit" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "orchard__fruit" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT "tree_id", "picked", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__fruit" t WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "picked", "_sign"`, rule_observers: ["ripe/1"] },
+  { rel: "ripe", kind: "set", table_name: "ripe", delta_table_name: "__delta_ripe", frontier_table_name: "__frontier_ripe", next_frontier_table_name: "__next_frontier_ripe", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "tree_id", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ripe" t WHERE "_sign" IN (-1, 1) GROUP BY "tree_id", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

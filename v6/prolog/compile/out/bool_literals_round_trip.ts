@@ -202,7 +202,7 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    flag: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled" FROM "__txt_flag"`, rel_columns.flag!, rel_column_types.flag!),
+    flag: select_rows(seam, `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled" FROM "__txt_flag" t`, rel_columns.flag!, rel_column_types.flag!),
   });
 }
 
@@ -219,7 +219,7 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  flag: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled" FROM "__txt_flag"`,
+  flag: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled" FROM "__txt_flag" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -249,7 +249,7 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "flag", kind: "set", table_name: "flag", delta_table_name: "__delta_flag", frontier_table_name: "__frontier_flag", next_frontier_table_name: "__next_frontier_flag", columns: ["name", "enabled"], column_types: ["text", "bool"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "flag" ("name", "enabled") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "enabled"`, arrival_del_sql: `DELETE FROM "flag" WHERE ("name", "enabled") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "enabled"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_flag" WHERE "_sign" IN (-1, 1) GROUP BY "name", "enabled", "_sign"`, rule_observers: [] },
+  { rel: "flag", kind: "set", table_name: "flag", delta_table_name: "__delta_flag", frontier_table_name: "__frontier_flag", next_frontier_table_name: "__next_frontier_flag", columns: ["name", "enabled"], column_types: ["text", "bool"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "flag" ("name", "enabled") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "enabled"`, arrival_del_sql: `DELETE FROM "flag" WHERE ("name", "enabled") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "enabled"`, boundary_sql: `SELECT CASE WHEN json_valid("name") AND json_type("name") = 'object' AND json_type("name", '$.fn') = 'text' AND json_type("name", '$.args') = 'array' THEN json_extract("name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("name", '$.args')), '') || ')' ELSE "name" END AS "name", "enabled", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_flag" t WHERE "_sign" IN (-1, 1) GROUP BY "name", "enabled", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

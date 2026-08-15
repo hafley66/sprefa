@@ -240,16 +240,16 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    finding: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`, rel_columns.finding!, rel_column_types.finding!),
-    span: select_rows(seam, `SELECT "start", "end" FROM "span"`, rel_columns.span!, rel_column_types.span!),
-    span_seen: select_rows(seam, `SELECT "start", "end" FROM "span_seen"`, rel_columns.span_seen!, rel_column_types.span_seen!),
+    finding: select_rows(seam, `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "finding" t`, rel_columns.finding!, rel_column_types.finding!),
+    span: select_rows(seam, `SELECT "start", "end" FROM "span" t`, rel_columns.span!, rel_column_types.span!),
+    span_seen: select_rows(seam, `SELECT "start", "end" FROM "span_seen" t`, rel_columns.span_seen!, rel_column_types.span_seen!),
   });
 }
 
 const final_select: Record<string, string> = {
-  finding: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at" FROM "finding"`,
-  span: `SELECT "start", "end" FROM "span"`,
-  span_seen: `SELECT "start", "end" FROM "span_seen"`,
+  finding: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at" FROM "finding" t`,
+  span: `SELECT "start", "end" FROM "span" t`,
+  span_seen: `SELECT "start", "end" FROM "span_seen" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -280,9 +280,9 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "finding", kind: "set", table_name: "finding", delta_table_name: "__delta_finding", frontier_table_name: "__frontier_finding", next_frontier_table_name: "__next_frontier_finding", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "finding" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "finding" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = "at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" WHERE "_sign" IN (-1, 1) GROUP BY "at", "_sign"`, rule_observers: [] },
-  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, rule_observers: ["span_seen/2"] },
-  { rel: "span_seen", kind: "set", table_name: "span_seen", delta_table_name: "__delta_span_seen", frontier_table_name: "__frontier_span_seen", next_frontier_table_name: "__next_frontier_span_seen", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span_seen" WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, rule_observers: [] },
+  { rel: "finding", kind: "set", table_name: "finding", delta_table_name: "__delta_finding", frontier_table_name: "__frontier_finding", next_frontier_table_name: "__next_frontier_finding", columns: ["at"], column_types: ["ref"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "finding" ("at") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "at"`, arrival_del_sql: `DELETE FROM "finding" WHERE ("at") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "at"`, boundary_sql: `SELECT (SELECT d."__rendered" FROM "__ref_span" d WHERE d."__id" = t."at") AS "at", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_finding" t WHERE "_sign" IN (-1, 1) GROUP BY "at", "_sign"`, rule_observers: [] },
+  { rel: "span", kind: "set", table_name: "span", delta_table_name: "__delta_span", frontier_table_name: "__frontier_span", next_frontier_table_name: "__next_frontier_span", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "span" ("start", "end") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "start", "end"`, arrival_del_sql: `DELETE FROM "span" WHERE ("start", "end") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "start", "end"`, boundary_sql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span" t WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, rule_observers: ["span_seen/2"] },
+  { rel: "span_seen", kind: "set", table_name: "span_seen", delta_table_name: "__delta_span_seen", frontier_table_name: "__frontier_span_seen", next_frontier_table_name: "__next_frontier_span_seen", columns: ["start", "end"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "start", "end", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_span_seen" t WHERE "_sign" IN (-1, 1) GROUP BY "start", "end", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

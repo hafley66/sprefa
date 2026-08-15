@@ -223,8 +223,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    repo_kv: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value" FROM "__txt_repo_kv"`, rel_columns.repo_kv!, rel_column_types.repo_kv!),
-    repo_meta: select_rows(seam, `SELECT "col1" FROM "repo_meta"`, rel_columns.repo_meta!, rel_column_types.repo_meta!),
+    repo_kv: select_rows(seam, `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value" FROM "__txt_repo_kv" t`, rel_columns.repo_kv!, rel_column_types.repo_kv!),
+    repo_meta: select_rows(seam, `SELECT "col1" FROM "repo_meta" t`, rel_columns.repo_meta!, rel_column_types.repo_meta!),
   });
 }
 
@@ -242,8 +242,8 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  repo_kv: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value" FROM "__txt_repo_kv"`,
-  repo_meta: `SELECT "col1" FROM "repo_meta"`,
+  repo_kv: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value" FROM "__txt_repo_kv" t`,
+  repo_meta: `SELECT "col1" FROM "repo_meta" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
@@ -273,8 +273,8 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "repo_kv", kind: "set", table_name: "repo_kv", delta_table_name: "__delta_repo_kv", frontier_table_name: "__frontier_repo_kv", next_frontier_table_name: "__next_frontier_repo_kv", columns: ["key", "value"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo_kv" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "repo_kv" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_kv" WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: ["repo_meta/1"] },
-  { rel: "repo_meta", kind: "set", table_name: "repo_meta", delta_table_name: "__delta_repo_meta", frontier_table_name: "__frontier_repo_meta", next_frontier_table_name: "__next_frontier_repo_meta", columns: ["col1"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "col1", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_meta" WHERE "_sign" IN (-1, 1) GROUP BY "col1", "_sign"`, rule_observers: [] },
+  { rel: "repo_kv", kind: "set", table_name: "repo_kv", delta_table_name: "__delta_repo_kv", frontier_table_name: "__frontier_repo_kv", next_frontier_table_name: "__next_frontier_repo_kv", columns: ["key", "value"], column_types: ["text", "json"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "repo_kv" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: `DELETE FROM "repo_kv" WHERE ("key", "value") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "key", "value"`, boundary_sql: `SELECT CASE WHEN json_valid("key") AND json_type("key") = 'object' AND json_type("key", '$.fn') = 'text' AND json_type("key", '$.args') = 'array' THEN json_extract("key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each("key", '$.args')), '') || ')' ELSE "key" END AS "key", "value", "_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_repo_kv" t WHERE "_sign" IN (-1, 1) GROUP BY "key", "value", "_sign"`, rule_observers: ["repo_meta/1"] },
+  { rel: "repo_meta", kind: "set", table_name: "repo_meta", delta_table_name: "__delta_repo_meta", frontier_table_name: "__frontier_repo_meta", next_frontier_table_name: "__next_frontier_repo_meta", columns: ["col1"], column_types: ["json"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT "col1", "_sign" AS "__sign", count(*) AS "__count" FROM "__delta_repo_meta" t WHERE "_sign" IN (-1, 1) GROUP BY "col1", "_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

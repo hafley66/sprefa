@@ -1,0 +1,1 @@
+{"tick":1,"deltas":{"carrier":{"add":[[1,{"head":{"left":10,"right":20},"tail":{"left":30,"right":40}}]],"del":[]},"leaf_pair":{"add":[[10,20],[30,40]],"del":[]},"seen":{"add":[[1]],"del":[]},"shell_pair":{"add":[[{"left":10,"right":20},{"left":30,"right":40}]],"del":[]}}}

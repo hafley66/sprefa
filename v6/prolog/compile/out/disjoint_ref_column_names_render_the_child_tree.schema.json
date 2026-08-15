@@ -1,0 +1,33 @@
+{
+  "$defs": {
+    "carrier": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"},"nested": {"$ref":"#/$defs/shell_pair"}},
+      "required": ["id", "nested" ],
+      "type":"object"
+    },
+    "leaf_pair": {
+      "additionalProperties":false,
+      "properties": {"left": {"type":"integer"},"right": {"type":"integer"}},
+      "required": ["left", "right" ],
+      "type":"object"
+    },
+    "seen": {
+      "additionalProperties":false,
+      "properties": {"id": {"type":"integer"}},
+      "required": ["id" ],
+      "type":"object"
+    },
+    "shell_pair": {
+      "additionalProperties":false,
+      "properties": {
+        "head": {"$ref":"#/$defs/leaf_pair"},
+        "tail": {"$ref":"#/$defs/leaf_pair"}
+      },
+      "required": ["head", "tail" ],
+      "type":"object"
+    }
+  },
+  "$id":"disjoint_ref_column_names_render_the_child_tree#33ff3e83d56195f1",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}
