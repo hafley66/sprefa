@@ -617,3 +617,95 @@ fn a_missing_checkout_root_is_a_named_stop() {
         .expect_err("a missing input must stop");
     assert!(failure.message.contains("checkout_root"), "{failure}");
 }
+
+// ═══ the manifest leg: the roster reads go.mod / package.json at HEAD ════════
+
+/// One commit per checkout, then an arbitrary set of files committed under the
+/// same init/add/commit sequence `checkout_root_fixture` uses, so a follow-up
+/// overwrite in the worktree is what a HEAD read must ignore.
+fn git_checkout(root: &std::path::Path, slug: &str, files: &[(&str, &str)]) -> PathBuf {
+    let repo = root.join(slug);
+    std::fs::create_dir_all(&repo).expect("fixture directory");
+    for (name, content) in files {
+        std::fs::write(repo.join(name), content).expect("write manifest");
+    }
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "."],
+        vec!["commit", "-qm", "pinned fixture"],
+    ] {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(&args)
+            .env("GIT_AUTHOR_NAME", "sprefa-engine-rs")
+            .env("GIT_AUTHOR_EMAIL", "sprefa-engine-rs@example.invalid")
+            .env("GIT_COMMITTER_NAME", "sprefa-engine-rs")
+            .env("GIT_COMMITTER_EMAIL", "sprefa-engine-rs@example.invalid")
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    repo
+}
+
+/// The roster's manifest leg must read at the same HEAD every target leg reads.
+/// A committed manifest overwritten in the worktree still answers to the
+/// committed coordinate; the dirty spelling resolves nothing. Before the fix
+/// this test is RED the other way round: the dirty coordinate resolves and the
+/// committed one does not, because the old code read the live worktree.
+#[test]
+fn the_roster_reads_manifests_at_head_not_the_worktree() {
+    let root = std::env::temp_dir().join(format!(
+        "sprefa_dep_manifest_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&root).expect("fixture root");
+
+    let go = git_checkout(
+        &root,
+        "gomod",
+        &[("go.mod", "module example.com/committed\n\ngo 1.21\n")],
+    );
+    std::fs::write(go.join("go.mod"), "module example.com/dirty\n\ngo 1.21\n")
+        .expect("dirty the worktree go.mod");
+
+    let pkg = git_checkout(
+        &root,
+        "pkgjson",
+        &[(
+            "package.json",
+            "{\"name\":\"@scope/committed\",\"version\":\"1.0.0\"}\n",
+        )],
+    );
+    std::fs::write(
+        pkg.join("package.json"),
+        "{\"name\":\"@scope/dirty\",\"version\":\"1.0.0\"}\n",
+    )
+    .expect("dirty the worktree package.json");
+
+    let plain = root.join("plain");
+    std::fs::create_dir_all(&plain).expect("plain directory");
+    std::fs::write(plain.join("go.mod"), "module example.com/plain\n\ngo 1.21\n")
+        .expect("plain go.mod");
+
+    let roster = LocalRepoRoster::scan_checkout_root(&root).expect("scan");
+
+    assert!(roster.locate("example.com/committed").is_some());
+    assert!(roster.locate("example.com/dirty").is_none());
+    assert!(roster.locate("@scope/committed").is_some());
+    assert!(roster.locate("@scope/dirty").is_none());
+
+    assert!(roster.locate("plain").is_some());
+    assert!(roster.locate("example.com/plain").is_none());
+
+    std::fs::remove_dir_all(root).expect("remove fixture root");
+}

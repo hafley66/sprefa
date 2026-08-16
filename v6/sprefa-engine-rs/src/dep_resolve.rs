@@ -129,7 +129,8 @@ pub enum StopReason {
     VisitBudget,
 }
 
-/// Construction touches the filesystem; resolution never does.
+/// Construction reads each checkout's manifests at Git HEAD; resolution never
+/// touches the filesystem.
 #[derive(Clone, Debug, Default)]
 pub struct LocalRepoRoster {
     entries: BTreeMap<String, PathBuf>,
@@ -147,6 +148,7 @@ impl LocalRepoRoster {
     pub fn scan_checkout_root(root: impl AsRef<Path>) -> anyhow::Result<Self> {
         let root = root.as_ref();
         let mut entries = BTreeMap::new();
+        let mut checkouts = CheckoutTrees::default();
         let listing = std::fs::read_dir(root)
             .with_context(|| format!("scan checkout root {}", root.display()))?;
         for child in listing {
@@ -158,12 +160,31 @@ impl LocalRepoRoster {
                 continue;
             };
             entries.insert(name.to_string(), child.clone());
-            if let Some(module) = go_module_path(&child.join("go.mod")) {
-                entries.insert(module, child.clone());
-            }
-            if let Some(package) = package_json_name(&child.join("package.json")) {
-                entries.insert(package, child.clone());
-            }
+            let repo = LocalRepo {
+                coordinate: name.to_string(),
+                root: child.clone(),
+            };
+            let Ok(head) = checkouts.head(&repo) else {
+                continue;
+            };
+            let _ = checkouts.read_each(
+                &repo,
+                &head,
+                &["go.mod".to_string(), "package.json".to_string()],
+                |path, bytes| match path {
+                    "go.mod" => {
+                        if let Some(module) = go_module_path(bytes) {
+                            entries.insert(module, child.clone());
+                        }
+                    }
+                    "package.json" => {
+                        if let Some(package) = package_json_name(bytes) {
+                            entries.insert(package, child.clone());
+                        }
+                    }
+                    _ => {}
+                },
+            );
         }
         Ok(Self { entries })
     }
@@ -406,17 +427,16 @@ fn is_relative(target: &str) -> bool {
     target.starts_with('.') || target.starts_with('/')
 }
 
-fn go_module_path(manifest: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(manifest).ok()?;
+fn go_module_path(manifest: &[u8]) -> Option<String> {
+    let text = std::str::from_utf8(manifest).ok()?;
     text.lines()
         .find_map(|line| line.strip_prefix("module "))
         .map(|path| path.trim().trim_matches('"').to_string())
         .filter(|path| !path.is_empty())
 }
 
-fn package_json_name(manifest: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(manifest).ok()?;
-    let parsed: serde_json::Value = serde_json::from_str(&text).ok()?;
+fn package_json_name(manifest: &[u8]) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_slice(manifest).ok()?;
     parsed
         .get("name")?
         .as_str()
