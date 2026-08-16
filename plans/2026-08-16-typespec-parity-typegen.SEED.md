@@ -18,10 +18,10 @@ the cheapest arc sequence that closes the gaps worth closing?
 |---|---|
 | prolog emitters (parity judges, NOT the product per user decision 2026-08-14) | `v6/prolog/compile/{4_emit_jsonschema,5_emit_openapi,7_emit_ts_types,8_emit_rust_types,9_emit_type_artifact,3_emit_trace_schema}.pl` |
 | dl6-first render doors (the product) | `v6/dl/typegen/render_ts.dl6`, `render_rust.dl6`; IR = `type_row/7` JSONL from `v6/prolog/compile/typegen_export.pl` |
-| render_ts declared scope | its header: interfaces + option + list columns, single module, no collisions; module-prefix and generic-rel emission named as future arcs |
-| type plane wrapper inventory | `v6/prolog/compile/0_type_plane.pl:145-151`; `docs/generics-wrapper-inspection.md` (+ .visual.human.unga.md) |
+| render_ts declared scope | its header: interfaces + option + list columns, single module, no collisions; module-prefix and generic-rel emission named as future arcs. SEED-CORRECTION: the header is stale; the body implements module-prefix (`render_ts.dl6:98-107`) and generic-rel (`:257-288`) since Phase F round 2 |
+| type plane wrapper inventory | SEED-CORRECTION: `v6/prolog/0_type_plane.pl:153-157` (not `compile/0_type_plane.pl:145-151`); `docs/generics-wrapper-inspection.md` (+ .visual.human.unga.md) |
 | compile coverage | `v6/prolog/compile/out/manifest.json` — 342/452 compiled, 110 unsupported at seed time; RE-RUN, never quote |
-| ~780 untracked `out/*.types.{ts,rs}` | awaiting user word; the plan may propose their fate |
+| 676 tracked `out/*.types.{ts,rs}` (338 ts + 338 rs) | SEED-CORRECTION: committed, not untracked; their fate is still open |
 
 ## Decisions that BIND this plan (rulings.pl / CLAUDE.md; do not relitigate)
 
