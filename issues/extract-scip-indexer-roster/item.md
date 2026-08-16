@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: feature
-status: open
+status: testing
 priority: normal
 epic: extract-port-closeout
 labels:
@@ -69,3 +69,9 @@ cargo test --features cli --test 8_scip_families_cli
 ```
 Toolchain-absent path must be covered by a test that asserts a `scip_skip` row
 and rc=0 for a marker-bearing root with no binary on PATH.
+
+## Comments
+
+### 2026-08-16T17:29:31Z · @extract-closeout-driver
+
+PR #301, gate green twice. Six rows now, v5's order. The three build bodies collapsed into a spec-driven build_indexer first, so each added language is one IndexerSpec plus its staging call.

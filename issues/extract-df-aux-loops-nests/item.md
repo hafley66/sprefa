@@ -47,3 +47,9 @@ cargo test --features cli
 cargo test --features cli --test 2_df_aux_cli
 cargo test --features cli --test golden_parity
 ```
+
+## Comments
+
+### 2026-08-16T17:29:18Z · @extract-closeout-driver
+
+NO GRADING PATH TODAY. The committed v5 oracle baselines carry zero loop_over, nest and allocates rows. Facet census over v6/sprefa-extract/tests/fixtures/*/*.v5.jsonl: df_node 267, df_edge 210, type_node 73, call_def 48, df_args 44, df_param_pos 42, type_edge 41, type_sig 35, call_site 28, doc 19, const_value 14, df_lits 8, df_fields 8. The v5 crate is not in this crate's build graph, so no oracle regenerates from here. This arc needs a hand-written expectation or a decision to leave it ungraded; do not dispatch it as a byte-parity port.

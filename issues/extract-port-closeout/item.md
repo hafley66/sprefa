@@ -50,3 +50,9 @@ opens dl5 again.
 cd v6/sprefa-extract && cargo build --all-targets --features cli   # rc=0
 cd v6/sprefa-extract && cargo test --features cli                  # rc=0, all legs pass
 ```
+
+## Comments
+
+### 2026-08-16T17:29:18Z · @extract-closeout-driver
+
+df_args (44 oracle rows) and df_param_pos (42) are in the captured oracle AND emitted by v6, and neither is in golden_parity's PORTED list, so 86 oracle rows sit unasserted. Adding both to PORTED is a one-line ratchet worth trying before any new work; if it goes red, that is a real port gap nobody has measured. Note PR #304 made ported_facets_match_v5 filter BOTH sides by PORTED, so the flip is now safe to try.

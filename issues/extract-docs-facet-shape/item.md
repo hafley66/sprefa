@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: feature
-status: open
+status: testing
 priority: normal
 epic: extract-port-closeout
 labels:
@@ -60,3 +60,9 @@ cargo build --all-targets --features cli
 cargo test --features cli
 cargo test --features cli --test golden_parity
 ```
+
+## Comments
+
+### 2026-08-16T17:29:31Z · @extract-closeout-driver
+
+PR #304, gate green twice. The captured v5 oracle already carried 19 doc rows (rust 5, go 6, ts 8), unasserted because doc was never in PORTED. Rust is asserted byte-for-byte now via rust_doc_parity; doc stays out of the global PORTED list until the other three walkers land.

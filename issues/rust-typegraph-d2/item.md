@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: feature
-status: open
+status: testing
 priority: normal
 epic: extract-port-closeout
 labels:
@@ -66,3 +66,9 @@ cargo build --all-targets --features cli
 cargo test --features cli
 d2 <each emitted board> /private/tmp/.../out.svg    # rc=0 each
 ```
+
+## Comments
+
+### 2026-08-16T17:29:31Z · @extract-closeout-driver
+
+PR #303, gate green twice, taken by the coordinator after the lane produced nothing. direction: down is what makes the board wide: the same seven-node star renders 619x898 with direction: right and 1052x455 with down. Not covered: the over-budget chunk split, since no hop band in src reaches 24 nodes.

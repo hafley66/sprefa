@@ -50,3 +50,9 @@ cargo test --features cli
 cargo test --features cli --test 2_df_aux_cli
 cargo test --features cli --test golden_parity
 ```
+
+## Comments
+
+### 2026-08-16T17:29:18Z · @extract-closeout-driver
+
+Oracle rows already committed and byte-gradable: 8 df_lits and 8 df_fields across v6/sprefa-extract/tests/fixtures/*/*.v5.jsonl. Count them with: cat v6/sprefa-extract/tests/fixtures/*/*.v5.jsonl | cut -f1 | sort | uniq -c. The parity leg is a normalize arm in golden_parity.rs plus a narrowed per-facet test, the same move the docs facet used in PR #304.

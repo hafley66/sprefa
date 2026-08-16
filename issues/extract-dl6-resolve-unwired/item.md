@@ -2,7 +2,7 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: bug
-status: open
+status: testing
 priority: high
 epic: extract-port-closeout
 labels:
@@ -53,3 +53,9 @@ cd v6/sprefa-extract
 cargo build --all-targets --features cli
 cargo test --features cli            # twice, read rc explicitly
 ```
+
+## Comments
+
+### 2026-08-16T17:29:31Z · @extract-closeout-driver
+
+PR #302, gate green twice. Found a second defect underneath: the dl6 type projection read field(inner,"columns") and the grammar binds every column to that same field name, so only the first column ever minted a sig or candidate. Both fixed, plus a RESOLVE_ARMS table so dispatch is a lookup and a new Source cannot land unreachable.
