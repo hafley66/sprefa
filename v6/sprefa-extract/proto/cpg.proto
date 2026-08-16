@@ -1,0 +1,81 @@
+// VENDORED (hand-transcribed, cpg.proto is never published — report section
+// 3) from io.shiftleft:codepropertygraph-protos_3:1.7.36 (Maven Central).
+
+// Field numbers read off the release jar's Cpg.java FIELD_NUMBER constants
+// and enum-value javadoc, not invented. See src/cpg/cpg_proto.rs for detail.
+
+syntax = "proto3";
+
+package cpg;
+
+// A property-graph payload: a flat node table plus a flat edge table,
+// joined by the int64 `key` (Node) / `src`,`dst` (Edge) surrogate.
+message CpgStruct {
+  message Property {
+    int32 name = 1;  // NodePropertyName protoId
+    PropertyValue value = 2;
+  }
+
+  message Node {
+    int64 key = 1;
+    int32 type = 2;  // NodeType protoId
+    repeated Property property = 3;
+  }
+
+  message Edge {
+    message Property {
+      int32 name = 1;  // EdgePropertyName protoId
+      PropertyValue value = 2;
+    }
+    int64 src = 1;
+    int64 dst = 2;
+    int32 type = 3;  // EdgeType protoId
+    repeated Property property = 4;
+  }
+
+  repeated Node node = 1;
+  repeated Edge edge = 2;
+}
+
+message StringList {
+  repeated string values = 1;
+}
+message BoolList {
+  repeated bool values = 1;
+}
+message IntList {
+  repeated int32 values = 1;
+}
+message LongList {
+  repeated int64 values = 1;
+}
+message FloatList {
+  repeated float values = 1;
+}
+message DoubleList {
+  repeated double values = 1;
+}
+
+// A named list of node-key references (e.g. REFS on a captured local).
+message ContainedRefs {
+  string local_name = 1;
+  repeated int64 refs = 2;
+}
+
+message PropertyValue {
+  oneof value {
+    string string_value = 1;
+    bool bool_value = 2;
+    int32 int_value = 3;
+    int64 long_value = 4;
+    float float_value = 5;
+    double double_value = 6;
+    StringList string_list = 7;
+    BoolList bool_list = 8;
+    IntList int_list = 9;
+    LongList long_list = 10;
+    FloatList float_list = 11;
+    DoubleList double_list = 12;
+    ContainedRefs contained_refs = 13;
+  }
+}
