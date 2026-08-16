@@ -24,7 +24,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::lang::{
-    source_for, DlSource, GoSource, KotlinSource, PrologSource, RustSource, TsSource,
+    source_for, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, RustSource,
+    TsSource,
 };
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
@@ -584,7 +585,7 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
     ResolveArm {
         name: "markdown",
         call: None,
-        types: None,
+        types: Some(|out, cx| Resolve::<TypeF>::resolve(&MarkdownSource, out, cx)),
     },
     ResolveArm {
         name: "astgrep",
