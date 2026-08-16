@@ -56,6 +56,9 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 # spans come straight off the nodes (`start_byte`/`end_byte`); no line/col bridge.
 tree-sitter = "0.25"
 tree-sitter-go = "0.23"
+# tree-sitter-python is the Python front-end v5 carried; already a strict
+# ast-grep-language transitive (0.23.6), so cargo unifies it: one copy, no dupe.
+tree-sitter-python = "0.23"
 # tree-sitter-kotlin-sg is the Kotlin AST front-end v5 carried
 # (src/graph/typegraph/kotlin.rs; root Cargo.toml pins the same crate, so the v6
 # parse is byte-identical to the v5 oracle's). It is ALREADY in this lock as an

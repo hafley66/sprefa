@@ -43,7 +43,7 @@ pub use family::{
 };
 pub use lang::{
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DlSource,
-    GoSource, KotlinSource, MarkdownSource, PrologSource, RustSource, TsSource,
+    GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource, RustSource, TsSource,
 };
 pub use project::{
     diet_scip, diet_scip_jsonl, resolve_project, resolve_project_jsonl, scip_facts,
