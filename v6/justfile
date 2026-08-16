@@ -287,6 +287,11 @@ rtkq-golden:
 multirepo-golden:
     bash {{ v6 }}/tsv2/goldens/multirepo_crawl/2_gate.sh
 
+# The same corpus read the other way: one seed in, the reachable repo set out,
+# on the RUST runtime. (expect: DEPENDENCY CRAWL GRADED: 2/2, exit 0)
+dep-crawl-golden:
+    bash {{ v6 }}/tsv2/goldens/multirepo_crawl/5_dep_gate.sh
+
 # STOPPING-POINT PROGRAM #3: git pre-commit --changed, the biome-style
 # recent-change-lines gating, spelled as ordinary rules. "Which files are NEW
 # since a base revision" is a join between two rev-pinned `files_at` host
@@ -472,4 +477,4 @@ green-all:
     bash {{ v6 }}/tools/green-parallel.sh
 
 # the original one-leg-at-a-time chain, kept for bisecting a parallel-only red
-green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden rtkq-golden precommit-changed watch-scale getting-started
+green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden dep-crawl-golden rtkq-golden precommit-changed watch-scale getting-started

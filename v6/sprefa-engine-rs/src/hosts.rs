@@ -3,7 +3,13 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path};
+use std::sync::{Arc, LazyLock, Mutex};
 
+use crate::dep_resolve::{
+    DepResolveOutcome, DepResolver, GoModFrontier, IDepFrontierSource, LocalRepoRoster,
+    SpecifierFrontier, DEP_EDGE_COLUMNS, DEP_REPO_COLUMNS, DEP_UNRESOLVED_COLUMNS,
+    DEP_VISITED_COLUMNS,
+};
 use crate::types::{
     Arrival, ArrivalSign, BoundaryError, HostColumnPlan, HostPlanData, ScalarSeam, ScalarValue,
     TickDeltas, Value,
@@ -51,6 +57,9 @@ fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> 
         )
     {
         return Some(&SoopyFilesExecutor);
+    }
+    if plan.execution == "shell" && DEP_CRAWL_HOSTS.contains(&plan.name.as_str()) {
+        return Some(&*DEP_CRAWL);
     }
     executor_for(&plan.execution)
 }
@@ -187,6 +196,164 @@ fn path_from_cwd(
         }
     }
     Ok(result.to_string_lossy().replace('\\', "/"))
+}
+
+// ═══ the dependency crawl, linked the way the Git file feeds are ════════════
+
+// Four names, ONE frontier closure: the memo is keyed on the crawl's inputs,
+// so a program declaring all four pays for one traversal.
+const DEP_CRAWL_HOSTS: &[&str] = &[
+    "dep_crawl_repo",
+    "dep_crawl_visited",
+    "dep_crawl_edge",
+    "dep_crawl_unresolved",
+];
+
+static DEP_CRAWL: LazyLock<DepCrawlExecutor> = LazyLock::new(DepCrawlExecutor::default);
+
+#[derive(Default)]
+pub struct DepCrawlExecutor {
+    crawls: Mutex<BTreeMap<String, Arc<DepResolveOutcome>>>,
+}
+
+impl DepCrawlExecutor {
+    fn crawl(
+        &self,
+        host: &str,
+        checkout_root: &str,
+        seed: &str,
+        frontier: &str,
+    ) -> Result<Arc<DepResolveOutcome>, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let key = format!("{frontier}|{checkout_root}|{seed}");
+        if let Some(memo) = self.crawls.lock().expect("dep crawl memo").get(&key) {
+            return Ok(memo.clone());
+        }
+        let roster = LocalRepoRoster::scan_checkout_root(checkout_root)
+            .map_err(|error| named(format!("scan checkout root {checkout_root}: {error}")))?;
+        // An unlinked spelling is a named stop, never a silent empty answer.
+        let mut source: Box<dyn IDepFrontierSource> = match frontier {
+            "" | "go_mod" => Box::new(GoModFrontier::new()),
+            "specifier" => Box::new(SpecifierFrontier::default()),
+            other => {
+                return Err(named(format!(
+                    "frontier '{other}' is not linked; the kinds are go_mod and specifier"
+                )))
+            }
+        };
+        let outcome = Arc::new(
+            DepResolver::new(&roster)
+                .run(&[seed.to_string()], source.as_mut())
+                .map_err(|error| named(format!("crawl from {seed}: {error}")))?,
+        );
+        self.crawls
+            .lock()
+            .expect("dep crawl memo")
+            .insert(key, outcome.clone());
+        Ok(outcome)
+    }
+}
+
+// The column names come from dep_resolve.rs's own constants, so a host output
+// column and the module's relation declaration cannot drift apart.
+fn dep_crawl_row(columns: &[&str], values: Vec<String>) -> serde_json::Value {
+    serde_json::Value::Object(
+        columns
+            .iter()
+            .map(|name| (*name).to_string())
+            .zip(values.into_iter().map(serde_json::Value::String))
+            .collect(),
+    )
+}
+
+impl IHostExecutor for DepCrawlExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let required = |name: &str| {
+            env.get(name)
+                .cloned()
+                .ok_or_else(|| named(format!("missing required host input `{name}`")))
+        };
+        let checkout_root = required("checkout_root")?;
+        let seed = required("seed")?;
+        let frontier = env.get("frontier").cloned().unwrap_or_default();
+        let outcome = self.crawl(host, &checkout_root, &seed, &frontier)?;
+        let rows: Vec<serde_json::Value> = match host {
+            "dep_crawl_repo" => outcome
+                .repos
+                .iter()
+                .map(|repo| {
+                    dep_crawl_row(
+                        DEP_REPO_COLUMNS,
+                        vec![
+                            repo.coordinate.clone(),
+                            repo.root.to_string_lossy().to_string(),
+                        ],
+                    )
+                })
+                .collect(),
+            "dep_crawl_visited" => outcome
+                .visited
+                .iter()
+                .map(|at| {
+                    dep_crawl_row(
+                        DEP_VISITED_COLUMNS,
+                        vec![
+                            at.coordinate.clone(),
+                            at.revision.clone(),
+                            at.hop.to_string(),
+                        ],
+                    )
+                })
+                .collect(),
+            "dep_crawl_edge" => outcome
+                .edges
+                .iter()
+                .map(|edge| {
+                    dep_crawl_row(
+                        DEP_EDGE_COLUMNS,
+                        vec![
+                            edge.from_repo.clone(),
+                            edge.from_revision.clone(),
+                            edge.target.clone(),
+                            edge.to_repo.clone(),
+                        ],
+                    )
+                })
+                .collect(),
+            "dep_crawl_unresolved" => outcome
+                .unresolved
+                .iter()
+                .map(|row| {
+                    dep_crawl_row(
+                        DEP_UNRESOLVED_COLUMNS,
+                        vec![
+                            row.from_repo.clone(),
+                            row.target.clone(),
+                            row.reason.as_str().to_string(),
+                        ],
+                    )
+                })
+                .collect(),
+            _ => return Err(named("not a dependency-crawl host".to_string())),
+        };
+        Ok(rows
+            .iter()
+            .map(serde_json::Value::to_string)
+            .collect::<Vec<String>>()
+            .join("\n"))
+    }
 }
 
 impl IHostExecutor for SprefaExtractExecutor {
