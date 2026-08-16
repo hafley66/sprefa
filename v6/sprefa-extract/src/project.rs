@@ -46,8 +46,7 @@ pub struct ResolveArms {
     /// source in the roster except the ast-grep CST fallback.
     pub call: bool,
     /// `Resolve<TypeF>`: resolved type reference edges. Implemented for TS, Go,
-    /// Rust, dl6 and Kotlin; Prolog has no arm and is skipped rather than
-    /// dispatched, because the trait's default body is `todo!()`.
+    /// Rust, dl6 and Kotlin; Prolog has no arm and is skipped, never dispatched.
     pub types: bool,
 }
 
@@ -541,8 +540,8 @@ fn scip_source_for(inputs: &[ProjectInput]) -> Result<&'static dyn ScipSource, P
     }
 }
 
-/// One roster entry's phase-2 arms. `None` means the language has no impl and
-/// must never be dispatched: `Resolve::resolve`'s default body is `todo!()`.
+/// One roster entry's phase-2 arms. `None` means the language has no impl:
+/// `Resolve::resolve` is non-defaulted, so a missing arm cannot be dispatched.
 pub struct ResolveArm {
     pub name: &'static str,
     pub call: Option<fn(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge<CallF>>>,
