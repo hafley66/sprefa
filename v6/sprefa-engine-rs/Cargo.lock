@@ -1564,6 +1564,7 @@ dependencies = [
  "tree-sitter-kotlin-sg",
  "tree-sitter-md",
  "tree-sitter-prolog",
+ "tree-sitter-python",
 ]
 
 [[package]]

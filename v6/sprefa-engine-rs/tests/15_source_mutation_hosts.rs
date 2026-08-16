@@ -3,11 +3,63 @@ use std::process::Command;
 use std::sync::Arc;
 
 use sprefa_engine_rs::hosts::{HostLiveRunner, IHostExecutor, SoopyMutationExecutor};
-use sprefa_engine_rs::types::{HostColumnPlan, HostPlanData, RelDelta, TickDeltas, Value};
+use sprefa_engine_rs::program::run_boot;
+use sprefa_engine_rs::sql::SqliteSeam;
+use sprefa_engine_rs::types::{
+    Arrival, ArrivalSign, HostColumnPlan, HostPlanData, RelDelta, TickDeltas, Value,
+};
+use sprefa_engine_rs::GenProgram;
 use tempfile::TempDir;
+
+// Regenerate with:
+// swipl -q -l v6/prolog/compile.pl -l v6/prolog/emit_rust.pl \
+//   -g "compile_dl6('v6/dl/fixtures/source-mutations.dl6', \
+//       'v6/sprefa-engine-rs/tests/fixtures/source-mutations.program.rs', \
+//       [emitter(emit_rust:emit_program)])" -g halt
+#[path = "fixtures/source-mutations.program.rs"]
+mod source_mutations_program;
 
 fn text(value: impl AsRef<str>) -> String {
     value.as_ref().to_string()
+}
+
+fn add(rel: &str, row: Vec<Value>) -> Arrival {
+    Arrival {
+        rel: rel.to_string(),
+        sign: ArrivalSign::Add,
+        row,
+    }
+}
+
+fn generated_source_mutations_program() -> GenProgram {
+    GenProgram::from_json(source_mutations_program::program())
+}
+
+fn evidence_span() -> Value {
+    Value::Text(
+        serde_json::json!({
+            "file": {
+                "rev": {
+                    "repo": { "root": "golden-evidence-root" },
+                    "oid": "golden-evidence-revision"
+                },
+                "path": "evidence.rs",
+                "blob": { "oid": "golden-evidence-blob" }
+            },
+            "start_byte": 7,
+            "end_byte": 19
+        })
+        .to_string(),
+    )
+}
+
+fn delta_adds<'a>(deltas: &'a TickDeltas, rel: &str) -> &'a [Vec<Value>] {
+    deltas
+        .rels
+        .iter()
+        .find(|delta| delta.rel == rel)
+        .map(|delta| delta.add.as_slice())
+        .unwrap_or(&[])
 }
 
 fn run(host: &str, values: &[(&str, String)]) -> serde_json::Value {
@@ -98,6 +150,194 @@ fn mutation_plan(
         response_rel: response_rel.to_string(),
         execution: "soopy_mutation".to_string(),
     }
+}
+
+#[test]
+fn compiled_dl6_source_mutation_golden_stages_approves_commits_and_replays() {
+    let root = TempDir::new().expect("target root");
+    let state = TempDir::new().expect("state root");
+    let target = root.path().join("compiled-dl6.txt");
+    let request = stage_request(
+        directory_id(root.path()),
+        soopy::SourcePath::Directory {
+            path: soopy::RootPath(Arc::from("compiled-dl6.txt")),
+        },
+    );
+    let proposal = "proposal-from-compiled-dl6";
+    let span = evidence_span();
+    let program = generated_source_mutations_program();
+    let seam = SqliteSeam::in_memory().expect("program seam");
+    seam.run_ddl(&program.ddl).expect("program DDL");
+    run_boot(&seam, &program.boot);
+    let mut runner =
+        HostLiveRunner::new(&program.host_plans, &program.rel_columns).expect("generated hosts");
+
+    // Tick 1: authored source evidence joins to the generated source_stage
+    // demand. Its only side effect is durable staging outside the target root.
+    let staged_demand = program
+        .run_tick(
+            &seam,
+            &[
+                add(
+                    "source_request",
+                    vec![
+                        Value::Text(proposal.to_string()),
+                        Value::Text(root.path().display().to_string()),
+                        Value::Text(state.path().display().to_string()),
+                        Value::Text(request),
+                        span.clone(),
+                    ],
+                ),
+                add(
+                    "source_dependency",
+                    vec![
+                        span.clone(),
+                        Value::Text("dependency-target".to_string()),
+                        Value::Text("uses".to_string()),
+                    ],
+                ),
+                add(
+                    "source_ownership",
+                    vec![span.clone(), Value::Text("owner".to_string())],
+                ),
+                add(
+                    "source_type",
+                    vec![
+                        span,
+                        Value::Text("type-name".to_string()),
+                        Value::Text("struct".to_string()),
+                    ],
+                ),
+            ],
+        )
+        .expect("source evidence tick");
+    assert_eq!(
+        delta_adds(&staged_demand, "__host_demand_source_stage").len(),
+        1
+    );
+    let staged_response = runner.collect(&staged_demand).expect("stage host response");
+    assert_eq!(staged_response.len(), 1);
+    assert_eq!(staged_response[0].rel, "__host_response_source_stage");
+    assert_eq!(staged_response[0].row[6], Value::Text("staged".to_string()));
+    let stage_id = match &staged_response[0].row[5] {
+        Value::Text(stage_id) => stage_id.clone(),
+        value => panic!("generated stage response has a non-text stage id: {value:?}"),
+    };
+    assert!(
+        !target.exists(),
+        "the generated stage host may only write durable state before approval"
+    );
+
+    // Tick 2: the actual Rust host response re-enters the compiled program.
+    let staged = program
+        .run_tick(&seam, &staged_response)
+        .expect("stage response tick");
+    assert_eq!(delta_adds(&staged, "source_stage_preview").len(), 1);
+    assert!(
+        delta_adds(&staged, "__host_demand_source_commit").is_empty(),
+        "a stage result alone must derive no commit host demand"
+    );
+    assert!(runner
+        .collect(&staged)
+        .expect("no commit without approval")
+        .is_empty());
+    assert!(
+        !target.exists(),
+        "an unapproved stage must leave target bytes absent"
+    );
+
+    // Tick 3: a proposal approval carrying another StageId has no join.
+    let wrong_approval = program
+        .run_tick(
+            &seam,
+            &[add(
+                "source_approval",
+                vec![
+                    Value::Text(proposal.to_string()),
+                    Value::Text("00".repeat(32)),
+                ],
+            )],
+        )
+        .expect("wrong approval tick");
+    assert!(
+        delta_adds(&wrong_approval, "__host_demand_source_commit").is_empty(),
+        "a wrong StageId must derive no commit host demand"
+    );
+    assert!(runner
+        .collect(&wrong_approval)
+        .expect("wrong approval has no host response")
+        .is_empty());
+    assert!(
+        !target.exists(),
+        "a wrong approval must leave target bytes absent"
+    );
+
+    // Tick 4: the exact stage id reaches source_commit. Tick 5 lands the
+    // response and exposes the authored receipt relation.
+    let approved = program
+        .run_tick(
+            &seam,
+            &[add(
+                "source_approval",
+                vec![
+                    Value::Text(proposal.to_string()),
+                    Value::Text(stage_id.clone()),
+                ],
+            )],
+        )
+        .expect("exact approval tick");
+    assert_eq!(
+        delta_adds(&approved, "__host_demand_source_commit").len(),
+        1
+    );
+    let committed_response = runner.collect(&approved).expect("commit host response");
+    assert_eq!(committed_response.len(), 1);
+    assert_eq!(committed_response[0].rel, "__host_response_source_commit");
+    assert_eq!(
+        committed_response[0].row[5],
+        Value::Text("committed".to_string())
+    );
+    assert_eq!(
+        std::fs::read(&target).expect("host committed target bytes"),
+        b"created by source_stage\n"
+    );
+    let committed = program
+        .run_tick(&seam, &committed_response)
+        .expect("commit response tick");
+    let receipts = delta_adds(&committed, "source_commit_receipt");
+    assert_eq!(receipts.len(), 1);
+    assert_eq!(receipts[0][0], Value::Text(stage_id.clone()));
+    let receipt = match &receipts[0][1] {
+        Value::Text(document) => {
+            serde_json::from_str::<serde_json::Value>(document).expect("receipt JSON document")
+        }
+        value => panic!("receipt document was not text JSON: {value:?}"),
+    };
+    assert_eq!(receipt["applied_files"], 1);
+    assert_eq!(receipt["watch"]["paths"][0]["path"], "compiled-dl6.txt");
+    assert_eq!(
+        std::fs::read(&target).expect("committed target bytes"),
+        b"created by source_stage\n"
+    );
+
+    // A replacement runner models a runtime restart before acknowledgement.
+    // Replaying the emitted commit demand uses the durable Soopy receipt and
+    // leaves the target bytes unchanged.
+    let mut restarted =
+        HostLiveRunner::new(&program.host_plans, &program.rel_columns).expect("restarted hosts");
+    let replayed = restarted
+        .collect(&approved)
+        .expect("idempotent replay host response");
+    assert_eq!(replayed.len(), 1);
+    assert_eq!(replayed[0].row[5], Value::Text("committed".to_string()));
+    let replayed_tick = program
+        .run_tick(&seam, &replayed)
+        .expect("idempotent replay response tick");
+    assert!(delta_adds(&replayed_tick, "source_commit_refusal").is_empty());
+    assert_eq!(
+        std::fs::read(&target).expect("target bytes after replay"),
+        b"created by source_stage\n"
+    );
 }
 
 #[test]
