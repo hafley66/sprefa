@@ -12,6 +12,8 @@ by rel.
 | `1_corpus.sh` | builds the pinned corpus: 4 one-commit git repos + the v5 config |
 | `2_gate.sh` | the rig (v5 leg, v6 leg, the grade) |
 | `3_classify.py` | buckets every difference, proves each bucket from corpus bytes |
+| `4_dep_crawl.dl6` | the dependency-crawl frontier closure, on the Rust runtime |
+| `5_dep_gate.sh` | the crawl rig, graded against the same pinned v5 golden |
 
 ## The result
 
@@ -39,6 +41,38 @@ not oldest/newest". "More than one distinct version exists" is a self-join and
 a disequality, so `skewed`, `skew_row` and `skew_width` all grade in full. The
 gap costs two columns and no rows, and the gate prints v5's three `dep_ver`
 rows so the thing that is missing is visible rather than absent.
+
+## The second question, over the same bytes
+
+`just dep-crawl-golden`
+
+    DEPENDENCY CRAWL GRADED: 2/2 rels byte-identical against the pinned v5
+                             golden, frontier closed, 0 unclassified
+
+`2_gate.sh` hands the engine a repository set and asks each repository for its
+pins. `5_dep_gate.sh` asks the opposite: one seed coordinate goes in, and the
+repository set the corpus *reaches* comes out, so here the repo set is the
+answer rather than the input. One `want_crawl` row can name a corpus nobody
+enumerated.
+
+Both are reading the same `go.mod` require lines, which is what makes the grade
+possible with **no new golden**. Drop the version column from v5's `dep_pin`,
+map its slug to the module path that repository's own `go.mod` declares, and
+the result must equal the crawl's `dep_target` — the union of the edges it
+resolved to a checkout and the targets it could not — byte for byte. It does,
+8 rows. The two modules the corpus names but does not contain
+(`github.com/pkg/errors`, `golang.org/x/sync`) come back as `corpus_boundary`
+rows carrying `no_local_checkout`: the edge of the corpus is a relation, not a
+silence. Nothing here reaches the network.
+
+The leg runs the **Rust** runtime: `4_dep_crawl.dl6` compiles through
+`emit_rust.pl` and folds under `emit_rust_harness --live-hosts`, where
+`sprefa-engine-rs/src/hosts.rs` routes the four `dep_crawl_*` host names to
+`dep_resolve.rs` in-process. All four templates end in `exit 3`, so a fall-back
+to a shell answers zero rows and reds every grade at once.
+
+`scripts/crawl-bench.sh --dep-leg` runs the same program for timings, and
+`DEP_CRAWL_CORPUS` + `DEP_CRAWL_SEEDS` point it at a real checkout root.
 
 ## Two differences in kind, stated rather than hidden
 

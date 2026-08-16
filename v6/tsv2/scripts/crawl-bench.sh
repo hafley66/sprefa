@@ -19,7 +19,7 @@ DEFAULT_V6_CAP=8
 V6_CAP="$DEFAULT_V6_CAP"
 BENCH_MODE=""
 
-if [ "${1:-}" = --v5-leg ] || [ "${1:-}" = --v6-leg ]; then
+if [ "${1:-}" = --v5-leg ] || [ "${1:-}" = --v6-leg ] || [ "${1:-}" = --dep-leg ]; then
   BENCH_MODE="$1"
   shift
 fi
@@ -30,6 +30,14 @@ usage: crawl-bench.sh [--max-repos N]
 
 The v5 leg always crawls the full configured Grafana org. The v6 leg uses the
 first N usable repos in sorted path order; N=0 selects every usable repo.
+
+The dep-crawl leg runs goldens/multirepo_crawl/4_dep_crawl.dl6 on the Rust
+runtime, seeding the frontier closure in dep_resolve.rs. It defaults to that
+golden's pinned four-repo corpus, so it needs no v5 binary, no node and no
+network. Point it at a real checkout root with:
+
+  DEP_CRAWL_CORPUS=$HOME/orgs/grafana/repos \
+  DEP_CRAWL_SEEDS='github.com/grafana/loki' bash scripts/crawl-bench.sh
 EOF
 }
 
@@ -430,6 +438,71 @@ PY
   printf '%s\n' "$cap_excluded" >"$WORK/v6-cap-excluded"
 }
 
+# The other two legs are handed a repository set and measure the fan-out below
+# it; this one measures the frontier closure that DISCOVERS the set from a seed.
+run_dep_leg() {
+  local result_file="$1" log_file="$WORK/dep.log"
+  local corpus seeds program generated schedule started ended wall
+  local repos visits edges gaps coordinates rows_per_second
+  : >"$log_file"
+  program="$TSV2_DIR/goldens/multirepo_crawl/4_dep_crawl.dl6"
+  generated="$WORK/dep_crawl.program.rs"
+  schedule="$WORK/dep-schedule.json"
+  corpus="${DEP_CRAWL_CORPUS:-$WORK/dep-corpus}"
+  seeds="${DEP_CRAWL_SEEDS:-example.com/alpha example.com/beta example.com/gamma example.com/shared}"
+  if [ -z "${DEP_CRAWL_CORPUS:-}" ]; then
+    rm -rf "$corpus"
+    bash "$TSV2_DIR/goldens/multirepo_crawl/1_corpus.sh" "$corpus" >>"$log_file" 2>&1 \
+      || fail "pinned corpus build failed: $(tail -5 "$log_file")"
+  fi
+  [ -d "$corpus" ] || fail "dep crawl corpus not found: $corpus"
+
+  swipl -q -l "$REPO_ROOT/v6/prolog/compile.pl" -l "$REPO_ROOT/v6/prolog/emit_rust.pl" \
+    -g "compile_dl6('$program','$generated',[emitter(emit_rust:emit_program)])" -g halt \
+    >>"$log_file" 2>&1 || fail "4_dep_crawl.dl6 compile failed: $(tail -5 "$log_file")"
+  cargo build --quiet --manifest-path "$REPO_ROOT/v6/sprefa-engine-rs/Cargo.toml" \
+    --bin emit_rust_harness >>"$log_file" 2>&1 \
+    || fail "harness build failed: $(tail -5 "$log_file")"
+
+  python3 - "$corpus" $seeds >"$schedule" <<'PY'
+import json, sys
+root, seeds = sys.argv[1], sys.argv[2:]
+json.dump([[{"rel": "want_crawl", "sign": "add", "row": [root, seed, "go_mod"]}
+            for seed in seeds]], sys.stdout)
+PY
+
+  started="$(date +%s.%N)"
+  "$REPO_ROOT/v6/sprefa-engine-rs/target/debug/emit_rust_harness" \
+    "$generated" "$schedule" --live-hosts >"$WORK/dep-ticks.jsonl" 2>>"$log_file" \
+    || fail "dep crawl harness stopped: $(tail -5 "$log_file")"
+  ended="$(date +%s.%N)"
+  wall="$(awk -v start="$started" -v end="$ended" 'BEGIN { printf "%.2f", end - start }')"
+
+  # Settled add-sets per rel: no rel in 4_dep_crawl.dl6 deletes.
+  read -r repos visits edges gaps <<<"$(python3 - "$WORK/dep-ticks.jsonl" <<'PY'
+import json, sys
+rows = {}
+for line in open(sys.argv[1]):
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    for rel, delta in json.loads(line)["deltas"].items():
+        rows.setdefault(rel, set()).update(tuple(str(c) for c in row) for row in delta["add"])
+print(*(len(rows.get(rel, ())) for rel in
+        ("crawl_repo", "crawl_visit", "crawl_edge", "crawl_gap")))
+PY
+)"
+  coordinates="$(find "$corpus" -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+  rows_per_second="$(awk -v rows="$((repos + visits + edges + gaps))" -v w="$wall" \
+    'BEGIN { if (w > 0) printf "%.2f", rows / w; else print "n/a" }')"
+  printf 'dep-crawl\t%s\t%s\t%s\t%s\tn/a\tn/a\t%s\t%s\n' \
+    "$visits" "$repos" "$wall" "$rows_per_second" "$corpus" "$(printf '%s' "$seeds" | wc -w | tr -d ' ') seeds" \
+    >"$result_file"
+  printf 'dep-crawl completed: seeds=%s dirs=%s repo=%s visit=%s edge=%s gap=%s wall=%ss rows/s=%s\n' \
+    "$(printf '%s' "$seeds" | wc -w | tr -d ' ')" "$coordinates" \
+    "$repos" "$visits" "$edges" "$gaps" "$wall" "$rows_per_second"
+}
+
 # BEFORE / AFTER for the change that removed the per-repository loop.
 #
 # The "before" is a real run of the previous v6 leg, recorded in
@@ -466,7 +539,7 @@ report_loop_delta() {
 }
 
 main() {
-  local bench_started bench_ended bench_wall v5_status v6_status
+  local bench_started bench_ended bench_wall v5_status v6_status dep_status
   bench_started="$(date +%s.%N)"
   ensure_v5_bin
   ensure_v6_runtime
@@ -501,7 +574,17 @@ main() {
   fi
   replace_rss "$WORK/v6-result" "$WORK/v6-time"
   cat "$WORK/v6-run.log"
-  cat "$WORK/v5-result" "$WORK/v6-result"
+  set +e
+  CRAWL_BENCH_WORK="$WORK" bash "$0" --dep-leg "$WORK/dep-result" >"$WORK/dep-run.log" 2>&1
+  dep_status=$?
+  set -e
+  if [ -f "$WORK/dep-result" ]; then
+    cat "$WORK/dep-run.log"
+  else
+    printf 'dep-crawl leg failed (status %s):\n' "$dep_status"
+    cat "$WORK/dep-run.log"
+  fi
+  cat "$WORK/v5-result" "$WORK/v6-result" "$WORK/dep-result" 2>/dev/null
   report_loop_delta "$WORK/v6-result"
   printf 'skip counts: v5/v6 unusable=%s, v6 cap-excluded=%s\n' \
     "$skip_count" "$(cat "$WORK/v6-cap-excluded")"
@@ -517,6 +600,10 @@ if [ "$BENCH_MODE" = --v5-leg ]; then
 fi
 if [ "$BENCH_MODE" = --v6-leg ]; then
   run_v6_leg "$1" "$2"
+  exit 0
+fi
+if [ "$BENCH_MODE" = --dep-leg ]; then
+  run_dep_leg "$1"
   exit 0
 fi
 

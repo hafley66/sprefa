@@ -561,12 +561,12 @@ impl Default for GoModFrontier {
 
 impl GoModFrontier {
     /// The pattern `goldens/multirepo_crawl/0_multirepo_crawl.dl6:75` selects
-    /// pins with, so a frontier row and a `dep_pin` row name the same module.
+    /// pins with; the indent is optional because `1_corpus.sh:47` has none.
     pub fn new() -> Self {
         Self {
             checkouts: CheckoutTrees::default(),
             require: regex::Regex::new(
-                r"(?m)^\s+([a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+)[ ]+(v[0-9][a-zA-Z0-9._+-]*)",
+                r"(?m)^[ \t]*([a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+)[ \t]+(v[0-9][a-zA-Z0-9._+-]*)",
             )
             .expect("the require pattern is a literal"),
         }
