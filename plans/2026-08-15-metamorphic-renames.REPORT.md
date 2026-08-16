@@ -42,7 +42,7 @@ RUN B  seed = 20260815   swept=341  identical-modulo-map=8  findings=314  skippe
 - Skipped (19): fixtures whose rel names double as TYPE names in a
   `list(rel)` / `option(rel)` / `acyclic(option(rel))` / host-decl position. The
   rename reaches the rel position but the renamed program then fails silently in
-  the type plane (a `harness_fail`, not a thrown refusal). This is the
+  the type plane (a `harness_fail`, not a thrown compiler error). This is the
   struct-as-rows rel/type name coupling, out of the rel/var/module rename scope:
 
   `list_entity_dense_sequence_end_to_end`, `list_interned_set_end_to_end`,
@@ -66,7 +66,7 @@ Two root causes, one issue each, filed:
 | `snake-name-allcaps-mangling` | `snake_name/2` turns an ALLCAPS variable into a garbled column name | `analyze.pl:364` | `0_enum_variants.pl:81` `enum_name_is_a_column_type` |
 | `type-name-non-injective` | `type_name/2` maps camelCase and snake_case rel names to one PascalCase type name | `compile/7_emit_ts_types.pl:172`, `compile/8_emit_rust_types.pl:172` | `10_list_elements.pl` `list_bare_column_round_trips` |
 
-### 1. snake_name/2 mangles ALLCAPS variables (5 refusals)
+### 1. snake_name/2 mangles ALLCAPS variables (5 compile-to-error flips)
 
 `analyze.pl:364` `snake_name/2` runs `snake_codes/2`, which rewrites every
 uppercase letter to `_lowercase` WITHOUT collapsing underscores already in the
@@ -82,7 +82,7 @@ check throws:
 unsupported_construct(join_column_type_mismatch('b1."v_a_r__c_a_p_s_0"', text, 'b0."g"', int))
 ```
 
-5 of 341 fixtures flip to this refusal under an ALLCAPS/camelCase variable
+5 of 341 fixtures flip to this compiler error under an ALLCAPS/camelCase variable
 rename. The artifact diffs for the remaining fixtures show the same residue:
 inferred columns named `v_a_r__c_a_p_s_0` instead of the declared column.
 
@@ -108,11 +108,11 @@ prolog camelCase collision remains.
 
 ### 3. rel-as-type name coupling (19 skipped, not filed)
 
-The 19 skipped fixtures and the one `compound_pattern_on_arrival_rel` refusal are
+The 19 skipped fixtures and the one `compound_pattern_on_arrival_rel` error are
 one phenomenon: a rel name that also serves as a struct type (`list(rel)`,
 `option(rel)`, `acyclic(option(rel))`, relation patterns, host columns) does not
 survive a consistent rename. The type plane resolves those positions against the
 rel declaration by name, and the renamed program fails silently rather than
-throwing a named refusal. Left as a boundary of the rel/var/module scope; a
+throwing a named error. Left as a boundary of the rel/var/module scope; a
 follow-up pass that renames the type plane in lockstep with the rel plane would
 turn this from a limitation into coverage.
