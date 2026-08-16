@@ -58,22 +58,14 @@ fn source_bytes(path: &PathBuf, digest: Option<&str>) -> Result<Vec<u8>, String>
 }
 
 fn cat_blob(oid: &str) -> Result<Vec<u8>, String> {
-    let output = std::process::Command::new("git")
-        .arg("cat-file")
-        .arg("blob")
-        .arg(oid)
-        .output()
-        .map_err(|error| format!("git cat-file blob {oid}: {error}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let reason = stderr
-            .lines()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .unwrap_or("git cat-file blob failed");
-        return Err(format!("git cat-file blob {oid}: {reason}"));
-    }
-    Ok(output.stdout)
+    let repository = soopy::discover(".")
+        .map_err(|error| one_line_text(format!("git cat-file blob {oid}: {error}")))?;
+    let mut batch = soopy::GitBatch::open(&repository.root)
+        .map_err(|error| one_line_text(format!("git cat-file blob {oid}: {error}")))?;
+    let bytes = batch
+        .read(&soopy::ObjectId(oid.into()))
+        .map_err(|error| one_line_text(format!("git cat-file blob {oid}: {error}")))?;
+    Ok(bytes.to_vec())
 }
 
 fn query_language(name: &str) -> Result<tree_sitter::Language, String> {
