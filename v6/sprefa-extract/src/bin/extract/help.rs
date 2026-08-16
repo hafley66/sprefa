@@ -133,9 +133,11 @@ above). Output goes to stdout; with --bench, the timing summary goes to stderr
 instead and no facts are printed.";
 
 pub const FAMILY_LONG: &str = "\
-Which kinds of facts to extract, comma-separated: cst, type, call, df.
-Defaults to all four. Unknown names are silently ignored; `type` and `types`
-are equivalent.
+Which kinds of facts to extract, comma-separated: cst, type, call, df, cfg.
+Defaults to the first four. Unknown names are silently ignored; `type` and
+`types` are equivalent. `cfg` (intra-procedural control flow) is derived from
+the cst parse, so naming it turns cst on; rust, go, ts and kotlin have the
+kind_role rows it needs and every other language emits no cfg rows.
 
 Under --resolve this instead picks which resolved edges to emit: `call` (the
 default) and/or `type`.
