@@ -1856,6 +1856,52 @@ sites but not against new code. **missing** = nothing.
   YOUR WORKTREE, and every commit you make must have that worktree's branch
   checked out; `pwd` before every `git commit`.
 
+## 49. A gate that grades a stale binary because the build step is conditional
+
+- WHAT IT LOOKS LIKE: you edit the arm, delete a whole branch of the executor
+  router, re-run the gate, and it comes back GREEN with every grade
+  byte-identical. Nothing in the output says the edit was never compiled.
+- HOW IT BIT US: 2026-08-16, `11_change_gate.sh`, first sabotage receipt. The
+  gate carried `if [ ! -x "$HARNESS" ]; then cargo build ...; fi` — the shape
+  `8_git_gate.sh` uses. A prebuilt `target/debug/emit_rust_harness` from an
+  earlier run satisfied the test, the build was skipped, and the run graded the
+  OLD executable. The sabotage receipt "arm removed → the harness stops by
+  name" would have shipped as a lie.
+- THE LAW: a gate that compiles the thing it grades rebuilds it EVERY run.
+  "The binary exists" is not "the binary is this source". An escape hatch for a
+  caller-supplied binary is fine (`DL_RUST_HARNESS`), but the default path
+  builds. A sabotage receipt that comes back green is a claim about the gate,
+  not about the guard.
+- THE RAIL: `11_change_gate.sh` builds unconditionally unless
+  `DL_RUST_HARNESS` is set, and its header records this incident as the reason.
+  `8_git_gate.sh` and `5_dep_gate.sh` still carry the conditional shape and are
+  owed the same change; neither is in this lane's ownership.
+- SAY THIS TO AN AGENT: before you write a sabotage receipt, prove the sabotage
+  reached the binary. A green sabotage run is a gate defect until shown
+  otherwise.
+
+## 50. A Git fixture tag named `head` on a case-insensitive filesystem
+
+- WHAT IT LOOKS LIKE: 11 of 14 tests red at once, all reporting listings from
+  the wrong commit. The base revision reads correctly and the head revision
+  silently resolves to the checkout tip, so every diff is computed against a
+  tree nobody asked for.
+- HOW IT BIT US: 2026-08-16, `tests/change_facts.rs`. The fixture tagged its
+  three commits `base`, `head`, `pruned`. macOS filesystems are
+  case-insensitive, so `.git/refs/tags/head` and `HEAD` collide: `git` prints
+  `warning: refname 'head' is ambiguous` on stderr, which the fixture's
+  `Command::output()` never surfaces, and resolves the spelling to `HEAD`.
+  Renaming the tags to `at_base` / `at_head` / `at_pruned` turned 11 red tests
+  green with no change to the code under test.
+- THE LAW: a Git fixture never names a ref `head`, `orig_head`, `fetch_head`
+  or `merge_head` in any case. The collision is filesystem-dependent, so it is
+  green on Linux CI and red on a developer's Mac, or the reverse.
+- THE RAIL: pending — no scanner checks fixture ref names; the two Git
+  fixtures in `sprefa-engine-rs/tests` now spell theirs `at_*`.
+- SAY THIS TO AN AGENT: when a Git fixture's assertions all disagree in the
+  same direction, run the underlying `git` command by hand and READ ITS
+  STDERR. `refname is ambiguous` is a warning, not a failure.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
