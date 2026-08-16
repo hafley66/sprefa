@@ -3,11 +3,11 @@
     "line": {
       "additionalProperties":false,
       "properties": {
-        "_name": {"type":"string"},
-        "_stream_id": {"type":"integer"},
-        "path": {"type":"string"}
+        "name": {"type":"string"},
+        "path": {"type":"string"},
+        "stream_id": {"type":"integer"}
       },
-      "required": ["_stream_id", "path", "_name" ],
+      "required": ["stream_id", "path", "name" ],
       "type":"object"
     },
     "seen": {

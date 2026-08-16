@@ -367,13 +367,28 @@ snake_name(VarName, ColumnName) :-
     ( SnakeCodes0 = [0'_ | Rest] -> SnakeCodes = Rest ; SnakeCodes = SnakeCodes0 ),
     atom_codes(ColumnName, SnakeCodes).
 
-snake_codes([], []).
-snake_codes([Code | Rest], Out) :-
-    ( code_type(Code, upper)
-    -> code_type(Lower, to_lower(Code)), Out = [0'_, Lower | More]
-    ;  Out = [Code | More]
+% Underscores only at word boundaries: lower/digit->upper, and a run's last
+% upper before a lower (URL -> url, VAR_CAPS_0 -> var_caps_0, HTTPServer -> http_server).
+snake_codes(Codes, Out) :-
+    snake_codes(Codes, none, Out).
+
+snake_codes([], _, []).
+snake_codes([Code | Rest], Prev, Out) :-
+    ( insert_boundary(Prev, Code, Rest)
+    -> emit_code(Code, Lower), Out = [0'_, Lower | More]
+    ;  emit_code(Code, Lower), Out = [Lower | More]
     ),
-    snake_codes(Rest, More).
+    snake_codes(Rest, Code, More).
+
+insert_boundary(Prev, Code, Rest) :-
+    Prev \== none,
+    code_type(Code, upper),
+    ( ( code_type(Prev, lower) ; code_type(Prev, digit) )
+    ; ( code_type(Prev, upper), Rest = [Next | _], code_type(Next, lower) )
+    ).
+
+emit_code(Code, Lower) :-
+    ( code_type(Code, upper) -> code_type(Lower, to_lower(Code)) ; Lower = Code ).
 
 % ═══ column type inference from concrete literal values (PHASE C2 RULING 1)
 % ═══════════════════════════════════════════════════════════════════════════

@@ -1,7 +1,7 @@
 export interface Line {
-  _stream_id: number;
+  stream_id: number;
   path: string;
-  _name: string;
+  name: string;
 }
 
 export interface Seen {

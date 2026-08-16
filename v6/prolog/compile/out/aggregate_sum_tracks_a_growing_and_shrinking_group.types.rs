@@ -7,6 +7,6 @@ pub struct Budget {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Spend {
     pub team: String,
-    pub _item: String,
+    pub item: String,
     pub cost: i64,
 }

@@ -6,7 +6,7 @@ pub struct DispatchAck {
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DispatchFirst {
     pub dispatch_id: i64,
-    pub _ack_tag: String,
+    pub ack_tag: String,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

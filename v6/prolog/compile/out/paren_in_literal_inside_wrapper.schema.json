@@ -2,8 +2,8 @@
   "$defs": {
     "link": {
       "additionalProperties":false,
-      "properties": {"_target": {"type":"string"},"source": {"type":"string"}},
-      "required": ["source", "_target" ],
+      "properties": {"source": {"type":"string"},"target": {"type":"string"}},
+      "required": ["source", "target" ],
       "type":"object"
     },
     "orphan": {

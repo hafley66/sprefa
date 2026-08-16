@@ -4,7 +4,7 @@ export interface DispatchAck {
 
 export interface DispatchFirst {
   dispatch_id: number;
-  _ack_tag: string;
+  ack_tag: string;
 }
 
 export interface DispatchSeal {

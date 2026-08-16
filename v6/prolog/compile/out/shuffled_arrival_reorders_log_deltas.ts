@@ -153,17 +153,17 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "line" ("_stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "_name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_line" AS SELECT t."_stream_id" AS "_stream_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_name") AS "_name" FROM "line" t`,
+  `CREATE TABLE "line" ("stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_line" AS SELECT t."stream_id" AS "stream_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name" FROM "line" t`,
   `CREATE TABLE "seen" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path"))`,
   `CREATE TEMP VIEW "__txt_seen" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."__refcount" AS "__refcount" FROM "seen" t`,
-  `CREATE TEMP TABLE "__delta_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "_stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "_name" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_line_sign" ON "__delta_line" ("_sign")`,
-  `CREATE INDEX "__delta_line_group" ON "__delta_line" ("_stream_id", "path", "_name")`,
-  `CREATE TEMP TABLE "__frontier_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "_stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "_name" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_line_group" ON "__delta_line" ("stream_id", "path", "name")`,
+  `CREATE TEMP TABLE "__frontier_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_line_phase" ON "__frontier_line" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "_stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "_name" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_line" AS SELECT t."_stream_id" AS "_stream_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_name") AS "_name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_line" t`,
+  `CREATE TEMP TABLE "__next_frontier_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "stream_id" INTEGER NOT NULL, "path" INTEGER NOT NULL, "name" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_line" AS SELECT t."stream_id" AS "stream_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_line" t`,
   `CREATE TEMP TABLE "__delta_seen" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_seen_sign" ON "__delta_seen" ("_sign")`,
   `CREATE INDEX "__delta_seen_group" ON "__delta_seen" ("path")`,
@@ -177,7 +177,7 @@ const ddl: readonly string[] = [
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
-  line: ["_stream_id", "path", "_name"],
+  line: ["stream_id", "path", "name"],
   seen: ["path"],
 };
 
@@ -198,17 +198,17 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 4, parent_id: 0, ordinal: 0, local_name: "bool", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 5, parent_id: 0, ordinal: 0, local_name: "json", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 6, parent_id: 0, ordinal: 0, local_name: "shuffled_arrival_reorders_log_deltas", kind: "module", type_id: 0, arity: 0, module_id: 6, h_id: "cd187e0eb77c5c6e", h_schema: "", h_rule: "" },
-  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "line", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "cca1cc802ba86016", h_schema: "ae965939e7862088", h_rule: "" },
-  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "_stream_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "e2e38d248ed9c7a4", h_schema: "", h_rule: "" },
+  { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "line", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "cca1cc802ba86016", h_schema: "09fdad7d51d1ad09", h_rule: "" },
+  { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "stream_id", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "17367f548660c0b2", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "abd9bdaab13b6746", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "_name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "1eca54d042d97c1f", h_schema: "", h_rule: "" },
+  { rel_id: 10, parent_id: 7, ordinal: 3, local_name: "name", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "ad78762645237e10", h_schema: "", h_rule: "" },
   { rel_id: 11, parent_id: 6, ordinal: 0, local_name: "seen", kind: "rel", type_id: 0, arity: 1, module_id: 6, h_id: "9b6a8ed22242e2ef", h_schema: "8596fa45d0ad8be0", h_rule: "e859e4fe05a11d3b" },
   { rel_id: 12, parent_id: 11, ordinal: 1, local_name: "path", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "519d36df2bff7417", h_schema: "", h_rule: "" },
-  { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "__delta_line", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "239dfd00aa386aa4", h_schema: "451cff712d57dd4f", h_rule: "" },
-  { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "__frontier_line", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "9711a86c10d549c4", h_schema: "b97d7275bbd79d2c", h_rule: "" },
-  { rel_id: 15, parent_id: 7, ordinal: 0, local_name: "__next_frontier_line", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "3abd4871cccc086d", h_schema: "b97d7275bbd79d2c", h_rule: "" },
-  { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "__txt_line", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "0869de5ffe47a956", h_schema: "ae965939e7862088", h_rule: "" },
-  { rel_id: 17, parent_id: 13, ordinal: 0, local_name: "__txt___delta_line", kind: "view", type_id: 0, arity: 5, module_id: 6, h_id: "0becd4dc961f3e65", h_schema: "ae965939e7862088", h_rule: "" },
+  { rel_id: 13, parent_id: 7, ordinal: 0, local_name: "__delta_line", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "239dfd00aa386aa4", h_schema: "0c051197e9fa14b9", h_rule: "" },
+  { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "__frontier_line", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "9711a86c10d549c4", h_schema: "0e1a36e315535832", h_rule: "" },
+  { rel_id: 15, parent_id: 7, ordinal: 0, local_name: "__next_frontier_line", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "3abd4871cccc086d", h_schema: "0e1a36e315535832", h_rule: "" },
+  { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "__txt_line", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "0869de5ffe47a956", h_schema: "09fdad7d51d1ad09", h_rule: "" },
+  { rel_id: 17, parent_id: 13, ordinal: 0, local_name: "__txt___delta_line", kind: "view", type_id: 0, arity: 5, module_id: 6, h_id: "0becd4dc961f3e65", h_schema: "09fdad7d51d1ad09", h_rule: "" },
   { rel_id: 18, parent_id: 11, ordinal: 0, local_name: "__delta_seen", kind: "delta", type_id: 0, arity: 3, module_id: 6, h_id: "3fd7dd2aa43d5c6d", h_schema: "7070ed917d8b2300", h_rule: "" },
   { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__frontier_seen", kind: "frontier", type_id: 0, arity: 3, module_id: 6, h_id: "4c875dbdbde11c4b", h_schema: "2fa787c854d72852", h_rule: "" },
   { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__next_frontier_seen", kind: "next_frontier", type_id: 0, arity: 3, module_id: 6, h_id: "bb5b837f34327589", h_schema: "2fa787c854d72852", h_rule: "" },
@@ -217,9 +217,9 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 23, parent_id: 6, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 6, h_id: "144dd77ef9213cdb", h_schema: "", h_rule: "" },
   { rel_id: 24, parent_id: 11, ordinal: 0, local_name: "__support_next_seen", kind: "refcount", type_id: 0, arity: 2, module_id: 6, h_id: "fc461cb844f03d41", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 11, ordinal: 0, local_name: "__new_seen", kind: "refcount_staging", type_id: 0, arity: 2, module_id: 6, h_id: "b92475484c623993", h_schema: "", h_rule: "" },
-  { rel_id: 26, parent_id: 8, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "4580fd2004803d98", h_schema: "", h_rule: "" },
+  { rel_id: 26, parent_id: 8, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "5bf91bed29d968d6", h_schema: "", h_rule: "" },
   { rel_id: 27, parent_id: 9, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "01b6d243f1c7bb9d", h_schema: "", h_rule: "" },
-  { rel_id: 28, parent_id: 10, ordinal: 3, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "b56c8879cadf6dc0", h_schema: "", h_rule: "" },
+  { rel_id: 28, parent_id: 10, ordinal: 3, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "2b25e2954dd38faa", h_schema: "", h_rule: "" },
   { rel_id: 29, parent_id: 12, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "9542959f86a27d78", h_schema: "", h_rule: "" },
 ];
 
@@ -234,12 +234,12 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  line: `SELECT t."_stream_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."_name") AND json_type(t."_name") = 'object' AND json_type(t."_name", '$.fn') = 'text' AND json_type(t."_name", '$.args') = 'array' THEN json_extract(t."_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_name", '$.args')), '') || ')' ELSE t."_name" END AS "_name" FROM "__txt_line" t`,
+  line: `SELECT t."stream_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name" FROM "__txt_line" t`,
   seen: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path" FROM "__txt_seen" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "line", kind: "log", table_name: "line", delta_table_name: "__delta_line", frontier_table_name: "__frontier_line", next_frontier_table_name: "__next_frontier_line", columns: ["_stream_id", "path", "_name"], column_types: ["int", "text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "line" ("_stream_id", "path", "_name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "_stream_id", "path", "_name"`, arrival_del_sql: null, boundary_sql: `SELECT t."_stream_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."_name") AND json_type(t."_name") = 'object' AND json_type(t."_name", '$.fn') = 'text' AND json_type(t."_name", '$.args') = 'array' THEN json_extract(t."_name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_name", '$.args')), '') || ')' ELSE t."_name" END AS "_name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_line" t WHERE t."_sign" IN (-1, 1) GROUP BY t."_stream_id", t."path", t."_name", t."_sign"`, rule_observers: ["seen/1"] },
+  { rel: "line", kind: "log", table_name: "line", delta_table_name: "__delta_line", frontier_table_name: "__frontier_line", next_frontier_table_name: "__next_frontier_line", columns: ["stream_id", "path", "name"], column_types: ["int", "text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "line" ("stream_id", "path", "name") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "stream_id", "path", "name"`, arrival_del_sql: null, boundary_sql: `SELECT t."stream_id", CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_line" t WHERE t."_sign" IN (-1, 1) GROUP BY t."stream_id", t."path", t."name", t."_sign"`, rule_observers: ["seen/1"] },
   { rel: "seen", kind: "set", table_name: "seen", delta_table_name: "__delta_seen", frontier_table_name: "__frontier_seen", next_frontier_table_name: "__next_frontier_seen", columns: ["path"], column_types: ["text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seen" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."_sign"`, rule_observers: [] },
 ];
 

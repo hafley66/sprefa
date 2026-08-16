@@ -8,8 +8,8 @@
     },
     "dispatch_first": {
       "additionalProperties":false,
-      "properties": {"_ack_tag": {"type":"string"},"dispatch_id": {"type":"integer"}},
-      "required": ["dispatch_id", "_ack_tag" ],
+      "properties": {"ack_tag": {"type":"string"},"dispatch_id": {"type":"integer"}},
+      "required": ["dispatch_id", "ack_tag" ],
       "type":"object"
     },
     "dispatch_seal": {

@@ -1,6 +1,6 @@
 export interface Link {
   source: string;
-  _target: string;
+  target: string;
 }
 
 export interface Orphan {

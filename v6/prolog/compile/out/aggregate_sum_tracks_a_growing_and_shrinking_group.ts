@@ -155,8 +155,8 @@ const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `CREATE TABLE "budget" ("__id" INTEGER PRIMARY KEY, "team" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("team", "col2"))`,
   `CREATE TEMP VIEW "__txt_budget" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "budget" t`,
-  `CREATE TABLE "spend" ("__id" INTEGER PRIMARY KEY, "team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL, UNIQUE ("team", "_item", "cost"))`,
-  `CREATE TEMP VIEW "__txt_spend" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_item") AS "_item", t."cost" AS "cost" FROM "spend" t`,
+  `CREATE TABLE "spend" ("__id" INTEGER PRIMARY KEY, "team" INTEGER NOT NULL, "item" INTEGER NOT NULL, "cost" INTEGER NOT NULL, UNIQUE ("team", "item", "cost"))`,
+  `CREATE TEMP VIEW "__txt_spend" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."cost" AS "cost" FROM "spend" t`,
   `CREATE TEMP TABLE "__delta_budget" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_budget_sign" ON "__delta_budget" ("_sign")`,
   `CREATE INDEX "__delta_budget_group" ON "__delta_budget" ("team", "col2")`,
@@ -164,19 +164,19 @@ const ddl: readonly string[] = [
   `CREATE INDEX "__frontier_budget_phase" ON "__frontier_budget" ("_phase")`,
   `CREATE TEMP TABLE "__next_frontier_budget" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
   `CREATE TEMP VIEW "__txt___delta_budget" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", t."col2" AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_budget" t`,
-  `CREATE TEMP TABLE "__delta_spend" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_spend" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
   `CREATE INDEX "__delta_spend_sign" ON "__delta_spend" ("_sign")`,
-  `CREATE INDEX "__delta_spend_group" ON "__delta_spend" ("team", "_item", "cost")`,
-  `CREATE TEMP TABLE "__frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_spend_group" ON "__delta_spend" ("team", "item", "cost")`,
+  `CREATE TEMP TABLE "__frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
   `CREATE INDEX "__frontier_spend_phase" ON "__frontier_spend" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "_item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_spend" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."_item") AS "_item", t."cost" AS "cost", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_spend" t`,
+  `CREATE TEMP TABLE "__next_frontier_spend" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "team" INTEGER NOT NULL, "item" INTEGER NOT NULL, "cost" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_spend" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."team") AS "team", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."item") AS "item", t."cost" AS "cost", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_spend" t`,
   `CREATE TEMP TABLE "__agg_scope_budget" ("team" INTEGER NOT NULL, PRIMARY KEY ("team")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
   budget: ["team", "col2"],
-  spend: ["team", "_item", "cost"],
+  spend: ["team", "item", "cost"],
 };
 
 const rel_column_types: Record<string, readonly IRowColumnType[]> = {
@@ -199,26 +199,26 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 7, parent_id: 6, ordinal: 0, local_name: "budget", kind: "rel", type_id: 0, arity: 2, module_id: 6, h_id: "4f2a27ae91e0bc1d", h_schema: "ed6fe1287e73349a", h_rule: "71a2c2126d7b54dd" },
   { rel_id: 8, parent_id: 7, ordinal: 1, local_name: "team", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "f6bd9b7904898400", h_schema: "", h_rule: "" },
   { rel_id: 9, parent_id: 7, ordinal: 2, local_name: "col2", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "56b189f537ca7009", h_schema: "", h_rule: "" },
-  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "spend", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "896c1a819de68164", h_schema: "1d919935858c123d", h_rule: "" },
+  { rel_id: 10, parent_id: 6, ordinal: 0, local_name: "spend", kind: "rel", type_id: 0, arity: 3, module_id: 6, h_id: "896c1a819de68164", h_schema: "3e10896ee217c11d", h_rule: "" },
   { rel_id: 11, parent_id: 10, ordinal: 1, local_name: "team", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "379564e800db0391", h_schema: "", h_rule: "" },
-  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "_item", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "8ad9a17a40395cbf", h_schema: "", h_rule: "" },
+  { rel_id: 12, parent_id: 10, ordinal: 2, local_name: "item", kind: "column", type_id: 1, arity: 0, module_id: 6, h_id: "579b31499a487f71", h_schema: "", h_rule: "" },
   { rel_id: 13, parent_id: 10, ordinal: 3, local_name: "cost", kind: "column", type_id: 2, arity: 0, module_id: 6, h_id: "ade30efa0d94c726", h_schema: "", h_rule: "" },
   { rel_id: 14, parent_id: 7, ordinal: 0, local_name: "__delta_budget", kind: "delta", type_id: 0, arity: 4, module_id: 6, h_id: "f26467236f0dceb2", h_schema: "3e155727b42e2b48", h_rule: "" },
   { rel_id: 15, parent_id: 7, ordinal: 0, local_name: "__frontier_budget", kind: "frontier", type_id: 0, arity: 4, module_id: 6, h_id: "2c9c18946455b0a0", h_schema: "8f295795f0611698", h_rule: "" },
   { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "__next_frontier_budget", kind: "next_frontier", type_id: 0, arity: 4, module_id: 6, h_id: "c2d7b4d2f18f1706", h_schema: "8f295795f0611698", h_rule: "" },
   { rel_id: 17, parent_id: 7, ordinal: 0, local_name: "__txt_budget", kind: "view", type_id: 0, arity: 2, module_id: 6, h_id: "714fc28028554e91", h_schema: "ed6fe1287e73349a", h_rule: "" },
   { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_budget", kind: "view", type_id: 0, arity: 4, module_id: 6, h_id: "8069ee270e9a7a61", h_schema: "ed6fe1287e73349a", h_rule: "" },
-  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_spend", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "4e9e9e577a5531cd", h_schema: "ba18f67879483da4", h_rule: "" },
-  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_spend", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "a01d86d8433d2391", h_schema: "818716ddc9e93bc7", h_rule: "" },
-  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_spend", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "2fd3ad5971ab0d80", h_schema: "818716ddc9e93bc7", h_rule: "" },
-  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__txt_spend", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "dcca8667f1289bba", h_schema: "1d919935858c123d", h_rule: "" },
-  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_spend", kind: "view", type_id: 0, arity: 5, module_id: 6, h_id: "e549e43758558c02", h_schema: "1d919935858c123d", h_rule: "" },
+  { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__delta_spend", kind: "delta", type_id: 0, arity: 5, module_id: 6, h_id: "4e9e9e577a5531cd", h_schema: "adfc5907cbe71c1c", h_rule: "" },
+  { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__frontier_spend", kind: "frontier", type_id: 0, arity: 5, module_id: 6, h_id: "a01d86d8433d2391", h_schema: "226d8dd3642789e0", h_rule: "" },
+  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__next_frontier_spend", kind: "next_frontier", type_id: 0, arity: 5, module_id: 6, h_id: "2fd3ad5971ab0d80", h_schema: "226d8dd3642789e0", h_rule: "" },
+  { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__txt_spend", kind: "view", type_id: 0, arity: 3, module_id: 6, h_id: "dcca8667f1289bba", h_schema: "3e10896ee217c11d", h_rule: "" },
+  { rel_id: 23, parent_id: 19, ordinal: 0, local_name: "__txt___delta_spend", kind: "view", type_id: 0, arity: 5, module_id: 6, h_id: "e549e43758558c02", h_schema: "3e10896ee217c11d", h_rule: "" },
   { rel_id: 24, parent_id: 6, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 6, h_id: "782859c05ee40984", h_schema: "", h_rule: "" },
   { rel_id: 25, parent_id: 7, ordinal: 0, local_name: "__agg_scope_budget", kind: "scope", type_id: 0, arity: 1, module_id: 6, h_id: "19a4bd8ecb0fbc61", h_schema: "fc33589dd771a917", h_rule: "" },
   { rel_id: 26, parent_id: 8, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "3fe205245580ff9c", h_schema: "", h_rule: "" },
   { rel_id: 27, parent_id: 9, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "6ef843b501a22075", h_schema: "", h_rule: "" },
   { rel_id: 28, parent_id: 11, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "e6a910a711cf03c8", h_schema: "", h_rule: "" },
-  { rel_id: 29, parent_id: 12, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "362a4c4c445cf352", h_schema: "", h_rule: "" },
+  { rel_id: 29, parent_id: 12, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "949f587dea152865", h_schema: "", h_rule: "" },
   { rel_id: 30, parent_id: 13, ordinal: 3, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 6, h_id: "88929016a1b4929e", h_schema: "", h_rule: "" },
 ];
 
@@ -230,22 +230,22 @@ const arrival_targets: readonly string[] = ["spend"];
 const boot: readonly IBootStatement[] = [
   { rel: "spend", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["core"] },
   { rel: "spend", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["disk"] },
-  { rel: "spend", sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["core", "disk", 10] },
+  { rel: "spend", sql: `INSERT OR IGNORE INTO "spend" ("team", "item", "cost") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["core", "disk", 10] },
   { rel: "spend", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["core"] },
   { rel: "spend", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cpu"] },
-  { rel: "spend", sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["core", "cpu", 5] },
+  { rel: "spend", sql: `INSERT OR IGNORE INTO "spend" ("team", "item", "cost") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["core", "cpu", 5] },
   { rel: "budget", sql: `DELETE FROM "budget"`, params: [] },
   { rel: "budget", sql: `INSERT OR IGNORE INTO "budget" ("team", "col2") SELECT b0."team", sum(b0."cost") FROM "spend" b0 GROUP BY b0."team" HAVING count(*) > 0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
   budget: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", t."col2" FROM "__txt_budget" t`,
-  spend: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", CASE WHEN json_valid(t."_item") AND json_type(t."_item") = 'object' AND json_type(t."_item", '$.fn') = 'text' AND json_type(t."_item", '$.args') = 'array' THEN json_extract(t."_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_item", '$.args')), '') || ')' ELSE t."_item" END AS "_item", t."cost" FROM "__txt_spend" t`,
+  spend: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."cost" FROM "__txt_spend" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
   { rel: "budget", kind: "set", table_name: "budget", delta_table_name: "__delta_budget", frontier_table_name: "__frontier_budget", next_frontier_table_name: "__next_frontier_budget", columns: ["team", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", t."col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_budget" t WHERE t."_sign" IN (-1, 1) GROUP BY t."team", t."col2", t."_sign"`, rule_observers: [] },
-  { rel: "spend", kind: "set", table_name: "spend", delta_table_name: "__delta_spend", frontier_table_name: "__frontier_spend", next_frontier_table_name: "__next_frontier_spend", columns: ["team", "_item", "cost"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spend" ("team", "_item", "cost") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "team", "_item", "cost"`, arrival_del_sql: `DELETE FROM "spend" WHERE ("team", "_item", "cost") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "team", "_item", "cost"`, boundary_sql: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", CASE WHEN json_valid(t."_item") AND json_type(t."_item") = 'object' AND json_type(t."_item", '$.fn') = 'text' AND json_type(t."_item", '$.args') = 'array' THEN json_extract(t."_item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."_item", '$.args')), '') || ')' ELSE t."_item" END AS "_item", t."cost", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_spend" t WHERE t."_sign" IN (-1, 1) GROUP BY t."team", t."_item", t."cost", t."_sign"`, rule_observers: ["budget/2"] },
+  { rel: "spend", kind: "set", table_name: "spend", delta_table_name: "__delta_spend", frontier_table_name: "__frontier_spend", next_frontier_table_name: "__next_frontier_spend", columns: ["team", "item", "cost"], column_types: ["text", "text", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "spend" ("team", "item", "cost") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "team", "item", "cost"`, arrival_del_sql: `DELETE FROM "spend" WHERE ("team", "item", "cost") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "team", "item", "cost"`, boundary_sql: `SELECT CASE WHEN json_valid(t."team") AND json_type(t."team") = 'object' AND json_type(t."team", '$.fn') = 'text' AND json_type(t."team", '$.args') = 'array' THEN json_extract(t."team", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."team", '$.args')), '') || ')' ELSE t."team" END AS "team", CASE WHEN json_valid(t."item") AND json_type(t."item") = 'object' AND json_type(t."item", '$.fn') = 'text' AND json_type(t."item", '$.args') = 'array' THEN json_extract(t."item", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."item", '$.args')), '') || ')' ELSE t."item" END AS "item", t."cost", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_spend" t WHERE t."_sign" IN (-1, 1) GROUP BY t."team", t."item", t."cost", t."_sign"`, rule_observers: ["budget/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
