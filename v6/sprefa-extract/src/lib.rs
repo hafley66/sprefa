@@ -16,6 +16,8 @@
 //! `--bench`. Proves bin -> seams -> flat wire -> stdout end to end.
 #![allow(dead_code)]
 
+pub mod cpg_decode;
+pub mod cpg_types;
 pub mod deps;
 pub mod dispatch;
 pub mod family;
@@ -34,6 +36,11 @@ pub mod source;
 pub mod types;
 pub mod wire;
 
+pub use cpg_decode::decode_cpg_struct;
+pub use cpg_types::{
+    CpgEdge, CpgEdgeKind, CpgImport, CpgImportError, CpgNode, CpgNodeKind, CpgProperty,
+    CpgPropertyValue,
+};
 pub use deps::{resolve_specifier, Policy, TsconfigPaths};
 pub use dispatch::dispatch;
 pub use family::{
