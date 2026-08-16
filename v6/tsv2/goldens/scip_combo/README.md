@@ -62,7 +62,7 @@ module skewed, passes a corpus that cannot contradict it.
 | # | program | combination | doors | verdict |
 |---|---|---|---|---|
 | 1 | `1_rev_file_skew` | `repo_files_at` rev A ⋈ rev B, three set differences | both | agree; the rev-A feed is now verified |
-| 2 | `2_extract_rev_skew` | rev-pinned file set fed to `repo_extract` vs the worktree set | both | agree; the pin does not reach the extraction |
+| 2 | `2_extract_rev_skew` | rev-pinned file set fed to `repo_extract` vs the worktree set | both | **PINNED disagreement** |
 | 3 | `3_span_in_file` | def spans ⋈ `--file-fact` extents, containment both ways | both | agree; 0 escaping spans, 0 orphans |
 | 4 | `4_crawl_extract` | `dep_crawl` visits → file feed → extraction, per family | Rust only | 4 barren rows, 0 rootless visits |
 | 5 | `5_cross_repo_ref` | call sites in X ⋈ defs in Y, name level | both | agree; 2 cross, 1 local, 2 dangling |
@@ -164,21 +164,22 @@ Nothing downstream can catch this: an empty response rel is a legitimate answer
 (a file with no call sites), so only a both-door diff over one program makes it
 a row.
 
-### F3 -- pinning the file set does not pin the extraction
+### F3 -- pinning the file set now pins the extraction (FIXED)
 
-`2_extract_rev_skew.dl6`, and both doors agree about it. Two independent
-reasons:
-
-1. the extract host's template ends in `{repo}/{path}` and the executor opens
-   that path on the FILESYSTEM; no revision reaches it;
-2. `digest` is a FRESHNESS input (`registry.pl:402-404`), so it extends the
-   witness and never returns on the response row -- two demands under two
-   digests are two witnesses and ONE response identity.
+`2_extract_rev_skew.dl6`, and the doors now DISAGREE about it by design.
+`SprefaExtractExecutor` reads extract bytes by the blob oid in `digest`, so the
+HEAD-pinned feed answers a different callable set than the dirty worktree feed
+on the Rust door; the TS door's emitted template still reads the worktree for
+both.
 
 Measured on the dirty-worktree arm: `pinned_digest_skew` has a row, and the
-HEAD-pinned feed still extracts `beta_uncommitted`, a callable that is not at
-HEAD. `worktree_only_proc` and `pinned_only_proc` are both empty over 6 rows of
-`agreed_proc`.
+Rust door answers `worktree_only_proc = { beta_uncommitted }` and
+`pinned_only_proc = {}`. The two feeds are DISTINCT rules; `digest` is still a
+FRESHNESS input (`registry.pl:402-404`), and `repo_extract` is still the only
+repo-scoped name holding the `(identity, identity, freshness)` shape, so a
+single rel cannot hold both feeds. That is `ARCH.pl:879` defect D1, still
+unbuilt. The unit-level proof that a digest gates content is
+`tests/live_hosts.rs` `digest_carrying_demand_reads_the_blob_not_the_worktree`.
 
 ### F4 -- a name-level ref chase over-reports method calls
 
@@ -218,6 +219,6 @@ Gate classes, one per program and no program in two:
 
 | class | programs | rule |
 |---|---|---|
-| pinned | 7 | MUST differ; agreement fails the gate |
-| agreeing | 1, 2, 3, 5, 6 | any difference is unexplained and fails |
+| pinned | 2, 7 | MUST differ; agreement fails the gate |
+| agreeing | 1, 3, 5, 6 | any difference is unexplained and fails |
 | one-door | 4 | Rust only, proven by its own `exit 3` templates |

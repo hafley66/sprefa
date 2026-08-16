@@ -125,6 +125,12 @@ export function beta_uncommitted(seed: number): number {
 }
 TS
 
+# The dirty worktree's digest is a `git hash-object` oid. SprefaExtractExecutor
+# now reads extract bytes by that oid, not the worktree, so the dirty blob must
+# exist in the object database before either door runs. The engine's file-feed
+# host stays read-only; this rig writes the one dirty blob itself.
+git -C "$root/beta" hash-object -w src/use.ts >/dev/null
+
 {
   index=0
   for slug in alpha beta gamma shared; do
