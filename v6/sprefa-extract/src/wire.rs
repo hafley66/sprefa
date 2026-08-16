@@ -101,7 +101,8 @@ fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact
         bundle.nodes.len()
             + bundle.aux.sigs.len()
             + bundle.aux.consts.len()
-            + bundle.aux.docs.len(),
+            + bundle.aux.docs.len()
+            + bundle.aux.doc_nodes.len(),
     );
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
@@ -148,6 +149,15 @@ fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact
                 text: strings.lookup(tag.text).to_string(),
             });
         }
+    }
+    for node in &bundle.aux.doc_nodes {
+        out.push(FlatFact::DocNodeOut {
+            family: TypeF::TAG,
+            span: SpanOut::new(node.span.start, node.span.end()),
+            kind: node.kind.as_str().to_string(),
+            name: strings.lookup(node.name).to_string(),
+            parent: node.parent.map(|id| strings.lookup(id).to_string()),
+        });
     }
     out
 }
