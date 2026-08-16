@@ -51,7 +51,7 @@ sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
   `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
 
 sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
-  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
 
 sh repo_extract(repo: text, path: text, digest: text)
    -> (record: text, family: text, kind: text, name: text) =
@@ -59,9 +59,9 @@ sh repo_extract(repo: text, path: text, digest: text)
 
 # `rev` is the HEAD of each repository, not the base revision, and that is a
 # constraint this program depends on: at HEAD the index and the tree agree, so
-# `--with-tree` unions nothing new and this file feed is free of the guard
-# defect 6_door_skew_files_at.dl6 pins. Combo 2 is about extraction, not about
-# that.
+# `--with-tree` unions nothing new and this file feed is free of the phantom
+# row the verified guard (6_door_skew_files_at.dl6) removes. Combo 2 is about
+# extraction, not about that.
 rel want_repo_pair(repo: text, rev: text, glob: text).
 
 rel worktree_file(repo: text, path: text, digest: text).

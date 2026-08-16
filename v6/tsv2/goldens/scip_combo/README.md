@@ -2,8 +2,8 @@
 
 Seven authored `.dl6` programs combining the hosted `sprefa-extract` and soopy
 surfaces, each run on BOTH v6 doors over one pinned corpus and judged by byte
-diff. Two combinations compile and answer differently on the two doors; both are
-pinned as their own minimal programs.
+diff. One combination compiles and answers differently on the two doors; it is
+pinned as its own minimal program.
 
 ```
 cd v6 && just scip-combo
@@ -61,12 +61,12 @@ module skewed, passes a corpus that cannot contradict it.
 
 | # | program | combination | doors | verdict |
 |---|---|---|---|---|
-| 1 | `1_rev_file_skew` | `repo_files_at` rev A ⋈ rev B, three set differences | both | INHERITED disagreement, cause pinned in 6 |
+| 1 | `1_rev_file_skew` | `repo_files_at` rev A ⋈ rev B, three set differences | both | agree; the rev-A feed is now verified |
 | 2 | `2_extract_rev_skew` | rev-pinned file set fed to `repo_extract` vs the worktree set | both | agree; the pin does not reach the extraction |
 | 3 | `3_span_in_file` | def spans ⋈ `--file-fact` extents, containment both ways | both | agree; 0 escaping spans, 0 orphans |
 | 4 | `4_crawl_extract` | `dep_crawl` visits → file feed → extraction, per family | Rust only | 4 barren rows, 0 rootless visits |
 | 5 | `5_cross_repo_ref` | call sites in X ⋈ defs in Y, name level | both | agree; 2 cross, 1 local, 2 dangling |
-| 6 | `6_door_skew_files_at` | ONE rev-pinned feed, shrunk | both | **PINNED disagreement** |
+| 6 | `6_door_skew_files_at` | ONE rev-pinned feed, shrunk | both | agree; the phantom row is gone |
 | 7 | `7_door_skew_family` | ONE extract host, `--family diet_scip` | both | **PINNED disagreement** |
 
 Every program compiles through `emit_rust.pl`; nothing in this directory is in a
@@ -74,10 +74,10 @@ refusal bucket of `v6/prolog/compile/out/manifest.json`.
 
 ## Findings
 
-### F1 -- a rev-pinned file feed over-answers on the TS door
+### F1 -- a rev-pinned file feed over-answered on the TS door (FIXED)
 
-`6_door_skew_files_at.dl6`, and `1_rev_file_skew.dl6` is what it costs a real
-query. One repository, one revision, one glob:
+`6_door_skew_files_at.dl6`, and `1_rev_file_skew.dl6` is what it cost a real
+query. One repository, one revision, one glob, before the fix:
 
 | door | rows | the extra row |
 |---|---|---|
@@ -92,8 +92,9 @@ Measured mechanism, both halves:
 | resolve | `git rev-parse <rev>:<absent>` | exits 128, `fatal:` to stderr, ECHOES ITS ARGUMENT to stdout |
 | guard | `[ -n "$oid" ]` | passes on the echo, prints the row |
 
-So absence becomes a row carrying the argument string in a `text` digest column,
-which no type check can catch. The consequence in `1_rev_file_skew`:
+So absence became a row carrying the argument string in a `text` digest column,
+which no type check can catch. The consequence in `1_rev_file_skew`, before the
+fix:
 
 | rel | Rust | TS |
 |---|--:|--:|
@@ -101,7 +102,7 @@ which no type check can catch. The consequence in `1_rev_file_skew`:
 | `added_path` | 4 | **0** |
 | `rewritten_path` | 1 | 5 |
 
-"Which files are new since a base revision" answers NOTHING on the TS door.
+"Which files are new since a base revision" answered NOTHING on the TS door.
 
 The declaration's own header claims the opposite, in these words at
 `v6/dl/fixtures/files-hosts.dl6:62-64` and again at
@@ -130,6 +131,12 @@ is a host failure.
 oid="$(git rev-parse --verify --quiet '{rev}':"$entry")"
 if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi
 ```
+
+APPLIED to the three goldens templates that carry the guard -- `1_rev_file_skew`,
+`2_extract_rev_skew`, and `6_door_skew_files_at` -- so 6 and 1 now agree across
+the doors. The seven fixture declarations above still carry the bare guard;
+they are outside this lane's ownership (`v6/dl/fixtures/**`) and stay listed as
+the remaining surface.
 
 ### F2 -- `--family diet_scip` answers rows on one door and silence on the other
 
@@ -191,7 +198,7 @@ No file outside `goldens/scip_combo/**` and `v6/justfile` was edited.
 | B2 | a repo-scoped program reading `node` AND `site` records | same as B1 | one name, one output projection, and `carriesEveryColumn` drops a row missing any declared column. Worked around in 3 and 5 by the UNSCOPED `(path, digest)` names plus a `concat`ed absolute path |
 | B3 | naming a new extract host after what it does | same as B1 | `call_node_at`, `call_ref`, `extract` are used as the names the registry ALLOWS, not as descriptions. The dl6 headers say so where it reads oddly |
 | B4 | `4_crawl_extract` on the TS door | `hosts.rs` DEP_CRAWL is Rust-only | not a defect: the four templates `exit 3` so a fall-through stops by name. Assertion 0 pins that |
-| B5 | fixing F1 and F2 in place | `v6/dl/fixtures/**` and `v6/sprefa-engine-rs/src/**` are outside this lane's ownership | both fixes written out above and in the two pin headers |
+| B5 | fixing F2 in place | `v6/sprefa-engine-rs/src/**` and `v6/sprefa-extract/src/**` are outside this lane's ownership | the fix is written out above and in the 7_door_skew_family header |
 
 Also observed and not chased: `registry.pl:361-366` describes the repo-scoped
 template test as CONTAINS, while the code at `:369-373` is
@@ -211,7 +218,6 @@ Gate classes, one per program and no program in two:
 
 | class | programs | rule |
 |---|---|---|
-| pinned | 6, 7 | MUST differ; agreement fails the gate |
-| inherited | 1 | MUST differ, and the failing line names the pin |
-| agreeing | 2, 3, 5 | any difference is unexplained and fails |
+| pinned | 7 | MUST differ; agreement fails the gate |
+| agreeing | 1, 2, 3, 5, 6 | any difference is unexplained and fails |
 | one-door | 4 | Rust only, proven by its own `exit 3` templates |

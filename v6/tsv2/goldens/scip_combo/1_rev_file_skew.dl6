@@ -15,15 +15,14 @@
 # "which blobs are at this revision". The gate byte-diffs the rel dumps, which
 # is the only way that pair of implementations is ever compared.
 #
-# ── AND THEY DO NOT AGREE, WHICH IS THIS PROGRAM'S HEADLINE ─────────────────
-# Measured on the pinned corpus: `added_path` is 4 rows on the Rust door and
-# ZERO on the TS door. The rev-A feed is the one place the index and the tree
-# disagree, so the TS door's template answers the union, every added path is
-# already in its base set, and "what is new since the base revision" comes back
-# empty. The mechanism is shrunk to one host and one rule in
-# 6_door_skew_files_at.dl6; this program is what that defect looks like when a
-# real query meets it. The gate classes it INHERITED and requires it to keep
-# differing until the pin is fixed.
+# ── AND THEY NOW AGREE, AFTER THE PHANTOM-ROW FIX ───────────────────────────
+# The template used to over-answer at rev A: `git rev-parse <rev>:<absent>`
+# echoes its argument, the `[ -n "$oid" ]` guard passed, and absence minted a
+# row, so `added_path` was 4 rows on the Rust door and ZERO on the TS door.
+# The template now uses `rev-parse --verify --quiet` under an `if` guard, so
+# both doors answer 4 `added_path` rows. The mechanism was shrunk to one host
+# and one rule in 6_door_skew_files_at.dl6, which is the regression pin; this
+# program is what that defect cost a real query, and now measures the fix.
 #
 # ── THE RX LOWERING ─────────────────────────────────────────────────────────
 #   wantRevPair$.pipe(                                   // base_file, head_file
@@ -39,7 +38,7 @@
 # fixtures/files-hosts.dl6. The template is the portable contract; on the Rust
 # door it never runs.
 sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
-  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
 
 # One row per repository under comparison. Both revisions AND the pathspec ride
 # the same row, so a rig cannot pair a base rev with the wrong glob.

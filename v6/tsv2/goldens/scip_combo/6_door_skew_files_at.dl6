@@ -1,62 +1,40 @@
-# 6_door_skew_files_at.dl6 -- THE PRIZE, SHRUNK TO ONE HOST AND ONE RULE.
+# 6_door_skew_files_at.dl6 -- THE PHANTOM-ROW PIN, NOW A REGRESSION TEST.
 #
-# One repository, one revision, one glob, one join. The two doors answer
-# DIFFERENT ROW SETS, and one of the two answers is wrong.
+# One repository, one revision, one glob, one join. Both doors now answer the
+# SAME row set: the tree at that revision, 2 rows on alpha at rev A, go.mod and
+# main.go, each with its blob oid.
 #
-#   RUST DOOR   the tree at that revision. On alpha at rev A: 2 rows,
-#               go.mod and main.go, each with its blob oid.
-#   TS DOOR     3 rows. The third is `src/core.ts`, which does not exist at
-#               rev A, carrying the literal string `<rev>:src/core.ts` in the
-#               DIGEST column.
-#
-# ── THE MECHANISM, MEASURED AND NOT ARGUED ──────────────────────────────────
+# ── THE DEFECT THIS FILE USED TO PIN ─────────────────────────────────────────
 # The Rust runtime recognizes the ruled name and answers from Soopy in-process
-# (`sprefa-engine-rs/src/hosts.rs:52-60` -> SoopyFilesExecutor), which reads the
-# tree at `Revision::Named(rev)`. The served TS runtime has no such arm and runs
-# the template, whose second half is:
+# (`sprefa-engine-rs/src/hosts.rs:52-60` -> SoopyFilesExecutor). The served TS
+# runtime has no such arm and used to run a template whose second half was:
 #
 #     oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"
 #     [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"
 #
-# Two facts about git, both measured on this corpus:
+# `git rev-parse <rev>:<absent-path>` exits 128, writes `fatal:` to stderr, and
+# ECHOES ITS ARGUMENT to stdout, so `$oid` held the literal `<rev>:<path>` and
+# the `[ -n "$oid" ]` guard passed: absence minted a row whose digest column
+# carried the argument string. On rev A the index carries `src/core.ts`, which
+# the tree at rev A does not, so the TS door answered 3 rows to the Rust door's
+# 2. The shipped declaration's own header claimed the opposite --
+# `v6/dl/fixtures/files-hosts.dl6:62-64` -- "rev-parse fails, the guard drops
+# it, and it is no row". The guard tested whether git PRINTED, not whether it
+# SUCCEEDED.
 #
-#   1  `git ls-files --with-tree=<rev>` answers the UNION of the index and the
-#      tree, so a path that exists only in the worktree's commit is enumerated
-#      while asking about an older revision.
-#   2  `git rev-parse <rev>:<absent-path>` exits 128, writes `fatal:` to
-#      STDERR, and ECHOES ITS ARGUMENT TO STDOUT. `2>/dev/null` hides the fatal
-#      line; `$oid` is not empty; the `[ -n "$oid" ]` guard passes; the row is
-#      printed with the argument string where a blob oid belongs.
-#
-# So absence becomes a ROW WITH A GARBAGE DIGEST, on a text column, which no
-# type check can catch. The shipped declaration's own header claims the
-# opposite in so many words -- `v6/dl/fixtures/files-hosts.dl6:62-64`, "a path
-# staged but absent at that rev has no blob: `rev-parse` fails, the guard drops
-# it, and it is no row (absence is row absence, never an empty digest)". The
-# guard tests the wrong thing: it tests whether git PRINTED, not whether git
-# SUCCEEDED. `git rev-parse --verify --quiet` prints nothing and exits 1, which
-# is the guard the comment describes.
-#
-# THE ONE-LINE REPAIR IS NOT ONE, measured as sabotage receipt 1 in 8_gate.sh:
-# swapping in `--verify --quiet` and keeping `[ -n "$oid" ] && printf` makes the
-# TS door answer ZERO rows, because the `&&` leaves the while loop's exit status
-# at 1 whenever the last enumerated path is the absent one and a nonzero exit is
-# a host failure. The repair is both halves, `--verify --quiet` AND the `if`
-# form crawl_org.dl6:68-70 already documents.
-#
-# ── SCOPE, WHICH IS WIDER THAN THIS FILE ────────────────────────────────────
-# The same template ships four times: `files_at` at fixtures/files-hosts.dl6:66,
-# `repo_files_at` at :102, and `repo_files_at` again at
-# fixtures/crawl_org.dl6:100. Every one of them is a rev-pinned feed on the TS
-# door, and every one over-answers by exactly the paths its index carries and
-# its revision does not. This lane does not own those files and does not edit
-# them; the README failure table carries the fix.
+# ── THE FIX, WHICH IS BOTH HALVES ────────────────────────────────────────────
+# The template now captures `rev-parse --verify --quiet '{rev}':"$entry"` (no
+# echo, exit 1 on absence) and prints only under `if [ -n "$oid" ]`. The `if`
+# is load-bearing: `[ -n "$oid" ] && printf` leaves the while loop's exit status
+# at 1 whenever the last enumerated path is the absent one, and a nonzero exit
+# is a host failure that answers zero rows (sabotage receipt 1 in 8_gate.sh).
 #
 # ── HOW THIS PROGRAM STAYS FALSIFIABLE ──────────────────────────────────────
-# The demand is posted at rev A, the revision BEFORE the sources land, because
-# that is the only revision at which the index and the tree disagree. Posting
-# HEAD instead makes both doors right and this file green for the wrong reason,
-# which is why the gate posts rev A and asserts the row COUNTS differ.
+# The demand is still posted at rev A, the revision BEFORE the sources land,
+# because that is the only revision at which the index and the tree disagree.
+# Posting HEAD would make the phantom row unreachable and this file green for
+# the wrong reason; posting rev A makes the 2-row agreement a real check that
+# the verify guard holds.
 #
 # ── THE RX LOWERING ─────────────────────────────────────────────────────────
 #   wantRev$.pipe(map(mintIdentityAndWitness),
@@ -64,7 +42,7 @@
 #                 mergeMap(runFileFeed), mergeMap(commitEdbArrival))
 
 sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
-  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
 
 rel want_rev(repo: text, rev: text, glob: text).
 
