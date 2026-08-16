@@ -17,7 +17,7 @@
 //! extraction families, that one flattens a foreign tool's index. Both stay
 //! re-exported here so no import path moved.
 
-use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, ProjectEdge, TypeF};
+use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, FlowEdge, FlowF, ProjectEdge, TypeF};
 use crate::rows::FamilyBundle;
 pub use crate::schema::SCHEMA;
 pub use crate::scip_rows::{flatten_scip, scip_file_edges};
@@ -216,6 +216,22 @@ pub fn flatten_project_type(
                 to_blob: edge.dst_blob.to_hex(),
                 to: SpanOut::new(edge.dst_span.start, edge.dst_span.end()),
             }
+        })
+        .collect()
+}
+
+/// Flatten the FlowF join output to its `flow_edge` arm. Both endpoints are
+/// (blob, span) keys; `FlowEdge` already carries flat coordinates.
+pub fn flatten_flow(edges: &[FlowEdge]) -> Vec<FlatFact> {
+    edges
+        .iter()
+        .map(|edge| FlatFact::FlowEdgeOut {
+            family: FlowF::TAG,
+            kind: edge.kind.as_str().to_string(),
+            from_blob: edge.src_blob.to_hex(),
+            from: SpanOut::new(edge.src_span.start, edge.src_span.end()),
+            to_blob: edge.dst_blob.to_hex(),
+            to: SpanOut::new(edge.dst_span.start, edge.dst_span.end()),
         })
         .collect()
 }

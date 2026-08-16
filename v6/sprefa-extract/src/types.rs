@@ -5,18 +5,15 @@
 //! shims so historical import paths (`crate::shape::Span`, `crate::family::TypeF`,
 //! ...) keep resolving. This is the "tasks.rs technique" from the seed, promoted:
 //! one compiled file is the source of truth, and pending work is COMMENTED OUT
-//! (ModuleF, Flow edges). Resolve<F> landed in commit 4a as a HOLLOW design-freeze
-//! surface (S5 below): the trait + ProjectCx + ProjectEdge<F> exist, bodies are
-//! todo!(), and NOTHING calls resolve yet. Commit 4b-i fills the shared machinery
-//! (BlobHash::of, the DefIndex builder + the three pure lookup helpers, the
-//! FlatFact project-edge arm); the Resolve impls themselves land per-lang.
+//! (ModuleF, Flow edges).
 //!
 //! Leaf scope: a corpus at a version -> normalized graph facts. Pure CPU, no SQL,
 //! no datalog, no async (the engine, another worktree).
 //!
 //! Planes:  RESOLUTION (SCIP-wire): CallF, TypeF, ModuleF*
-//!          VALUE-FLOW (native):   DfF  (+ typed Flow* edges)
+//!          VALUE-FLOW (native):   DfF, FlowF
 //!          STRUCTURE (lossless):  CstF        (* = pending, commented out)
+// @comment-ok: the module header is a crate-level doc block predating the rail
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -94,6 +91,7 @@ pub struct NodeRef(pub u32);
 #[serde(rename_all = "lowercase")]
 pub enum FamilyTag {
     Df,
+    Flow,
     Call,
     Type,
     Module,
@@ -622,13 +620,12 @@ impl DfNodeKind {
     }
 }
 
-/// df_edge kind. `Direct` is v5's unkinded df_edge(from,to). `Flow` (the promoted
-/// interprocedural union: arg->param, ret->call_res, higher-order) is PENDING.
+/// df_edge kind. `Direct` is v5's unkinded df_edge(from,to). Cross-function
+/// value edges live in the `FlowF` family, not here (own plane, own closure).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DfEdgeKind {
     /// An intra-procedural value edge: dst receives the value of src.
     Direct,
-    // Flow(FlowEdgeKind), // PENDING epic 5
 }
 
 impl DfEdgeKind {
@@ -644,6 +641,153 @@ impl Family for DfF {
     type EdgeKind = DfEdgeKind;
     type Aux = DfFAux;
     const TAG: FamilyTag = FamilyTag::Df;
+}
+
+// ── VALUE-FLOW plane: FlowF  (inter-procedural value flow) ───────────────────
+
+/// Cross-function value flow, a separate family from `DfF`. Phase-2 only: no
+/// `FamilyMask` bit, no `ExtractOutput` field; a pure join computes its edges.
+#[derive(Default, Copy, Clone, Debug)]
+pub struct FlowF;
+
+/// Cross-function value edge kind. `DfDirect` is absent: that is DfF's plane.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FlowEdgeKind {
+    /// A caller argument value flows into the callee's parameter at the same
+    /// positional slot.
+    ArgToParam,
+    /// A callee return value reaches the caller's call-result node. The edge is
+    /// caller-local, so the VALUE travels dst to src for this kind alone.
+    RetToCallRes,
+    /// A captured value flows into the closure's element slot.
+    LambdaElem,
+    /// A closure's return value flows out to the closure node.
+    LambdaRet,
+}
+
+impl FlowEdgeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FlowEdgeKind::ArgToParam => "arg_to_param",
+            FlowEdgeKind::RetToCallRes => "ret_to_call_res",
+            FlowEdgeKind::LambdaElem => "lambda_elem",
+            FlowEdgeKind::LambdaRet => "lambda_ret",
+        }
+    }
+}
+
+impl Family for FlowF {
+    type NodeKind = DfNodeKind;
+    type EdgeKind = FlowEdgeKind;
+    type Aux = ();
+    const TAG: FamilyTag = FamilyTag::Flow;
+}
+
+/// One cross-function value-flow edge, BOTH endpoints (blob, span) because flow
+/// crosses files. Emitted only by the `flow_edges` join.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlowEdge {
+    pub src_blob: BlobHash,
+    pub src_span: Span,
+    pub dst_blob: BlobHash,
+    pub dst_span: Span,
+    pub kind: FlowEdgeKind,
+}
+
+/// The pure inter-procedural value-flow join: `DfArg` x resolved call edge x
+/// `DfParam` (ArgToParam) plus callee `Ret` nodes (RetToCallRes).
+pub fn flow_edges(
+    inputs: &[(BlobHash, &ExtractOutput)],
+    resolved: &[(BlobHash, Vec<ProjectEdge<CallF>>)],
+) -> Vec<FlowEdge> {
+    let by_blob: std::collections::HashMap<BlobHash, &ExtractOutput> =
+        inputs.iter().map(|(blob, out)| (*blob, *out)).collect();
+    let mut edges = Vec::new();
+    for (caller_blob, call_edges) in resolved {
+        let Some(caller) = by_blob.get(caller_blob) else {
+            continue;
+        };
+        let Some(caller_df) = caller.df.as_ref() else {
+            continue;
+        };
+        for call_edge in call_edges {
+            let Some(site) = call_edge.call_site else {
+                continue;
+            };
+            let Some(call_node) = call_node(caller_df, site) else {
+                continue;
+            };
+            let Some(callee) = by_blob.get(&call_edge.dst_blob) else {
+                continue;
+            };
+            let Some(callee_df) = callee.df.as_ref() else {
+                continue;
+            };
+            for arg in &caller_df.aux.args {
+                if arg.call != call_node || arg.pos < 0 {
+                    continue;
+                }
+                for param in &callee_df.aux.params {
+                    let param_span = callee_df.node(param.node).span;
+                    let in_callee = call_edge.dst_span.start <= param_span.start
+                        && param_span.end() <= call_edge.dst_span.end();
+                    if !in_callee || param.pos as i64 != arg.pos {
+                        continue;
+                    }
+                    edges.push(FlowEdge {
+                        src_blob: *caller_blob,
+                        src_span: caller_df.node(arg.arg).span,
+                        dst_blob: call_edge.dst_blob,
+                        dst_span: param_span,
+                        kind: FlowEdgeKind::ArgToParam,
+                    });
+                }
+            }
+            let call_span = caller_df.node(call_node).span;
+            for node in &callee_df.nodes {
+                if node.kind != DfNodeKind::Ret {
+                    continue;
+                }
+                let in_callee = call_edge.dst_span.start <= node.span.start
+                    && node.span.end() <= call_edge.dst_span.end();
+                if !in_callee {
+                    continue;
+                }
+                edges.push(FlowEdge {
+                    src_blob: *caller_blob,
+                    src_span: call_span,
+                    dst_blob: call_edge.dst_blob,
+                    dst_span: node.span,
+                    kind: FlowEdgeKind::RetToCallRes,
+                });
+            }
+        }
+    }
+    edges
+}
+
+/// The caller's call node at `site`: the `CallRes`/`New` node whose span equals
+/// the site, else the smallest such span containing it, else `None`.
+fn call_node(bundle: &FamilyBundle<DfF>, site: Span) -> Option<NodeRef> {
+    let is_call = |kind: DfNodeKind| matches!(kind, DfNodeKind::CallRes | DfNodeKind::New);
+    for (index, node) in bundle.nodes.iter().enumerate() {
+        if is_call(node.kind) && node.span == site {
+            return Some(NodeRef(index as u32));
+        }
+    }
+    let mut best: Option<(Span, NodeRef)> = None;
+    for (index, node) in bundle.nodes.iter().enumerate() {
+        if !is_call(node.kind) {
+            continue;
+        }
+        let contains = node.span.start <= site.start && site.end() <= node.span.end();
+        let tighter =
+            best.map_or(true, |(span, _)| node.span.end() - node.span.start < span.end() - span.start);
+        if contains && tighter {
+            best = Some((node.span, NodeRef(index as u32)));
+        }
+    }
+    best.map(|(_, node)| node)
 }
 
 // ── RESOLUTION plane: ModuleF  (PENDING - collapsed; not yet a family) ──────
@@ -840,17 +984,11 @@ pub trait BlobSource: Sync + Send {
     fn blob(&self, path: &str) -> Option<Vec<u8>>;
 }
 
-// ── phase 2: the Resolve seam (commit 4a DESIGN FREEZE) ─────────────────────
-// The trait surface + types only. Every method body is todo!(); NOTHING calls
-// resolve; no impl exists yet (per-family impls land in 4b/4c). Human review
-// gates 4b.
+// ── phase 2: the Resolve seam ───────────────────────────────────────────────
 
 /// Borrowed view over one (repo, rev) project, shared across a language's
 /// phase-2 calls. Extract is content-local; this is the ONLY handle it gets to
 /// the world beyond the blob it was handed. Spec: seed `_2_traits.rs`:29-51
-/// (per-field citations below). Every field is a HOLLOW declaration in 4a: the
-/// concrete FileSet / ManifestMap / IndexBag subsystems land with the phase-2
-/// implementations that need them, not before.
 pub struct ProjectCx<'a> {
     /// Project-relative tracked file set (the resolution universe; a specifier
     /// resolving outside it is External/Unresolved). Spec: `_2_traits.rs`:36-37
@@ -1119,14 +1257,15 @@ pub fn containing_def_site(
 /// - ADDENDUM 4a: the corpus `DefIndex` arrives through `cx.indexes.def_index`,
 ///   not an explicit param — whole-project state built once per refresh is
 ///   exactly what the cx exists to carry (see `IndexBag` / `build_def_index`).
+/// `resolve` has no default body: a `Source` with no plane for `F` implements
+/// nothing for `F`; there is no empty default, so a missing arm is a compile
+/// error, never an empty result.
+// @comment-ok: the no-default constraint is prose the signature alone cannot show
 pub trait Resolve<F: Family>: Source {
     /// Turn this file's phase-1 specifiers/names into resolved, cross-file
     /// `ProjectEdge`s. The return is ONLY the cross-file resolutions for this
     /// one blob (spec: `_2_traits.rs`:88-96).
-    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<F>> {
-        let _ = (output, cx);
-        todo!("4b-iii landed Resolve<TypeF> + 4c-ii Resolve<CallF> for TsSource; 4d landed both arms for RustSource; next: 4d go arms")
-    }
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<F>>;
 }
 
 // ── S6 SCIP: the Tier-1 resolution wire (commit 4c) ─────────────────────────
@@ -1536,6 +1675,17 @@ pub enum FlatFact {
         to_blob: String,
         to: SpanOut,
     },
+    /// One cross-function value-flow edge (FlowF), BOTH endpoints content-keyed
+    /// because flow crosses files. Flattened by `flatten_flow`.
+    #[serde(rename = "flow_edge")]
+    FlowEdgeOut {
+        family: FamilyTag,
+        kind: String,
+        from_blob: String,
+        from: SpanOut,
+        to_blob: String,
+        to: SpanOut,
+    },
     /// A project-mode CLI call edge. Paths and names are top-level fields so
     /// line-oriented consumers can decode the record without span joins.
     #[serde(rename = "resolved_edge")]
@@ -1868,6 +2018,7 @@ pub enum FlatFact {
 //   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust); kotlin DEFERRED to the traits/codegen arc
 //   df aux (args/param_pos)                       [x]         [x]            [x]                 [x]
 //   df aux (fields/lits/loops/nests)              -> labels, follow-up
+//   inter-procedural flow (FlowF)                 -> landed; the resolve_project dispatch is the follow-up  // @comment-ok: the status table is one pre-existing prose run
 //
 // LEAF INFRA (pure CPU; still this leaf): parallel dispatch (rayon, arena-per-
 //   worker); BlobSource impls + the (BlobHash, lang, mask) content-keyed cache.

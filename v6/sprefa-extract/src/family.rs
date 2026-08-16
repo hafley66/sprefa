@@ -29,9 +29,8 @@
 //! the pass `diet_scip` labels.
 
 pub use crate::types::{
-    CallEdgeKind, CallF, CallFAux, CallKind, CallSite, ConstKind, ConstValue, CstEdgeKind, CstF,
-    DfArg, DfEdgeKind, DfF, DfFAux, DfNodeKind, DfParam, DocFact, DocTag, Family, ProjectEdge,
-    RefPosition,
-    Reference, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind,
-    TypeF, TypeFAux, TypeSig,
+    flow_edges, CallEdgeKind, CallF, CallFAux, CallKind, CallSite, ConstKind, ConstValue, CstEdgeKind,
+    CstF, DfArg, DfEdgeKind, DfF, DfFAux, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge,
+    FlowEdgeKind, FlowF, ProjectEdge, RefPosition, Reference, SigSlot, Specifier, SpecifierKind,
+    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };

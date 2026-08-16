@@ -193,7 +193,7 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                         span.start
                     ));
                 }
-                FamilyTag::Cst | FamilyTag::Module => {}
+                FamilyTag::Cst | FamilyTag::Module | FamilyTag::Flow => {}
             },
             FlatFact::Edge {
                 family, from, to, ..
@@ -257,6 +257,9 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             // phase-1); the Resolve<TypeF> twin-normalize lands with the
             // type_edge DEFERRED->PORTED flip.
             FlatFact::ProjectEdge { .. } => {}
+            // FlowF join output is phase-2 (never in `flatten`); 13_flow_join.rs
+            // pins its shape.
+            FlatFact::FlowEdgeOut { .. } => {}
             // Module specifier rows are v6-ONLY (no v5 oracle facet): reported
             // by the ledger test below, never asserted.
             FlatFact::Specifier { .. } => {}
