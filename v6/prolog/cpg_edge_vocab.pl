@@ -38,7 +38,7 @@ cpg_edge(tagged_by,      'nodes to the tags they are tagged by',                
 cpg_edge(binds,          'a TYPE_DECL with a BINDING node',                                        'Binding.scala:55',     none).
 cpg_edge(binds_to,       'type arguments to type parameters',                                      'Type.scala:165',       existing(type_generic)).
 cpg_edge(alias_of,       'alias relation between a type declaration and a type',                   'Type.scala:174',       none).
-cpg_edge(inherits_from,  'inheritance between a type declaration and a type',                      'Type.scala:184',       none).
+cpg_edge(inherits_from,  'inheritance between a type declaration and a type',                      'Type.scala:184',       existing(type_impl)).
 cpg_edge(source_file,    'a node to the node representing its source file',                        'FileSystem.scala:84',  none).
 
 % Node kinds (report section 1b), statements and expressions.
