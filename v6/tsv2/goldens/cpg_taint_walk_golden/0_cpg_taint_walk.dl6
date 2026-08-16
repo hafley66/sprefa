@@ -1,0 +1,269 @@
+# 0_cpg_taint_walk.dl6 -- CAN A SOURCE VALUE REACH A SINK, AS RECURSIVE RULES.
+#
+# TERMINATION, the two lines the house law asks for:
+#   Every recursive head draws its columns from the FINITE extracted sets (df
+#   node spans, df node kinds, call-site starts) and each rule only ever adds
+#   pairs already drawn from that product, so the closure is monotone over a
+#   finite lattice and reaches a fixed point.
+#   Negation is STRATIFIED: `sanitizer_node` is derived from `call_site` and
+#   `df_node` alone and never from a walk rel, so no `not/1` sits inside its own
+#   recursive cycle and the strata are (facts) < (source/sink/sanitizer) < (walks).
+#
+# ── WHAT THE WALK ACTUALLY CONSUMES ─────────────────────────────────────────
+# `--family flow` DOES NOT EXIST on the CLI. `parse_mask` accepts exactly
+# cst/type/call/df (extract.rs:487-501) and errors on any other name, so the
+# arg-to-param and ret-to-call-res edges the anchor doc's section 5 names cannot
+# be asked for. The library CAN compute them -- `flow_edges` at
+# types.rs:700-768 is real code producing ArgToParam and RetToCallRes -- but
+# nothing in `src/bin/extract.rs` or `src/project.rs` calls it, and
+# tests/13_flow_join.rs:3-5 names the CLI dispatch as the follow-up.
+#
+# So this program DERIVES both interprocedural hops from facts the CLI does
+# emit, which is the same join `flow_edges` performs:
+#   arg-to-param      `arg` record (call, pos, arg) x `site` record (callee)
+#                     x `node`/call proc definition x `param` record (pos)
+#   ret-to-call-res   callee `ret` df nodes x the `call_res` df node at the site
+#
+# THE JOIN KEY IS THE CALL START, NOT THE WHOLE SPAN. A `site` span covers the
+# callee NAME (`execute_sql` = 286..297) and the `arg` record's `call` span
+# covers the WHOLE call expression (`execute_sql(query_text)` = 286..309). They
+# agree on `start` and on nothing else, so every hop below joins on the start
+# offset. Keying on the full span yields zero hops and a silently empty walk.
+#
+# ── THE TWO WALKS, AND WHY THERE ARE TWO ────────────────────────────────────
+#   reaches / tainted        the anchor's context-INSENSITIVE closure. A return
+#                            edge may be taken out of ANY call site, so taint
+#                            entering a callee at one site leaks out at another.
+#   top_tainted / call_tainted
+#                            the CFL-reachability variant: the walk rel is
+#                            INDEXED ON THE CALL SITE it descended through, and
+#                            the ascent rule may only fire on the matching site.
+#                            One level deep, which is exact for this corpus.
+#
+# `cfl_blocked` is the difference, and it is the receipt: a sink the naive walk
+# taints and the site-indexed walk does not is a false path the CFL discipline
+# removed. An empty `cfl_blocked` means the corpus stopped exercising the
+# discipline, so the gate grades it non-empty.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantRows$.pipe(map(mintIdentityAndWitness), distinct(r => r.witnessDigest),
+#                  mergeMap(runLinkedFiles), mergeMap(commitEdbArrival))
+#   sourceFile$.pipe(mergeMap(runExtractOnce), mergeMap(commitEdbArrival))
+#   valueEdge$.pipe(expand(row => joinAgainstReaches(row)), distinct(rowKey))
+#   combineLatest([reaches$, sourceNode$, sinkNode$]).pipe(map(join))
+
+rel span(start: int, end: int).
+
+sh files(glob: text) -> (path: text, digest: text) =
+  `git ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git hash-object -- "$entry")"; done`.
+
+# Six projections, ONE template, so the applicative fold serves them all from a
+# single extractor run per file (hosts.rs is_applicative).
+sh df_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text) =
+  `"$DL_EXTRACT_BIN" --family call,df {path}`.
+sh df_edge_at(path: text, digest: text) -> (record: text, family: text, kind: text, from: span, from_kind: text, to: span, to_kind: text) =
+  `"$DL_EXTRACT_BIN" --family call,df {path}`.
+sh df_param_at(path: text, digest: text) -> (record: text, family: text, span: span, pos: int) =
+  `"$DL_EXTRACT_BIN" --family call,df {path}`.
+sh df_arg_at(path: text, digest: text) -> (record: text, family: text, call: span, pos: int, arg: span) =
+  `"$DL_EXTRACT_BIN" --family call,df {path}`.
+sh call_node_at(path: text, digest: text) -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call,df {path}`.
+sh call_ref(path: text, digest: text) -> (record: text, family: text, span: span, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call,df {path}`.
+
+rel want(glob: text).
+
+rel source_file(path: text, digest: text).
+source_file(FilePath, BlobDigest) <- want(Glob), files(Glob, FilePath, BlobDigest).
+
+# ── the extracted planes ────────────────────────────────────────────────────
+
+rel df_node(path: text, node_start: int, node_end: int, node_kind: text).
+df_node(FilePath, NodeStart, NodeEnd, NodeKind) <-
+  source_file(FilePath, BlobDigest),
+  df_node_at(FilePath, BlobDigest, 'node', 'df', NodeAt, NodeKind),
+  decode(NodeAt, {start: NodeStart, end: NodeEnd}).
+
+rel df_edge(path: text, from_start: int, from_end: int, from_kind: text,
+            to_start: int, to_end: int, to_kind: text).
+df_edge(FilePath, FromStart, FromEnd, FromKind, ToStart, ToEnd, ToKind) <-
+  source_file(FilePath, BlobDigest),
+  df_edge_at(FilePath, BlobDigest, 'edge', 'df', 'direct', FromAt, FromKind, ToAt, ToKind),
+  decode(FromAt, {start: FromStart, end: FromEnd}),
+  decode(ToAt, {start: ToStart, end: ToEnd}).
+
+rel df_param(path: text, param_start: int, param_end: int, param_pos: int).
+df_param(FilePath, ParamStart, ParamEnd, ParamPos) <-
+  source_file(FilePath, BlobDigest),
+  df_param_at(FilePath, BlobDigest, 'param', 'df', ParamAt, ParamPos),
+  decode(ParamAt, {start: ParamStart, end: ParamEnd}).
+
+rel df_arg(path: text, call_start: int, call_end: int, arg_pos: int,
+           arg_start: int, arg_end: int).
+df_arg(FilePath, CallStart, CallEnd, ArgPos, ArgStart, ArgEnd) <-
+  source_file(FilePath, BlobDigest),
+  df_arg_at(FilePath, BlobDigest, 'arg', 'df', CallAt, ArgPos, ArgAt),
+  decode(CallAt, {start: CallStart, end: CallEnd}),
+  decode(ArgAt, {start: ArgStart, end: ArgEnd}).
+
+rel proc_def(path: text, proc_start: int, proc_end: int, proc_name: text).
+proc_def(FilePath, ProcStart, ProcEnd, ProcName) <-
+  source_file(FilePath, BlobDigest),
+  call_node_at(FilePath, BlobDigest, 'node', 'call', ProcAt, _ProcKind, ProcName),
+  decode(ProcAt, {start: ProcStart, end: ProcEnd}).
+
+rel call_site(path: text, site_start: int, site_end: int, callee: text).
+call_site(FilePath, SiteStart, SiteEnd, Callee) <-
+  source_file(FilePath, BlobDigest),
+  call_ref(FilePath, BlobDigest, 'site', 'call', SiteAt, Callee),
+  decode(SiteAt, {start: SiteStart, end: SiteEnd}).
+
+# ── the two interprocedural hops, joined on the call START offset ───────────
+
+rel flow_arg_to_param(path: text, site_start: int, arg_start: int, arg_end: int,
+                      param_start: int, param_end: int).
+flow_arg_to_param(FilePath, SiteStart, ArgStart, ArgEnd, ParamStart, ParamEnd) <-
+  call_site(FilePath, SiteStart, _SiteEnd, Callee),
+  df_arg(FilePath, SiteStart, _CallEnd, SlotPos, ArgStart, ArgEnd),
+  proc_def(FilePath, ProcStart, ProcEnd, Callee),
+  df_param(FilePath, ParamStart, ParamEnd, SlotPos),
+  ParamStart >= ProcStart,
+  ParamEnd =< ProcEnd.
+
+rel flow_ret_to_call_res(path: text, site_start: int, ret_start: int, ret_end: int,
+                         call_res_start: int, call_res_end: int).
+flow_ret_to_call_res(FilePath, SiteStart, RetStart, RetEnd, SiteStart, CallResEnd) <-
+  call_site(FilePath, SiteStart, _SiteEnd, Callee),
+  proc_def(FilePath, ProcStart, ProcEnd, Callee),
+  df_node(FilePath, RetStart, RetEnd, 'ret'),
+  RetStart >= ProcStart,
+  RetEnd =< ProcEnd,
+  df_node(FilePath, SiteStart, CallResEnd, 'call_res').
+
+# ── the colored edge set the walks run over ────────────────────────────────
+
+rel value_edge(path: text, from_start: int, from_end: int, from_kind: text,
+               to_start: int, to_end: int, to_kind: text).
+value_edge(FilePath, FromStart, FromEnd, FromKind, ToStart, ToEnd, ToKind) <-
+  df_edge(FilePath, FromStart, FromEnd, FromKind, ToStart, ToEnd, ToKind).
+value_edge(FilePath, ArgStart, ArgEnd, ArgKind, ParamStart, ParamEnd, 'param') <-
+  flow_arg_to_param(FilePath, _SiteStart, ArgStart, ArgEnd, ParamStart, ParamEnd),
+  df_node(FilePath, ArgStart, ArgEnd, ArgKind).
+value_edge(FilePath, RetStart, RetEnd, 'ret', CallResStart, CallResEnd, 'call_res') <-
+  flow_ret_to_call_res(FilePath, _SiteStart, RetStart, RetEnd, CallResStart, CallResEnd).
+
+# ── source, sink, sanitizer: all three are call-site name reads ─────────────
+
+rel source_node(path: text, node_start: int, node_end: int, node_kind: text).
+source_node(FilePath, SiteStart, CallResEnd, 'call_res') <-
+  call_site(FilePath, SiteStart, _SiteEnd, 'read_request_body'),
+  df_node(FilePath, SiteStart, CallResEnd, 'call_res').
+
+rel sink_node(path: text, node_start: int, node_end: int, node_kind: text).
+sink_node(FilePath, ArgStart, ArgEnd, ArgKind) <-
+  call_site(FilePath, SiteStart, _SiteEnd, 'execute_sql'),
+  df_arg(FilePath, SiteStart, _CallEnd, _SlotPos, ArgStart, ArgEnd),
+  df_node(FilePath, ArgStart, ArgEnd, ArgKind).
+
+rel sanitizer_node(path: text, node_start: int, node_end: int, node_kind: text).
+sanitizer_node(FilePath, SiteStart, CallResEnd, 'call_res') <-
+  call_site(FilePath, SiteStart, _SiteEnd, 'escape_sql'),
+  df_node(FilePath, SiteStart, CallResEnd, 'call_res').
+
+# ── WALK 1: the anchor's context-insensitive closure ────────────────────────
+# Neither head reads ITSELF, so lower.pl's direct-self-read test leaves both
+# with ExpandPlan=none and the closure comes from the outer rounds; this is the
+# df_reach/df_hop shape of conformance/fixtures/24_mutual_recursion.pl.
+
+rel reaches(path: text, from_start: int, from_end: int, from_kind: text,
+            to_start: int, to_end: int, to_kind: text).
+rel reach_hop(path: text, from_start: int, from_end: int, from_kind: text,
+              to_start: int, to_end: int, to_kind: text).
+
+reaches(FilePath, FromStart, FromEnd, FromKind, ToStart, ToEnd, ToKind) <-
+  value_edge(FilePath, FromStart, FromEnd, FromKind, ToStart, ToEnd, ToKind).
+reaches(FilePath, FromStart, FromEnd, FromKind, ToStart, ToEnd, ToKind) <-
+  reach_hop(FilePath, FromStart, FromEnd, FromKind, ToStart, ToEnd, ToKind).
+reach_hop(FilePath, FromStart, FromEnd, FromKind, ToStart, ToEnd, ToKind) <-
+  reaches(FilePath, FromStart, FromEnd, FromKind, MidStart, MidEnd, MidKind),
+  not(sanitizer_node(FilePath, MidStart, MidEnd, MidKind)),
+  value_edge(FilePath, MidStart, MidEnd, MidKind, ToStart, ToEnd, ToKind).
+
+rel tainted(path: text, sink_start: int, sink_end: int, sink_kind: text).
+tainted(FilePath, SinkStart, SinkEnd, SinkKind) <-
+  source_node(FilePath, SourceStart, SourceEnd, SourceKind),
+  reaches(FilePath, SourceStart, SourceEnd, SourceKind, SinkStart, SinkEnd, SinkKind),
+  sink_node(FilePath, SinkStart, SinkEnd, SinkKind).
+
+# ── WALK 2: the same question, INDEXED ON THE CALL SITE ────────────────────
+# `top_tainted` is the walk in the caller; `call_tainted` carries the site it
+# descended through. The ascent rule reads that column, so a value that entered
+# at one site cannot leave at another. That is the CFL call-return discipline.
+
+rel top_tainted(path: text, node_start: int, node_end: int, node_kind: text).
+rel top_step(path: text, node_start: int, node_end: int, node_kind: text).
+rel call_tainted(path: text, site_start: int, node_start: int, node_end: int, node_kind: text).
+rel call_step(path: text, site_start: int, node_start: int, node_end: int, node_kind: text).
+
+top_tainted(FilePath, NodeStart, NodeEnd, NodeKind) <-
+  source_node(FilePath, NodeStart, NodeEnd, NodeKind).
+top_tainted(FilePath, NodeStart, NodeEnd, NodeKind) <-
+  top_step(FilePath, NodeStart, NodeEnd, NodeKind).
+
+top_step(FilePath, ToStart, ToEnd, ToKind) <-
+  top_tainted(FilePath, MidStart, MidEnd, MidKind),
+  not(sanitizer_node(FilePath, MidStart, MidEnd, MidKind)),
+  df_edge(FilePath, MidStart, MidEnd, MidKind, ToStart, ToEnd, ToKind).
+top_step(FilePath, CallResStart, CallResEnd, 'call_res') <-
+  call_tainted(FilePath, SiteStart, RetStart, RetEnd, 'ret'),
+  not(sanitizer_node(FilePath, RetStart, RetEnd, 'ret')),
+  flow_ret_to_call_res(FilePath, SiteStart, RetStart, RetEnd, CallResStart, CallResEnd).
+
+call_tainted(FilePath, SiteStart, NodeStart, NodeEnd, NodeKind) <-
+  call_step(FilePath, SiteStart, NodeStart, NodeEnd, NodeKind).
+
+call_step(FilePath, SiteStart, ParamStart, ParamEnd, 'param') <-
+  top_tainted(FilePath, ArgStart, ArgEnd, ArgKind),
+  not(sanitizer_node(FilePath, ArgStart, ArgEnd, ArgKind)),
+  flow_arg_to_param(FilePath, SiteStart, ArgStart, ArgEnd, ParamStart, ParamEnd).
+call_step(FilePath, SiteStart, ToStart, ToEnd, ToKind) <-
+  call_tainted(FilePath, SiteStart, MidStart, MidEnd, MidKind),
+  not(sanitizer_node(FilePath, MidStart, MidEnd, MidKind)),
+  df_edge(FilePath, MidStart, MidEnd, MidKind, ToStart, ToEnd, ToKind).
+
+rel site_tainted(path: text, sink_start: int, sink_end: int, sink_kind: text).
+site_tainted(FilePath, SinkStart, SinkEnd, SinkKind) <-
+  top_tainted(FilePath, SinkStart, SinkEnd, SinkKind),
+  sink_node(FilePath, SinkStart, SinkEnd, SinkKind).
+site_tainted(FilePath, SinkStart, SinkEnd, SinkKind) <-
+  call_tainted(FilePath, _SiteStart, SinkStart, SinkEnd, SinkKind),
+  sink_node(FilePath, SinkStart, SinkEnd, SinkKind).
+
+# The receipt: every sink the naive closure taints that the site-indexed walk
+# refuses. A row here is a false path the CFL discipline removed.
+rel cfl_blocked(path: text, sink_start: int, sink_end: int, sink_kind: text).
+cfl_blocked(FilePath, SinkStart, SinkEnd, SinkKind) <-
+  tainted(FilePath, SinkStart, SinkEnd, SinkKind),
+  not(site_tainted(FilePath, SinkStart, SinkEnd, SinkKind)).
+
+# ── populations, so an emptiness claim is never made over nothing ───────────
+
+rel source_count(path: text, sources: int).
+source_count(FilePath, count(NodeStart)) <- source_node(FilePath, NodeStart, _, _).
+rel sink_count(path: text, sinks: int).
+sink_count(FilePath, count(NodeStart)) <- sink_node(FilePath, NodeStart, _, _).
+rel hop_count(path: text, hops: int).
+hop_count(FilePath, count(ArgStart)) <- flow_arg_to_param(FilePath, _, ArgStart, _, _, _).
+
+? source_node(path, node_start, node_end, node_kind).
+? sink_node(path, node_start, node_end, node_kind).
+? sanitizer_node(path, node_start, node_end, node_kind).
+? flow_arg_to_param(path, site_start, arg_start, arg_end, param_start, param_end).
+? flow_ret_to_call_res(path, site_start, ret_start, ret_end, call_res_start, call_res_end).
+? tainted(path, sink_start, sink_end, sink_kind).
+? site_tainted(path, sink_start, sink_end, sink_kind).
+? cfl_blocked(path, sink_start, sink_end, sink_kind).
+? source_count(path, sources).
+? sink_count(path, sinks).
+? hop_count(path, hops).

@@ -1,0 +1,35 @@
+cfl_blocked	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	755	765	var_read
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	349	361	371	233	247
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	488	499	516	172	180
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	523	542	557	313	323
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	286	298	308	170	184
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	398	417	434	250	260
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	580	601	618	411	423
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	697	718	736	411	423
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	743	755	765	329	343
+flow_arg_to_param	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/unrelated_handler.rs	383	395	413	175	189
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	349	273	287	349	372
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	441	122	154	441	460
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	488	206	214	488	517
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	523	349	372	523	558
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	286	210	224	286	309
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	373	119	151	373	392
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	398	286	309	398	435
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	534	278	310	534	553
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	580	449	461	580	619
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	697	449	461	697	737
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	743	369	383	743	766
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/unrelated_handler.rs	303	124	156	303	322
+flow_ret_to_call_res	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/unrelated_handler.rs	383	215	229	383	414
+sanitizer_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	488	517	call_res
+sink_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	361	371	var_read
+sink_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	298	308	var_read
+sink_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	755	765	var_read
+sink_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/unrelated_handler.rs	395	413	var_read
+site_tainted	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	298	308	var_read
+source_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/sanitized_handler.rs	441	460	call_res
+source_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	373	392	call_res
+source_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	534	553	call_res
+source_node	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/unrelated_handler.rs	303	322	call_res
+tainted	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/tainted_handler.rs	298	308	var_read
+tainted	v6/tsv2/goldens/cpg_taint_walk_golden/corpus/two_site_handler.rs	755	765	var_read
