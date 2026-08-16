@@ -765,3 +765,10 @@ ruling(template_bound_spelling, bound_in_parameter_parens, user,
 % syntax; acyclic(option(node)) is the explicit synonym for the same guard.
 ruling(acyclic_guard_spelling, wrapper_composition_default_on, user,
        'user 2026-08-14: "A for now then". acyclic(option(node)) wrapper composition wins over a rel-level clause or a stdlib template; earlier in the same session "no, detect it" set divergence detection over any hang.').
+
+% 2026-08-16: TOML ingestion. No new reader dependency and no awk template;
+% TOML (and yaml) read through the format-polymorphic json operator exactly as
+% v4/v5 did (v5 `json`/`jsonp` ops dispatch on file extension in datapath.rs).
+% Closes the ghcacher plan's open question 4 (plans/2026-08-04-ghcacher-plan.md).
+ruling(toml_via_json_operator, format_polymorphic_json_op, user,
+       'user 2026-08-16: "toml is read by json operator im not relitigating this read v4/v5 json operator" — the v6 json op inherits v5 format polymorphism; no dasel/yj/tomlq, no awk').
