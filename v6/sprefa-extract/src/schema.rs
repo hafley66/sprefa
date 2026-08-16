@@ -20,8 +20,8 @@ sprefa-extract JSONL contract: one fact per line, each a JSON object tagged by \
 Records join across families by matching spans.
 
 RECORD SHAPES
-  record=node   family=<cst|type|call|df>  span={start,end}   kind=<slug>   name=<string|null>
-  record=edge   family=<cst|df>            kind=<slug>        from={start,end}  to={start,end}
+  record=node   family=<cst|type|call|df|cfg>  span={start,end}   kind=<slug>   name=<string|null>
+  record=edge   family=<cst|df|cfg>        kind=<slug>        from={start,end}  to={start,end}
   record=sig    family=type                owner={start,end}  owner_start=<u32>  owner_end=<u32>  slot=<param|ret>  pos=<u32>  ty=<name>
   record=param  family=df                  span={start,end}   pos=<u32>
   record=arg    family=df                  call={start,end}   pos=<i64>  arg={start,end}
@@ -61,7 +61,8 @@ RECORD SHAPES
 FIELDS
   family       the graph plane: cst (concrete syntax tree), type (declarations),
                call (callables + call sites), df (intra-procedural value flow),
-               flow (inter-procedural value flow, derived).
+               flow (inter-procedural value flow, derived),
+               cfg (intra-procedural control flow, derived from cst).
   span         a node location; half-open bytes.
   kind         the node/edge slug from the per-family vocabulary below.
   name         the declared identifier, when the node carries one (else null).
@@ -121,10 +122,23 @@ KIND VOCABULARIES (the `kind` field)
   cst edge    child
   df edge     direct
   flow edge   arg_to_param | ret_to_call_res | lambda_elem | lambda_ret
+  cfg node    entry exit stmt branch loop jump ret
+  cfg edge    next arm jump exit
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
   resolved_edge kind       name_resolve | scip_override
   resolved_type_edge kind  field | impl | variant | generic | uses
+
+CONTROL FLOW (--family cfg)
+  Intra-procedural only, and DERIVED from the cst family rather than projected
+  by a language front-end: `--family cfg` turns the cst mask on and emits cfg
+  node and edge records beside it. Every callable gets an entry and an exit
+  node, both carrying the callable's own span, so the `kind` field is what
+  separates them. A `next` edge whose destination starts before its source is a
+  loop back edge. Jump targets outside a loop (goto, labelled break) are NOT
+  resolved, so those nodes have no outgoing edge. Languages with kind_role rows:
+  rust, go, ts, kotlin; any other language emits no cfg rows at all.
+  Post-dominance and the CDG edge color are NOT built.
 
 PHASE-1 LIMITS (default mode)
   No name resolution: type edges, caller->callee links, and cross-file joins are

@@ -16,6 +16,7 @@
 //! `--bench`. Proves bin -> seams -> flat wire -> stdout end to end.
 #![allow(dead_code)]
 
+pub mod cfg;
 pub mod cpg_decode;
 pub mod cpg_types;
 pub mod deps;
@@ -36,6 +37,10 @@ pub mod source;
 pub mod types;
 pub mod wire;
 
+pub use cfg::{
+    build_cfg, cfg_bundle, cfg_facts, roles_for, CfgRole, RoleRule, GO_ROLES, KOTLIN_ROLES,
+    RUST_ROLES, TS_ROLES,
+};
 pub use cpg_decode::decode_cpg_struct;
 pub use cpg_types::{
     CpgEdge, CpgEdgeKind, CpgImport, CpgImportError, CpgNode, CpgNodeKind, CpgProperty,
@@ -49,6 +54,7 @@ pub use family::{
     ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind,
     TypeF, TypeFAux, TypeSig,
 };
+pub use types::{CfgEdgeKind, CfgF, CfgNodeKind};
 pub use lang::{
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DlSource,
     GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource, RustSource, TsSource,
@@ -83,6 +89,6 @@ pub use seams::{
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};
 pub use wire::{
-    file_fact, flatten, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges, FlatFact,
-    SpanOut, SCHEMA,
+    file_fact, flatten, flatten_cfg, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges,
+    FlatFact, SpanOut, SCHEMA,
 };

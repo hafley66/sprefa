@@ -96,6 +96,7 @@ pub enum FamilyTag {
     Type,
     Module,
     Cst,
+    Cfg,
 }
 
 /// The per-file string interner backing every `NameId`. One per extraction; the
@@ -788,6 +789,73 @@ fn call_node(bundle: &FamilyBundle<DfF>, site: Span) -> Option<NodeRef> {
         }
     }
     best.map(|(_, node)| node)
+}
+
+// ── CONTROL-FLOW plane: CfgF ────────────────────────────────────────────────
+
+/// Intra-procedural control flow, DERIVED from the CstF parse: an Entry/Exit
+/// pair per callable plus one node per control point.
+
+/// The only per-language input is the `kind_role` table in `crate::cfg`.
+#[derive(Default, Copy, Clone, Debug)]
+pub struct CfgF;
+
+/// cfg_node kind. Entry and Exit are the callable's two synthetic endpoints and
+/// both carry ITS span, so kind is what separates them.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CfgNodeKind {
+    Entry,
+    Exit,
+    Stmt,
+    Branch,
+    Loop,
+    Jump,
+    Ret,
+}
+
+impl CfgNodeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CfgNodeKind::Entry => "entry",
+            CfgNodeKind::Exit => "exit",
+            CfgNodeKind::Stmt => "stmt",
+            CfgNodeKind::Branch => "branch",
+            CfgNodeKind::Loop => "loop",
+            CfgNodeKind::Jump => "jump",
+            CfgNodeKind::Ret => "ret",
+        }
+    }
+}
+
+/// cfg_edge kind. `Next` is plain succession, a loop's back edge included (the
+/// back edge is the one whose dst starts before its src).
+
+/// `Arm` enters a branch arm or a loop body, `Jump` leaves a break/continue,
+/// `Exit` enters the callable's Exit node.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CfgEdgeKind {
+    Next,
+    Arm,
+    Jump,
+    Exit,
+}
+
+impl CfgEdgeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CfgEdgeKind::Next => "next",
+            CfgEdgeKind::Arm => "arm",
+            CfgEdgeKind::Jump => "jump",
+            CfgEdgeKind::Exit => "exit",
+        }
+    }
+}
+
+impl Family for CfgF {
+    type NodeKind = CfgNodeKind;
+    type EdgeKind = CfgEdgeKind;
+    type Aux = ();
+    const TAG: FamilyTag = FamilyTag::Cfg;
 }
 
 // ── RESOLUTION plane: ModuleF  (PENDING - collapsed; not yet a family) ──────
