@@ -302,6 +302,11 @@ git-refs-golden:
 scip-combo:
     bash {{ v6 }}/tsv2/goldens/scip_combo/8_gate.sh
 
+# Source-to-sink taint as recursive dl6 rules over extracted edges, byte-diffed;
+# one arm is a pinned CFL receipt and goes red if the two walks agree. Dir README.
+cpg-taint-walk:
+    bash {{ v6 }}/tsv2/goldens/cpg_taint_walk_golden/3_gate.sh
+
 # STOPPING-POINT PROGRAM #3: git pre-commit --changed, the biome-style
 # recent-change-lines gating, spelled as ordinary rules. "Which files are NEW
 # since a base revision" is a join between two rev-pinned `files_at` host
