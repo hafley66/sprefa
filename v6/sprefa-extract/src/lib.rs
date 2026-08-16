@@ -56,7 +56,8 @@ pub use soopy::{ContentId as SourceContentId, Pattern as SourcePattern,
     Revision as SourceRevision, RevisionId as SourceRevisionId, SourceEntry, SourceRef};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
-    byte_range, definition_of, join_documents, site_occurrence, ScipGo, ScipRust, ScipTypescript,
+    byte_range, definition_of, join_documents, site_occurrence, Fallback, IndexerSpec, ScipClang,
+    ScipGo, ScipJava, ScipPython, ScipRust, ScipTypescript, Staging,
 };
 pub use scip_ensure::{
     default_cache_dir, detect, ensure_index, index_path, EnsureReport, IndexBudget, Indexer,

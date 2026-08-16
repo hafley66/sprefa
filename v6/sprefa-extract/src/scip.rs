@@ -28,11 +28,8 @@
 //! which owns the protobuf -> flat-types decode. Only the types in
 //! `crate::types` cross the seam.
 
-//! EVERY SPAWN HERE IS BUDGETED. The three `build` bodies below call
-//! `scip_ensure::run_capped` rather than `Command::output()`: the child runs in
-//! its own process group and the whole group is killed on the deadline. v5 had
-//! no bound at all, and these indexers fork (cargo metadata, tsc), so a bound
-//! that only reached the direct child would leak the real worker.
+//! EVERY SPAWN HERE IS BUDGETED. The child runs in its own process group and
+//! the whole group dies on the deadline: these indexers fork.
 
 use std::path::{Path, PathBuf};
 
@@ -94,42 +91,25 @@ const TS_EXTS: &[&str] = &["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"]
 const RUST_EXTS: &[&str] = &["rs"];
 const RUST_EXTRA_NAMES: &[&str] = &["Cargo.toml"];
 
+/// The jvm staging set. The build files are what scip-java drives; without
+/// them the staged copy has no project to index.
+const JAVA_EXTS: &[&str] = &["java", "scala", "kt", "kts"];
+const JAVA_EXTRA_NAMES: &[&str] = &[
+    "build.gradle.kts",
+    "build.gradle",
+    "settings.gradle.kts",
+    "settings.gradle",
+    "pom.xml",
+    "gradle.properties",
+];
+
 impl ScipSource for ScipTypescript {
     fn indexer(&self) -> &'static str {
         "scip-typescript"
     }
 
     fn build(&self, root: &Path) -> Result<PathBuf, ScipError> {
-        let stage = fresh_temp_dir("sprefa-scip")?;
-        let out = stage.join("index.scip");
-        // Hermetic staging: with no tsconfig at the root, the indexer's
-        // --infer-tsconfig would WRITE one into the source dir. Copy the
-        // sources to a temp workdir and let it write there instead. With a
-        // tsconfig present the indexer writes nothing but the (redirected)
-        // output, so the root is used in place (no copying real projects).
-        let work = if root.join("tsconfig.json").is_file() {
-            root.to_path_buf()
-        } else {
-            let work = stage.join("work");
-            copy_sources(root, &work, TS_EXTS, &[])?;
-            work
-        };
-        let out_str = out.to_string_lossy().into_owned();
-        let argv: [&str; 4] = ["index", "--infer-tsconfig", "--output", out_str.as_str()];
-        // PATH first (v5's `dl index` convention); a spawn miss falls back to
-        // the version-pinned npx form (the ORACLE entry ran 0.4.0). A PATH
-        // binary that runs and fails is reported, not retried.
-        let direct: Vec<&str> = std::iter::once("scip-typescript")
-            .chain(argv.iter().copied())
-            .collect();
-        if let Some(path) = attempt(&direct, &work, &stage, &out)? {
-            return Ok(path);
-        }
-        let fallback: Vec<&str> = ["npx", "-y", "@sourcegraph/scip-typescript@0.4.0"]
-            .into_iter()
-            .chain(argv.iter().copied())
-            .collect();
-        attempt(&fallback, &work, &stage, &out)?.ok_or(ScipError::IndexerMissing("scip-typescript"))
+        build_indexer(&TS_SPEC, root)
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
@@ -143,22 +123,7 @@ impl ScipSource for ScipRust {
     }
 
     fn build(&self, root: &Path) -> Result<PathBuf, ScipError> {
-        let stage = fresh_temp_dir("sprefa-scip-rust")?;
-        let out = stage.join("index.scip");
-        // ALWAYS staged, never in place (a stronger hermetic than the ts
-        // conditional): cargo metadata writes `target/` (and can write
-        // Cargo.lock) under the project root UNCONDITIONALLY, and the seam's
-        // law is that the source dir is never written. The staged copy is
-        // sources + manifests only, so crate-relative document paths match
-        // the root's layout exactly.
-        let work = stage.join("work");
-        copy_sources(root, &work, RUST_EXTS, RUST_EXTRA_NAMES)?;
-        let out_str = out.to_string_lossy().into_owned();
-        // v5's argv verbatim (src/scip_setup.rs INDEXERS rust row), cwd = the
-        // staged root. PATH only: rust-analyzer ships with the toolchain; a
-        // spawn miss is IndexerMissing, a run failure is reported as-is.
-        let argv = ["rust-analyzer", "scip", ".", "--output", out_str.as_str()];
-        attempt(&argv, &work, &stage, &out)?.ok_or(ScipError::IndexerMissing("rust-analyzer"))
+        build_indexer(&RUST_SPEC, root)
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
@@ -181,38 +146,223 @@ impl ScipSource for ScipGo {
     }
 
     fn build(&self, root: &Path) -> Result<PathBuf, ScipError> {
-        let stage = fresh_temp_dir("sprefa-scip-go")?;
-        let out = stage.join("index.scip");
-        let out_str = out.to_string_lossy().into_owned();
-        // HERMETIC: scip-go writes ONLY the (redirected) output — there is no
-        // --infer-tsconfig analog (a missing go.mod is an honest IndexerFailed,
-        // never staged around), and its `go list` loads land in the go build/
-        // module caches, never in the source dir (verified: the fixture module
-        // is byte-identical after a run). The root is used in place.
-        let argv: [&str; 2] = ["--output", out_str.as_str()];
-        // PATH first (v5's `dl index` convention); a spawn miss falls back to
-        // the version-pinned `go run` form. A PATH binary that runs and fails
-        // is reported, not retried.
-        let direct: Vec<&str> = std::iter::once("scip-go")
-            .chain(argv.iter().copied())
-            .collect();
-        if let Some(path) = attempt(&direct, root, &stage, &out)? {
-            return Ok(path);
-        }
-        let fallback: Vec<&str> = [
-            "go",
-            "run",
-            "github.com/scip-code/scip-go/cmd/scip-go@v0.2.7",
-        ]
-        .into_iter()
-        .chain(argv.iter().copied())
-        .collect();
-        attempt(&fallback, root, &stage, &out)?.ok_or(ScipError::IndexerMissing("scip-go"))
+        build_indexer(&GO_SPEC, root)
     }
 
     fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
         // The proto is language-agnostic, so every indexer shares one decode.
         load_index(index_path)
+    }
+}
+
+/// scip-python (v5's python INDEXERS row, `src/scip_setup.rs:66-72`).
+pub struct ScipPython;
+
+/// scip-java (v5's kotlin/java INDEXERS row, `src/scip_setup.rs:80-86`).
+pub struct ScipJava;
+
+/// scip-clang (v5's cpp INDEXERS row, `src/scip_setup.rs:87-99`).
+pub struct ScipClang;
+
+impl ScipSource for ScipPython {
+    fn indexer(&self) -> &'static str {
+        "scip-python"
+    }
+
+    fn build(&self, root: &Path) -> Result<PathBuf, ScipError> {
+        build_indexer(&PYTHON_SPEC, root)
+    }
+
+    fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
+        load_index(index_path)
+    }
+}
+
+impl ScipSource for ScipJava {
+    fn indexer(&self) -> &'static str {
+        "scip-java"
+    }
+
+    fn build(&self, root: &Path) -> Result<PathBuf, ScipError> {
+        build_indexer(&JAVA_SPEC, root)
+    }
+
+    fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
+        load_index(index_path)
+    }
+}
+
+impl ScipSource for ScipClang {
+    fn indexer(&self) -> &'static str {
+        "scip-clang"
+    }
+
+    fn build(&self, root: &Path) -> Result<PathBuf, ScipError> {
+        build_indexer(&CLANG_SPEC, root)
+    }
+
+    fn load(&self, index_path: &Path) -> Result<ScipIndex, ScipError> {
+        load_index(index_path)
+    }
+}
+
+// ── the indexer roster as DATA ────────────────────────────────────────────────
+// `bin` + `args` mirror v5 `src/scip_setup.rs` INDEXERS run arrays verbatim.
+
+/// How a non-PATH indexer is reached when the direct binary is not installed.
+/// `None` for indexers that ship with their toolchain (rust-analyzer).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fallback {
+    None,
+    /// `npx -y <pkg>` prepended to the argv; the payload is a pinned release.
+    Npx(&'static str),
+    GoRun(&'static str),
+}
+
+/// Whether the indexer may write into the project root, or must run over a
+/// hermetic copy. Three variants, one per existing indexer policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Staging {
+    /// Run in place: the indexer writes nothing but the redirected output
+    /// (scip-go).
+    InPlace,
+    /// Always run over a staged copy: the indexer writes the source dir
+    /// unconditionally (rust-analyzer's cargo metadata writes `target/`).
+    Always {
+        exts: &'static [&'static str],
+        extra_names: &'static [&'static str],
+    },
+    /// Run in place when `marker` is present, else stage: the indexer writes
+    /// the marker when it is missing (scip-typescript's `--infer-tsconfig`).
+    Conditional {
+        marker: &'static str,
+        exts: &'static [&'static str],
+        extra_names: &'static [&'static str],
+    },
+}
+
+/// One language's SCIP build spec: the binary, the trailing argv (`{out}` is
+/// the absolute output path), the fallback, and the staging policy.
+#[derive(Clone, Copy, Debug)]
+pub struct IndexerSpec {
+    pub bin: &'static str,
+    pub args: &'static [&'static str],
+    pub fallback: Fallback,
+    pub staging: Staging,
+}
+
+static TS_SPEC: IndexerSpec = IndexerSpec {
+    bin: "scip-typescript",
+    args: &["index", "--infer-tsconfig", "--output", "{out}"],
+    fallback: Fallback::Npx("@sourcegraph/scip-typescript@0.4.0"),
+    staging: Staging::Conditional {
+        marker: "tsconfig.json",
+        exts: TS_EXTS,
+        extra_names: &[],
+    },
+};
+
+static RUST_SPEC: IndexerSpec = IndexerSpec {
+    bin: "rust-analyzer",
+    args: &["scip", ".", "--output", "{out}"],
+    fallback: Fallback::None,
+    staging: Staging::Always {
+        exts: RUST_EXTS,
+        extra_names: RUST_EXTRA_NAMES,
+    },
+};
+
+static GO_SPEC: IndexerSpec = IndexerSpec {
+    bin: "scip-go",
+    args: &["--output", "{out}"],
+    fallback: Fallback::GoRun("github.com/scip-code/scip-go/cmd/scip-go@v0.2.7"),
+    staging: Staging::InPlace,
+};
+
+/// scip-python writes only the redirected output; its pyright analysis reads
+/// the tree and caches outside it.
+static PYTHON_SPEC: IndexerSpec = IndexerSpec {
+    bin: "scip-python",
+    args: &["index", ".", "--output", "{out}"],
+    fallback: Fallback::Npx("@sourcegraph/scip-python"),
+    staging: Staging::InPlace,
+};
+
+/// scip-java drives gradle or maven, which write `build/` and `target/` under
+/// the root, so the copy is not optional.
+static JAVA_SPEC: IndexerSpec = IndexerSpec {
+    bin: "scip-java",
+    args: &["index", "--output", "{out}"],
+    fallback: Fallback::None,
+    staging: Staging::Always {
+        exts: JAVA_EXTS,
+        extra_names: JAVA_EXTRA_NAMES,
+    },
+};
+
+/// scip-clang reads the compilation database and writes only `-o`. The compdb
+/// names absolute paths, so a staged copy would break every entry.
+static CLANG_SPEC: IndexerSpec = IndexerSpec {
+    bin: "scip-clang",
+    args: &["--compdb-path", "compile_commands.json", "-o", "{out}"],
+    fallback: Fallback::None,
+    staging: Staging::InPlace,
+};
+
+/// A PATH binary that runs and FAILS is reported, not retried: a fallback
+/// answers "not installed", never "crashed".
+fn build_indexer(spec: &IndexerSpec, root: &Path) -> Result<PathBuf, ScipError> {
+    let stage = fresh_temp_dir(spec.bin)?;
+    let out = stage.join("index.scip");
+    let out_str = out.to_string_lossy().into_owned();
+    let work = match spec.staging {
+        Staging::InPlace => root.to_path_buf(),
+        Staging::Always { exts, extra_names } => {
+            let work = stage.join("work");
+            copy_sources(root, &work, exts, extra_names)?;
+            work
+        }
+        Staging::Conditional {
+            marker,
+            exts,
+            extra_names,
+        } => {
+            if root.join(marker).is_file() {
+                root.to_path_buf()
+            } else {
+                let work = stage.join("work");
+                copy_sources(root, &work, exts, extra_names)?;
+                work
+            }
+        }
+    };
+    let args: Vec<&str> = spec
+        .args
+        .iter()
+        .map(|a| if *a == "{out}" { out_str.as_str() } else { a })
+        .collect();
+    let direct: Vec<&str> = std::iter::once(spec.bin)
+        .chain(args.iter().copied())
+        .collect();
+    if let Some(path) = attempt(&direct, &work, &stage, &out)? {
+        return Ok(path);
+    }
+    match spec.fallback {
+        Fallback::None => Err(ScipError::IndexerMissing(spec.bin)),
+        Fallback::Npx(pkg) => {
+            let fallback: Vec<&str> = ["npx", "-y", pkg]
+                .into_iter()
+                .chain(args.iter().copied())
+                .collect();
+            attempt(&fallback, &work, &stage, &out)?.ok_or(ScipError::IndexerMissing(spec.bin))
+        }
+        Fallback::GoRun(module) => {
+            let fallback: Vec<&str> = ["go", "run", module]
+                .into_iter()
+                .chain(args.iter().copied())
+                .collect();
+            attempt(&fallback, &work, &stage, &out)?.ok_or(ScipError::IndexerMissing(spec.bin))
+        }
     }
 }
 
