@@ -1,0 +1,111 @@
+# 3_span_in_file.dl6 -- EVERY EXTRACTED SPAN, CHECKED AGAINST ITS OWN FILE.
+#
+# A def span is a byte range and a file is a byte count, so "this span is inside
+# the file it came from" is an ordinary comparison and needs no new construct.
+# What makes it worth writing is that the two numbers arrive from DIFFERENT
+# extractor invocations -- `--file-fact` answers the extent, `--family call`
+# answers the spans -- and nothing in the wire format makes them agree.
+#
+#   span_outside_file   MUST BE EMPTY. A def whose end byte is past its file's
+#                       length is an extractor defect, not a query result.
+#   orphan_span         MUST BE EMPTY. A span whose file has no row in the file
+#                       feed means the extraction and the enumeration disagree
+#                       about which files exist.
+#   contained_count     the population both emptiness claims were made over.
+#
+# ── WHY THE HOST NAMES READ ODDLY, WHICH IS A DEFECT AND NOT A STYLE ────────
+# `call_node_at` and `extract` are not descriptions of what these two
+# declarations do; they are the two names this program is ALLOWED to use.
+# `host_input_contract` is keyed on hardcoded host names (registry.pl:394-449),
+# so only a listed name gets the (identity, freshness) shape that lets `digest`
+# stay off the template. Any other spelling falls to `identity_roles/2`
+# (registry.pl:526-534) and throws `template_mismatch(unreferenced_input(digest))`
+# at 1_host_expand.pl:301. ARCH.pl:879 defect D1, already filed and unbuilt.
+#
+# ── WHY THE PATH IS BUILT IN A RULE ─────────────────────────────────────────
+# The (path, digest) contract is the UNSCOPED one, so its template ends in
+# `{path}` and the extractor opens exactly that string. The file feed answers
+# repository-RELATIVE paths, so the absolute path is `concat`ed in
+# `scanned_file` and the repository column travels beside it. The repo-scoped
+# alternative (`repo_extract`) exists and holds one name, which this program
+# cannot use because it needs TWO projections with different templates.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantScan$.pipe(map(mintIdentityAndWitness),
+#                  distinct(demand => demand.witnessDigest),
+#                  mergeMap(runFileFeed), mergeMap(commitEdbArrival))
+#   scannedFile$.pipe(mergeMap(row => merge(runFileFact(row), runCallNodes(row))))
+#   combineLatest([procSpan$, fileExtent$]).pipe(
+#     map(join), filter(([span, extent]) => span.end > extent.bytes))
+
+rel span(start: int, end: int).
+
+sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
+
+# The file's EXTENT. `--file-fact` prepends one `{"record":"file",...}` line
+# carrying bytes and lines; the `file` record is the only one with a `bytes`
+# key, so declaring it is the whole selection.
+sh extract(path: text, digest: text) -> (record: text, bytes: int, lines: int) =
+  `"$DL_EXTRACT_BIN" --file-fact --family call {path}`.
+
+sh call_node_at(path: text, digest: text)
+   -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+rel want_scan(repo: text, glob: text).
+
+rel scanned_file(repo: text, path: text, abs_path: text, digest: text).
+scanned_file(repo, path, abs_path, digest) <-
+  want_scan(repo, glob),
+  repo_files(repo, glob, path, digest),
+  abs_path := concat([repo, '/', path]).
+
+rel file_extent(repo: text, path: text, bytes: int, lines: int).
+file_extent(repo, path, bytes, lines) <-
+  scanned_file(repo, path, abs_path, digest),
+  extract(abs_path, digest, 'file', bytes, lines).
+
+rel proc_span(repo: text, path: text, proc_start: int, proc_end: int, proc_name: text).
+proc_span(repo, path, proc_start, proc_end, proc_name) <-
+  scanned_file(repo, path, abs_path, digest),
+  call_node_at(abs_path, digest, 'node', 'call', proc_at, _proc_kind, proc_name),
+  decode(proc_at, {start: proc_start, end: proc_end}).
+
+rel contained_span(repo: text, path: text, proc_name: text, proc_start: int, proc_end: int).
+contained_span(repo, path, proc_name, proc_start, proc_end) <-
+  proc_span(repo, path, proc_start, proc_end, proc_name),
+  file_extent(repo, path, bytes, _),
+  proc_start >= 0,
+  proc_end =< bytes.
+
+rel span_outside_file(repo: text, path: text, proc_name: text, proc_end: int, bytes: int).
+span_outside_file(repo, path, proc_name, proc_end, bytes) <-
+  proc_span(repo, path, _, proc_end, proc_name),
+  file_extent(repo, path, bytes, _),
+  proc_end > bytes.
+
+# The other direction of the same containment claim: a span whose file the file
+# feed never reported. `not/1` over the enumeration, so a repository the
+# extractor read and the feed did not is a NAMED row.
+rel enumerated_file(repo: text, path: text).
+enumerated_file(repo, path) <- scanned_file(repo, path, _, _).
+
+rel orphan_span(repo: text, path: text, proc_name: text).
+orphan_span(repo, path, proc_name) <-
+  proc_span(repo, path, _, _, proc_name),
+  not(enumerated_file(repo, path)).
+
+rel contained_count(repo: text, spans: int).
+contained_count(repo, count(proc_name)) <- contained_span(repo, _, proc_name, _, _).
+
+rel extent_count(repo: text, files: int).
+extent_count(repo, count(path)) <- file_extent(repo, path, _, _).
+
+? file_extent(repo, path, bytes, lines).
+? proc_span(repo, path, proc_start, proc_end, proc_name).
+? contained_span(repo, path, proc_name, proc_start, proc_end).
+? span_outside_file(repo, path, proc_name, proc_end, bytes).
+? orphan_span(repo, path, proc_name).
+? contained_count(repo, spans).
+? extent_count(repo, files).

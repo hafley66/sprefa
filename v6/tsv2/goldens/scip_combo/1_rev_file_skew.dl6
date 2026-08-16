@@ -1,0 +1,94 @@
+# 1_rev_file_skew.dl6 -- ONE REPOSITORY, TWO REVISIONS, THREE SET DIFFERENCES.
+#
+# `repo_files_at` is a rev-pinned host, so asking it twice under one repository
+# with two different `rev` values is two witnesses and two answers, and the
+# difference between them is an ordinary join. Nothing here is a diff ALGORITHM:
+# added / removed / rewritten are `not/1` over the two path sets and a
+# disequality over the two digests.
+#
+# ── WHY THIS COMBO IS A DIFFERENTIAL AND NOT A SMOKE TEST ───────────────────
+# The two doors execute this host DIFFERENTLY and the templates never say so.
+# The Rust runtime recognizes the ruled name and answers from Soopy in-process
+# (`sprefa-engine-rs/src/hosts.rs:52-60` -> SoopyFilesExecutor); the served TS
+# runtime has no such arm and spawns the template's `git ls-files` +
+# `git rev-parse` pipeline. Same program, same corpus, two implementations of
+# "which blobs are at this revision". The gate byte-diffs the rel dumps, which
+# is the only way that pair of implementations is ever compared.
+#
+# ── AND THEY DO NOT AGREE, WHICH IS THIS PROGRAM'S HEADLINE ─────────────────
+# Measured on the pinned corpus: `added_path` is 4 rows on the Rust door and
+# ZERO on the TS door. The rev-A feed is the one place the index and the tree
+# disagree, so the TS door's template answers the union, every added path is
+# already in its base set, and "what is new since the base revision" comes back
+# empty. The mechanism is shrunk to one host and one rule in
+# 6_door_skew_files_at.dl6; this program is what that defect looks like when a
+# real query meets it. The gate classes it INHERITED and requires it to keep
+# differing until the pin is fixed.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantRevPair$.pipe(                                   // base_file, head_file
+#     map(mintIdentityAndWitness), distinct(demand => demand.witnessDigest),
+#     mergeMap(runFileFeed), mergeMap(commitEdbArrival))
+#
+#   headPath$.pipe(withLatestFrom(basePathSet$),         // added_path
+#                  filter(([row, base]) => !base.has(rowKey(row))))
+#   combineLatest([baseFile$, headFile$]).pipe(          // rewritten_path
+#     map(join), filter(([base, head]) => base.digest !== head.digest))
+
+# The ruled repo-scoped, rev-pinned file feed, byte-identical to
+# fixtures/files-hosts.dl6. The template is the portable contract; on the Rust
+# door it never runs.
+sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+
+# One row per repository under comparison. Both revisions AND the pathspec ride
+# the same row, so a rig cannot pair a base rev with the wrong glob.
+rel want_rev_pair(repo: text, base_rev: text, head_rev: text, glob: text).
+
+rel base_file(repo: text, path: text, digest: text).
+base_file(repo, path, digest) <-
+  want_rev_pair(repo, base_rev, _, glob),
+  repo_files_at(repo, base_rev, glob, path, digest).
+
+rel head_file(repo: text, path: text, digest: text).
+head_file(repo, path, digest) <-
+  want_rev_pair(repo, _, head_rev, glob),
+  repo_files_at(repo, head_rev, glob, path, digest).
+
+# The digest column is dropped FIRST and on purpose: presence is a question
+# about the path alone, and a `not/1` over the three-column rel would report
+# every content change as an addition.
+rel base_path(repo: text, path: text).
+base_path(repo, path) <- base_file(repo, path, _).
+
+rel head_path(repo: text, path: text).
+head_path(repo, path) <- head_file(repo, path, _).
+
+rel added_path(repo: text, path: text).
+added_path(repo, path) <- head_path(repo, path), not(base_path(repo, path)).
+
+rel removed_path(repo: text, path: text).
+removed_path(repo, path) <- base_path(repo, path), not(head_path(repo, path)).
+
+rel rewritten_path(repo: text, path: text, base_digest: text, head_digest: text).
+rewritten_path(repo, path, base_digest, head_digest) <-
+  base_file(repo, path, base_digest),
+  head_file(repo, path, head_digest),
+  base_digest != head_digest.
+
+# The corpus-wide shape of the change, so a gate has one number per class to
+# assert before it reads any row. The grouping column is local to the rel being
+# counted, which is what aggregate_group_not_delta_local requires.
+rel added_count(repo: text, added: int).
+added_count(repo, count(path)) <- added_path(repo, path).
+
+rel removed_count(repo: text, removed: int).
+removed_count(repo, count(path)) <- removed_path(repo, path).
+
+? base_file(repo, path, digest).
+? head_file(repo, path, digest).
+? added_path(repo, path).
+? removed_path(repo, path).
+? rewritten_path(repo, path, base_digest, head_digest).
+? added_count(repo, added).
+? removed_count(repo, removed).
