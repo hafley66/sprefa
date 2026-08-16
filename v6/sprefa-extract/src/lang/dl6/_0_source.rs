@@ -110,9 +110,9 @@ fn project_types(
                     Node::new(rel_span, TypeEntityKind::Struct).with_name(rel_name_id),
                 );
 
-                if let Some(columns_node) = field(inner, "columns") {
-                    walk_relation_columns(columns_node, rel_span, src, strings, sink);
-                }
+                // The columns are not wrapped: every column binds to the same
+                // `columns` field name, so `field()` would return only the first.
+                walk_relation_columns(inner, rel_span, src, strings, sink);
             }
             _ => {}
         }

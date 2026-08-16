@@ -23,7 +23,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::lang::{source_for, GoSource, KotlinSource, PrologSource, RustSource, TsSource};
+use crate::lang::{source_for, DlSource, GoSource, KotlinSource, PrologSource, RustSource, TsSource};
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
 use crate::scip_ensure::IndexBudget;
@@ -43,8 +43,8 @@ pub struct ResolveArms {
     /// `Resolve<CallF>`: resolved caller-to-callee edges. Implemented for every
     /// source in the roster except the ast-grep CST fallback.
     pub call: bool,
-    /// `Resolve<TypeF>`: resolved type reference edges. Implemented for TS, Go
-    /// and Rust only; Kotlin and Prolog have no arm and are skipped rather than
+    /// `Resolve<TypeF>`: resolved type reference edges. Implemented for TS, Go,
+    /// Rust and dl6; Kotlin and Prolog have no arm and are skipped rather than
     /// dispatched, because the trait's default body is `todo!()`.
     pub types: bool,
 }
@@ -443,37 +443,83 @@ fn scip_source_for(inputs: &[ProjectInput]) -> Result<&'static dyn ScipSource, P
     }
 }
 
-/// Dispatch the `Resolve<CallF>` arm by source name. Explicit rather than
-/// blanket: the trait's default body is `todo!()`, so a source without an arm
-/// must never be dispatched.
+/// One roster entry's phase-2 arms. `None` means the language has no impl and
+/// must never be dispatched: `Resolve::resolve`'s default body is `todo!()`.
+pub struct ResolveArm {
+    pub name: &'static str,
+    pub call: Option<fn(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge<CallF>>>,
+    pub types: Option<fn(&ExtractOutput, &ProjectCx) -> Vec<ProjectEdge<TypeF>>>,
+}
+
+/// One row per `Source` in `lang::sources()`; an impl with no row here is
+/// unreachable from the binary. Checked both ways by `tests/1_resolve_cli.rs`.
+pub static RESOLVE_ARMS: &[ResolveArm] = &[
+    ResolveArm {
+        name: "ts",
+        call: Some(|out, cx| Resolve::<CallF>::resolve(&TsSource, out, cx)),
+        types: Some(|out, cx| Resolve::<TypeF>::resolve(&TsSource, out, cx)),
+    },
+    ResolveArm {
+        name: "rust",
+        call: Some(|out, cx| Resolve::<CallF>::resolve(&RustSource, out, cx)),
+        types: Some(|out, cx| Resolve::<TypeF>::resolve(&RustSource, out, cx)),
+    },
+    ResolveArm {
+        name: "go",
+        call: Some(|out, cx| Resolve::<CallF>::resolve(&GoSource, out, cx)),
+        types: Some(|out, cx| Resolve::<TypeF>::resolve(&GoSource, out, cx)),
+    },
+    ResolveArm {
+        name: "dl6",
+        call: Some(|out, cx| Resolve::<CallF>::resolve(&DlSource, out, cx)),
+        types: Some(|out, cx| Resolve::<TypeF>::resolve(&DlSource, out, cx)),
+    },
+    ResolveArm {
+        name: "kotlin",
+        call: Some(|out, cx| Resolve::<CallF>::resolve(&KotlinSource, out, cx)),
+        types: None,
+    },
+    ResolveArm {
+        name: "prolog",
+        call: Some(|out, cx| Resolve::<CallF>::resolve(&PrologSource, out, cx)),
+        types: None,
+    },
+    ResolveArm {
+        name: "markdown",
+        call: None,
+        types: None,
+    },
+    ResolveArm {
+        name: "astgrep",
+        call: None,
+        types: None,
+    },
+];
+
+fn arm_for(path: &str) -> Option<&'static ResolveArm> {
+    let name = source_for(path).map(Source::name)?;
+    RESOLVE_ARMS.iter().find(|arm| arm.name == name)
+}
+
 fn resolve_call_edges(
     path: &str,
     output: &ExtractOutput,
     cx: &ProjectCx,
 ) -> Vec<ProjectEdge<CallF>> {
-    match source_for(path).map(Source::name) {
-        Some("ts") => Resolve::<CallF>::resolve(&TsSource, output, cx),
-        Some("rust") => Resolve::<CallF>::resolve(&RustSource, output, cx),
-        Some("go") => Resolve::<CallF>::resolve(&GoSource, output, cx),
-        Some("kotlin") => Resolve::<CallF>::resolve(&KotlinSource, output, cx),
-        Some("prolog") => Resolve::<CallF>::resolve(&PrologSource, output, cx),
-        _ => Vec::new(),
+    match arm_for(path).and_then(|arm| arm.call) {
+        Some(resolve) => resolve(output, cx),
+        None => Vec::new(),
     }
 }
 
-/// Dispatch the `Resolve<TypeF>` arm by source name. Only TS, Go and Rust have
-/// one; Kotlin's is deferred to the traits arc and Prolog has no type plane, so
-/// both are skipped here rather than hitting the trait's `todo!()`.
 fn resolve_type_edges(
     path: &str,
     output: &ExtractOutput,
     cx: &ProjectCx,
 ) -> Vec<ProjectEdge<TypeF>> {
-    match source_for(path).map(Source::name) {
-        Some("ts") => Resolve::<TypeF>::resolve(&TsSource, output, cx),
-        Some("rust") => Resolve::<TypeF>::resolve(&RustSource, output, cx),
-        Some("go") => Resolve::<TypeF>::resolve(&GoSource, output, cx),
-        _ => Vec::new(),
+    match arm_for(path).and_then(|arm| arm.types) {
+        Some(resolve) => resolve(output, cx),
+        None => Vec::new(),
     }
 }
 
