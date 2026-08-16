@@ -13,6 +13,7 @@ pub mod go;
 pub mod kotlin;
 pub mod markdown;
 pub mod prolog;
+pub mod python;
 pub mod rust;
 pub mod ts;
 
@@ -25,6 +26,7 @@ pub use go::GoSource;
 pub use kotlin::KotlinSource;
 pub use markdown::MarkdownSource;
 pub use prolog::PrologSource;
+pub use python::PythonSource;
 pub use rust::RustSource;
 pub use ts::{CallProjector, DfProjector, OxcParser, TsSource, TypeProjector};
 
