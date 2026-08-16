@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use crate::sql::{result_rows, SqlRunner, SqliteSeam};
 use crate::types::{
-    Arrival, ArrivalSign, BoundaryError, BoundaryResult, IncrementalRelationPlan, RelationKind, Row,
-    ScalarSeam, ScalarValue, SqlStatement, Value,
+    Arrival, ArrivalSign, BoundaryError, BoundaryResult, IncrementalRelationPlan, RelationKind,
+    Row, ScalarSeam, ScalarValue, SqlStatement, Value,
 };
 
 #[derive(Clone)]
@@ -1467,9 +1467,17 @@ fn reconcile_ref_count_statement(
     seam.batch(&seed_wave).expect("expand seed batch failed");
     let round = |fills_b: bool| -> i64 {
         let texts = if fills_b {
-            [&expand.clear_b_sql, &expand.hop_ab_sql, &expand.absorb_b_sql]
+            [
+                &expand.clear_b_sql,
+                &expand.hop_ab_sql,
+                &expand.absorb_b_sql,
+            ]
         } else {
-            [&expand.clear_a_sql, &expand.hop_ba_sql, &expand.absorb_a_sql]
+            [
+                &expand.clear_a_sql,
+                &expand.hop_ba_sql,
+                &expand.absorb_a_sql,
+            ]
         };
         let statements: Vec<SqlStatement> = texts
             .iter()

@@ -8207,6 +8207,32 @@ test(offline_source_golden_compiles_qualified_span_owner) :-
           \+ sub_string(Text, _, _, _, 'file_span_id') ),
         catch(delete_file(OutFile), _, true)).
 
+% One complete StageRequest document crosses the host boundary. The current
+% surface has no array fold that could assemble arbitrary source_action rows,
+% and the approval relation must join the exact staged id before source_commit
+% can become a demand. This test pins the authored fixture and both emitted
+% host plans rather than re-describing the runtime's mutation implementation.
+test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_join) :-
+    test_dir_fact(Here),
+    atomic_list_concat([Here, '/../../../dl/fixtures/source-mutations.dl6'], Source),
+    read_file_to_string(Source, SourceText, []),
+    sub_string(SourceText, _, _, _, 'request: text'),
+    sub_string(SourceText, _, _, _,
+               'source_approval(Proposal, StageId)'),
+    sub_string(SourceText, _, _, _,
+               'source_commit_demand(Root, State, StageId)'),
+    \+ sub_string(SourceText, _, _, _, 'source_action('),
+    tmp_file(source_mutations, OutFile),
+    setup_call_cleanup(
+        true,
+        ( compile_dl6(Source, OutFile),
+          read_file_to_string(OutFile, Text, []),
+          sub_string(Text, _, _, _, 'name: "source_stage"'),
+          sub_string(Text, _, _, _, 'name: "source_commit"'),
+          sub_string(Text, _, _, _, 'execution: "soopy_mutation"'),
+          sub_string(Text, _, _, _, 'source_commit_demand') ),
+        catch(delete_file(OutFile), _, true)).
+
 % ── the mount reaches the catalog as data ───────────────────────────────────
 
 % One module row per FILE, so two files keep distinct module identity even

@@ -2,7 +2,8 @@
 // HostRunner contract (serve/1_hosts.ts), sharing its emitted HostPlanData.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::change_facts::{
@@ -43,6 +44,7 @@ pub trait IHostExecutor: Sync {
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
         "shell" => Some(&ShellExecutor),
+        "soopy_mutation" => Some(&SoopyMutationExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" | "sprefa_extract_repo" => Some(&*EXTRACT),
         _ => None,
@@ -54,6 +56,9 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
 // Rust live runner recognizes these four ruled names and delegates their Git
 // mechanics to Soopy instead of spawning the emitted pipeline.
 fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> {
+    if plan.execution == "soopy_mutation" {
+        return Some(&SoopyMutationExecutor);
+    }
     if plan.execution == "shell"
         && matches!(
             plan.name.as_str(),
@@ -109,6 +114,231 @@ impl IHostExecutor for ShellExecutor {
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+}
+
+/// Linked executor for the two authored source-mutation hosts.
+///
+/// `source_stage` receives one complete canonical `StageRequest` document and
+/// persists its preview under `state/stages`. `source_commit` later receives
+/// the exact stage id that an approval relation joined, reloads the sealed
+/// transaction, and applies it through Soopy's durable commit engine. The
+/// ordinary host response rows carry both successes and typed refusals, so a
+/// refusal remains observable data instead of becoming a runner failure.
+pub struct SoopyMutationExecutor;
+
+impl IHostExecutor for SoopyMutationExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        match host {
+            "source_stage" => source_stage_response(host, env),
+            "source_commit" => source_commit_response(host, env),
+            _ => Err(HostError {
+                host: host.to_string(),
+                message: "not a Soopy source-mutation host".to_string(),
+            }),
+        }
+    }
+}
+
+fn source_mutation_input(
+    host: &str,
+    env: &BTreeMap<String, String>,
+    name: &str,
+) -> Result<String, HostError> {
+    env.get(name).cloned().ok_or_else(|| HostError {
+        host: host.to_string(),
+        message: format!("missing required host input `{name}`"),
+    })
+}
+
+fn mutation_row(
+    stage_id: &str,
+    outcome: &str,
+    detail: String,
+    document: serde_json::Value,
+) -> Result<String, HostError> {
+    serde_json::to_string(&serde_json::json!({
+        "stage_id": stage_id,
+        "outcome": outcome,
+        "detail": detail,
+        "document": document,
+    }))
+    .map_err(|error| HostError {
+        host: "soopy_mutation".to_string(),
+        message: format!("serialize source-mutation response: {error}"),
+    })
+}
+
+fn mutation_root(
+    target_root: &Path,
+    request: &soopy::StageRequest,
+) -> Result<soopy::SourceRoot, String> {
+    match request.root {
+        soopy::SourceRootId::Directory { .. } => soopy::SourceRoot::open_directory(target_root),
+        soopy::SourceRootId::GitWorktree { .. } => soopy::SourceRoot::discover_git(target_root),
+    }
+    .map_err(|error| format!("open mutation root {}: {error}", target_root.display()))
+}
+
+fn mutation_state_root(target_root: &Path, state_root: &Path) -> Result<PathBuf, String> {
+    let target_root = target_root.canonicalize().map_err(|error| {
+        format!(
+            "canonicalize mutation root {}: {error}",
+            target_root.display()
+        )
+    })?;
+    let state_root = state_root.canonicalize().map_err(|error| {
+        format!(
+            "canonicalize mutation state {}: {error}",
+            state_root.display()
+        )
+    })?;
+    if !state_root.is_dir() {
+        return Err(format!(
+            "mutation state root is not a directory: {}",
+            state_root.display()
+        ));
+    }
+    if state_root.starts_with(&target_root) {
+        return Err(format!(
+            "mutation state root must be outside the target root: {}",
+            state_root.display()
+        ));
+    }
+    Ok(state_root)
+}
+
+fn source_stage_response(host: &str, env: &BTreeMap<String, String>) -> Result<String, HostError> {
+    let target_root = PathBuf::from(source_mutation_input(host, env, "root")?);
+    let state_root = PathBuf::from(source_mutation_input(host, env, "state")?);
+    let request_json = source_mutation_input(host, env, "request")?;
+    let request: soopy::StageRequest = match serde_json::from_str(&request_json) {
+        Ok(request) => request,
+        Err(error) => {
+            return mutation_row(
+                "",
+                "refused",
+                format!("decode StageRequest: {error}"),
+                serde_json::json!([]),
+            )
+        }
+    };
+    let state_root = match mutation_state_root(&target_root, &state_root) {
+        Ok(state_root) => state_root,
+        Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
+    };
+    let mut root = match mutation_root(&target_root, &request) {
+        Ok(root) => root,
+        Err(detail) => return mutation_row("", "refused", detail, serde_json::json!([])),
+    };
+    let mut store = match soopy::DurableStageStore::open(state_root.join("stages")) {
+        Ok(store) => store,
+        Err(error) => {
+            return mutation_row(
+                "",
+                "refused",
+                format!("open stage store: {error}"),
+                serde_json::json!([]),
+            )
+        }
+    };
+    match soopy::stage_mutations(&mut root, &request, &mut store) {
+        Ok(stage) => mutation_row(
+            &stage.id.to_string(),
+            "staged",
+            String::new(),
+            serde_json::to_value(stage.previews).map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("serialize stage previews: {error}"),
+            })?,
+        ),
+        Err(refusal) => mutation_row("", "refused", refusal.to_string(), serde_json::json!([])),
+    }
+}
+
+fn source_commit_response(host: &str, env: &BTreeMap<String, String>) -> Result<String, HostError> {
+    let target_root = PathBuf::from(source_mutation_input(host, env, "root")?);
+    let state_root = PathBuf::from(source_mutation_input(host, env, "state")?);
+    let stage_id_text = source_mutation_input(host, env, "stage_id")?;
+    let stage_id = match soopy::StageId::from_str(&stage_id_text) {
+        Ok(id) => id,
+        Err(error) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                format!("decode StageId: {error}"),
+                serde_json::json!({}),
+            )
+        }
+    };
+    let state_root = match mutation_state_root(&target_root, &state_root) {
+        Ok(state_root) => state_root,
+        Err(detail) => {
+            return mutation_row(&stage_id_text, "refused", detail, serde_json::json!({}))
+        }
+    };
+    let store = match soopy::DurableStageStore::open(state_root.join("stages")) {
+        Ok(store) => store,
+        Err(error) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                format!("open stage store: {error}"),
+                serde_json::json!({}),
+            )
+        }
+    };
+    let stage = match soopy::show_stage(&store, stage_id) {
+        Ok(Some(stage)) => stage,
+        Ok(None) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                "stage is not present in this state root".to_string(),
+                serde_json::json!({}),
+            )
+        }
+        Err(error) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                format!("load stage: {error}"),
+                serde_json::json!({}),
+            )
+        }
+    };
+    let engine = match soopy::CommitEngine::open(&target_root, state_root.join("commits")) {
+        Ok(engine) => engine,
+        Err(error) => {
+            return mutation_row(
+                &stage_id_text,
+                "refused",
+                format!("open commit engine: {error}"),
+                serde_json::json!({}),
+            )
+        }
+    };
+    match engine.commit(&stage) {
+        Ok(receipt) => mutation_row(
+            &stage_id_text,
+            "committed",
+            String::new(),
+            serde_json::to_value(receipt).map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("serialize commit receipt: {error}"),
+            })?,
+        ),
+        Err(refusal) => mutation_row(
+            &stage_id_text,
+            "refused",
+            refusal.to_string(),
+            serde_json::json!({}),
+        ),
     }
 }
 
@@ -731,12 +961,14 @@ impl ChangeFactExecutor {
         }
         // A revision that does not resolve is a named stop: zero rows would
         // read as "these two trees are identical", a different fact.
-        let answer = Arc::new(self.differ.diff(repo, rev_base, rev_head).map_err(|error| {
-            HostError {
-                host: host.to_string(),
-                message: format!("diff {rev_base}..{rev_head} in {repo}: {error:#}"),
-            }
-        })?);
+        let answer = Arc::new(
+            self.differ
+                .diff(repo, rev_base, rev_head)
+                .map_err(|error| HostError {
+                    host: host.to_string(),
+                    message: format!("diff {rev_base}..{rev_head} in {repo}: {error:#}"),
+                })?,
+        );
         self.diffs
             .lock()
             .expect("change fact memo")
