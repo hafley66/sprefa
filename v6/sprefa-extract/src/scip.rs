@@ -499,7 +499,7 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
 //    golden_parity scip ratchet — the arm and the test MUST read the same
 //    occurrence the same way, so the conventions live here exactly once) ────
 
-/// The content join for one loaded index: for every document, its blob hash +
+/// The content join for one loaded index: for every document, its content id +
 /// bytes from the rev-correct reader (None when the reader can't read the
 /// document — it is then external to the corpus). Parallel to
 /// `index.documents` (same order, same length). Whole-project state built once
@@ -509,13 +509,13 @@ pub fn byte_range(content: &[u8], range: [i32; 4], encoding: PositionEncoding) -
 pub fn join_documents(
     index: &ScipIndex,
     reader: &dyn Fn(&str) -> Option<Vec<u8>>,
-) -> Vec<Option<(crate::shape::BlobHash, Vec<u8>)>> {
+) -> Vec<Option<(crate::shape::ContentId, Vec<u8>)>> {
     index
         .documents
         .iter()
         .map(|doc| {
             reader(&doc.relative_path)
-                .map(|content| (crate::shape::BlobHash::of(&content), content))
+                .map(|content| (crate::shape::content_id_of(&content), content))
         })
         .collect()
 }

@@ -44,7 +44,7 @@ use crate::family::{
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
-use crate::shape::{BlobHash, FamilyTag, NodeRef, Span, Strings};
+use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 
 // ── the tree-sitter-kotlin parse (one parse feeds type/call/df) ─────────────
@@ -1373,7 +1373,7 @@ impl KotlinSource {
         output: &ExtractOutput,
         index: &DefIndex,
         callee: &str,
-    ) -> Option<(BlobHash, Span)> {
+    ) -> Option<(ContentId, Span)> {
         let call = output.call.as_ref()?;
         if let Some(r) = def_named(call, &output.strings, callee) {
             let span = call.node(r).span;
@@ -1381,14 +1381,14 @@ impl KotlinSource {
                 .iter()
                 .find(|site| site.span == span)
             {
-                return Some((site.blob, site.span));
+                return Some((site.blob.clone(), site.span));
             }
         }
         let sites = corpus_defs(index, callee);
-        let mut blobs: Vec<BlobHash> = Vec::new();
+        let mut blobs: Vec<ContentId> = Vec::new();
         for site in sites {
             if !blobs.contains(&site.blob) {
-                blobs.push(site.blob);
+                blobs.push(site.blob.clone());
             }
         }
         let [blob] = blobs.as_slice() else {
@@ -1398,7 +1398,7 @@ impl KotlinSource {
             .iter()
             .find(|site| site.family == FamilyTag::Call)
             .unwrap_or(&sites[0]);
-        Some((*blob, site.span))
+        Some((blob.clone(), site.span))
     }
 }
 
@@ -1457,7 +1457,7 @@ fn resolve_type_dst(
     strings: &Strings,
     index: Option<&DefIndex>,
     name: &str,
-) -> Option<(BlobHash, Span)> {
+) -> Option<(ContentId, Span)> {
     let same_file = types
         .nodes
         .iter()
@@ -1466,11 +1466,11 @@ fn resolve_type_dst(
         return corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob, site.span));
+            .map(|site| (site.blob.clone(), site.span));
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((only.blob, only.span)),
+        [only] => Some((only.blob.clone(), only.span)),
         _ => None,
     }
 }
@@ -1498,7 +1498,7 @@ impl Resolve<TypeF> for KotlinSource {
                 index,
                 output.strings.lookup(candidate.to),
             )
-            .unwrap_or_default();
+            .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,

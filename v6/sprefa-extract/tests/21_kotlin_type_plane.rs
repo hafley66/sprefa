@@ -10,8 +10,8 @@
 use std::collections::BTreeSet;
 
 use sprefa_extract::{
-    build_def_index, dispatch, BlobHash, ExtractOutput, FamilyMask, FileSet, IndexBag,
-    KotlinSource, ManifestMap, ProjectCx, ProjectDigest, Resolve, Span, TypeF,
+    build_def_index, content_id_of, dispatch, ContentId, ExtractOutput, FamilyMask, FileSet,
+    IndexBag, KotlinSource, ManifestMap, ProjectCx, ProjectDigest, Resolve, Span, TypeF,
 };
 
 struct Case {
@@ -38,17 +38,19 @@ fn facet_of(line: &str) -> &str {
 /// the DefIndex folded over all of them (the resolution universe), and a
 /// borrowed ProjectCx. Mirror of golden_parity's shared helper.
 fn with_resolve_cx<R>(
-    f: impl FnOnce(&ProjectCx, &[(BlobHash, ExtractOutput, &'static Case)]) -> R,
+    f: impl FnOnce(&ProjectCx, &[(ContentId, ExtractOutput, &'static Case)]) -> R,
 ) -> R {
-    let corpus: Vec<(BlobHash, ExtractOutput, &'static Case)> = CASES
+    let corpus: Vec<(ContentId, ExtractOutput, &'static Case)> = CASES
         .iter()
         .map(|case| {
             let out = dispatch(case.path, case.fixture, FamilyMask::ALL).expect("source");
-            (BlobHash::of(case.fixture), out, case)
+            (content_id_of(case.fixture), out, case)
         })
         .collect();
-    let pairs: Vec<(BlobHash, &ExtractOutput)> =
-        corpus.iter().map(|(hash, out, _)| (*hash, out)).collect();
+    let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
+        .iter()
+        .map(|(hash, out, _)| (hash.clone(), out))
+        .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
     let cx = ProjectCx {

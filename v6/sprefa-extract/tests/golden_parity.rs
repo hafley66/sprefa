@@ -30,10 +30,11 @@
 use std::collections::BTreeSet;
 
 use sprefa_extract::{
-    build_def_index, byte_range, containing_def_site, covering_def, definition_of, dispatch,
-    flatten, join_documents, site_occurrence, BlobHash, CallEdgeKind, ExtractOutput, FamilyMask,
-    FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap, ProjectCx, ProjectDigest,
-    Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript, Span, TsSource, TypeF,
+    build_def_index, byte_range, containing_def_site, content_id_of, covering_def, definition_of,
+    dispatch, flatten, join_documents, site_occurrence, CallEdgeKind, ContentId, ExtractOutput,
+    FamilyMask, FamilyTag, FileSet, FlatFact, GoSource, IndexBag, ManifestMap, ProjectCx,
+    ProjectDigest, Resolve, RustSource, ScipGo, ScipRust, ScipSource, ScipTypescript, Span,
+    TsSource, TypeF, ZERO_CONTENT_ID,
 };
 
 struct Case {
@@ -403,17 +404,19 @@ fn ported_facets_match_v5() {
 /// hash, the DefIndex folded over all of them (the resolution universe), and a
 /// borrowed ProjectCx. Shared by the type_edge parity test and the ledger test.
 fn with_resolve_cx<R>(
-    f: impl FnOnce(&ProjectCx, &[(BlobHash, ExtractOutput, &'static Case)]) -> R,
+    f: impl FnOnce(&ProjectCx, &[(ContentId, ExtractOutput, &'static Case)]) -> R,
 ) -> R {
-    let corpus: Vec<(BlobHash, ExtractOutput, &'static Case)> = CASES
+    let corpus: Vec<(ContentId, ExtractOutput, &'static Case)> = CASES
         .iter()
         .map(|case| {
             let out = dispatch(case.path, case.fixture, FamilyMask::ALL).expect("source");
-            (BlobHash::of(case.fixture), out, case)
+            (content_id_of(case.fixture), out, case)
         })
         .collect();
-    let pairs: Vec<(BlobHash, &ExtractOutput)> =
-        corpus.iter().map(|(hash, out, _)| (*hash, out)).collect();
+    let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
+        .iter()
+        .map(|(hash, out, _)| (hash.clone(), out))
+        .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
     let cx = ProjectCx {
@@ -668,15 +671,15 @@ fn deferred_and_v6_only_ledger() {
             let resolved_legs = match case.fixture_dir {
                 "ts" => Resolve::<TypeF>::resolve(&TsSource, out, cx)
                     .iter()
-                    .filter(|edge| edge.dst_blob != BlobHash::default())
+                    .filter(|edge| edge.dst_blob != ZERO_CONTENT_ID)
                     .count(),
                 "go" => Resolve::<TypeF>::resolve(&GoSource, out, cx)
                     .iter()
-                    .filter(|edge| edge.dst_blob != BlobHash::default())
+                    .filter(|edge| edge.dst_blob != ZERO_CONTENT_ID)
                     .count(),
                 "rust" => Resolve::<TypeF>::resolve(&RustSource, out, cx)
                     .iter()
-                    .filter(|edge| edge.dst_blob != BlobHash::default())
+                    .filter(|edge| edge.dst_blob != ZERO_CONTENT_ID)
                     .count(),
                 _ => 0,
             };
@@ -790,19 +793,21 @@ fn call_resolve_scip_ratchet_ts() {
         "every scip document is reader-readable: the corpus and the index cover the same universe"
     );
     // The corpus: every fixture file dispatched + the DefIndex over all.
-    let corpus: Vec<(String, BlobHash, ExtractOutput)> = rels
+    let corpus: Vec<(String, ContentId, ExtractOutput)> = rels
         .iter()
         .map(|rel| {
             let bytes = reader(rel).unwrap();
             (
                 rel.clone(),
-                BlobHash::of(&bytes),
+                content_id_of(&bytes),
                 dispatch(rel, &bytes, FamilyMask::ALL).expect("a Source matches the fixture"),
             )
         })
         .collect();
-    let pairs: Vec<(BlobHash, &ExtractOutput)> =
-        corpus.iter().map(|(_, hash, out)| (*hash, out)).collect();
+    let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
+        .iter()
+        .map(|(_, hash, out)| (hash.clone(), out))
+        .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
     let cx = ProjectCx {
@@ -836,7 +841,7 @@ fn call_resolve_scip_ratchet_ts() {
         let content = reader(rel).unwrap();
         let Some(call) = &out.call else { continue };
         let edges = Resolve::<sprefa_extract::CallF>::resolve(&TsSource, out, &cx);
-        let mut actual: Vec<(u32, u32, u32, &'static str, BlobHash)> = edges
+        let mut actual: Vec<(u32, u32, u32, &'static str, ContentId)> = edges
             .iter()
             .map(|edge| {
                 let from = call.node(edge.src).span;
@@ -845,12 +850,12 @@ fn call_resolve_scip_ratchet_ts() {
                     edge.dst_span.start,
                     edge.dst_span.end(),
                     edge.kind.as_str(),
-                    edge.dst_blob,
+                    edge.dst_blob.clone(),
                 )
             })
             .collect();
         actual.sort_by_key(|t| (t.0, t.1, t.2, t.3));
-        let mut expected: Vec<(u32, u32, u32, &'static str, BlobHash)> = Vec::new();
+        let mut expected: Vec<(u32, u32, u32, &'static str, ContentId)> = Vec::new();
         for site in &call.aux.sites {
             total_sites += 1;
             let callee = out.strings.lookup(site.callee);
@@ -867,14 +872,15 @@ fn call_resolve_scip_ratchet_ts() {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
                     let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
-                    containing_def_site(def_index, *def_blob, ident)
-                        .map(|(name, s)| (*def_blob, s.span, name))
+                    containing_def_site(def_index, def_blob.clone(), ident)
+                        .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
             let name_t = TsSource::call_name_match(out, def_index, callee);
             // The twin outcome (the same legs the arm runs; the multiset
-            // comparison below is the orchestration check).
+            // comparison below is the orchestration check). Clones name_t/scip_t
+            // into the closure so both stay owned for the scip-side match below.
             let twin = covering_def(call, site.span).and_then(|caller| {
-                let (dst, kind) = match (name_t, scip_t) {
+                let (dst, kind) = match (name_t.clone(), scip_t.clone()) {
                     (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => {
                         (n, CallEdgeKind::NameResolve)
                     }
@@ -884,9 +890,9 @@ fn call_resolve_scip_ratchet_ts() {
                 };
                 Some((caller, dst, kind))
             });
-            if let Some((caller, dst, kind)) = twin {
-                let from = call.node(caller).span;
-                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0));
+            if let Some((caller, dst, kind)) = &twin {
+                let from = call.node(*caller).span;
+                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0.clone()));
             }
             // The scip-side classification (assertions 2-6).
             match (twin, scip_t) {
@@ -895,7 +901,7 @@ fn call_resolve_scip_ratchet_ts() {
                         counts.disagreements += 1;
                         lines.push(format!(
                             "DISAGREE {rel}:{line} {callee}: v6 NameResolve -> ({:?}, {callee}), scip -> ({:?}, {})",
-                            short(dst.0), short(s.0), s.2
+                            short(&dst.0), short(&s.0), s.2
                         ));
                     } else {
                         counts.name_resolve += 1;
@@ -905,27 +911,27 @@ fn call_resolve_scip_ratchet_ts() {
                     counts.overbound += 1;
                     lines.push(format!(
                         "OVERBOUND {rel}:{line} {callee}: v6 NameResolve -> ({:?}) but scip has no corpus target",
-                        short(dst.0)
+                        short(&dst.0)
                     ));
                 }
                 (Some((_, dst, CallEdgeKind::ScipOverride)), Some(s)) => {
                     assert_eq!(
-                        (dst.0, dst.1),
-                        (s.0, s.1),
+                        (dst.0.clone(), dst.1),
+                        (s.0.clone(), s.1),
                         "override edge carries scip's target at {rel}:{line} {callee}"
                     );
                     assert!(
-                        !(name_t == Some((s.0, s.1)) && callee == s.2),
+                        !(name_t == Some((s.0.clone(), s.1)) && callee == s.2),
                         "override with a matching name-match is no override at {rel}:{line} {callee}"
                     );
                     counts.scip_override += 1;
                     lines.push(format!(
                         "OVERRIDE {rel}:{line} {callee}: name-match {} displaced; scip -> ({:?}, {})",
                         match name_t {
-                            Some((b, _)) => format!("({:?}, {callee})", short(b)),
+                            Some((b, _)) => format!("({:?}, {callee})", short(&b)),
                             None => "<none: ambiguous/absent>".to_string(),
                         },
-                        short(s.0),
+                        short(&s.0),
                         s.2
                     ));
                 }
@@ -936,7 +942,7 @@ fn call_resolve_scip_ratchet_ts() {
                     counts.misses += 1;
                     lines.push(format!(
                         "MISS {rel}:{line} {callee}: scip resolves to corpus ({:?}, {}) but v6 emitted no edge",
-                        short(s.0), s.2
+                        short(&s.0), s.2
                     ));
                 }
                 (None, None) => {
@@ -1072,19 +1078,21 @@ fn call_resolve_scip_ratchet_go() {
         "every scip document is reader-readable: the corpus and the index cover the same universe"
     );
     // The corpus: every module file dispatched + the DefIndex over all.
-    let corpus: Vec<(String, BlobHash, ExtractOutput)> = rels
+    let corpus: Vec<(String, ContentId, ExtractOutput)> = rels
         .iter()
         .map(|rel| {
             let bytes = reader(rel).unwrap();
             (
                 rel.clone(),
-                BlobHash::of(&bytes),
+                content_id_of(&bytes),
                 dispatch(rel, &bytes, FamilyMask::ALL).expect("a Source matches the fixture"),
             )
         })
         .collect();
-    let pairs: Vec<(BlobHash, &ExtractOutput)> =
-        corpus.iter().map(|(_, hash, out)| (*hash, out)).collect();
+    let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
+        .iter()
+        .map(|(_, hash, out)| (hash.clone(), out))
+        .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
     let cx = ProjectCx {
@@ -1118,7 +1126,7 @@ fn call_resolve_scip_ratchet_go() {
         let content = reader(rel).unwrap();
         let Some(call) = &out.call else { continue };
         let edges = Resolve::<sprefa_extract::CallF>::resolve(&GoSource, out, &cx);
-        let mut actual: Vec<(u32, u32, u32, &'static str, BlobHash)> = edges
+        let mut actual: Vec<(u32, u32, u32, &'static str, ContentId)> = edges
             .iter()
             .map(|edge| {
                 let from = call.node(edge.src).span;
@@ -1127,12 +1135,12 @@ fn call_resolve_scip_ratchet_go() {
                     edge.dst_span.start,
                     edge.dst_span.end(),
                     edge.kind.as_str(),
-                    edge.dst_blob,
+                    edge.dst_blob.clone(),
                 )
             })
             .collect();
         actual.sort_by_key(|t| (t.0, t.1, t.2, t.3));
-        let mut expected: Vec<(u32, u32, u32, &'static str, BlobHash)> = Vec::new();
+        let mut expected: Vec<(u32, u32, u32, &'static str, ContentId)> = Vec::new();
         for site in &call.aux.sites {
             total_sites += 1;
             let callee = out.strings.lookup(site.callee);
@@ -1149,14 +1157,15 @@ fn call_resolve_scip_ratchet_go() {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
                     let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
-                    containing_def_site(def_index, *def_blob, ident)
-                        .map(|(name, s)| (*def_blob, s.span, name))
+                    containing_def_site(def_index, def_blob.clone(), ident)
+                        .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
             let name_t = GoSource::call_name_match(out, def_index, callee);
             // The twin outcome (the same legs the arm runs; the multiset
-            // comparison below is the orchestration check).
+            // comparison below is the orchestration check). Clones name_t/scip_t
+            // into the closure so both stay owned for the scip-side match below.
             let twin = covering_def(call, site.span).and_then(|caller| {
-                let (dst, kind) = match (name_t, scip_t) {
+                let (dst, kind) = match (name_t.clone(), scip_t.clone()) {
                     (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => {
                         (n, CallEdgeKind::NameResolve)
                     }
@@ -1166,9 +1175,9 @@ fn call_resolve_scip_ratchet_go() {
                 };
                 Some((caller, dst, kind))
             });
-            if let Some((caller, dst, kind)) = twin {
-                let from = call.node(caller).span;
-                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0));
+            if let Some((caller, dst, kind)) = &twin {
+                let from = call.node(*caller).span;
+                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0.clone()));
             }
             // The scip-side classification (assertions 2-6).
             match (twin, scip_t) {
@@ -1177,7 +1186,7 @@ fn call_resolve_scip_ratchet_go() {
                         counts.disagreements += 1;
                         lines.push(format!(
                             "DISAGREE {rel}:{line} {callee}: v6 NameResolve -> ({:?}, {callee}), scip -> ({:?}, {})",
-                            short(dst.0), short(s.0), s.2
+                            short(&dst.0), short(&s.0), s.2
                         ));
                     } else {
                         counts.name_resolve += 1;
@@ -1187,27 +1196,27 @@ fn call_resolve_scip_ratchet_go() {
                     counts.overbound += 1;
                     lines.push(format!(
                         "OVERBOUND {rel}:{line} {callee}: v6 NameResolve -> ({:?}) but scip has no corpus target",
-                        short(dst.0)
+                        short(&dst.0)
                     ));
                 }
                 (Some((_, dst, CallEdgeKind::ScipOverride)), Some(s)) => {
                     assert_eq!(
-                        (dst.0, dst.1),
-                        (s.0, s.1),
+                        (dst.0.clone(), dst.1),
+                        (s.0.clone(), s.1),
                         "override edge carries scip's target at {rel}:{line} {callee}"
                     );
                     assert!(
-                        !(name_t == Some((s.0, s.1)) && callee == s.2),
+                        !(name_t == Some((s.0.clone(), s.1)) && callee == s.2),
                         "override with a matching name-match is no override at {rel}:{line} {callee}"
                     );
                     counts.scip_override += 1;
                     lines.push(format!(
                         "OVERRIDE {rel}:{line} {callee}: name-match {} displaced; scip -> ({:?}, {})",
                         match name_t {
-                            Some((b, _)) => format!("({:?}, {callee})", short(b)),
+                            Some((b, _)) => format!("({:?}, {callee})", short(&b)),
                             None => "<none: ambiguous/absent>".to_string(),
                         },
-                        short(s.0),
+                        short(&s.0),
                         s.2
                     ));
                 }
@@ -1218,7 +1227,7 @@ fn call_resolve_scip_ratchet_go() {
                     counts.misses += 1;
                     lines.push(format!(
                         "MISS {rel}:{line} {callee}: scip resolves to corpus ({:?}, {}) but v6 emitted no edge",
-                        short(s.0), s.2
+                        short(&s.0), s.2
                     ));
                 }
                 (None, None) => {
@@ -1342,19 +1351,21 @@ fn call_resolve_scip_ratchet_rust() {
         "every scip document is reader-readable: the corpus and the index cover the same universe"
     );
     // The corpus: every fixture file dispatched + the DefIndex over all.
-    let corpus: Vec<(String, BlobHash, ExtractOutput)> = rels
+    let corpus: Vec<(String, ContentId, ExtractOutput)> = rels
         .iter()
         .map(|rel| {
             let bytes = reader(rel).unwrap();
             (
                 rel.clone(),
-                BlobHash::of(&bytes),
+                content_id_of(&bytes),
                 dispatch(rel, &bytes, FamilyMask::ALL).expect("a Source matches the fixture"),
             )
         })
         .collect();
-    let pairs: Vec<(BlobHash, &ExtractOutput)> =
-        corpus.iter().map(|(_, hash, out)| (*hash, out)).collect();
+    let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
+        .iter()
+        .map(|(_, hash, out)| (hash.clone(), out))
+        .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
     let cx = ProjectCx {
@@ -1388,7 +1399,7 @@ fn call_resolve_scip_ratchet_rust() {
         let content = reader(rel).unwrap();
         let Some(call) = &out.call else { continue };
         let edges = Resolve::<sprefa_extract::CallF>::resolve(&RustSource, out, &cx);
-        let mut actual: Vec<(u32, u32, u32, &'static str, BlobHash)> = edges
+        let mut actual: Vec<(u32, u32, u32, &'static str, ContentId)> = edges
             .iter()
             .map(|edge| {
                 let from = call.node(edge.src).span;
@@ -1397,12 +1408,12 @@ fn call_resolve_scip_ratchet_rust() {
                     edge.dst_span.start,
                     edge.dst_span.end(),
                     edge.kind.as_str(),
-                    edge.dst_blob,
+                    edge.dst_blob.clone(),
                 )
             })
             .collect();
         actual.sort_by_key(|t| (t.0, t.1, t.2, t.3));
-        let mut expected: Vec<(u32, u32, u32, &'static str, BlobHash)> = Vec::new();
+        let mut expected: Vec<(u32, u32, u32, &'static str, ContentId)> = Vec::new();
         for site in &call.aux.sites {
             total_sites += 1;
             let callee = out.strings.lookup(site.callee);
@@ -1421,14 +1432,15 @@ fn call_resolve_scip_ratchet_rust() {
                     let def_doc = &scip_index.documents[def_doc_ix];
                     let (def_blob, def_content) = joined[def_doc_ix].as_ref().unwrap();
                     let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
-                    containing_def_site(def_index, *def_blob, ident)
-                        .map(|(name, s)| (*def_blob, s.span, name))
+                    containing_def_site(def_index, def_blob.clone(), ident)
+                        .map(|(name, s)| (def_blob.clone(), s.span, name))
                 });
             let name_t = RustSource::call_name_match(out, def_index, callee);
             // The twin outcome (the same legs the arm runs; the multiset
-            // comparison below is the orchestration check).
+            // comparison below is the orchestration check). Clones name_t/scip_t
+            // into the closure so both stay owned for the scip-side match below.
             let twin = covering_def(call, site.span).and_then(|caller| {
-                let (dst, kind) = match (name_t, scip_t) {
+                let (dst, kind) = match (name_t.clone(), scip_t.clone()) {
                     (Some(n), Some(s)) if n.0 == s.0 && callee == s.2 => {
                         (n, CallEdgeKind::NameResolve)
                     }
@@ -1438,9 +1450,9 @@ fn call_resolve_scip_ratchet_rust() {
                 };
                 Some((caller, dst, kind))
             });
-            if let Some((caller, dst, kind)) = twin {
-                let from = call.node(caller).span;
-                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0));
+            if let Some((caller, dst, kind)) = &twin {
+                let from = call.node(*caller).span;
+                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0.clone()));
             }
             // The scip-side classification (assertions 2-6).
             match (twin, scip_t) {
@@ -1449,7 +1461,7 @@ fn call_resolve_scip_ratchet_rust() {
                         counts.disagreements += 1;
                         lines.push(format!(
                             "DISAGREE {rel}:{line} {callee}: v6 NameResolve -> ({:?}, {callee}), scip -> ({:?}, {})",
-                            short(dst.0), short(s.0), s.2
+                            short(&dst.0), short(&s.0), s.2
                         ));
                     } else {
                         counts.name_resolve += 1;
@@ -1459,27 +1471,27 @@ fn call_resolve_scip_ratchet_rust() {
                     counts.overbound += 1;
                     lines.push(format!(
                         "OVERBOUND {rel}:{line} {callee}: v6 NameResolve -> ({:?}) but scip has no corpus target",
-                        short(dst.0)
+                        short(&dst.0)
                     ));
                 }
                 (Some((_, dst, CallEdgeKind::ScipOverride)), Some(s)) => {
                     assert_eq!(
-                        (dst.0, dst.1),
-                        (s.0, s.1),
+                        (dst.0.clone(), dst.1),
+                        (s.0.clone(), s.1),
                         "override edge carries scip's target at {rel}:{line} {callee}"
                     );
                     assert!(
-                        !(name_t == Some((s.0, s.1)) && callee == s.2),
+                        !(name_t == Some((s.0.clone(), s.1)) && callee == s.2),
                         "override with a matching name-match is no override at {rel}:{line} {callee}"
                     );
                     counts.scip_override += 1;
                     lines.push(format!(
                         "OVERRIDE {rel}:{line} {callee}: name-match {} displaced; scip -> ({:?}, {})",
                         match name_t {
-                            Some((b, _)) => format!("({:?}, {callee})", short(b)),
+                            Some((b, _)) => format!("({:?}, {callee})", short(&b)),
                             None => "<none: ambiguous/absent>".to_string(),
                         },
-                        short(s.0),
+                        short(&s.0),
                         s.2
                     ));
                 }
@@ -1490,7 +1502,7 @@ fn call_resolve_scip_ratchet_rust() {
                     counts.misses += 1;
                     lines.push(format!(
                         "MISS {rel}:{line} {callee}: scip resolves to corpus ({:?}, {}) but v6 emitted no edge",
-                        short(s.0), s.2
+                        short(&s.0), s.2
                     ));
                 }
                 (None, None) => {
@@ -1559,9 +1571,11 @@ struct RatchetCounts {
     overbound: usize,
 }
 
-/// The first 6 hex chars of a blob, for divergence listings.
-fn short(blob: BlobHash) -> String {
-    blob.to_hex()[..6].to_string()
+/// A short diagnostic label for a blob in divergence listings, never compared
+/// against a golden fixture: `ContentId`'s Display (`git:`/`blake3:` prefixed)
+/// truncated to a legible prefix.
+fn short(blob: &ContentId) -> String {
+    blob.to_string().chars().take(16).collect()
 }
 
 /// THE DOC FACET, RUST ONLY, ASSERTED BYTE-FOR-BYTE.

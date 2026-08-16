@@ -265,7 +265,7 @@ impl Resolve<TypeF> for MarkdownSource {
             if let [site] = sites {
                 edges.push(ProjectEdge::new(
                     NodeRef(ix as u32),
-                    site.blob,
+                    site.blob.clone(),
                     site.span,
                     TypeEdgeKind::DocRef,
                 ));

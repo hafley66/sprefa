@@ -83,7 +83,9 @@ pub use seams::{
     ScipDocument, ScipError, ScipIndex, ScipMetadata, ScipOccurrence, ScipRelationship,
     ScipSignature, ScipSource, ScipSymbolInfo,
 };
-pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
+pub use shape::{
+    content_id_of, ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID,
+};
 pub use soopy::{
     ContentId as SourceContentId, Pattern as SourcePattern, ReadRequest as SourceReadRequest,
     RepositoryId as SourceRepositoryId, Revision as SourceRevision, RevisionId as SourceRevisionId,

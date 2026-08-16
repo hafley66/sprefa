@@ -34,7 +34,7 @@ use crate::scip_rows::ScipRecords;
 use crate::seams::{
     build_def_index, BlobSource, FileSet, IndexBag, ManifestMap, ProjectCx, ProjectDigest,
 };
-use crate::shape::{BlobHash, Span};
+use crate::shape::{content_id_of, ContentId, Span};
 use crate::source::{ExtractOutput, FamilyMask, Resolve, Source};
 use crate::types::{CallF, ProjectEdge, ScipError, ScipIndex, ScipSource, TypeF};
 use crate::wire::FlatFact;
@@ -127,7 +127,7 @@ impl std::error::Error for ProjectError {}
 /// One supplied file, extracted once, kept for the whole resolve.
 pub(crate) struct ProjectInput {
     pub(crate) path: String,
-    blob: BlobHash,
+    blob: ContentId,
     pub(crate) output: ExtractOutput,
 }
 
@@ -137,9 +137,9 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     let inputs = read_inputs(request.paths)?;
     let scip_index = load_scip(request, &inputs)?;
 
-    let pairs: Vec<(BlobHash, &ExtractOutput)> = inputs
+    let pairs: Vec<(ContentId, &ExtractOutput)> = inputs
         .iter()
-        .map(|input| (input.blob, &input.output))
+        .map(|input| (input.blob.clone(), &input.output))
         .collect();
     let files = FileSet;
     let manifests = ManifestMap;
@@ -427,7 +427,7 @@ fn read_inputs_plain(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectErro
         let path = path.to_string_lossy().to_string();
         if let Some(output) = crate::dispatch(&path, &content, FamilyMask::ALL) {
             inputs.push(ProjectInput {
-                blob: BlobHash::of(&content),
+                blob: content_id_of(&content),
                 path,
                 output,
             });
@@ -463,7 +463,7 @@ fn read_inputs_batched(
         let path = path.to_string_lossy().to_string();
         if let Some(output) = crate::dispatch(&path, &content, FamilyMask::ALL) {
             inputs.push(ProjectInput {
-                blob: BlobHash::of(&content),
+                blob: content_id_of(&content),
                 path,
                 output,
             });

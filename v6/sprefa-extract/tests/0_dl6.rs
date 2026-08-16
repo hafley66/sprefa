@@ -6,7 +6,7 @@
 // test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 
 use sprefa_extract::{
-    build_def_index, flatten, BlobHash, CallEdgeKind, CallF, DlSource, FamilyMask, FamilyTag,
+    build_def_index, content_id_of, flatten, CallEdgeKind, CallF, DlSource, FamilyMask, FamilyTag,
     FileSet, IndexBag, ManifestMap, ProjectCx, ProjectDigest, Resolve, Source, Span,
 };
 
@@ -121,12 +121,12 @@ fn dl6_call_and_type_resolution() {
     let caller_out = DlSource.extract(CALLER_PATH, CALLER_SRC, FamilyMask::ALL);
     let callee_out = DlSource.extract(CALLEE_PATH, CALLEE_SRC, FamilyMask::ALL);
 
-    let caller_blob = BlobHash::of(CALLER_SRC);
-    let callee_blob = BlobHash::of(CALLEE_SRC);
+    let caller_blob = content_id_of(CALLER_SRC);
+    let callee_blob = content_id_of(CALLEE_SRC);
 
     let index = build_def_index(&[
         (caller_blob, &caller_out),
-        (callee_blob, &callee_out),
+        (callee_blob.clone(), &callee_out),
     ]);
     let indexes = IndexBag::default();
     indexes.def_index.set(index).unwrap();

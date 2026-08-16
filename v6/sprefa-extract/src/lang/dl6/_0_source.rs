@@ -14,7 +14,7 @@ use crate::family::{
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, own_blob, ProjectCx, Resolve};
-use crate::shape::{BlobHash, FamilyTag, NodeRef, Span, Strings};
+use crate::shape::{ContentId, FamilyTag, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
 
 #[derive(Default)]
@@ -347,7 +347,7 @@ impl DlSource {
         output: &ExtractOutput,
         index: &crate::seams::DefIndex,
         callee: &str,
-    ) -> Option<(BlobHash, Span)> {
+    ) -> Option<(ContentId, Span)> {
         let call = output.call.as_ref()?;
         if let Some(node) = call.nodes.iter().find(|node| {
             node.name
@@ -356,7 +356,7 @@ impl DlSource {
         }) {
             for site in corpus_defs(index, callee) {
                 if site.span == node.span && site.family == FamilyTag::Call {
-                    return Some((site.blob, site.span));
+                    return Some((site.blob.clone(), site.span));
                 }
             }
         }
@@ -364,14 +364,14 @@ impl DlSource {
             .iter()
             .filter(|site| site.family == FamilyTag::Call)
             .collect();
-        let mut blobs: Vec<_> = sites.iter().map(|site| site.blob).collect();
-        blobs.sort_by_key(|blob| blob.0);
+        let mut blobs: Vec<_> = sites.iter().map(|site| site.blob.clone()).collect();
+        blobs.sort();
         blobs.dedup();
         let [blob] = blobs.as_slice() else {
             return None;
         };
         let site = sites.iter().find(|site| site.blob == *blob)?;
-        Some((site.blob, site.span))
+        Some((site.blob.clone(), site.span))
     }
 
     pub fn type_edge_candidates(output: &ExtractOutput) -> Vec<TypeEdgeCandidate> {
@@ -469,17 +469,21 @@ impl Resolve<TypeF> for DlSource {
             let sites: Vec<_> = corpus_defs(index, to_name)
                 .iter()
                 .filter(|site| site.family == TypeF::TAG)
-                .copied()
                 .collect();
             let matched_site = if sites.len() == 1 {
-                Some(sites[0])
-            } else if let Some(own_hash) = own {
-                sites.into_iter().find(|site| site.blob == own_hash)
+                Some(&sites[0])
+            } else if let Some(own_hash) = &own {
+                sites.iter().find(|site| site.blob == *own_hash)
             } else {
                 None
             };
             if let Some(target) = matched_site {
-                edges.push(ProjectEdge::new(owner_ref, target.blob, target.span, cand.kind));
+                edges.push(ProjectEdge::new(
+                    owner_ref,
+                    target.blob.clone(),
+                    target.span,
+                    cand.kind,
+                ));
             }
         }
         edges
