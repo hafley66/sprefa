@@ -1,0 +1,79 @@
+# 6_door_skew_files_at.dl6 -- THE PRIZE, SHRUNK TO ONE HOST AND ONE RULE.
+#
+# One repository, one revision, one glob, one join. The two doors answer
+# DIFFERENT ROW SETS, and one of the two answers is wrong.
+#
+#   RUST DOOR   the tree at that revision. On alpha at rev A: 2 rows,
+#               go.mod and main.go, each with its blob oid.
+#   TS DOOR     3 rows. The third is `src/core.ts`, which does not exist at
+#               rev A, carrying the literal string `<rev>:src/core.ts` in the
+#               DIGEST column.
+#
+# ── THE MECHANISM, MEASURED AND NOT ARGUED ──────────────────────────────────
+# The Rust runtime recognizes the ruled name and answers from Soopy in-process
+# (`sprefa-engine-rs/src/hosts.rs:52-60` -> SoopyFilesExecutor), which reads the
+# tree at `Revision::Named(rev)`. The served TS runtime has no such arm and runs
+# the template, whose second half is:
+#
+#     oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"
+#     [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"
+#
+# Two facts about git, both measured on this corpus:
+#
+#   1  `git ls-files --with-tree=<rev>` answers the UNION of the index and the
+#      tree, so a path that exists only in the worktree's commit is enumerated
+#      while asking about an older revision.
+#   2  `git rev-parse <rev>:<absent-path>` exits 128, writes `fatal:` to
+#      STDERR, and ECHOES ITS ARGUMENT TO STDOUT. `2>/dev/null` hides the fatal
+#      line; `$oid` is not empty; the `[ -n "$oid" ]` guard passes; the row is
+#      printed with the argument string where a blob oid belongs.
+#
+# So absence becomes a ROW WITH A GARBAGE DIGEST, on a text column, which no
+# type check can catch. The shipped declaration's own header claims the
+# opposite in so many words -- `v6/dl/fixtures/files-hosts.dl6:62-64`, "a path
+# staged but absent at that rev has no blob: `rev-parse` fails, the guard drops
+# it, and it is no row (absence is row absence, never an empty digest)". The
+# guard tests the wrong thing: it tests whether git PRINTED, not whether git
+# SUCCEEDED. `git rev-parse --verify --quiet` prints nothing and exits 1, which
+# is the guard the comment describes.
+#
+# THE ONE-LINE REPAIR IS NOT ONE, measured as sabotage receipt 1 in 8_gate.sh:
+# swapping in `--verify --quiet` and keeping `[ -n "$oid" ] && printf` makes the
+# TS door answer ZERO rows, because the `&&` leaves the while loop's exit status
+# at 1 whenever the last enumerated path is the absent one and a nonzero exit is
+# a host failure. The repair is both halves, `--verify --quiet` AND the `if`
+# form crawl_org.dl6:68-70 already documents.
+#
+# ── SCOPE, WHICH IS WIDER THAN THIS FILE ────────────────────────────────────
+# The same template ships four times: `files_at` at fixtures/files-hosts.dl6:66,
+# `repo_files_at` at :102, and `repo_files_at` again at
+# fixtures/crawl_org.dl6:100. Every one of them is a rev-pinned feed on the TS
+# door, and every one over-answers by exactly the paths its index carries and
+# its revision does not. This lane does not own those files and does not edit
+# them; the README failure table carries the fix.
+#
+# ── HOW THIS PROGRAM STAYS FALSIFIABLE ──────────────────────────────────────
+# The demand is posted at rev A, the revision BEFORE the sources land, because
+# that is the only revision at which the index and the tree disagree. Posting
+# HEAD instead makes both doors right and this file green for the wrong reason,
+# which is why the gate posts rev A and asserts the row COUNTS differ.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantRev$.pipe(map(mintIdentityAndWitness),
+#                 distinct(demand => demand.witnessDigest),
+#                 mergeMap(runFileFeed), mergeMap(commitEdbArrival))
+
+sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+
+rel want_rev(repo: text, rev: text, glob: text).
+
+rel pinned_file(repo: text, path: text, digest: text).
+pinned_file(repo, path, digest) <-
+  want_rev(repo, rev, glob), repo_files_at(repo, rev, glob, path, digest).
+
+rel pinned_file_count(repo: text, files: int).
+pinned_file_count(repo, count(path)) <- pinned_file(repo, path, _).
+
+? pinned_file(repo, path, digest).
+? pinned_file_count(repo, files).

@@ -1,0 +1,114 @@
+# 5_cross_repo_ref.dl6 -- A CALL SITE IN ONE REPOSITORY, ITS DEFINITION IN ANOTHER.
+#
+# NAME-LEVEL ONLY, and that is a design statement rather than a shortcut. The
+# extractor's per-file `site` record carries `callee` and a `callee_path` that
+# is null for everything it cannot resolve inside the one file it read; there
+# is no cross-file resolver on this path and this program does not invent one.
+# So a "cross-repo reference" here means exactly: a call site naming N in repo
+# X, and a callable named N defined in repo Y. Nothing more is claimed.
+#
+# ── THE CORPUS IS BUILT SO THE JOIN CAN BE WRONG ────────────────────────────
+#   beta  calls shared_helper   defined in alpha    -> cross_repo_ref
+#   gamma calls alpha_only      defined in alpha    -> cross_repo_ref
+#   beta  calls beta_local      defined in beta     -> local_ref, NOT cross
+#   gamma calls ghost_call      defined nowhere     -> dangling_ref
+# `ghost_call` is the negative control a name chase cannot fake. A rig that
+# reports every site as resolved passes a corpus with no dangling name, so the
+# corpus has one.
+#
+# ── ONE EXTRACTOR RUN, TWO PROJECTIONS ──────────────────────────────────────
+# `call_node_at` and `call_ref` carry IDENTICAL templates, so the applicative
+# fold serves both from one extractor invocation per file (hosts.rs
+# `is_applicative`, serve/1_hosts.ts `ApplicativeExecutors`). Splitting defs
+# from sites costs nothing; they are two named readings of one stdout, and the
+# `carriesEveryColumn` rule is what separates them: a `node` line has no
+# `callee` and a `site` line has no `name`.
+#
+# The two names are also, again, the only spelling available: both hold the
+# (path, digest) contract at registry.pl:417-443. See 3_span_in_file.dl6 for
+# the defect that constrains the naming.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   scannedFile$.pipe(map(mintIdentityAndWitness),
+#                     distinct(demand => demand.witnessDigest),
+#                     mergeMap(runExtractOnce), mergeMap(commitEdbArrival))
+#   combineLatest([callSite$, procDef$]).pipe(           // cross_repo_ref
+#     map(join('callee')), filter(([site, def]) => site.repo !== def.repo))
+#   callSite$.pipe(withLatestFrom(resolvedSet$),         // dangling_ref
+#                  filter(([site, resolved]) => !resolved.has(key(site))))
+
+rel span(start: int, end: int).
+
+sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
+
+sh call_node_at(path: text, digest: text)
+   -> (record: text, family: text, span: span, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+sh call_ref(path: text, digest: text)
+   -> (record: text, family: text, span: span, callee: text) =
+  `"$DL_EXTRACT_BIN" --family call {path}`.
+
+rel want_scan(repo: text, glob: text).
+
+rel scanned_file(repo: text, path: text, abs_path: text, digest: text).
+scanned_file(repo, path, abs_path, digest) <-
+  want_scan(repo, glob),
+  repo_files(repo, glob, path, digest),
+  abs_path := concat([repo, '/', path]).
+
+rel proc_def(repo: text, path: text, proc_name: text, proc_start: int, proc_end: int).
+proc_def(repo, path, proc_name, proc_start, proc_end) <-
+  scanned_file(repo, path, abs_path, digest),
+  call_node_at(abs_path, digest, 'node', 'call', proc_at, _proc_kind, proc_name),
+  decode(proc_at, {start: proc_start, end: proc_end}).
+
+rel call_site(repo: text, path: text, callee: text, site_start: int, site_end: int).
+call_site(repo, path, callee, site_start, site_end) <-
+  scanned_file(repo, path, abs_path, digest),
+  call_ref(abs_path, digest, 'site', 'call', site_at, callee),
+  decode(site_at, {start: site_start, end: site_end}).
+
+# The definition side, name-keyed and repository-keyed. A name defined in two
+# repositories yields two rows here and therefore two `cross_repo_ref` rows,
+# which is the correct answer for a NAME-level chase and the reason the header
+# says name-level out loud.
+rel defining_repo(proc_name: text, repo: text).
+defining_repo(proc_name, repo) <- proc_def(repo, _, proc_name, _, _).
+
+rel cross_repo_ref(from_repo: text, from_path: text, callee: text, to_repo: text).
+cross_repo_ref(from_repo, from_path, callee, to_repo) <-
+  call_site(from_repo, from_path, callee, _, _),
+  defining_repo(callee, to_repo),
+  from_repo != to_repo.
+
+rel local_ref(repo: text, path: text, callee: text).
+local_ref(repo, path, callee) <-
+  call_site(repo, path, callee, _, _),
+  defining_repo(callee, repo).
+
+# The boundary of the corpus's name graph, as a relation. A site whose callee
+# no repository under scan defines is a ROW, never a silence.
+rel resolved_site(repo: text, path: text, callee: text).
+resolved_site(repo, path, callee) <- local_ref(repo, path, callee).
+resolved_site(from_repo, from_path, callee) <- cross_repo_ref(from_repo, from_path, callee, _).
+
+rel dangling_ref(repo: text, path: text, callee: text).
+dangling_ref(repo, path, callee) <-
+  call_site(repo, path, callee, _, _),
+  not(resolved_site(repo, path, callee)).
+
+rel cross_repo_count(to_repo: text, refs: int).
+cross_repo_count(to_repo, count(callee)) <- cross_repo_ref(_, _, callee, to_repo).
+
+rel dangling_count(repo: text, refs: int).
+dangling_count(repo, count(callee)) <- dangling_ref(repo, _, callee).
+
+? proc_def(repo, path, proc_name, proc_start, proc_end).
+? call_site(repo, path, callee, site_start, site_end).
+? cross_repo_ref(from_repo, from_path, callee, to_repo).
+? local_ref(repo, path, callee).
+? dangling_ref(repo, path, callee).
+? cross_repo_count(to_repo, refs).
+? dangling_count(repo, refs).

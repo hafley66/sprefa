@@ -1,0 +1,119 @@
+# 4_crawl_extract.dl6 -- THE CRAWL DECIDES WHICH REPOSITORIES GET EXTRACTED.
+#
+# 4_dep_crawl.dl6 answers "which repositories does this seed reach". This
+# program feeds that answer straight into the file feed and the extractor, so
+# the corpus under extraction is the ANSWER to a dependency question and not a
+# posted list. One `want_crawl` row names a repository set the poster never
+# enumerated, and every file read after that is a consequence.
+#
+#   want_crawl(root, seed, frontier)
+#     -> crawl_repo / crawl_visit          in-process dep_resolve, one traversal
+#     -> visited_root(seed, coordinate, root)
+#     -> repo_files(root, '*.ts', path, digest)
+#     -> repo_extract(root, path, digest)  the diet-SCIP node stream
+#     -> repo_family_count(seed, root, family, nodes)
+#     -> barren_repo(seed, root)           the NAMED zero
+#
+# ── THE NAMED ZERO IS THE POINT ─────────────────────────────────────────────
+# `shared` is reached by every seed and holds no TypeScript, so its extraction
+# answers nothing. A rig that reports only the repositories with facts cannot
+# tell "visited and empty" from "never visited", and those are different
+# answers to a dependency question. `barren_repo` is the anti-join that makes
+# the first one a row.
+#
+# ── RUST DOOR ONLY, AND THE PROGRAM SAYS SO IN ITS TEMPLATES ────────────────
+# All four `dep_crawl_*` templates end in `exit 3`. The four ruled names run
+# in-process on the Rust runtime (`hosts.rs` DEP_CRAWL_HOSTS); the served TS
+# runtime has no such arm, falls to ShellExecutor, and the templates then
+# actually run and stop the load by name. So this program has ONE door, and the
+# reason is a fact the templates prove rather than a note in a README.
+#
+# ── WHY THE COUNT IS OVER SPANS AND NOT OVER FACT LINES ─────────────────────
+# A response rel is a SET. Declaring `-> (record, family)` alone would collapse
+# every fact of one family in one file to a single row and the count would read
+# 1 everywhere. The span columns are what keep the nodes apart, so this counts
+# DISTINCT VALUE NODES per family, which is a number that means something.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantCrawl$.pipe(map(mintIdentityAndWitness),
+#                   distinct(demand => demand.witnessDigest),
+#                   mergeMap(runCrawlMemoised), mergeMap(commitEdbArrival))
+#   visitedRoot$.pipe(mergeMap(runFileFeed), mergeMap(runExtract))
+#   repoNode$.pipe(groupBy(row => [row.seed, row.root, row.family].join()),
+#                  mergeMap(group => group.pipe(count())))
+
+rel span(start: int, end: int).
+
+sh dep_crawl_repo(checkout_root: text, seed: text, frontier: text)
+   -> (coordinate: text, root: text) =
+  `echo 'dep_crawl_repo {checkout_root} {seed} {frontier} is linked in-process' >&2; exit 3`.
+
+sh dep_crawl_visited(checkout_root: text, seed: text, frontier: text)
+   -> (repo: text, rev: text, hop: int) =
+  `echo 'dep_crawl_visited {checkout_root} {seed} {frontier} is linked in-process' >&2; exit 3`.
+
+sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
+
+sh repo_extract(repo: text, path: text, digest: text)
+   -> (record: text, family: text, span: span, kind: text) =
+  `"$DL_EXTRACT_BIN" --family type,call,df {repo}/{path}`.
+
+rel want_crawl(checkout_root: text, seed: text, frontier: text).
+
+rel crawl_repo(seed: text, coordinate: text, root: text).
+crawl_repo(seed, coordinate, root) <-
+  want_crawl(checkout_root, seed, frontier),
+  dep_crawl_repo(checkout_root, seed, frontier, coordinate, root).
+
+rel crawl_visit(seed: text, coordinate: text, rev: text, hop: int).
+crawl_visit(seed, coordinate, rev, hop) <-
+  want_crawl(checkout_root, seed, frontier),
+  dep_crawl_visited(checkout_root, seed, frontier, coordinate, rev, hop).
+
+# The join that turns a module coordinate into a checkout to read. A visited
+# coordinate with no root row would silently drop out here, so it is its own
+# rel below rather than a filter nobody can see.
+rel visited_root(seed: text, coordinate: text, root: text).
+visited_root(seed, coordinate, root) <-
+  crawl_visit(seed, coordinate, _, _),
+  crawl_repo(seed, coordinate, root).
+
+rel rootless_visit(seed: text, coordinate: text).
+rootless_visit(seed, coordinate) <-
+  crawl_visit(seed, coordinate, _, _),
+  not(crawl_repo(seed, coordinate, _)).
+
+rel visited_file(seed: text, root: text, path: text, digest: text).
+visited_file(seed, root, path, digest) <-
+  visited_root(seed, _, root),
+  repo_files(root, '*.ts', path, digest).
+
+rel repo_node(seed: text, root: text, path: text, family: text,
+              node_start: int, node_end: int, node_kind: text).
+repo_node(seed, root, path, family, node_start, node_end, node_kind) <-
+  visited_file(seed, root, path, digest),
+  repo_extract(root, path, digest, 'node', family, node_at, node_kind),
+  decode(node_at, {start: node_start, end: node_end}).
+
+rel repo_family_count(seed: text, root: text, family: text, nodes: int).
+repo_family_count(seed, root, family, count(node_start)) <-
+  repo_node(seed, root, _, family, node_start, _, _).
+
+rel repo_has_node(seed: text, root: text).
+repo_has_node(seed, root) <- repo_node(seed, root, _, _, _, _, _).
+
+rel barren_repo(seed: text, root: text).
+barren_repo(seed, root) <-
+  visited_root(seed, _, root), not(repo_has_node(seed, root)).
+
+rel reached_repo_count(seed: text, repos: int).
+reached_repo_count(seed, count(root)) <- visited_root(seed, _, root).
+
+? crawl_visit(seed, coordinate, rev, hop).
+? visited_root(seed, coordinate, root).
+? rootless_visit(seed, coordinate).
+? visited_file(seed, root, path, digest).
+? repo_family_count(seed, root, family, nodes).
+? barren_repo(seed, root).
+? reached_repo_count(seed, repos).

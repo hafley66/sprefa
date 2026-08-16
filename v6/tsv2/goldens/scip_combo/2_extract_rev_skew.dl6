@@ -1,0 +1,120 @@
+# 2_extract_rev_skew.dl6 -- DOES PINNING THE FILE SET PIN THE EXTRACTION?
+#
+# The combo reads as if it should: `repo_files_at` answers a revision's blob
+# oids, and feeding that answer to `repo_extract` looks like "the callables at
+# that revision". It is not, for TWO independent reasons, and this program is
+# the shape that shows both.
+#
+#   1  THE EXTRACTOR READS THE FILESYSTEM. The template ends in `{repo}/{path}`
+#      and the executor opens exactly that path: `std::fs::read(&path)` in
+#      `sprefa-engine-rs/src/hosts.rs` SprefaExtractExecutor, a spawn of
+#      `$DL_EXTRACT_BIN` on the served TS door. Neither mentions a revision.
+#   2  `digest` IS A FRESHNESS INPUT (registry.pl:402-404 host_input_contract),
+#      so it extends the WITNESS and does not return on the response row. Two
+#      demands for one (repo, path) under two digests are two witnesses and one
+#      response identity, so the two rules below read the SAME response rows.
+#
+# `0_corpus.sh` leaves one uncommitted function in beta/src/use.ts so the claim
+# is measured and not argued: the two feeds report DIFFERENT digests for that
+# path, and the callable set they extract is identical anyway.
+#
+#   pinned_digest_skew   nonempty   the two feeds disagree about the bytes
+#   worktree_only_proc   EMPTY      and the extraction cannot tell them apart
+#   pinned_only_proc     EMPTY
+#
+# An empty rel is a claim, so `agreed_proc_count` names the population the two
+# anti-joins ran over. A rig that never fired the rule and a rig that fired it
+# and found nothing must not print the same thing.
+#
+# ── WHAT THIS PROGRAM CANNOT SAY, AND WHERE IT BLOCKS ───────────────────────
+# The sharper program declares TWO repo-scoped extract hosts, one per feed, so
+# each carries its own witness AND its own response identity. That refuses:
+# `host_input_contract` is keyed on hardcoded host NAMES (registry.pl:394-449)
+# and `repo_extract` is the only repo-scoped name holding the
+# (identity, identity, freshness) shape. Any other name falls to
+# `identity_roles/2` (registry.pl:526-534), every input becomes identity, and a
+# template that never spells `{digest}` throws
+# `template_mismatch(unreferenced_input(digest))` at 1_host_expand.pl:301.
+# That is ARCH.pl:879 defect D1, already filed and unbuilt.
+#
+# ── THE RX LOWERING ─────────────────────────────────────────────────────────
+#   wantRepoPair$.pipe(map(mintIdentityAndWitness),      // both file feeds
+#                      distinct(demand => demand.witnessDigest),
+#                      mergeMap(runFileFeed), mergeMap(commitEdbArrival))
+#   merge(worktreeFile$, pinnedFile$).pipe(              // one extract feed,
+#     map(mintIdentityAndWitness),                       // two witnesses, one
+#     distinct(demand => demand.witnessDigest),          // response identity
+#     mergeMap(runExtract), mergeMap(commitEdbArrival))
+#   combineLatest([worktreeProc$, pinnedProc$]).pipe(map(antiJoin))
+
+sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
+
+sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
+  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+
+sh repo_extract(repo: text, path: text, digest: text)
+   -> (record: text, family: text, kind: text, name: text) =
+  `"$DL_EXTRACT_BIN" --family call {repo}/{path}`.
+
+# `rev` is the HEAD of each repository, not the base revision, and that is a
+# constraint this program depends on: at HEAD the index and the tree agree, so
+# `--with-tree` unions nothing new and this file feed is free of the guard
+# defect 6_door_skew_files_at.dl6 pins. Combo 2 is about extraction, not about
+# that.
+rel want_repo_pair(repo: text, rev: text, glob: text).
+
+rel worktree_file(repo: text, path: text, digest: text).
+worktree_file(repo, path, digest) <-
+  want_repo_pair(repo, _, glob), repo_files(repo, glob, path, digest).
+
+rel pinned_file(repo: text, path: text, digest: text).
+pinned_file(repo, path, digest) <-
+  want_repo_pair(repo, rev, glob), repo_files_at(repo, rev, glob, path, digest).
+
+# The rel that says the pin IS doing something, at the file level.
+rel pinned_digest_skew(repo: text, path: text, worktree_digest: text, pinned_digest: text).
+pinned_digest_skew(repo, path, worktree_digest, pinned_digest) <-
+  worktree_file(repo, path, worktree_digest),
+  pinned_file(repo, path, pinned_digest),
+  worktree_digest != pinned_digest.
+
+# A JSONL line missing a declared column contributes no row, so `name: text` is
+# itself the filter that keeps anonymous callables out of both sides.
+rel worktree_proc(repo: text, path: text, proc_name: text).
+worktree_proc(repo, path, proc_name) <-
+  worktree_file(repo, path, digest),
+  repo_extract(repo, path, digest, 'node', 'call', _kind, proc_name).
+
+rel pinned_proc(repo: text, path: text, proc_name: text).
+pinned_proc(repo, path, proc_name) <-
+  pinned_file(repo, path, digest),
+  repo_extract(repo, path, digest, 'node', 'call', _kind, proc_name).
+
+rel worktree_only_proc(repo: text, path: text, proc_name: text).
+worktree_only_proc(repo, path, proc_name) <-
+  worktree_proc(repo, path, proc_name), not(pinned_proc(repo, path, proc_name)).
+
+rel pinned_only_proc(repo: text, path: text, proc_name: text).
+pinned_only_proc(repo, path, proc_name) <-
+  pinned_proc(repo, path, proc_name), not(worktree_proc(repo, path, proc_name)).
+
+rel agreed_proc(repo: text, path: text, proc_name: text).
+agreed_proc(repo, path, proc_name) <-
+  worktree_proc(repo, path, proc_name), pinned_proc(repo, path, proc_name).
+
+rel agreed_proc_count(repo: text, procs: int).
+agreed_proc_count(repo, count(proc_name)) <- agreed_proc(repo, _, proc_name).
+
+rel skewed_file_count(repo: text, files: int).
+skewed_file_count(repo, count(path)) <- pinned_digest_skew(repo, path, _, _).
+
+? worktree_file(repo, path, digest).
+? pinned_file(repo, path, digest).
+? pinned_digest_skew(repo, path, worktree_digest, pinned_digest).
+? worktree_proc(repo, path, proc_name).
+? pinned_proc(repo, path, proc_name).
+? worktree_only_proc(repo, path, proc_name).
+? pinned_only_proc(repo, path, proc_name).
+? agreed_proc_count(repo, procs).
+? skewed_file_count(repo, files).
