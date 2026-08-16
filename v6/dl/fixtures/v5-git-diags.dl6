@@ -110,13 +110,13 @@
 # two cardinalities that discriminate (2 and 3). History in
 # plans/2026-07-30-v5-parity-spelunk.md.
 sh files_at(rev: text, glob: text) -> (path: text, digest: text) =
-  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '{"path":"%s","digest":"%s"}\n' "$entry" "$oid"; done`.
+  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '{"path":"%s","digest":"%s"}\n' "$entry" "$oid"; fi; done`.
 
 # The shipped whitespace spelling, verbatim from fixtures/files-hosts.dl6.
 # It exists ONLY as the decode regression guard; `ws_file` below is read by the
 # receipt and by nothing else in the rail.
 sh files_at_ws(rev: text, glob: text) -> (path: text, digest: text) =
-  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
 
 # ── file CONTENT at a revision, the shared line-regex host ──────────────────
 sh grep_at(rev: text, glob: text, pattern: text) -> (path: text, line: int, g1: text, g2: text, g3: text) =
