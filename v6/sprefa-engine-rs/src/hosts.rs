@@ -61,6 +61,12 @@ fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> 
     if plan.execution == "shell" && DEP_CRAWL_HOSTS.contains(&plan.name.as_str()) {
         return Some(&*DEP_CRAWL);
     }
+    if plan.execution == "shell" && GIT_REF_HOSTS.contains(&plan.name.as_str()) {
+        return Some(&*GIT_REFS);
+    }
+    if plan.execution == "shell" && GIT_REVISION_HOSTS.contains(&plan.name.as_str()) {
+        return Some(&*GIT_REVISIONS);
+    }
     executor_for(&plan.execution)
 }
 
@@ -257,16 +263,32 @@ impl DepCrawlExecutor {
     }
 }
 
-// The column names come from dep_resolve.rs's own constants, so a host output
-// column and the module's relation declaration cannot drift apart.
-fn dep_crawl_row(columns: &[&str], values: Vec<String>) -> serde_json::Value {
+// One object per output row, named by the host's own declared columns, so a
+// linked arm and the decl it answers cannot drift apart.
+fn host_row(columns: &[&str], values: Vec<serde_json::Value>) -> serde_json::Value {
     serde_json::Value::Object(
         columns
             .iter()
             .map(|name| (*name).to_string())
-            .zip(values.into_iter().map(serde_json::Value::String))
+            .zip(values)
             .collect(),
     )
+}
+
+// The column names come from dep_resolve.rs's own constants, so a host output
+// column and the module's relation declaration cannot drift apart.
+fn dep_crawl_row(columns: &[&str], values: Vec<String>) -> serde_json::Value {
+    host_row(
+        columns,
+        values.into_iter().map(serde_json::Value::String).collect(),
+    )
+}
+
+fn ndjson(rows: &[serde_json::Value]) -> String {
+    rows.iter()
+        .map(serde_json::Value::to_string)
+        .collect::<Vec<String>>()
+        .join("\n")
 }
 
 impl IHostExecutor for DepCrawlExecutor {
@@ -348,11 +370,322 @@ impl IHostExecutor for DepCrawlExecutor {
                 .collect(),
             _ => return Err(named("not a dependency-crawl host".to_string())),
         };
-        Ok(rows
-            .iter()
-            .map(serde_json::Value::to_string)
-            .collect::<Vec<String>>()
-            .join("\n"))
+        Ok(ndjson(&rows))
+    }
+}
+
+// ═══ refs, tags, and the revision graph, linked the same way ════════════════
+
+// Two names, ONE `for-each-ref` pass: a program declaring both settles one
+// snapshot per repository.
+const GIT_REF_HOSTS: &[&str] = &["git_ref", "git_tag"];
+
+// Three names, ONE revision-graph answer per (repo, rev_a, rev_b). Git has no
+// batch form for the pairwise relations, so the memo is what caps the spawns.
+const GIT_REVISION_HOSTS: &[&str] = &["git_merge_base", "git_ahead_behind", "git_ancestor"];
+
+pub const GIT_REF_COLUMNS: &[&str] = &["ref_name", "kind", "target_sha"];
+pub const GIT_TAG_COLUMNS: &[&str] = &["tag_name", "target_sha", "tagged_at", "annotated"];
+pub const GIT_MERGE_BASE_COLUMNS: &[&str] = &["base_sha"];
+pub const GIT_AHEAD_BEHIND_COLUMNS: &[&str] = &["ahead_count", "behind_count"];
+pub const GIT_ANCESTOR_COLUMNS: &[&str] = &["ancestor_sha", "descendant_sha"];
+
+const TAG_PREFIX: &str = "refs/tags/";
+
+static GIT_REFS: LazyLock<GitRefExecutor> = LazyLock::new(GitRefExecutor::default);
+static GIT_REVISIONS: LazyLock<GitRevisionExecutor> = LazyLock::new(GitRevisionExecutor::default);
+
+#[derive(Default)]
+pub struct GitRefExecutor {
+    snapshots: Mutex<BTreeMap<String, Arc<soopy::RefSnapshot>>>,
+}
+
+// `kind` names the ref's namespace, never the Git object type: every branch tip
+// is a `commit` object, so the object type cannot tell branches from tags.
+fn ref_kind(name: &str) -> &'static str {
+    if name.starts_with("refs/heads/") {
+        "branch"
+    } else if name.starts_with(TAG_PREFIX) {
+        "tag"
+    } else if name.starts_with("refs/remotes/") {
+        "remote"
+    } else {
+        "other"
+    }
+}
+
+// An annotated tag's ref points at the tag object; `peeled` carries the commit.
+fn ref_target(observation: &soopy::RefObservation) -> String {
+    observation
+        .peeled
+        .as_ref()
+        .unwrap_or(&observation.direct)
+        .0
+        .to_string()
+}
+
+impl GitRefExecutor {
+    fn snapshot(&self, host: &str, repo: &str) -> Result<Arc<soopy::RefSnapshot>, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        if let Some(memo) = self.snapshots.lock().expect("git ref memo").get(repo) {
+            return Ok(memo.clone());
+        }
+        let repository = soopy::discover(std::path::PathBuf::from(repo))
+            .map_err(|error| named(format!("open repository {repo}: {error}")))?;
+        let query = soopy::RefQuery {
+            repository: repository.identity.clone(),
+            namespace: Arc::from(""),
+            name: None,
+            pattern: None,
+        };
+        let snapshot = Arc::new(
+            soopy::Refs::open(repository)
+                .snapshot(&query)
+                .map_err(|error| named(format!("enumerate refs in {repo}: {error}")))?,
+        );
+        self.snapshots
+            .lock()
+            .expect("git ref memo")
+            .insert(repo.to_string(), snapshot.clone());
+        Ok(snapshot)
+    }
+}
+
+impl IHostExecutor for GitRefExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let repo = env
+            .get("repo")
+            .cloned()
+            .ok_or_else(|| named("missing required host input `repo`".to_string()))?;
+        let snapshot = self.snapshot(host, &repo)?;
+        let rows: Vec<serde_json::Value> = match host {
+            "git_ref" => {
+                let mut rows: Vec<serde_json::Value> = snapshot
+                    .refs
+                    .iter()
+                    .map(|observation| {
+                        host_row(
+                            GIT_REF_COLUMNS,
+                            vec![
+                                serde_json::Value::String(observation.name.to_string()),
+                                serde_json::Value::String(ref_kind(&observation.name).to_string()),
+                                serde_json::Value::String(ref_target(observation)),
+                            ],
+                        )
+                    })
+                    .collect();
+                // An unborn HEAD names a branch with no commit, so it has no
+                // target_sha and produces no row.
+                if let Some(target) = &snapshot.head_target {
+                    rows.push(host_row(
+                        GIT_REF_COLUMNS,
+                        vec![
+                            serde_json::Value::String("HEAD".to_string()),
+                            serde_json::Value::String("head".to_string()),
+                            serde_json::Value::String(target.0.to_string()),
+                        ],
+                    ));
+                }
+                rows
+            }
+            // A lightweight tag has no tag object and so no tag date;
+            // `annotated` keeps a zero `tagged_at` from reading as the epoch.
+            "git_tag" => snapshot
+                .refs
+                .iter()
+                .filter_map(|observation| {
+                    let tag_name = observation.name.strip_prefix(TAG_PREFIX)?;
+                    let tagged_at = observation
+                        .tag
+                        .as_ref()
+                        .map(|tag| tag.tagger.when)
+                        .unwrap_or(0);
+                    Some(host_row(
+                        GIT_TAG_COLUMNS,
+                        vec![
+                            serde_json::Value::String(tag_name.to_string()),
+                            serde_json::Value::String(ref_target(observation)),
+                            serde_json::Value::Number(tagged_at.into()),
+                            serde_json::Value::Bool(observation.tag.is_some()),
+                        ],
+                    ))
+                })
+                .collect(),
+            _ => return Err(named("not a Git ref host".to_string())),
+        };
+        Ok(ndjson(&rows))
+    }
+}
+
+#[derive(Default)]
+pub struct GitRevisionExecutor {
+    pairs: Mutex<BTreeMap<String, Arc<soopy::RevisionGraphResult>>>,
+}
+
+impl GitRevisionExecutor {
+    fn pair(
+        &self,
+        host: &str,
+        repo: &str,
+        rev_a: &str,
+        rev_b: &str,
+    ) -> Result<Arc<soopy::RevisionGraphResult>, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let key = format!("{repo}|{rev_a}|{rev_b}");
+        if let Some(memo) = self.pairs.lock().expect("git revision memo").get(&key) {
+            return Ok(memo.clone());
+        }
+        let repository = soopy::discover(std::path::PathBuf::from(repo))
+            .map_err(|error| named(format!("open repository {repo}: {error}")))?;
+        let identity = repository.identity.clone();
+        let graph = soopy::RevisionGraph::open(repository);
+        let empty = soopy::RevisionGraphQuery {
+            repository: identity.clone(),
+            resolve: Vec::new(),
+            parents: Vec::new(),
+            ancestry: Vec::new(),
+            merge_bases: Vec::new(),
+            ahead_behind: Vec::new(),
+            walks: Vec::new(),
+        };
+        // The pairwise questions take commit ids, so the two spellings resolve
+        // first; the answers then ride ONE batched query.
+        let resolved = graph
+            .query(&soopy::RevisionGraphQuery {
+                resolve: vec![
+                    soopy::Revision::Named(Arc::from(rev_a)),
+                    soopy::Revision::Named(Arc::from(rev_b)),
+                ],
+                ..empty.clone()
+            })
+            .map_err(|error| named(format!("resolve {rev_a} and {rev_b} in {repo}: {error}")))?;
+        let mut commits = Vec::with_capacity(2);
+        for (spelling, resolution) in [rev_a, rev_b].iter().zip(&resolved.resolutions) {
+            // Zero rows would read as "no shared history", so an unresolvable
+            // revision stops by name; a shallow boundary answers locally.
+            match resolution {
+                soopy::RevisionResolution::Present(oid)
+                | soopy::RevisionResolution::ShallowBoundary(oid) => commits.push(oid.clone()),
+                soopy::RevisionResolution::Absent => {
+                    return Err(named(format!(
+                        "revision '{spelling}' does not resolve in {repo}"
+                    )))
+                }
+                soopy::RevisionResolution::CorruptObject => {
+                    return Err(named(format!(
+                        "revision '{spelling}' names a corrupt object in {repo}"
+                    )))
+                }
+            }
+        }
+        let (left, right) = (commits[0].clone(), commits[1].clone());
+        // Both directions, so `git_ancestor` answers the relation rather than
+        // one ordered question. Two equal revisions ask it once.
+        let mut ancestry = vec![(left.clone(), right.clone())];
+        if left != right {
+            ancestry.push((right.clone(), left.clone()));
+        }
+        let answer = Arc::new(
+            graph
+                .query(&soopy::RevisionGraphQuery {
+                    ancestry,
+                    merge_bases: vec![(left.clone(), right.clone())],
+                    ahead_behind: vec![(left, right)],
+                    ..empty
+                })
+                .map_err(|error| {
+                    named(format!(
+                        "revision graph for {rev_a} and {rev_b} in {repo}: {error}"
+                    ))
+                })?,
+        );
+        self.pairs
+            .lock()
+            .expect("git revision memo")
+            .insert(key, answer.clone());
+        Ok(answer)
+    }
+}
+
+impl IHostExecutor for GitRevisionExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let required = |name: &str| {
+            env.get(name)
+                .cloned()
+                .ok_or_else(|| named(format!("missing required host input `{name}`")))
+        };
+        let repo = required("repo")?;
+        let rev_a = required("rev_a")?;
+        let rev_b = required("rev_b")?;
+        let answer = self.pair(host, &repo, &rev_a, &rev_b)?;
+        let rows: Vec<serde_json::Value> = match host {
+            // Two commits with no shared history have no merge base, and that
+            // is zero rows rather than an error.
+            "git_merge_base" => answer
+                .merge_bases
+                .iter()
+                .flat_map(|pair| pair.bases.iter())
+                .map(|base| {
+                    host_row(
+                        GIT_MERGE_BASE_COLUMNS,
+                        vec![serde_json::Value::String(base.0.to_string())],
+                    )
+                })
+                .collect(),
+            "git_ahead_behind" => answer
+                .ahead_behind
+                .iter()
+                .map(|counts| {
+                    host_row(
+                        GIT_AHEAD_BEHIND_COLUMNS,
+                        vec![
+                            serde_json::Value::Number((counts.ahead as i64).into()),
+                            serde_json::Value::Number((counts.behind as i64).into()),
+                        ],
+                    )
+                })
+                .collect(),
+            "git_ancestor" => answer
+                .ancestry
+                .iter()
+                .filter(|edge| edge.is_ancestor)
+                .map(|edge| {
+                    host_row(
+                        GIT_ANCESTOR_COLUMNS,
+                        vec![
+                            serde_json::Value::String(edge.ancestor.0.to_string()),
+                            serde_json::Value::String(edge.descendant.0.to_string()),
+                        ],
+                    )
+                })
+                .collect(),
+            _ => return Err(named("not a Git revision host".to_string())),
+        };
+        Ok(ndjson(&rows))
     }
 }
 
