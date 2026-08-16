@@ -25,7 +25,8 @@
 //! incl. the `lam_sym` closure naming).
 //!
 //! Deferred follow-ups (the same set the other langs parked): df literal/loop/
-//! nesting aux. Named-argument field names are emitted. The type_edge candidates (`kotlin_decl_edges`) +
+//! nesting aux. Named-argument field names are emitted. The type_edge
+//! candidates (`kotlin_decl_edges`) +
 //! `Resolve<TypeF>`/`Resolve<CallF>` arms - v5 kotlin DOES emit type_edge, and
 //! both resolve arms land with the traits/codegen arc, not this port. The
 //! const facet is NOT ported: v5 kotlin emits no const entities and no
