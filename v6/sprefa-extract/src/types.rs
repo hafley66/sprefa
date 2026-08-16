@@ -2171,7 +2171,7 @@ pub enum FlatFact {
 //   lam_sym) is ported - minted in the df walks from span/containment data.
 //
 // DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
-//   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); GO ASSERTED (4d-i-go, v5 go shape-only: field/impl/generic); rust ASSERTED (4d-i-rust; no sig-sourced rows per v5); kotlin DEFERRED to the traits/codegen arc (v5 kotlin DOES emit: field/impl/generic/variant - candidates + Resolve<TypeF> land there)
+//   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); GO ASSERTED (4d-i-go, v5 go shape-only: field/impl/generic); rust ASSERTED (4d-i-rust; no sig-sourced rows per v5); kotlin ASSERTED (this lane: field/impl/generic/variant)
 //   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust); kotlin DEFERRED to the traits/codegen arc
 //   df aux (args/param_pos)                       [x]         [x]            [x]                 [x]
 //   df aux (fields)                               [x]         [x]            [x]                 [x]

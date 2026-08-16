@@ -46,7 +46,7 @@ pub struct ResolveArms {
     /// source in the roster except the ast-grep CST fallback.
     pub call: bool,
     /// `Resolve<TypeF>`: resolved type reference edges. Implemented for TS, Go,
-    /// Rust and dl6; Kotlin and Prolog have no arm and are skipped rather than
+    /// Rust, dl6 and Kotlin; Prolog has no arm and is skipped rather than
     /// dispatched, because the trait's default body is `todo!()`.
     pub types: bool,
 }
@@ -575,7 +575,7 @@ pub static RESOLVE_ARMS: &[ResolveArm] = &[
     ResolveArm {
         name: "kotlin",
         call: Some(|out, cx| Resolve::<CallF>::resolve(&KotlinSource, out, cx)),
-        types: None,
+        types: Some(|out, cx| Resolve::<TypeF>::resolve(&KotlinSource, out, cx)),
     },
     ResolveArm {
         name: "prolog",
