@@ -532,6 +532,20 @@ fn the_scip_family_takes_exactly_one_root() {
     );
 }
 
+/// A mask name outside cst/type/call/df is a named stop, not a silent empty
+/// stream. The mode names are consumed by `family_mode` before `parse_mask`
+/// runs, so anything unknown here is a typo.
+#[test]
+fn an_unknown_mask_family_is_a_named_error() {
+    let output = raw(&["--family", "nonsense", "tests/fixtures/ts/scip/alpha.ts"]);
+    assert!(!output.status.success());
+    let message = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        message.contains("nonsense") && message.contains("mask family"),
+        "the error must name the unknown family: {message}"
+    );
+}
+
 /// The honest-label sentence has to be reachable from the binary itself, not
 /// only from the source. A caller who reads `--help` or `--schema` must learn
 /// what `diet` means before they trust a diet row.

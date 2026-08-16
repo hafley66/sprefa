@@ -325,11 +325,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             serde_json::to_string(&file_fact(&path_str, &content))?
         );
     }
-    let mask = cli
-        .family
-        .as_deref()
-        .map(parse_mask)
-        .unwrap_or(FamilyMask::ALL);
+    let mask = match cli.family.as_deref() {
+        Some(families) => parse_mask(families)?,
+        None => FamilyMask::ALL,
+    };
     if cli.bench {
         bench(&path_str, &content, mask)?;
     } else {
@@ -455,10 +454,8 @@ fn stream_resolve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// `--family` under `--resolve`. Unlike the phase-1 mask, an unknown name here
-/// is an ERROR rather than a silent drop: the phase-1 mask can afford to ignore
-/// noise because every family it does know still runs, while a typo'd resolve
-/// arm would silently produce an empty stream that reads as "nothing resolved".
+/// `--family` under `--resolve`. An unknown name is a named stop; `parse_mask`
+/// refuses unknown names the same way.
 fn parse_arms(families: &[String]) -> Result<ResolveArms, String> {
     let mut arms = ResolveArms::default();
     for family in families {
@@ -479,7 +476,7 @@ fn parse_arms(families: &[String]) -> Result<ResolveArms, String> {
     Ok(arms)
 }
 
-fn parse_mask(families: &[String]) -> FamilyMask {
+fn parse_mask(families: &[String]) -> Result<FamilyMask, String> {
     let mut mask = FamilyMask::NONE;
     for family in families {
         match family.trim() {
@@ -487,10 +484,15 @@ fn parse_mask(families: &[String]) -> FamilyMask {
             "type" | "types" => mask.types = true,
             "call" => mask.call = true,
             "df" => mask.df = true,
-            _ => {}
+            other => {
+                return Err(format!(
+                    "--family '{other}' is not a mask family; per-file families are \
+                     cst, type, call, df"
+                ))
+            }
         }
     }
-    mask
+    Ok(mask)
 }
 
 fn stream(path: &str, content: &[u8], mask: FamilyMask) -> Result<(), Box<dyn std::error::Error>> {
