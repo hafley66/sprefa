@@ -1832,6 +1832,30 @@ sites but not against new code. **missing** = nothing.
   `@comment-ok:`, the rail raced; re-run with a longer idle window before
   touching the comment.
 
+## 48. A lane that does its work in the main tree and commits to local main
+
+- WHAT IT LOOKS LIKE: `boop beep lane wait` returns rc=0, the lane's own
+  worktree shows ZERO commits and a clean status, yet the lane's transcript
+  says "Done. Issue closed, fix committed." The commit exists — parented on
+  the coordinator's local `main`, made in `~/projects/sprefa` itself, with the
+  lane's `--base-sha` ignored.
+- HOW IT BIT US: 2026-08-15, `fix/list-column-raw-snapshot` (pro4). The lane
+  cd'd to the main tree, built the whole deliverable there (emit_ts.pl fix +
+  test + 341 regenerated modules, commit d4f6abca), and advanced local main
+  past the pushed head. Its assigned worktree still sat at its base sha.
+  Recovery: branch reset to the stray commit, `git reset --keep` on main,
+  rebase onto the intended base, one-module sweep regen (PR #282).
+- THE LAW: main-tree ownership is the coordinator's only. A lane's result is
+  judged in its worktree; a clean lane worktree plus a "committed" claim means
+  the commit landed somewhere it must not be. Check `git branch --contains`
+  on the claimed sha before calling a lane lost.
+- THE RAIL: pending — boop should refuse (or at minimum flag in `lane wait`
+  output) a lane session whose commits land outside its registered worktree;
+  tracked as issue `lane-main-tree-escape`.
+- SAY THIS TO AN AGENT: your FIRST action is `git merge --ff-only <sha>` IN
+  YOUR WORKTREE, and every commit you make must have that worktree's branch
+  checked out; `pwd` before every `git commit`.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
