@@ -31,12 +31,6 @@
 //! the seam's law is that a corpus is never mutated by reading it. So `INDEXERS`
 //! here carries detection, the PATH probe and the install hint; the spawn lives
 //! where the staging already is.
-//!
-//! NAMED GAP: v5's INDEXERS table has six rows; this roster has the three with a
-//! `ScipSource` impl (rust, typescript, go). python (`scip-python`),
-//! kotlin/java (`scip-java`) and cpp (`scip-clang`) are not reachable from here
-//! until each gets an impl. The decode is already indexer-agnostic, so each is
-//! one `build` body plus its staging decision, not a new wire.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -61,7 +55,7 @@ pub struct Indexer {
 }
 
 /// The roster. Marker files, binaries and install hints are v5's INDEXERS rows
-/// verbatim; see the module header for the three v5 rows not ported.
+/// verbatim, in v5's order (`src/scip_setup.rs:51-99`).
 pub static INDEXERS: &[Indexer] = &[
     Indexer {
         lang: "rust",
@@ -78,11 +72,32 @@ pub static INDEXERS: &[Indexer] = &[
         source: &crate::scip::ScipTypescript,
     },
     Indexer {
+        lang: "python",
+        markers: &["pyproject.toml", "setup.py", "requirements.txt"],
+        bin: "scip-python",
+        install: "npm install -g @sourcegraph/scip-python",
+        source: &crate::scip::ScipPython,
+    },
+    Indexer {
         lang: "go",
         markers: &["go.mod"],
         bin: "scip-go",
         install: "go install github.com/scip-code/scip-go/cmd/scip-go@latest",
         source: &crate::scip::ScipGo,
+    },
+    Indexer {
+        lang: "kotlin/java",
+        markers: &["build.gradle.kts", "build.gradle", "pom.xml"],
+        bin: "scip-java",
+        install: "coursier install --contrib scip-java  (see sourcegraph/scip-java)",
+        source: &crate::scip::ScipJava,
+    },
+    Indexer {
+        lang: "cpp",
+        markers: &["compile_commands.json", "CMakeLists.txt"],
+        bin: "scip-clang",
+        install: "download from github.com/sourcegraph/scip-clang/releases",
+        source: &crate::scip::ScipClang,
     },
 ];
 

@@ -615,3 +615,88 @@ fn the_scip_family_never_reuses_the_passthrough_occurrence_tag() {
         occurrences[0]
     );
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// THE ROSTER IS v5's SIX
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Every row of v5's INDEXERS table (`src/scip_setup.rs:51-99`) reaches a
+/// `ScipSource`. The lang strings are v5's, so a rename here is a rename there.
+#[test]
+fn the_roster_carries_v5s_six_languages() {
+    let langs: Vec<&str> = sprefa_extract::INDEXERS.iter().map(|ix| ix.lang).collect();
+    assert_eq!(
+        langs,
+        vec!["rust", "typescript", "python", "go", "kotlin/java", "cpp"],
+        "v5's six rows, in v5's order"
+    );
+    let bins: Vec<&str> = sprefa_extract::INDEXERS.iter().map(|ix| ix.bin).collect();
+    assert_eq!(
+        bins,
+        vec![
+            "rust-analyzer",
+            "scip-typescript",
+            "scip-python",
+            "scip-go",
+            "scip-java",
+            "scip-clang"
+        ],
+        "v5's binaries, verbatim"
+    );
+    for ix in sprefa_extract::INDEXERS {
+        assert_eq!(
+            ix.source.indexer(),
+            ix.bin,
+            "{}: the roster row and its ScipSource must name the same binary",
+            ix.lang
+        );
+        assert!(!ix.markers.is_empty(), "{}: no marker files", ix.lang);
+        assert!(!ix.install.is_empty(), "{}: no install hint", ix.lang);
+    }
+}
+
+/// A marker for a language whose indexer is absent is a NAMED SKIP with the
+/// install hint, exit 0. The three languages this arc added are the ones with
+/// no toolchain on this machine, so the empty-PATH plant is not needed to make
+/// them miss; it is planted anyway so the test says the same thing everywhere.
+#[test]
+fn the_three_added_languages_detect_and_skip_by_name() {
+    for (marker, lang, bin) in [
+        ("pyproject.toml", "python", "scip-python"),
+        ("build.gradle.kts", "kotlin/java", "scip-java"),
+        ("compile_commands.json", "cpp", "scip-clang"),
+    ] {
+        let root = scratch(&format!("added-{lang}").replace('/', "-"));
+        let cache = scratch(&format!("added-{lang}-cache").replace('/', "-"));
+        let empty_path = scratch(&format!("added-{lang}-path").replace('/', "-"));
+        std::fs::write(root.join(marker), "").expect("plant the marker");
+
+        let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+            .env("PATH", &empty_path)
+            .args([
+                "--family",
+                "scip",
+                "--scip-cache",
+                &cache.to_string_lossy(),
+                &root.to_string_lossy(),
+            ])
+            .output()
+            .expect("extract binary runs");
+
+        assert!(
+            output.status.success(),
+            "{lang}: a missing toolchain skips the root, exit was {}",
+            output.status
+        );
+        let stream = String::from_utf8_lossy(&output.stdout).to_string();
+        let skips = records(&stream, "scip_skip");
+        assert_eq!(skips.len(), 1, "{lang}: one skip row, got: {stream}");
+        assert!(
+            skips[0].contains(&format!("\"lang\":\"{lang}\""))
+                && skips[0].contains(&format!("\"bin\":\"{bin}\""))
+                && skips[0].contains("\"reason\":\"not_installed\""),
+            "{lang}: the row must name the language, the binary and the reason: {}",
+            skips[0]
+        );
+    }
+}
