@@ -1,10 +1,10 @@
-//! Kotlin type_edge parity (this lane): `Resolve<TypeF>` over the kotlin
+//! Kotlin type_edge parity: `Resolve<TypeF>` over the kotlin
 //! fixture corpus, twin-normalized to the oracle's
 //! `type_edge\t{owner}\t{to}\t{kind}` text shape via
 //! `KotlinSource::type_edge_candidates` (the same zip discipline as
 //! golden_parity's ts/go/rust legs). The candidate row IS the parity target;
 //! the resolve output pairs 1:1, in order, with the candidates. The kotlin leg
-//! lives here (not in golden_parity.rs) so this lane owns no existing file;
+//! lives here rather than in golden_parity.rs, which this card does not own;
 //! folding it into the shared parity test is a named follow-up.
 
 use std::collections::BTreeSet;

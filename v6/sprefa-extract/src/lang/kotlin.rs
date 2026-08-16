@@ -1433,7 +1433,7 @@ impl Resolve<CallF> for KotlinSource {
 impl KotlinSource {
     /// The deduped, deterministically-ordered candidate list (v5's BTreeSet
     /// shaping): the aux candidates, deduped on (owner, to, kind). `resolve`
-    /// emits its edges in EXACTLY this order, one per candidate — the parity
+    /// emits its edges in EXACTLY this order, one per candidate; the parity
     /// golden zips the two (the zip discipline: edge i resolves candidate i).
     // @comment-ok: method doc mirroring the go/rust candidate accessors
     pub fn type_edge_candidates(output: &ExtractOutput) -> Vec<TypeEdgeCandidate> {
@@ -1449,7 +1449,7 @@ impl KotlinSource {
 
 /// The dst leg of one candidate: same-file TypeF entity first (its span joined
 /// through the `DefIndex` for the blob), else a unique corpus site, else None
-/// (text stays text — the zero leg). Name-only resolution, per the 4a ADDENDUM
+/// (text stays text, the zero leg). Name-only resolution, per the 4a ADDENDUM
 /// site-key discipline (no receiver typing anywhere in commit 4).
 // @comment-ok: helper doc mirroring the go/rust resolve_type_dst
 fn resolve_type_dst(
