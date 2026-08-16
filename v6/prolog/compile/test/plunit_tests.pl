@@ -8208,15 +8208,23 @@ test(offline_source_golden_compiles_qualified_span_owner) :-
         catch(delete_file(OutFile), _, true)).
 
 % One complete StageRequest document crosses the host boundary. The current
-% surface has no array fold that could assemble arbitrary source_action rows,
-% and the approval relation must join the exact staged id before source_commit
-% can become a demand. This test pins the authored fixture and both emitted
-% host plans rather than re-describing the runtime's mutation implementation.
+% surface has no array fold that could assemble arbitrary source_action rows.
+% Before that boundary, a real source.span joins representative dependency,
+% ownership, and type facts into source_proposal_candidate. The approval
+% relation must join both the proposal and exact staged id before source_commit
+% can become a demand. This test pins the authored model and emitted SQL rather
+% than re-describing the runtime's mutation implementation.
 test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_join) :-
     test_dir_fact(Here),
     atomic_list_concat([Here, '/../../../dl/fixtures/source-mutations.dl6'], Source),
     read_file_to_string(Source, SourceText, []),
     sub_string(SourceText, _, _, _, 'request: text'),
+    sub_string(SourceText, _, _, _, 'at: source.span'),
+    sub_string(SourceText, _, _, _, 'rel source_dependency(at: source.span'),
+    sub_string(SourceText, _, _, _, 'rel source_ownership(at: source.span'),
+    sub_string(SourceText, _, _, _, 'rel source_type(at: source.span'),
+    sub_string(SourceText, _, _, _, 'source_proposal_candidate(Proposal, Root, State, Request, At, Dependency, Owner, TypeName) <-'),
+    sub_string(SourceText, _, _, _, 'source_proposal(Proposal, Root, State, Request) <-\n  source_proposal_candidate(Proposal, Root, State, Request, _, _, _, _).'),
     sub_string(SourceText, _, _, _,
                'source_approval(Proposal, StageId)'),
     sub_string(SourceText, _, _, _,
@@ -8230,7 +8238,14 @@ test(source_mutations_fixture_keeps_one_document_boundary_and_exact_approval_joi
           sub_string(Text, _, _, _, 'name: "source_stage"'),
           sub_string(Text, _, _, _, 'name: "source_commit"'),
           sub_string(Text, _, _, _, 'execution: "soopy_mutation"'),
-          sub_string(Text, _, _, _, 'source_commit_demand') ),
+          sub_string(Text, _, _, _, 'source_proposal_candidate'),
+          sub_string(Text, _, _, _, 'source_dependency'),
+          sub_string(Text, _, _, _, 'source_ownership'),
+          sub_string(Text, _, _, _, 'source_type'),
+          sub_string(Text, _, _, _,
+                     'FROM "source_stage_result" b0, "source_approval" b1 WHERE b0."outcome"'),
+          sub_string(Text, _, _, _, 'b1."proposal" = b0."proposal"'),
+          sub_string(Text, _, _, _, 'b1."stage_id" = b0."stage_id"') ),
         catch(delete_file(OutFile), _, true)).
 
 % ── the mount reaches the catalog as data ───────────────────────────────────

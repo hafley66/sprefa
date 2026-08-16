@@ -16,7 +16,31 @@
 # output blobs below state/stages, journals and commit receipts below
 # state/commits. It never creates those files under root.
 
+use "source.dl6" as source.
+
+# Facts from extraction and analysis meet before a staged source action exists.
+# `at` is the ordinary source coordinate, so candidate identity keeps the exact
+# revision-backed file and its half-open byte range. `request` is already a
+# complete StageRequest JSON document supplied by the boundary producer. These
+# rules select and explain a candidate; they do not construct its action array.
+rel source_request(proposal: text, root: text, state: text, request: text,
+                   at: source.span).
+rel source_dependency(at: source.span, target: text, kind: text).
+rel source_ownership(at: source.span, owner: text).
+rel source_type(at: source.span, name: text, kind: text).
+
+rel source_proposal_candidate(proposal: text, root: text, state: text,
+                              request: text, at: source.span, dependency: text,
+                              owner: text, type_name: text).
+source_proposal_candidate(Proposal, Root, State, Request, At, Dependency, Owner, TypeName) <-
+  source_request(Proposal, Root, State, Request, At),
+  source_dependency(At, Dependency, _),
+  source_ownership(At, Owner),
+  source_type(At, TypeName, _).
+
 rel source_proposal(proposal: text, root: text, state: text, request: text).
+source_proposal(Proposal, Root, State, Request) <-
+  source_proposal_candidate(Proposal, Root, State, Request, _, _, _, _).
 
 # The template is the portable declaration record. The Rust target selects
 # `soopy_mutation` for this fixed host name and invokes Soopy in-process.
