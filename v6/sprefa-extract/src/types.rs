@@ -5,11 +5,7 @@
 //! shims so historical import paths (`crate::shape::Span`, `crate::family::TypeF`,
 //! ...) keep resolving. This is the "tasks.rs technique" from the seed, promoted:
 //! one compiled file is the source of truth, and pending work is COMMENTED OUT
-//! (ModuleF, Flow edges). Resolve<F> landed in commit 4a as a HOLLOW design-freeze
-//! surface (S5 below): the trait + ProjectCx + ProjectEdge<F> exist, bodies are
-//! todo!(), and NOTHING calls resolve yet. Commit 4b-i fills the shared machinery
-//! (BlobHash::of, the DefIndex builder + the three pure lookup helpers, the
-//! FlatFact project-edge arm); the Resolve impls themselves land per-lang.
+//! (ModuleF, Flow edges).
 //!
 //! Leaf scope: a corpus at a version -> normalized graph facts. Pure CPU, no SQL,
 //! no datalog, no async (the engine, another worktree).
@@ -17,6 +13,7 @@
 //! Planes:  RESOLUTION (SCIP-wire): CallF, TypeF, ModuleF*
 //!          VALUE-FLOW (native):   DfF  (+ typed Flow* edges)
 //!          STRUCTURE (lossless):  CstF        (* = pending, commented out)
+// @comment-ok: the module header is a crate-level doc block predating the rail
 
 use std::fmt;
 use std::marker::PhantomData;
@@ -840,17 +837,11 @@ pub trait BlobSource: Sync + Send {
     fn blob(&self, path: &str) -> Option<Vec<u8>>;
 }
 
-// ── phase 2: the Resolve seam (commit 4a DESIGN FREEZE) ─────────────────────
-// The trait surface + types only. Every method body is todo!(); NOTHING calls
-// resolve; no impl exists yet (per-family impls land in 4b/4c). Human review
-// gates 4b.
+// ── phase 2: the Resolve seam ───────────────────────────────────────────────
 
 /// Borrowed view over one (repo, rev) project, shared across a language's
 /// phase-2 calls. Extract is content-local; this is the ONLY handle it gets to
 /// the world beyond the blob it was handed. Spec: seed `_2_traits.rs`:29-51
-/// (per-field citations below). Every field is a HOLLOW declaration in 4a: the
-/// concrete FileSet / ManifestMap / IndexBag subsystems land with the phase-2
-/// implementations that need them, not before.
 pub struct ProjectCx<'a> {
     /// Project-relative tracked file set (the resolution universe; a specifier
     /// resolving outside it is External/Unresolved). Spec: `_2_traits.rs`:36-37
@@ -1119,14 +1110,15 @@ pub fn containing_def_site(
 /// - ADDENDUM 4a: the corpus `DefIndex` arrives through `cx.indexes.def_index`,
 ///   not an explicit param — whole-project state built once per refresh is
 ///   exactly what the cx exists to carry (see `IndexBag` / `build_def_index`).
+/// `resolve` has no default body: a `Source` with no plane for `F` implements
+/// nothing for `F`; there is no empty default, so a missing arm is a compile
+/// error, never an empty result.
+// @comment-ok: the no-default constraint is prose the signature alone cannot show
 pub trait Resolve<F: Family>: Source {
     /// Turn this file's phase-1 specifiers/names into resolved, cross-file
     /// `ProjectEdge`s. The return is ONLY the cross-file resolutions for this
     /// one blob (spec: `_2_traits.rs`:88-96).
-    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<F>> {
-        let _ = (output, cx);
-        todo!("4b-iii landed Resolve<TypeF> + 4c-ii Resolve<CallF> for TsSource; 4d landed both arms for RustSource; next: 4d go arms")
-    }
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<F>>;
 }
 
 // ── S6 SCIP: the Tier-1 resolution wire (commit 4c) ─────────────────────────
