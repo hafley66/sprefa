@@ -48,8 +48,8 @@ pub use lang::{
 pub use project::{
     diet_scip, diet_scip_jsonl, resolve_project, resolve_project_jsonl, scip_facts,
     scip_facts_jsonl, scip_family, scip_family_jsonl, scip_file_edges_jsonl, scip_index_location,
-    FsBlobSource, ProjectError, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode,
-    SourceTreeBlobSource,
+    FsBlobSource, ProjectError, ResolveArm, ResolveArms, ResolveRequest, ScipFamilyRequest,
+    ScipMode, SourceTreeBlobSource, RESOLVE_ARMS,
 };
 pub use soopy::{ContentId as SourceContentId, Pattern as SourcePattern,
     ReadRequest as SourceReadRequest, RepositoryId as SourceRepositoryId,
