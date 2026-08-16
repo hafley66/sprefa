@@ -9,16 +9,16 @@
 //!
 //! Facet split:
 //!   PORTED {type_node, type_sig, call_def, call_site, df_node, df_edge,
-//!           const_value} — v6 emits these; the test ASSERTS their set equals
-//!           v5's (empty diff = gold). Const entities flow as `type_node` kind=
-//!           const; `const_value` is the resolved-string rows.
+//!           df_field, df_lit, const_value} — v6 emits these; the test ASSERTS
+//!           their set equals v5's (empty diff = gold). Const entities flow as
+//!           `type_node` kind=const; `const_value` is the resolved-string rows.
 //!   PORTED for ts + go + rust {type_edge} — phase-2 rows: `Resolve<TypeF>`
 //!           over the fixture corpus, twin-normalized to the oracle's text
 //!           shape (per-lang tests below: 4b-iii ts, 4d-i-go go, 4d-i-rust).
 //!   PORTED for rust {doc} — `rust_doc_parity` below asserts it; the ts, go
 //!           and kotlin walkers are the follow-up, which is why `doc` is not in
 //!           the global PORTED list.
-//!   DEFERRED v5-only {df_param_pos/args/fields/lits/loop/nest} —
+//!   DEFERRED v5-only {df_param_pos/args/loop/nest} —
 //!           reported, not asserted. df-aux is labels-not-graph.
 //!   v6-only {cst, specifier} — cst: v5 has NO TS tree-sitter grammar;
 //!           incomparable. specifier: module import/export-from rows (4b-ii);
@@ -129,6 +129,8 @@ const PORTED: &[&str] = &[
     "call_site",
     "df_node",
     "df_edge",
+    "df_field",
+    "df_lit",
     "const_value",
 ];
 
@@ -162,6 +164,21 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             } => Some(((span.start, span.end), (kind.clone(), name.clone()))),
             _ => None,
         })
+        .collect();
+    // df node index -> byte start, in push order (flatten_df emits the DfF
+    // nodes contiguously); the v5 oracle keys df_fields/df_lits by this index.
+    let df_index: std::collections::HashMap<u32, u32> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            FlatFact::Node {
+                family: FamilyTag::Df,
+                span,
+                ..
+            } => Some(span.start),
+            _ => None,
+        })
+        .enumerate()
+        .map(|(ix, start)| (start, ix as u32))
         .collect();
     let mut set = BTreeSet::new();
     for fact in facts {
@@ -205,6 +222,22 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                 _ => {}
             },
             FlatFact::DfParam { .. } | FlatFact::DfArg { .. } => {}
+            FlatFact::DfField {
+                owner, name, value, ..
+            } => {
+                set.insert(format!(
+                    "df_fields\t{}\t{name}\t{}",
+                    df_index[&owner.start], df_index[&value.start]
+                ));
+            }
+            FlatFact::DfLit {
+                node, kind, text, ..
+            } => {
+                set.insert(format!(
+                    "df_lits\t{}\t{kind}\t{text}",
+                    df_index[&node.start]
+                ));
+            }
             FlatFact::Sig {
                 owner,
                 slot,
@@ -304,6 +337,10 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
             FlatFact::ScipImplRow { .. } => {}
             FlatFact::ScipIndexRow { .. } => {}
             FlatFact::ScipSkipRow { .. } => {}
+            // Unreachable today: this match is exhaustive. It exists so a new
+            // FlatFact variant does not break this normalize.
+            #[allow(unreachable_patterns)]
+            _ => {}
         }
     }
     set
@@ -1544,7 +1581,10 @@ fn rust_doc_parity() {
         .lines()
         .filter(|line| facet_of(line) == "doc")
         .collect();
-    assert!(!v5.is_empty(), "the oracle must carry doc rows to assert on");
+    assert!(
+        !v5.is_empty(),
+        "the oracle must carry doc rows to assert on"
+    );
 
     let v6: BTreeSet<String> = v6_ported(case.path, case.fixture)
         .into_iter()

@@ -25,8 +25,8 @@ use oxc_span::{GetSpan, SourceType};
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
-    DfNodeKind, DfParam, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
-    TypeEdgeKind, TypeEntityKind, TypeF,
+    DfField, DfLit, DfNodeKind, DfParam, ProjectEdge, SigSlot, Specifier, SpecifierKind,
+    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -1367,17 +1367,29 @@ fn callee_name(expr: &ts::Expression) -> Option<String> {
 //  - JSX element/fragment flow (tsx-specific; the catch-all covers it for now).
 // ════════════════════════════════════════════════════════════════════════════
 
-/// The DfF projector: lifts each callable's body to its value-flow graph.
-/// Carries the file path: the `closure` value node's NAME is v5's `lam_sym`,
-/// whose root segment is `{file}::function::{name}` (parity is byte-exact).
-pub struct DfProjector<'a>(pub &'a str);
+/// The DfF projector: lifts each callable's body to its value-flow graph; the
+/// `closure` node's NAME is v5's `lam_sym`, and `content` resolves raw-source
+/// `df_lit` rows at the end of the walk.
+pub struct DfProjector<'a> {
+    pub file: &'a str,
+    pub content: &'a str,
+}
 
 impl Project<DfF> for DfProjector<'_> {
     type Parsed<'a> = Program<'a>;
 
     fn project(&self, program: &Program<'_>, strings: &mut Strings, sink: &mut FamilyBundle<DfF>) {
         for stmt in &program.body {
-            df_flow_stmt(stmt, self.0, strings, sink);
+            df_flow_stmt(stmt, self.file, strings, sink);
+        }
+        // Resolve the pending template/concat spans into raw source-slice text.
+        for (node, start, end, kind) in sink.aux.lit_spans.drain(..) {
+            let text = self
+                .content
+                .get(start as usize..end as usize)
+                .unwrap_or_default()
+                .to_string();
+            sink.aux.lits.push(DfLit { node, kind, text });
         }
     }
 }
@@ -1825,9 +1837,18 @@ fn df_flow_expr(
             }
             node
         }
-        // Literals: a `lit` node. (The string text is deferred `lits` aux.)
-        E::StringLiteral(_)
-        | E::NumericLiteral(_)
+        // A string literal carries its cooked value into `df_lit` (the only
+        // literal kind that does; numbers/bools/regex stay textless `lit` nodes).
+        E::StringLiteral(string) => {
+            let node = df_push(sink, strings, span, DfNodeKind::Lit, None);
+            sink.aux.lits.push(DfLit {
+                node,
+                kind: "lit",
+                text: string.value.to_string(),
+            });
+            node
+        }
+        E::NumericLiteral(_)
         | E::BooleanLiteral(_)
         | E::NullLiteral(_)
         | E::BigIntLiteral(_)
@@ -1857,66 +1878,69 @@ fn df_flow_expr(
             }
             new_node
         }
-        // `{ a: x, ...rest }` / `[a, b, ...rest]`: a composite `new` node; each
-        // element flows in. (Field names are deferred `fields` aux.)
+        // `{ a: x, ...rest }`: a composite `new` node; each named property
+        // records a `df_field` row (spread under "..").
         E::ObjectExpression(object) => {
-            let mut value_ids = Vec::new();
+            let mut filled: Vec<(String, NodeRef)> = Vec::new();
             for property in &object.properties {
                 match property {
                     ts::ObjectPropertyKind::ObjectProperty(prop) => {
-                        value_ids.push(df_flow_expr(
-                            &prop.value,
-                            file,
-                            fn_sym,
-                            strings,
-                            scope,
-                            sink,
-                        ));
+                        let value = df_flow_expr(&prop.value, file, fn_sym, strings, scope, sink);
+                        let name = match &prop.key {
+                            ts::PropertyKey::StaticIdentifier(ident) => ident.name.to_string(),
+                            ts::PropertyKey::StringLiteral(string) => string.value.to_string(),
+                            _ => String::new(),
+                        };
+                        filled.push((name, value));
                     }
                     ts::ObjectPropertyKind::SpreadProperty(spread) => {
-                        value_ids.push(df_flow_expr(
-                            &spread.argument,
-                            file,
-                            fn_sym,
-                            strings,
-                            scope,
-                            sink,
-                        ));
+                        let value =
+                            df_flow_expr(&spread.argument, file, fn_sym, strings, scope, sink);
+                        filled.push(("..".into(), value));
                     }
                 }
             }
             let new_node = df_push(sink, strings, span, DfNodeKind::New, None);
-            for value_id in value_ids {
-                df_edge(sink, value_id, new_node);
+            for (name, value) in filled {
+                df_edge(sink, value, new_node);
+                if !name.is_empty() {
+                    sink.aux.fields.push(DfField {
+                        owner: new_node,
+                        name,
+                        value,
+                    });
+                }
             }
             new_node
         }
         E::ArrayExpression(array) => {
-            let mut element_ids = Vec::new();
+            let mut filled: Vec<(String, NodeRef)> = Vec::new();
             for element in &array.elements {
                 match element {
                     ts::ArrayExpressionElement::SpreadElement(spread) => {
-                        element_ids.push(df_flow_expr(
-                            &spread.argument,
-                            file,
-                            fn_sym,
-                            strings,
-                            scope,
-                            sink,
-                        ));
+                        let value =
+                            df_flow_expr(&spread.argument, file, fn_sym, strings, scope, sink);
+                        filled.push(("..".into(), value));
                     }
                     ts::ArrayExpressionElement::Elision(_) => {}
                     _ => {
                         if let Some(expr) = element.as_expression() {
-                            element_ids
-                                .push(df_flow_expr(expr, file, fn_sym, strings, scope, sink));
+                            let value = df_flow_expr(expr, file, fn_sym, strings, scope, sink);
+                            filled.push((String::new(), value));
                         }
                     }
                 }
             }
             let new_node = df_push(sink, strings, span, DfNodeKind::New, None);
-            for element_id in element_ids {
-                df_edge(sink, element_id, new_node);
+            for (name, value) in filled {
+                df_edge(sink, value, new_node);
+                if !name.is_empty() {
+                    sink.aux.fields.push(DfField {
+                        owner: new_node,
+                        name,
+                        value,
+                    });
+                }
             }
             new_node
         }
@@ -1954,6 +1978,11 @@ fn df_flow_expr(
             let node = df_push(sink, strings, span, kind, None);
             df_edge(sink, left, node);
             df_edge(sink, right, node);
+            if binary.operator == ts::BinaryOperator::Addition {
+                sink.aux
+                    .lit_spans
+                    .push((node, binary.span.start, binary.span.end, "concat"));
+            }
             node
         }
         // An INLINE lambda: lift its body as its own scope under v5's `lam_sym`
@@ -2080,13 +2109,17 @@ fn df_flow_expr(
             }
             last
         }
-        // `` `hello ${name}` ``: each interpolation flows into a `template` node.
+        // `` `hello ${name}` ``: each interpolation flows into a `template` node;
+        // the raw source slice is the `df_lit` text.
         E::TemplateLiteral(template) => {
             let node = df_push(sink, strings, span, DfNodeKind::Template, None);
             for sub in &template.expressions {
                 let value = df_flow_expr(sub, file, fn_sym, strings, scope, sink);
                 df_edge(sink, value, node);
             }
+            sink.aux
+                .lit_spans
+                .push((node, template.span.start, template.span.end, "template"));
             node
         }
         E::TaggedTemplateExpression(tagged) => {
@@ -2096,6 +2129,14 @@ fn df_flow_expr(
                 let value = df_flow_expr(sub, file, fn_sym, strings, scope, sink);
                 df_edge(sink, value, node);
             }
+            // The quasi (the TemplateLiteral portion) is the string source; its
+            // span excludes the tag prefix.
+            sink.aux.lit_spans.push((
+                node,
+                tagged.quasi.span.start,
+                tagged.quasi.span.end,
+                "template",
+            ));
             node
         }
         // JSX elements/fragments + remaining variants: mint a node, don't chase.
@@ -2528,7 +2569,13 @@ impl Source for TsSource {
                 }
                 if mask.df {
                     let mut bundle = FamilyBundle::<DfF>::default();
-                    DfProjector(path).project(&parsed, &mut strings, &mut bundle);
+                    if let Ok(src) = std::str::from_utf8(content) {
+                        let df_projector = DfProjector {
+                            file: path,
+                            content: src,
+                        };
+                        df_projector.project(&parsed, &mut strings, &mut bundle);
+                    }
                     df = Some(bundle);
                 }
             }

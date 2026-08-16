@@ -25,7 +25,8 @@
 //! incl. the `lam_sym` closure naming).
 //!
 //! Deferred follow-ups (the same set the other langs parked): the docs facet
-//! (`walk_kotlin_docs`); df field/literal/loop/nesting aux; the type_edge candidates (`kotlin_decl_edges`) +
+//! (`walk_kotlin_docs`); df literal/loop/nesting aux. Named-argument field
+//! names are emitted. The type_edge candidates (`kotlin_decl_edges`) +
 //! `Resolve<TypeF>`/`Resolve<CallF>` arms - v5 kotlin DOES emit type_edge, and
 //! both resolve arms land with the traits/codegen arc, not this port. The
 //! const facet is NOT ported: v5 kotlin emits no const entities and no
@@ -36,8 +37,8 @@ use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
-    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfNodeKind, DfParam,
-    ProjectEdge, SigSlot, TypeEntityKind, TypeF, TypeSig,
+    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
+    DfParam, ProjectEdge, SigSlot, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
@@ -656,8 +657,7 @@ fn flow_kt(
         // (the lambda_literal arm lifts it and returns its closure node). A
         // navigation callee `recv.m(a)` flows the receiver in too. A
         // capitalized callee is a constructor call (Kotlin classes are
-        // UpperCamelCase), minted as a `new` node carrying the type name. The
-        // args/fields aux (positions, named-arg labels) is dropped.
+        // UpperCamelCase), minted as a `new` node carrying the type name.
         "call_expression" => {
             let callee = node.child(0);
             let mut recv: Option<NodeRef> = None;
@@ -679,7 +679,7 @@ fn flow_kt(
                 }
                 _ => {}
             }
-            let mut arg_ids: Vec<NodeRef> = Vec::new();
+            let mut arg_ids: Vec<(Option<String>, NodeRef)> = Vec::new();
             if let Some(suffix) = kt_first_child(node, "call_suffix") {
                 if let Some(vargs) = kt_first_child(suffix, "value_arguments") {
                     let mut cursor = vargs.walk();
@@ -691,18 +691,19 @@ fn flow_kt(
                         let mut vc = va.walk();
                         let kids: Vec<tree_sitter::Node> = va.children(&mut vc).collect();
                         let eq_at = kids.iter().position(|k| k.kind() == "=");
-                        let val_node = match eq_at {
-                            Some(i) if i >= 1 && kids[i - 1].kind() == "simple_identifier" => {
-                                kids.get(i + 1).copied()
-                            }
-                            _ => None,
+                        let (name, val_node) = match eq_at {
+                            Some(i) if i >= 1 && kids[i - 1].kind() == "simple_identifier" => (
+                                Some(kt_text(kids[i - 1], src).to_string()),
+                                kids.get(i + 1).copied(),
+                            ),
+                            _ => (None, None),
                         };
                         let vid = match val_node {
                             Some(v) => flow_kt(v, src, fn_sym, strings, scope, sink),
                             None => flow_kt(va, src, fn_sym, strings, scope, sink),
                         };
                         if let Some(vid) = vid {
-                            arg_ids.push(vid);
+                            arg_ids.push((name, vid));
                         }
                     }
                 }
@@ -712,7 +713,7 @@ fn flow_kt(
                 if let Some(al) = kt_first_child(suffix, "annotated_lambda") {
                     if let Some(ll) = kt_first_child(al, "lambda_literal") {
                         if let Some(vid) = flow_kt(ll, src, fn_sym, strings, scope, sink) {
-                            arg_ids.push(vid);
+                            arg_ids.push((None, vid));
                         }
                     }
                 }
@@ -739,13 +740,20 @@ fn flow_kt(
                     arg: r,
                 });
             }
-            for (pos, arg_id) in arg_ids.into_iter().enumerate() {
+            for (pos, (name, arg_id)) in arg_ids.into_iter().enumerate() {
                 df_edge(sink, arg_id, id);
                 sink.aux.args.push(DfArg {
                     call: id,
                     pos: pos as i64,
                     arg: arg_id,
                 });
+                if let Some(n) = name {
+                    sink.aux.fields.push(DfField {
+                        owner: id,
+                        name: n,
+                        value: arg_id,
+                    });
+                }
             }
             Some(id)
         }

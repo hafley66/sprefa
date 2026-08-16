@@ -16,8 +16,8 @@
 //! phase 1) + lands `Resolve<TypeF>`; 4d-ii-go lands `Resolve<CallF>` (the
 //! scip-ratcheted twin of the TsSource arm).
 //!
-//! Deferred follow-ups: the docs facet (`walk_go_docs`); df field/literal/
-//! loop/nesting aux. Df argument slots and parameter positions are emitted.
+//! Deferred follow-ups: the docs facet (`walk_go_docs`); df literal/loop/
+//! nesting aux. Df argument slots, parameter positions and field names emitted.
 //! The const facet is
 //! NOT ported: v5 go emits no const entities and no const_value rows
 //! (`walk_go_entities` skips `const_declaration`; `extract` leaves `consts`
@@ -27,8 +27,8 @@ use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
-    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfNodeKind, DfParam,
-    ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
+    DfParam, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -1306,10 +1306,18 @@ fn go_flow_literal_fields(
     owner: NodeRef,
 ) {
     let mut cursor = lit.walk();
+    let mut pos_idx: usize = 0;
     for child in lit.children(&mut cursor) {
-        let value_wrap = match child.kind() {
-            "keyed_element" => child.child_by_field_name("value"),
-            "literal_element" => Some(child),
+        let (key_text, value_wrap) = match child.kind() {
+            "keyed_element" => {
+                let key_text = child
+                    .child_by_field_name("key")
+                    .and_then(|key| key.named_child(0))
+                    .filter(|inner| inner.kind() == "identifier")
+                    .map(|inner| go_text(inner, src).to_string());
+                (key_text, child.child_by_field_name("value"))
+            }
+            "literal_element" => (None, Some(child)),
             _ => continue,
         };
         let Some(value_wrap) = value_wrap else {
@@ -1320,7 +1328,14 @@ fn go_flow_literal_fields(
         };
         if let Some(value) = flow_go(inner, src, fn_sym, strings, scope, sink) {
             df_edge(sink, value, owner);
+            let field = key_text.unwrap_or_else(|| pos_idx.to_string());
+            sink.aux.fields.push(DfField {
+                owner,
+                name: field,
+                value,
+            });
         }
+        pos_idx += 1;
     }
 }
 

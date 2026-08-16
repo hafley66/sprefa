@@ -97,8 +97,12 @@ fn flatten_cst(bundle: &FamilyBundle<CstF>, strings: &Strings) -> Vec<FlatFact> 
 /// callable's param/return type references) + the CONST value rows. The name-
 /// resolved type edges (field / impl / uses / ...) land with `Resolve<TypeF>`.
 fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact> {
-    let mut out =
-        Vec::with_capacity(bundle.nodes.len() + bundle.aux.sigs.len() + bundle.aux.consts.len() + bundle.aux.docs.len());
+    let mut out = Vec::with_capacity(
+        bundle.nodes.len()
+            + bundle.aux.sigs.len()
+            + bundle.aux.consts.len()
+            + bundle.aux.docs.len(),
+    );
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
             family: TypeF::TAG,
@@ -293,12 +297,16 @@ pub fn file_fact(path: &str, content: &[u8]) -> FlatFact {
 /// Flatten one DfF bundle to flat facts: value-flow NODES (kind = the DfNodeKind
 /// slug; name = the variable / property / type when the node carries one) +
 /// Direct value EDGES (src value -> dst value). The enclosing callable is
-/// derived at the seam (not in the wire). Df argument slots and parameter
-/// positions are emitted as flat records; field names and literal texts land
-/// in follow-ups.
+/// derived at the seam (not in the wire). Df argument slots, parameter
+/// positions, field names and literal texts are emitted as flat records.
 fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
     let mut out = Vec::with_capacity(
-        bundle.nodes.len() + bundle.edges.len() + bundle.aux.params.len() + bundle.aux.args.len(),
+        bundle.nodes.len()
+            + bundle.edges.len()
+            + bundle.aux.params.len()
+            + bundle.aux.args.len()
+            + bundle.aux.fields.len()
+            + bundle.aux.lits.len(),
     );
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
@@ -336,6 +344,25 @@ fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
             call: SpanOut::new(call.span.start, call.span.end()),
             pos: arg.pos,
             arg: SpanOut::new(value.span.start, value.span.end()),
+        });
+    }
+    for field in &bundle.aux.fields {
+        let owner = bundle.node(field.owner);
+        let value = bundle.node(field.value);
+        out.push(FlatFact::DfField {
+            family: DfF::TAG,
+            owner: SpanOut::new(owner.span.start, owner.span.end()),
+            name: field.name.clone(),
+            value: SpanOut::new(value.span.start, value.span.end()),
+        });
+    }
+    for lit in &bundle.aux.lits {
+        let node = bundle.node(lit.node);
+        out.push(FlatFact::DfLit {
+            family: DfF::TAG,
+            node: SpanOut::new(node.span.start, node.span.end()),
+            kind: lit.kind.to_string(),
+            text: lit.text.clone(),
         });
     }
     out
