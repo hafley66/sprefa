@@ -487,7 +487,7 @@ fn call_facts(input: &ProjectInput, inputs: &[ProjectInput], cx: &ProjectCx) -> 
             let target = inputs.iter().find(|other| other.blob == edge.dst_blob)?;
             Some(FlatFact::ResolvedEdge {
                 caller_path: input.path.clone(),
-                caller_name: node_name(call, &input.output, call.node(edge.src).span),
+                caller_name: Some(caller_name(call, &input.output, edge.src)),
                 callee_path: target.path.clone(),
                 callee_name: target
                     .output
@@ -526,6 +526,20 @@ fn type_facts(input: &ProjectInput, inputs: &[ProjectInput], cx: &ProjectCx) -> 
             })
         })
         .collect()
+}
+
+/// A closure def carries no name, and `resolve_at` types caller_name `text`
+/// (`v6/dl/fixtures/flagship-flow.dl6:35`): a null drops the whole row.
+fn caller_name<F: crate::family::Family>(
+    bundle: &FamilyBundle<F>,
+    output: &ExtractOutput,
+    src: crate::shape::NodeRef,
+) -> String {
+    let node = bundle.node(src);
+    match node.name {
+        Some(name) => output.strings.lookup(name).to_string(),
+        None => format!("closure@{}", node.span.start),
+    }
 }
 
 /// The declared name of the node at `span` in one bundle, through that file's
