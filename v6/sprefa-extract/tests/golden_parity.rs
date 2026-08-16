@@ -129,8 +129,9 @@ const PORTED: &[&str] = &[
     "call_site",
     "df_node",
     "df_edge",
-    "df_field",
-    "df_lit",
+    // df_field/df_lit are graded by content in 18_df_aux_fields_lits.rs;
+    // listing them here pins v6 push order to v5's node index, a coupling
+    // the user declined (2026-08-16).
     "const_value",
 ];
 
