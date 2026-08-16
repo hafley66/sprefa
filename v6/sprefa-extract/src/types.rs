@@ -234,6 +234,7 @@ pub enum TypeEdgeKind {
     Param,
     Returns,
     Uses,
+    DocRef,
 }
 
 impl TypeEdgeKind {
@@ -246,6 +247,7 @@ impl TypeEdgeKind {
             TypeEdgeKind::Param => "param",
             TypeEdgeKind::Returns => "returns",
             TypeEdgeKind::Uses => "uses",
+            TypeEdgeKind::DocRef => "doc_ref",
         }
     }
 }
@@ -340,14 +342,41 @@ pub struct DocTag {
     pub text: NameId,
 }
 
+/// One structural node of a document: a heading or a fenced code block.
+/// `name` is the heading title or fence language; `parent` the enclosing heading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocNode {
+    pub span: Span,
+    pub kind: DocNodeKind,
+    pub name: NameId,
+    pub parent: Option<NameId>,
+}
+
+/// The kind of a document structure node.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum DocNodeKind {
+    Heading,
+    CodeBlock,
+}
+
+impl DocNodeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DocNodeKind::Heading => "heading",
+            DocNodeKind::CodeBlock => "code_block",
+        }
+    }
+}
+
 /// The TypeF side-channel: arrow-type sigs + the const facet + the unresolved
-/// type-edge candidates (4b-iii) + the doc facet.
+/// type-edge candidates (4b-iii) + the doc facet + the doc structure rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TypeFAux {
     pub sigs: Vec<TypeSig>,
     pub consts: Vec<ConstValue>,
     pub candidates: Vec<TypeEdgeCandidate>,
     pub docs: Vec<DocFact>,
+    pub doc_nodes: Vec<DocNode>,
 }
 
 impl Family for TypeF {
@@ -1785,6 +1814,15 @@ pub enum FlatFact {
         tag: String,
         arg: Option<String>,
         text: String,
+    },
+    /// TypeF doc structure row: one heading or fenced code block of a document.
+    #[serde(rename = "doc_node")]
+    DocNodeOut {
+        family: FamilyTag,
+        span: SpanOut,
+        kind: String,
+        name: String,
+        parent: Option<String>,
     },
     /// CallF module specifier (phase-1, as written): span, bound name, kind.
     /// v6-ONLY rows (no v5 oracle facet) — the parity golden reports them,

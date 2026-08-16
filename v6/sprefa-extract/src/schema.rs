@@ -32,6 +32,7 @@ RECORD SHAPES
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>
   record=doc_tag  family=type              owner={start,end}  tag=<string>  arg=<string|null>  text=<string>
+  record=doc_node  family=type             span={start,end}   kind=<heading|code_block>  name=<string>  parent=<string|null>
   record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>
   record=unresolved  family=call           span={start,end}   reason=<slug>  detail=<string>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
@@ -134,7 +135,8 @@ KIND VOCABULARIES (the `kind` field)
   sig slot    param | ret
   unresolved reason  dynamic-import | computed-member-call | spread-call-args
   resolved_edge kind       name_resolve | scip_override
-  resolved_type_edge kind  field | impl | variant | generic | uses
+  resolved_type_edge kind  field | impl | variant | generic | uses | doc_ref
+  doc_node kind            heading | code_block
 
 CONTROL FLOW (--family cfg)
   Intra-procedural only, and DERIVED from the cst family rather than projected
