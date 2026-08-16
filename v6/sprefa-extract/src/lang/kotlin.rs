@@ -24,21 +24,22 @@
 //! (CallF); commit D ports `kotlin_dataflow_from` (DfF nodes + Direct edges,
 //! incl. the `lam_sym` closure naming).
 //!
-//! Deferred follow-ups (the same set the other langs parked): the docs facet
-//! (`walk_kotlin_docs`); df literal/loop/nesting aux. Named-argument field
-//! names are emitted. The type_edge candidates (`kotlin_decl_edges`) +
+//! Deferred follow-ups (the same set the other langs parked): df literal/loop/
+//! nesting aux. Named-argument field names are emitted. The type_edge
+//! candidates (`kotlin_decl_edges`) +
 //! `Resolve<TypeF>`/`Resolve<CallF>` arms - v5 kotlin DOES emit type_edge, and
 //! both resolve arms land with the traits/codegen arc, not this port. The
 //! const facet is NOT ported: v5 kotlin emits no const entities and no
 //! const_value rows (`extract` leaves `consts` at Default), so v6 matches by
 //! emitting none either.
+// @comment-ok: the module header is a crate-level doc block predating the rail
 
 use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, ProjectEdge, SigSlot, TypeEntityKind, TypeF, TypeSig,
+    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
@@ -137,7 +138,14 @@ fn walk_kotlin_entities(
                     } else {
                         TypeEntityKind::Class
                     };
-                    push_entity(sink, strings, node_span(child), &name, kind);
+                    let span = node_span(child);
+                    push_entity(sink, strings, span, &name, kind);
+                    // v5 walk_kotlin_docs walks class/object only, not companion.
+                    if child.kind() != "companion_object" {
+                        if let Some(text) = kotlin_leading_kdoc(child, src) {
+                            push_kt_doc(sink, strings, span, &text);
+                        }
+                    }
                 }
             }
             "function_declaration" => {
@@ -145,6 +153,9 @@ fn walk_kotlin_entities(
                     let name = kt_text(id, src).to_string();
                     let span = node_span(child);
                     push_entity(sink, strings, span, &name, TypeEntityKind::Function);
+                    if let Some(text) = kotlin_leading_kdoc(child, src) {
+                        push_kt_doc(sink, strings, span, &text);
+                    }
                     fn_sigs(sink, strings, span, child, src);
                 }
             }
@@ -163,6 +174,110 @@ fn push_entity(
 ) {
     sink.nodes
         .push(Node::new(span, kind).with_name(strings.intern(name)));
+}
+
+// ── doc facet (port of v5 `walk_kotlin_docs`) ────────────────────────────────
+
+/// Push one DocFact for a documented decl. Kotlin docs carry no parent (v5
+/// mints method docs with no owner).
+fn push_kt_doc(sink: &mut FamilyBundle<TypeF>, strings: &mut Strings, span: Span, text: &str) {
+    sink.aux.docs.push(DocFact {
+        owner: span,
+        parent: None,
+        text: strings.intern(text),
+        tags: parse_jsdoc_tags(text, strings),
+    });
+}
+
+/// The cleaned KDoc block directly above `node`, or None: a `*comment*` previous
+/// sibling whose text opens with `/**`. Port of v5 `kotlin_leading_kdoc`.
+fn kotlin_leading_kdoc(node: tree_sitter::Node, src: &[u8]) -> Option<String> {
+    let prev = node.prev_sibling()?;
+    if !prev.kind().contains("comment") {
+        return None;
+    }
+    let raw = prev.utf8_text(src).ok()?;
+    if !raw.trim_start().starts_with("/**") {
+        return None;
+    }
+    Some(clean_block_comment(raw))
+}
+
+/// Strip a `/** ... */` block down to its prose. Port of v5 `clean_block_comment`.
+fn clean_block_comment(raw: &str) -> String {
+    let inner = raw.trim();
+    let inner = inner
+        .strip_prefix("/**")
+        .or_else(|| inner.strip_prefix("/*!"))
+        .or_else(|| inner.strip_prefix("/*"))
+        .unwrap_or(inner);
+    let inner = inner.strip_suffix("*/").unwrap_or(inner);
+    let mut lines: Vec<String> = inner
+        .lines()
+        .map(|l| {
+            let t = l.trim_start();
+            let t = t.strip_prefix('*').unwrap_or(t);
+            t.strip_prefix(' ').unwrap_or(t).to_string()
+        })
+        .collect();
+    while lines.first().is_some_and(|s| s.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|s| s.trim().is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+/// Split a KDoc block into `@tag` rows; named tags carry a leading name into
+/// `arg`, a leading `{type}` annotation is dropped. Port of v5 `parse_jsdoc_tags`.
+fn parse_jsdoc_tags(text: &str, strings: &mut Strings) -> Vec<DocTag> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let l = line.trim_start();
+        let Some(rest) = l.strip_prefix('@') else {
+            continue;
+        };
+        let mut it = rest.splitn(2, char::is_whitespace);
+        let tag = it.next().unwrap_or("").to_string();
+        let mut body = it.next().unwrap_or("").trim_start();
+        if body.starts_with('{') {
+            if let Some(end) = body.find('}') {
+                body = body[end + 1..].trim_start();
+            }
+        }
+        let named = matches!(
+            tag.as_str(),
+            "param"
+                | "arg"
+                | "argument"
+                | "property"
+                | "prop"
+                | "throws"
+                | "exception"
+                | "typeparam"
+                | "tparam"
+        );
+        let (arg, desc) = if named {
+            let mut bi = body.splitn(2, char::is_whitespace);
+            (
+                bi.next().unwrap_or("").to_string(),
+                bi.next().unwrap_or("").trim().to_string(),
+            )
+        } else {
+            (String::new(), body.trim().to_string())
+        };
+        out.push(DocTag {
+            tag: strings.intern(&tag),
+            arg: if arg.is_empty() {
+                None
+            } else {
+                Some(strings.intern(&arg))
+            },
+            text: strings.intern(&desc),
+        });
+    }
+    out
 }
 
 // ── arrow-type signatures (port of v5 `kotlin_fn_type`) ─────────────────────

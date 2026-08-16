@@ -25,8 +25,8 @@ use oxc_span::{GetSpan, SourceType};
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
-    DfField, DfLit, DfNodeKind, DfParam, ProjectEdge, SigSlot, Specifier, SpecifierKind,
-    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
+    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
+    SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -172,6 +172,239 @@ impl Project<TypeF> for TypeProjector {
         // sites above (v5 emits no method-signature type_edges).
         edge_candidates(program, strings, sink);
     }
+}
+
+// ── doc facet (port of v5 `ts_docs_from`) ────────────────────────────────────
+
+/// Every `/** ... */` doc block bound to the entity it documents. Port of v5
+/// `ts_docs_from`: nearest anchor at/after block end, whitespace between.
+fn ts_doc_facts(
+    program: &Program<'_>,
+    content: &str,
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let anchors = ts_doc_anchors(program);
+    if anchors.is_empty() {
+        return;
+    }
+    for (cstart, cend) in ts_block_comments(content) {
+        let raw = &content[cstart..cend];
+        if !raw.trim_start().starts_with("/**") {
+            continue;
+        }
+        let Some((at, owner, parent)) = anchors
+            .iter()
+            .filter(|(at, _, _)| (*at as usize) >= cend)
+            .min_by_key(|(at, _, _)| *at)
+        else {
+            continue;
+        };
+        if !content[cend..*at as usize].trim().is_empty() {
+            continue;
+        }
+        let text = clean_block_comment(raw);
+        sink.aux.docs.push(DocFact {
+            owner: *owner,
+            parent: parent.as_deref().map(|name| strings.intern(name)),
+            text: strings.intern(&text),
+            tags: parse_jsdoc_tags(&text, strings),
+        });
+    }
+}
+
+/// `(anchor_byte, owner_span, parent)` per emitted entity; `anchor_byte` is the
+/// statement start (before an export prefix, so the whitespace check passes).
+fn ts_doc_anchors(program: &Program<'_>) -> Vec<(u32, Span, Option<String>)> {
+    use oxc_span::GetSpan;
+    let mut out = Vec::new();
+    for stmt in &program.body {
+        use ts::Statement as S;
+        let at = stmt.span().start;
+        match stmt {
+            S::ExportNamedDeclaration(e) => {
+                if let Some(d) = &e.declaration {
+                    ts_decl_anchor(d, at, &mut out);
+                }
+            }
+            S::ExportDefaultDeclaration(e) => match &e.declaration {
+                ts::ExportDefaultDeclarationKind::ClassDeclaration(c) => {
+                    ts_class_anchor(c, at, &mut out)
+                }
+                ts::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => out.push((
+                    at,
+                    to_span(i.span),
+                    None,
+                )),
+                ts::ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
+                    if f.id.is_some() {
+                        out.push((at, to_span(f.span), None));
+                    }
+                }
+                _ => {}
+            },
+            S::ClassDeclaration(c) => ts_class_anchor(c, at, &mut out),
+            S::TSInterfaceDeclaration(i) => out.push((at, to_span(i.span), None)),
+            S::TSTypeAliasDeclaration(a) => out.push((at, to_span(a.span), None)),
+            S::TSEnumDeclaration(en) => out.push((at, to_span(en.span), None)),
+            S::FunctionDeclaration(f) => {
+                if f.id.is_some() {
+                    out.push((at, to_span(f.span), None));
+                }
+            }
+            S::VariableDeclaration(v) => ts_var_anchor(v, at, &mut out),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn ts_decl_anchor(d: &ts::Declaration, at: u32, out: &mut Vec<(u32, Span, Option<String>)>) {
+    match d {
+        ts::Declaration::ClassDeclaration(c) => ts_class_anchor(c, at, out),
+        ts::Declaration::TSInterfaceDeclaration(i) => out.push((at, to_span(i.span), None)),
+        ts::Declaration::TSTypeAliasDeclaration(a) => out.push((at, to_span(a.span), None)),
+        ts::Declaration::TSEnumDeclaration(en) => out.push((at, to_span(en.span), None)),
+        ts::Declaration::FunctionDeclaration(f) => {
+            if f.id.is_some() {
+                out.push((at, to_span(f.span), None));
+            }
+        }
+        ts::Declaration::VariableDeclaration(v) => ts_var_anchor(v, at, out),
+        _ => {}
+    }
+}
+
+fn ts_class_anchor(c: &ts::Class, at: u32, out: &mut Vec<(u32, Span, Option<String>)>) {
+    let Some(id) = &c.id else { return };
+    let owner = id.name.to_string();
+    out.push((at, to_span(c.span), None));
+    for el in &c.body.body {
+        if let ts::ClassElement::MethodDefinition(m) = el {
+            if m.kind == ts::MethodDefinitionKind::Constructor {
+                continue;
+            }
+            if let ts::PropertyKey::StaticIdentifier(_) = &m.key {
+                out.push((m.span.start, to_span(m.span), Some(owner.clone())));
+            }
+        }
+    }
+}
+
+fn ts_var_anchor(v: &ts::VariableDeclaration, at: u32, out: &mut Vec<(u32, Span, Option<String>)>) {
+    for d in &v.declarations {
+        let ts::BindingPattern::BindingIdentifier(_) = &d.id else {
+            continue;
+        };
+        if matches!(
+            &d.init,
+            Some(ts::Expression::ArrowFunctionExpression(_))
+                | Some(ts::Expression::FunctionExpression(_))
+        ) {
+            out.push((at, to_span(d.span), None));
+        }
+    }
+}
+
+/// Byte ranges of every `/* ... */` block comment, including delimiters. Port
+/// of v5 `ts_block_comments`.
+fn ts_block_comments(content: &str) -> Vec<(usize, usize)> {
+    let b = content.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'/' && b[i + 1] == b'*' {
+            match content[i + 2..].find("*/") {
+                Some(rel) => {
+                    let end = i + 2 + rel + 2;
+                    out.push((i, end));
+                    i = end;
+                    continue;
+                }
+                None => break,
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Strip a `/** ... */` block down to its prose. Port of v5
+/// `clean_block_comment`.
+fn clean_block_comment(raw: &str) -> String {
+    let inner = raw.trim();
+    let inner = inner
+        .strip_prefix("/**")
+        .or_else(|| inner.strip_prefix("/*!"))
+        .or_else(|| inner.strip_prefix("/*"))
+        .unwrap_or(inner);
+    let inner = inner.strip_suffix("*/").unwrap_or(inner);
+    let mut lines: Vec<String> = inner
+        .lines()
+        .map(|l| {
+            let t = l.trim_start();
+            let t = t.strip_prefix('*').unwrap_or(t);
+            t.strip_prefix(' ').unwrap_or(t).to_string()
+        })
+        .collect();
+    while lines.first().is_some_and(|s| s.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|s| s.trim().is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+/// Split a JSDoc/KDoc block into `@tag` rows. Named tags carry a leading name
+/// into `arg`; a leading `{type}` annotation is dropped. Port of v5.
+fn parse_jsdoc_tags(text: &str, strings: &mut Strings) -> Vec<DocTag> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let l = line.trim_start();
+        let Some(rest) = l.strip_prefix('@') else {
+            continue;
+        };
+        let mut it = rest.splitn(2, char::is_whitespace);
+        let tag = it.next().unwrap_or("").to_string();
+        let mut body = it.next().unwrap_or("").trim_start();
+        if body.starts_with('{') {
+            if let Some(end) = body.find('}') {
+                body = body[end + 1..].trim_start();
+            }
+        }
+        let named = matches!(
+            tag.as_str(),
+            "param"
+                | "arg"
+                | "argument"
+                | "property"
+                | "prop"
+                | "throws"
+                | "exception"
+                | "typeparam"
+                | "tparam"
+        );
+        let (arg, desc) = if named {
+            let mut bi = body.splitn(2, char::is_whitespace);
+            (
+                bi.next().unwrap_or("").to_string(),
+                bi.next().unwrap_or("").trim().to_string(),
+            )
+        } else {
+            (String::new(), body.trim().to_string())
+        };
+        out.push(DocTag {
+            tag: strings.intern(&tag),
+            arg: if arg.is_empty() {
+                None
+            } else {
+                Some(strings.intern(&arg))
+            },
+            text: strings.intern(&desc),
+        });
+    }
+    out
 }
 
 fn decl_entity(decl: &ts::Declaration, strings: &mut Strings, sink: &mut FamilyBundle<TypeF>) {
@@ -2559,6 +2792,7 @@ impl Source for TsSource {
                     // ConstValue rows to the same TypeF bundle.
                     if let Ok(src) = std::str::from_utf8(content) {
                         collect_const_facts(&parsed, src, &mut strings, &mut bundle);
+                        ts_doc_facts(&parsed, src, &mut strings, &mut bundle);
                     }
                     types = Some(bundle);
                 }
