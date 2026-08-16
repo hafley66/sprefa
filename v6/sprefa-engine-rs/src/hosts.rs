@@ -861,7 +861,17 @@ impl IHostExecutor for SprefaExtractExecutor {
                         "type" | "types" => mask.types = true,
                         "call" => mask.call = true,
                         "df" => mask.df = true,
-                        _ => {}
+                        "scip" | "diet_scip" => {
+                            return Err(named(format!(
+                                "mode `{}` is not linked in-process",
+                                name.trim()
+                            )));
+                        }
+                        other => {
+                            return Err(named(format!(
+                                "family `{other}` is not a known family; in-process families are cst, type, call, df"
+                            )));
+                        }
                     }
                 }
                 mask

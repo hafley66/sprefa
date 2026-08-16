@@ -1,11 +1,13 @@
 # 7_door_skew_family.dl6 -- THE SECOND PRIZE: A FAMILY NAME ONE DOOR CANNOT READ.
 #
 # One extract host, one family name, one rule. The two doors answer DIFFERENT
-# ROW SETS and neither one says a word about it.
+# and neither one says a word about it.
 #
 #   TS DOOR     2 `resolved_edge` rows on the pinned corpus (beta_entry ->
 #               beta_local, beta_uncommitted -> beta_local, both name_resolve).
-#   RUST DOOR   ZERO rows. The rel never arrives.
+#   RUST DOOR   A named stop. `--family diet_scip` names a whole-project MODE
+#               the in-process mask parser refuses, so the host errors and
+#               answers no rows.
 #
 # ── THE MECHANISM, MEASURED AND NOT ARGUED ──────────────────────────────────
 # `--family` has TWO kinds of value and only one of them crosses the seam.
@@ -16,30 +18,17 @@
 # The CLI knows both: `sprefa-extract/src/bin/extract.rs` `family_mode/1` reads
 # a mode name first and refuses to mix it with a mask name. The in-process twin
 # knows only the mask: `sprefa-engine-rs/src/hosts.rs` parses `--family` by
-# matching `cst|type|call|df` and DROPS every other name on its `_ => {}` arm,
-# so `diet_scip` leaves `FamilyMask::NONE` and the extractor is asked for
-# nothing. `dispatch` then answers nothing, the host answers zero rows, and the
-# run is a success.
-#
-# The silence is the defect, and the executor's own neighbouring comment is the
-# argument against it: an unrecognized FLAG is `flag ... is not linked
-# in-process`, a named stop. An unrecognized `--family` VALUE gets the treatment
-# that comment refuses -- it is accepted and quietly answers nothing.
-#
-# `--family scip` is the same hole with a bigger blast radius: it names the real
-# SCIP index plane, and the in-process door answers zero rows for it too.
+# matching `cst|type|call|df` and refuses every other name. A mode name is a
+# named stop there: "mode `diet_scip` is not linked in-process". The same parser
+# arm refuses an unrecognized FLAG by name, so a family name gets the same
+# treatment rather than a silent empty answer.
 #
 # ── WHAT A GATE CANNOT SEE ──────────────────────────────────────────────────
-# `dispatch` returning nothing is indistinguishable from a source file with no
-# call sites, which is why nothing downstream catches this: the response rel is
-# EMPTY, not WRONG, and an empty rel is a legitimate answer on this path. Only a
-# both-door diff over one program makes it a row. That is this file.
-#
-# ── THE FIX THIS LANE DOES NOT OWN ──────────────────────────────────────────
-# `hosts.rs` is another lane's file tonight. The README failure table carries
-# the two candidate shapes: refuse the mode names by name the way the flag arm
-# refuses an unknown flag, or link the mode pass in-process. Refusing is the
-# smaller of the two and matches the file's stated law.
+# A named stop reads as a source file with no call sites to any rel that only
+# counts rows: the response rel is EMPTY, not WRONG, and an empty rel is a
+# legitimate answer on this path. The named stop is what the gate grades: the
+# Rust door must ERROR naming the mode, and answering rc=0 with zero rows is
+# the regression this pin exists to catch.
 #
 # ── THE RX LOWERING ─────────────────────────────────────────────────────────
 #   scannedFile$.pipe(map(mintIdentityAndWitness),

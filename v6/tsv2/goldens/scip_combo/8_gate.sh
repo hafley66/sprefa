@@ -16,14 +16,16 @@
 # it claims to be equivalent to, and nothing else in the tree compares them.
 #
 # ─── THE EXPECTED ANSWER IS NOT "EVERYTHING AGREES" ─────────────────────────
-# One program is a PINNED DISAGREEMENT. It is graded MUST-DIFFER, and this gate
-# goes RED if it ever starts agreeing, because that would mean either the defect
-# was fixed (rewrite the pin) or the rig stopped exercising it.
+# One program is a PINNED DISAGREEMENT. Its two doors answer DIFFERENTLY by
+# design (a named stop on one, rows on the other), and the Rust door's STOP is
+# itself graded: this gate goes RED if that stop degrades to a silent rc=0 with
+# zero rows, the exact defect the pin exists to hold.
 #
 #   7_door_skew_family     `--family diet_scip` is a whole-project MODE the CLI
-#                          implements and the in-process mask parser drops on
-#                          its `_ => {}` arm, so the Rust door answers zero rows
-#                          in silence.
+#                          implements and the in-process mask parser refuses by
+#                          name, so the Rust door stops with a named error. The
+#                          gate grades the STOP: a silent rc=0 with zero rows is
+#                          the regression, and it is what this pin turns RED on.
 #
 # 6_door_skew_files_at WAS the other pin (the rev-parse phantom row). Its
 # template now carries the verified guard and both doors agree, so it is graded
@@ -110,6 +112,11 @@ both_doors() { [ "$1" != "4_crawl_extract" ]; }
 #   agreeing    everything else, and a difference there is unexplained
 must_differ() { case "$1" in 7_door_skew_family) return 0 ;; *) return 1 ;; esac; }
 
+# program 7 pins a named STOP on the Rust door: the extract twin refuses the
+# mode name. Grading the stop means rc nonzero AND stderr naming the family.
+# rc=0 with zero rows is the silent regression this pin turns RED on.
+rust_should_stop() { [ "$1" = "7_door_skew_family" ]; }
+
 # ── the corpus, and the pins every leg reads ────────────────────────────────
 bash "$HERE/0_corpus.sh" "$CORPUS" >"$WORK/corpus.log" 2>&1 \
   || stop "corpus build failed: $(cat "$WORK/corpus.log")"
@@ -173,6 +180,19 @@ for program in $PROGRAMS; do
   [ -s "$generated" ] || stop "emit_rust wrote no program for $program"
 
   started="$(date +%s)"
+  if rust_should_stop "$program"; then
+    "$HARNESS" "$generated" "$WORK/$program.schedule.json" --live-hosts \
+      >"$WORK/$program.ticks.jsonl" 2>"$WORK/$program.harness.err"
+    rc=$?
+    if [ "$rc" = "0" ]; then
+      note_failure "PIN $program: the Rust door answered rc=0 with zero rows; the silent-zero-rows defect is back"
+    elif grep -q "diet_scip" "$WORK/$program.harness.err"; then
+      say "PIN   $program: the Rust door named the unknown family and stopped (rc=$rc)"
+    else
+      note_failure "PIN $program: the Rust door stopped (rc=$rc) but did not name diet_scip: $(tail -2 "$WORK/$program.harness.err")"
+    fi
+    continue
+  fi
   "$HARNESS" "$generated" "$WORK/$program.schedule.json" --live-hosts \
     >"$WORK/$program.ticks.jsonl" 2>"$WORK/$program.harness.err" \
     || stop "$program stopped on the Rust door: $(tail -3 "$WORK/$program.harness.err")"

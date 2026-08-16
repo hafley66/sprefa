@@ -6,7 +6,9 @@
 use std::collections::BTreeMap;
 
 use sprefa_engine_rs::driver::{run_schedule, run_schedule_live};
-use sprefa_engine_rs::hosts::{HostLiveRunner, IHostExecutor, ShellExecutor, SoopyFilesExecutor};
+use sprefa_engine_rs::hosts::{
+    HostLiveRunner, IHostExecutor, ShellExecutor, SoopyFilesExecutor, SprefaExtractExecutor,
+};
 use sprefa_engine_rs::sql::{SqlRunner, SqliteSeam};
 use sprefa_engine_rs::types::{
     Arrival, ArrivalSign, HostColumnPlan, HostPlanData, ProgramJson, RelDelta, SqlStatement,
@@ -157,6 +159,37 @@ fn live_flag_rejects_a_scripted_response_row() {
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("__host_response_look"), "{stderr}");
+}
+
+#[test]
+fn unknown_family_name_is_a_named_stop_in_the_extract_twin() {
+    let target = format!(
+        "{}/tests/fixtures/live_extract_target.rs",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let env = BTreeMap::new();
+
+    let mode = SprefaExtractExecutor
+        .run(
+            "extract",
+            &format!("$DL_EXTRACT_BIN --family diet_scip {target}"),
+            &env,
+        )
+        .err()
+        .expect("a mode name is not linked in-process");
+    assert!(mode.message.contains("diet_scip"), "{mode}");
+    assert!(mode.message.contains("not linked in-process"), "{mode}");
+
+    let unknown = SprefaExtractExecutor
+        .run(
+            "extract",
+            &format!("$DL_EXTRACT_BIN --family nonsense {target}"),
+            &env,
+        )
+        .err()
+        .expect("an unknown family is a named stop");
+    assert!(unknown.message.contains("nonsense"), "{unknown}");
+    assert!(unknown.message.contains("not a known family"), "{unknown}");
 }
 
 #[test]
