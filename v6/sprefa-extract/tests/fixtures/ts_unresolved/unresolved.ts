@@ -1,0 +1,10 @@
+import("./static-mod");
+import(loadPath());
+const f = (a, b) => a + b;
+f(...args);
+const o = { m() { return 1; } };
+o[key]();
+o.m();
+require("./static-require");
+require(somePath);
+plainCall(1, 2);
