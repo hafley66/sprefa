@@ -209,6 +209,12 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   dispatch_seal: ["int"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  dispatch_ack: ["int"],
+  dispatch_first: ["int", "text"],
+  dispatch_seal: ["int"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -267,9 +273,9 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
-    dispatch_first: select_rows(seam, `SELECT "dispatch_id", "_ack_tag" FROM "dispatch_first"`, rel_columns.dispatch_first!, rel_column_types.dispatch_first!),
-    dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
+    dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, rel_columns.dispatch_ack!, rel_stored_column_types.dispatch_ack!),
+    dispatch_first: select_rows(seam, `SELECT "dispatch_id", "_ack_tag" FROM "dispatch_first"`, rel_columns.dispatch_first!, rel_stored_column_types.dispatch_first!),
+    dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, rel_columns.dispatch_seal!, rel_stored_column_types.dispatch_seal!),
   });
 }
 

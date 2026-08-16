@@ -351,6 +351,22 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   tab_view: ["text", "text"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  close_request: ["text", "text"],
+  closed: ["text", "text"],
+  demanded: ["text", "text"],
+  drained: ["text", "int"],
+  live_tab: ["text", "text"],
+  open_request: ["text", "text"],
+  open_tab: ["text", "text"],
+  queue_head: ["text", "int"],
+  queue_head_tab: ["text", "text"],
+  queue_next: ["text", "int"],
+  queue_slot: ["text", "int", "text"],
+  tab_row: ["text", "text"],
+  tab_view: ["text", "text"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -575,19 +591,19 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    close_request: select_rows(seam, `SELECT "session_id", "tab_id" FROM "close_request"`, rel_columns.close_request!, rel_column_types.close_request!),
-    closed: select_rows(seam, `SELECT "session_id", "tab_id" FROM "closed"`, rel_columns.closed!, rel_column_types.closed!),
-    demanded: select_rows(seam, `SELECT "col1", "session_id" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
-    drained: select_rows(seam, `SELECT "session_id", "ordinal" FROM "drained"`, rel_columns.drained!, rel_column_types.drained!),
-    live_tab: select_rows(seam, `SELECT "session_id", "tab_id" FROM "live_tab"`, rel_columns.live_tab!, rel_column_types.live_tab!),
-    open_request: select_rows(seam, `SELECT "session_id", "tab_id" FROM "open_request"`, rel_columns.open_request!, rel_column_types.open_request!),
-    open_tab: select_rows(seam, `SELECT "session_id", "tab_id" FROM "open_tab"`, rel_columns.open_tab!, rel_column_types.open_tab!),
-    queue_head: select_rows(seam, `SELECT "session_id", "ordinal" FROM "queue_head"`, rel_columns.queue_head!, rel_column_types.queue_head!),
-    queue_head_tab: select_rows(seam, `SELECT "session_id", "tab_id" FROM "queue_head_tab"`, rel_columns.queue_head_tab!, rel_column_types.queue_head_tab!),
-    queue_next: select_rows(seam, `SELECT "session_id", "next" FROM "queue_next"`, rel_columns.queue_next!, rel_column_types.queue_next!),
-    queue_slot: select_rows(seam, `SELECT "session_id", "next", "tab_id" FROM "queue_slot"`, rel_columns.queue_slot!, rel_column_types.queue_slot!),
-    tab_row: select_rows(seam, `SELECT "tab_id", "body" FROM "tab_row"`, rel_columns.tab_row!, rel_column_types.tab_row!),
-    tab_view: select_rows(seam, `SELECT "tab_id", "body" FROM "tab_view"`, rel_columns.tab_view!, rel_column_types.tab_view!),
+    close_request: select_rows(seam, `SELECT "session_id", "tab_id" FROM "close_request"`, rel_columns.close_request!, rel_stored_column_types.close_request!),
+    closed: select_rows(seam, `SELECT "session_id", "tab_id" FROM "closed"`, rel_columns.closed!, rel_stored_column_types.closed!),
+    demanded: select_rows(seam, `SELECT "col1", "session_id" FROM "demanded"`, rel_columns.demanded!, rel_stored_column_types.demanded!),
+    drained: select_rows(seam, `SELECT "session_id", "ordinal" FROM "drained"`, rel_columns.drained!, rel_stored_column_types.drained!),
+    live_tab: select_rows(seam, `SELECT "session_id", "tab_id" FROM "live_tab"`, rel_columns.live_tab!, rel_stored_column_types.live_tab!),
+    open_request: select_rows(seam, `SELECT "session_id", "tab_id" FROM "open_request"`, rel_columns.open_request!, rel_stored_column_types.open_request!),
+    open_tab: select_rows(seam, `SELECT "session_id", "tab_id" FROM "open_tab"`, rel_columns.open_tab!, rel_stored_column_types.open_tab!),
+    queue_head: select_rows(seam, `SELECT "session_id", "ordinal" FROM "queue_head"`, rel_columns.queue_head!, rel_stored_column_types.queue_head!),
+    queue_head_tab: select_rows(seam, `SELECT "session_id", "tab_id" FROM "queue_head_tab"`, rel_columns.queue_head_tab!, rel_stored_column_types.queue_head_tab!),
+    queue_next: select_rows(seam, `SELECT "session_id", "next" FROM "queue_next"`, rel_columns.queue_next!, rel_stored_column_types.queue_next!),
+    queue_slot: select_rows(seam, `SELECT "session_id", "next", "tab_id" FROM "queue_slot"`, rel_columns.queue_slot!, rel_stored_column_types.queue_slot!),
+    tab_row: select_rows(seam, `SELECT "tab_id", "body" FROM "tab_row"`, rel_columns.tab_row!, rel_stored_column_types.tab_row!),
+    tab_view: select_rows(seam, `SELECT "tab_id", "body" FROM "tab_view"`, rel_columns.tab_view!, rel_stored_column_types.tab_view!),
   });
 }
 

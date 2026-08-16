@@ -273,6 +273,16 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   scope_done: ["text"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  demanded: ["text", "text"],
+  fetch_result: ["text", "text"],
+  live_fetch: ["text"],
+  open_fetch: ["text"],
+  phase: ["text", "text"],
+  poll_due: ["text"],
+  scope_done: ["text"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -396,13 +406,13 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    demanded: select_rows(seam, `SELECT "col1", "endpoint" FROM "demanded"`, rel_columns.demanded!, rel_column_types.demanded!),
-    fetch_result: select_rows(seam, `SELECT "endpoint", "col2" FROM "fetch_result"`, rel_columns.fetch_result!, rel_column_types.fetch_result!),
-    live_fetch: select_rows(seam, `SELECT "endpoint" FROM "live_fetch"`, rel_columns.live_fetch!, rel_column_types.live_fetch!),
-    open_fetch: select_rows(seam, `SELECT "endpoint" FROM "open_fetch"`, rel_columns.open_fetch!, rel_column_types.open_fetch!),
-    phase: select_rows(seam, `SELECT "endpoint", "col2" FROM "phase"`, rel_columns.phase!, rel_column_types.phase!),
-    poll_due: select_rows(seam, `SELECT "endpoint" FROM "poll_due"`, rel_columns.poll_due!, rel_column_types.poll_due!),
-    scope_done: select_rows(seam, `SELECT "endpoint" FROM "scope_done"`, rel_columns.scope_done!, rel_column_types.scope_done!),
+    demanded: select_rows(seam, `SELECT "col1", "endpoint" FROM "demanded"`, rel_columns.demanded!, rel_stored_column_types.demanded!),
+    fetch_result: select_rows(seam, `SELECT "endpoint", "col2" FROM "fetch_result"`, rel_columns.fetch_result!, rel_stored_column_types.fetch_result!),
+    live_fetch: select_rows(seam, `SELECT "endpoint" FROM "live_fetch"`, rel_columns.live_fetch!, rel_stored_column_types.live_fetch!),
+    open_fetch: select_rows(seam, `SELECT "endpoint" FROM "open_fetch"`, rel_columns.open_fetch!, rel_stored_column_types.open_fetch!),
+    phase: select_rows(seam, `SELECT "endpoint", "col2" FROM "phase"`, rel_columns.phase!, rel_stored_column_types.phase!),
+    poll_due: select_rows(seam, `SELECT "endpoint" FROM "poll_due"`, rel_columns.poll_due!, rel_stored_column_types.poll_due!),
+    scope_done: select_rows(seam, `SELECT "endpoint" FROM "scope_done"`, rel_columns.scope_done!, rel_stored_column_types.scope_done!),
   });
 }
 

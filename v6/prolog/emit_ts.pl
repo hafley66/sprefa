@@ -761,6 +761,27 @@ rel_column_types_entry_line(RelPlan, Line) :-
     js_object_key(Name, NameKey),
     format(atom(Line), '  ~w: ~w,', [NameKey, TypesText]).
 
+% ═══ the raw-storage column types (read_stored_snapshot's own view) ═════════
+% read_snapshot decodes the boundary/final plane: a list column reads the
+% `__list_...` view's array text and carries type `list` so row_value_from_sql
+% parses it into Array<T>. read_stored_snapshot reads the raw base table, where
+% a list column is the interned surrogate INTEGER id, and shares rel_column_types
+% keyed only by declared type -- so the raw path inherits `list` and crashes on
+% the first non-empty row. This map names the STORED shape: `list(T)` is the
+% surrogate `int`, everything else keeps its boundary type unchanged.
+rel_stored_column_types_lines(RelPlans, Lines) :-
+    maplist(rel_stored_column_types_entry_line, RelPlans, EntryLines),
+    append([ ['const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {'],
+             EntryLines, ['};'] ], Lines).
+
+rel_stored_column_types_entry_line(RelPlan, Line) :-
+    relplan_parts(RelPlan, Ref, _Kind, _Columns, _Key, ColumnTypes),
+    ref_name(Ref, Name),
+    maplist(stored_column_type, ColumnTypes, StoredTypes),
+    quoted_string_array_text(StoredTypes, TypesText),
+    js_object_key(Name, NameKey),
+    format(atom(Line), '  ~w: ~w,', [NameKey, TypesText]).
+
 % ═══ the catalog rows, the same list the INSERT renders ════════════════════
 % Emitted even for a program that never queries `__rel`, so a reload compares.
 % The full catalog_all_rows/10 block (decl + plane), so the emitted const
@@ -849,6 +870,14 @@ boundary_column_type(json_list(_), json) :- !.
 boundary_column_type(list(_), list) :- !.
 boundary_column_type(Type, Type).
 
+% The stored/raw-base-table shape. A list column's raw storage is the interned
+% surrogate entity id (an int), which is what the raw `SELECT "sites" FROM
+% "tree_bundle"` read_stored_snapshot issues hands back; everything else stores
+% its boundary type directly (ref columns keep the surrogate ref id, json and
+% json_list keep their TEXT). Only `list(T)` differs from boundary_column_type/2.
+stored_column_type(list(_), int) :- !.
+stored_column_type(Type, Stored) :- boundary_column_type(Type, Stored).
+
 arrival_targets_lines(ArrivalTargets, Lines) :-
     maplist(ref_name, ArrivalTargets, Names),
     quoted_string_array_text(Names, Sql),
@@ -934,7 +963,7 @@ stored_snapshot_read_entry_line(
         deltastmt(Ref, _SelectSql, _DeltaTable, _BoundarySql, StoredSelectSql), Line) :-
     ref_name(Ref, Name),
     js_template(StoredSelectSql, Template),
-    format(atom(Line), '    ~w: select_rows(seam, ~w, rel_columns.~w!, rel_column_types.~w!),',
+    format(atom(Line), '    ~w: select_rows(seam, ~w, rel_columns.~w!, rel_stored_column_types.~w!),',
            [Name, Template, Name, Name]).
 
 % Which snapshot each tick-chain position reads. `false` reproduces the text
@@ -2387,6 +2416,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ddl_lines(Ddl, DdlLines),
     rel_columns_lines(RelPlans, RelColumnsLines),
     rel_column_types_lines(RelPlans, RelColumnTypesLines),
+    rel_stored_column_types_lines(RelPlans, RelStoredColumnTypesLines),
     program_catalog_rows(InternMode, Name, PlanDecls, PlanRules, RelPlans,
                          DepartureRefs, PreRefs, LoweringTypes,
                          RuleLevelStatements, CatalogRows),
@@ -2460,7 +2490,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     [ HeaderLines, ImportLines, LocalTypeLines, WorldPlanLines,
       BindArgsHelperLines, ArrivalValueGuardLines, TriggerOccurrencesHelperLines,
       StructPlaneLines, TextInternPlanLines,
-      DdlLines, RelColumnsLines, RelColumnTypesLines, RelCatalogLines,
+      DdlLines, RelColumnsLines, RelColumnTypesLines, RelStoredColumnTypesLines, RelCatalogLines,
       RelDeclaredColumnTypesLines, ArrivalTargetsLines,
       BootLines, SnapshotTypeLines, ReadSnapshotFnLines,
       ReadStoredSnapshotFnLines, FinalSelectLines,

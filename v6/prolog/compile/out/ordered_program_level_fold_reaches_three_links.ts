@@ -242,6 +242,14 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   seq_ping_ordinal_2: ["text", "int"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  dispatch_leg: ["int", "int", "int", "int"],
+  leg_total: ["int", "int", "int"],
+  ping: ["text"],
+  ping_ordinal: ["text", "int"],
+  seq_ping_ordinal_2: ["text", "int"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -344,11 +352,11 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dispatch_leg: select_rows(seam, `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos" FROM "dispatch_leg"`, rel_columns.dispatch_leg!, rel_column_types.dispatch_leg!),
-    leg_total: select_rows(seam, `SELECT "leg_id", "dispatch_id", "kilos" FROM "leg_total"`, rel_columns.leg_total!, rel_column_types.leg_total!),
-    ping: select_rows(seam, `SELECT "partition" FROM "ping"`, rel_columns.ping!, rel_column_types.ping!),
-    ping_ordinal: select_rows(seam, `SELECT "partition", "col2" FROM "ping_ordinal"`, rel_columns.ping_ordinal!, rel_column_types.ping_ordinal!),
-    seq_ping_ordinal_2: select_rows(seam, `SELECT "partition", "at" FROM "seq_ping_ordinal_2"`, rel_columns.seq_ping_ordinal_2!, rel_column_types.seq_ping_ordinal_2!),
+    dispatch_leg: select_rows(seam, `SELECT "leg_id", "dispatch_id", "previous_leg", "kilos" FROM "dispatch_leg"`, rel_columns.dispatch_leg!, rel_stored_column_types.dispatch_leg!),
+    leg_total: select_rows(seam, `SELECT "leg_id", "dispatch_id", "kilos" FROM "leg_total"`, rel_columns.leg_total!, rel_stored_column_types.leg_total!),
+    ping: select_rows(seam, `SELECT "partition" FROM "ping"`, rel_columns.ping!, rel_stored_column_types.ping!),
+    ping_ordinal: select_rows(seam, `SELECT "partition", "col2" FROM "ping_ordinal"`, rel_columns.ping_ordinal!, rel_stored_column_types.ping_ordinal!),
+    seq_ping_ordinal_2: select_rows(seam, `SELECT "partition", "at" FROM "seq_ping_ordinal_2"`, rel_columns.seq_ping_ordinal_2!, rel_stored_column_types.seq_ping_ordinal_2!),
   });
 }
 

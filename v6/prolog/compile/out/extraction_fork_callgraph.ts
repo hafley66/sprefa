@@ -240,6 +240,15 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   query_value: ["text"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  __host_demand_sg: ["text", "text", "text", "text"],
+  __host_response_sg: ["text", "int", "text", "text", "text", "text", "int", "int"],
+  call_edge: ["text", "text", "text", "int", "int"],
+  call_site: ["text", "text", "text"],
+  file: ["text", "text"],
+  query_value: ["text"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },

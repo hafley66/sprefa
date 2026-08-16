@@ -216,6 +216,12 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   seq_numbered_1: ["text", "int"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  arrival: ["text"],
+  numbered: ["int", "text"],
+  seq_numbered_1: ["text", "int"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -284,9 +290,9 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrival: select_rows(seam, `SELECT "payload" FROM "arrival"`, rel_columns.arrival!, rel_column_types.arrival!),
-    numbered: select_rows(seam, `SELECT "ordinal", "payload" FROM "numbered"`, rel_columns.numbered!, rel_column_types.numbered!),
-    seq_numbered_1: select_rows(seam, `SELECT "partition", "at" FROM "seq_numbered_1"`, rel_columns.seq_numbered_1!, rel_column_types.seq_numbered_1!),
+    arrival: select_rows(seam, `SELECT "payload" FROM "arrival"`, rel_columns.arrival!, rel_stored_column_types.arrival!),
+    numbered: select_rows(seam, `SELECT "ordinal", "payload" FROM "numbered"`, rel_columns.numbered!, rel_stored_column_types.numbered!),
+    seq_numbered_1: select_rows(seam, `SELECT "partition", "at" FROM "seq_numbered_1"`, rel_columns.seq_numbered_1!, rel_stored_column_types.seq_numbered_1!),
   });
 }
 
