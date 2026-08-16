@@ -22,7 +22,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::family::{CallF, CstF, SigSlot, TypeEntityKind, TypeF, TypeSig};
+use crate::family::{CallF, CallKind, CallSite, CstF, SigSlot, TypeEntityKind, TypeF, TypeSig};
 use crate::lang::{AstGrepParser, CstProjector};
 use crate::rows::{FamilyBundle, Node};
 use crate::seams::{Parser, Project};
@@ -348,7 +348,107 @@ fn project_call(
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
 ) {
-    let _ = (root, src, strings, sink);
+    py_walk_call_defs(root, src, strings, sink, None, false);
+    py_walk_call_sites(root, src, strings, sink);
+}
+
+/// The def span covers `[decl start, body end)` for span-containment caller
+/// resolution; a lambda (no `body` field) covers its own extent.
+fn def_span(child: tree_sitter::Node) -> Span {
+    let start = child.start_byte();
+    let end = child
+        .child_by_field_name("body")
+        .unwrap_or(child)
+        .end_byte();
+    Span {
+        start: start as u32,
+        len: (end - start) as u32,
+    }
+}
+
+/// One CallF def node per Free function / Method / Lambda. `parent` is the
+/// enclosing class name (method vs free); `in_fn` gates lambda minting.
+fn py_walk_call_defs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+    parent: Option<&str>,
+    in_fn: bool,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let target = py_unwrap_decorated(child);
+        match target.kind() {
+            "class_definition" => {
+                let owner = target.child_by_field_name("name").map(|n| py_text(n, src));
+                // A class body is not a fn scope: a bare class-attribute lambda
+                // is skipped (in_fn reset), matching v5's enclosing == "".
+                if let Some(body) = target.child_by_field_name("body") {
+                    py_walk_call_defs(body, src, strings, sink, owner, false);
+                }
+            }
+            "function_definition" => {
+                if let Some(name_node) = target.child_by_field_name("name") {
+                    let kind = match parent {
+                        Some(_) => CallKind::Method,
+                        None => CallKind::Free,
+                    };
+                    let span = def_span(target);
+                    let name = py_text(name_node, src);
+                    sink.nodes
+                        .push(Node::new(span, kind).with_name(strings.intern(name)));
+                    if let Some(body) = target.child_by_field_name("body") {
+                        py_walk_call_defs(body, src, strings, sink, None, true);
+                    }
+                }
+            }
+            // `is_named` keeps the `lambda` KEYWORD token (same node kind) from
+            // double-minting.
+            "lambda" if in_fn && target.is_named() => {
+                let span = def_span(target);
+                sink.nodes.push(Node::new(span, CallKind::Lambda));
+                py_walk_call_defs(target, src, strings, sink, parent, true);
+            }
+            _ => py_walk_call_defs(target, src, strings, sink, parent, in_fn),
+        }
+    }
+}
+
+/// One call site per `call`; the callee is the name as written (bare identifier
+/// or trailing attribute name). The site span is the callee node's start.
+fn py_walk_call_sites(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "call" {
+            if let Some((callee, span)) = py_callee(child, src) {
+                sink.aux.sites.push(CallSite {
+                    span,
+                    callee: strings.intern(&callee),
+                    callee_path: None,
+                });
+            }
+        }
+        py_walk_call_sites(child, src, strings, sink);
+    }
+}
+
+/// (callee name, callee-node span) for a `call`, None for a non-identifier or
+/// non-attribute callee. Port of v5 `py_callee`.
+fn py_callee(call: tree_sitter::Node, src: &[u8]) -> Option<(String, Span)> {
+    let func = call.child_by_field_name("function")?;
+    let span = node_span(func);
+    let callee = match func.kind() {
+        "identifier" => py_text(func, src).to_string(),
+        "attribute" => py_text(func.child_by_field_name("attribute")?, src).to_string(),
+        _ => return None,
+    };
+    Some((callee, span))
 }
 
 // ── PythonSource: cst via ast-grep + type/call via tree-sitter-python ──────
