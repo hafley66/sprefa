@@ -26,7 +26,6 @@ in `v6/dl/fixtures/golden-flex.dl6`.
 |---|---|---|
 | roundtrip | `G1 round-trip: 391 / 392 fixtures pass` then `FAIL mutual_recursion_matches_oracle (.../fixtures/engine_core.pl): fail(not_variant)` | `v6/prolog/compile/scripts/roundtrip.sh:132` |
 | tsv2-test | 4 failures of 209: `hostDecode.test.ts:144` (actual `[1,2,2,3]`, expected `[0,1,2,3]`), two `bopCheck` exit-code tests, and `edge-body negation SEARCHes the negated rel by key`. The stated "needs `gen_emitted/`" cause is WRONG: `v6/tsv2/gen_emitted/` holds 287 files and all four still fail. Re-diagnose before fixing. | `v6/tsv2/tests/hostDecode.test.ts:144` |
-| rtkq-golden | `ERR_ASSERTION` `deepStrictEqual` at `labs/1_rtkq-extraction-golden.ts:200`: `api_endpoint` rows emit `updateUser`-before-`listUsers`, order-sensitive golden expects `listUsers`-first (spans identical, not a corpus move) | `v6/tsv2/labs/1_rtkq-extraction-golden.ts:200` |
 | plunit | `5 tests failed` (of 637): `catalog_plane_rail:level_plane_family_corpus_counts`, `rel_zero_arity:a_root_rel_zero_still_has_no_storage`, `json_merge_patch:json_patch_lowers_with_the_null_stand_in_guard`, `json_merge_patch:merge_patch_stops_on_the_json_null_stand_in` (no_exception), `json_merge_patch:merge_patch_stops_on_a_nested_json_null_stand_in` (no_exception). `expression_inventory` was fixed with the typed_scalar landing (the ratchet had gone stale at #238). | `v6/prolog/compile/test/plunit_tests.pl:1314,5809,7684,7739,7743` |
 | compile-speed | `COMPILE_SPEED regressions=17 improvements=0 FAIL` (baseline written 2026-08-07; golden-flex lower +178%, emit +120%). The 17th row is `door-handwritten parse 42941 -> 50165 (+16.8%)`, added when the classic parser was deleted and `use_item/3` moved onto the DCG. | `v6/prolog/compile/scripts/1_compile_speed.sh:248` |
 | memory-soak | `FAIL sqlite_page_count_flat: second-quarter mean 24.8, final-quarter mean 49.5, ceiling 27.2` | `v6/tsv2/scripts/memory-soak.ts:327` |
@@ -45,7 +44,6 @@ own equivalents and stay.
 ## Allowlist
 
 allow: plunit
-allow: rtkq-golden
 allow: compile-speed
 allow: tsv2-test
 allow: lsp-diags
