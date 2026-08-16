@@ -23,7 +23,9 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::lang::{source_for, DlSource, GoSource, KotlinSource, PrologSource, RustSource, TsSource};
+use crate::lang::{
+    source_for, DlSource, GoSource, KotlinSource, PrologSource, RustSource, TsSource,
+};
 use crate::rows::FamilyBundle;
 use crate::scip::{ScipGo, ScipRust, ScipTypescript};
 use crate::scip_ensure::IndexBudget;
@@ -143,8 +145,26 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
     let manifests = ManifestMap;
     // The reader is what makes a SCIP index usable: `join_documents` maps every
     // project-relative document path to its bytes, and the arms find their own
-    // document by content hash off that join.
-    let blobs = request.project_root.map(FsBlobSource::new);
+    // document by content hash off that join. It reads exactly the index's
+    // documents, not the whole repository.
+    let blobs: Option<SourceTreeBlobSource> = match (request.project_root, scip_index.as_ref()) {
+        (Some(root), Some(index)) => {
+            let files: Vec<&str> = index
+                .documents
+                .iter()
+                .map(|doc| doc.relative_path.as_str())
+                .collect();
+            Some(
+                SourceTreeBlobSource::open_files(root, &files).map_err(|err| {
+                    ProjectError::Read(
+                        root.to_path_buf(),
+                        std::io::Error::new(std::io::ErrorKind::Other, err),
+                    )
+                })?,
+            )
+        }
+        _ => None,
+    };
     let reader = move |relative: &str| -> Option<Vec<u8>> { blobs.as_ref()?.blob(relative) };
     let cx = ProjectCx {
         files: &files,
@@ -192,7 +212,17 @@ pub fn scip_facts(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectErro
             "scip facts need --scip-index or --scip-build".to_string(),
         ));
     };
-    let blobs = FsBlobSource::new(root);
+    let files: Vec<&str> = index
+        .documents
+        .iter()
+        .map(|doc| doc.relative_path.as_str())
+        .collect();
+    let blobs = SourceTreeBlobSource::open_files(root, &files).map_err(|err| {
+        ProjectError::Read(
+            root.to_path_buf(),
+            std::io::Error::new(std::io::ErrorKind::Other, err),
+        )
+    })?;
     let reader = blobs.reader();
     Ok(crate::scip_rows::flatten_scip_records(
         &index,
@@ -374,6 +404,23 @@ pub(crate) fn sorted_lines(facts: Vec<FlatFact>) -> Vec<String> {
 }
 
 pub(crate) fn read_inputs(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    // A corpus inside a Git repository is read in one batched read_many of the
+    // worktree (current disk, so untracked and dirty files are visible), keyed
+    // by repo-relative paths internally while ProjectInput.path keeps the
+    // caller's spelling byte-for-byte. A corpus outside any repository has no
+    // revision coordinate for soopy to enumerate, so it falls back to the plain
+    // per-path filesystem read, which is what the previous implementation did
+    // for every input.
+    match soopy::discover(&paths[0]) {
+        Ok(repository) => read_inputs_batched(&repository, paths),
+        Err(_) => read_inputs_plain(paths),
+    }
+}
+
+fn read_inputs_plain(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {
     let mut inputs = Vec::with_capacity(paths.len());
     for path in paths {
         let content = std::fs::read(path).map_err(|err| ProjectError::Read(path.clone(), err))?;
@@ -387,6 +434,57 @@ pub(crate) fn read_inputs(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, Projec
         }
     }
     Ok(inputs)
+}
+
+fn read_inputs_batched(
+    repository: &soopy::Repository,
+    paths: &[PathBuf],
+) -> Result<Vec<ProjectInput>, ProjectError> {
+    let mut inputs = Vec::with_capacity(paths.len());
+    let keys: Vec<String> = paths
+        .iter()
+        .map(|path| repo_relative(&repository.root, path))
+        .collect::<Result<_, _>>()?;
+    let key_refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    let source = SourceTreeBlobSource::open_files(&repository.root, &key_refs).map_err(|err| {
+        ProjectError::Read(
+            paths[0].clone(),
+            std::io::Error::new(std::io::ErrorKind::Other, err),
+        )
+    })?;
+    let answers = source.read_many(&key_refs);
+    for (path, answer) in paths.iter().zip(answers) {
+        let Some(content) = answer else {
+            return Err(ProjectError::Read(
+                path.clone(),
+                std::io::Error::new(std::io::ErrorKind::NotFound, "not in the worktree snapshot"),
+            ));
+        };
+        let path = path.to_string_lossy().to_string();
+        if let Some(output) = crate::dispatch(&path, &content, FamilyMask::ALL) {
+            inputs.push(ProjectInput {
+                blob: BlobHash::of(&content),
+                path,
+                output,
+            });
+        }
+    }
+    Ok(inputs)
+}
+
+fn repo_relative(repo_root: &Path, path: &Path) -> Result<String, ProjectError> {
+    let absolute =
+        std::fs::canonicalize(path).map_err(|err| ProjectError::Read(path.to_path_buf(), err))?;
+    let relative = absolute.strip_prefix(repo_root).map_err(|_| {
+        ProjectError::Read(
+            path.to_path_buf(),
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("{} is outside the repository", path.display()),
+            ),
+        )
+    })?;
+    Ok(relative.to_string_lossy().replace('\\', "/"))
 }
 
 fn load_scip(
@@ -604,40 +702,55 @@ fn node_name<F: crate::family::Family>(
         .map(|name| output.strings.lookup(name).to_string())
 }
 
-/// The filesystem `BlobSource`: project-relative path in, bytes out, rooted at
-/// one directory.
+/// Test-only filesystem `BlobSource`: project-relative path in, bytes out,
+/// rooted at one directory, reading any path with no revision and no content
+/// verification.
 ///
-/// `BlobSource` shipped as a trait with no implementation anywhere in the crate,
-/// which is why every caller that needed a rev-correct reader wrote the same
-/// closure by hand (this module did it twice before this type existed, and
-/// golden_parity still does it per test). Naming it once makes the root explicit
-/// and gives the phase-2 cache something to own later.
-///
-/// SOURCE-AGNOSTIC BY DESIGN, per the trait's own contract: this is the plain
-/// directory implementation. A git worktree or an object-store implementation is
-/// another type behind the same trait, and nothing above the trait changes.
-///
-/// A path that does not resolve, or cannot be read, is `None`. That is the
-/// honest answer for a document the corpus does not contain, which is exactly
-/// how `join_documents` tells a corpus file from an external one.
+/// NOT a production source: production readers use `SourceTreeBlobSource`
+/// (revision-aware, sees the worktree). This type survives only as a
+/// plain-directory fixture and as the stable public re-export at `lib.rs`; it
+/// has zero production call sites.
 pub struct FsBlobSource {
     root: PathBuf,
 }
 
-/// Revision-pinned source backed by `soopy`: enumeration happens once at
-/// construction, and later reads retain that pass's exact source identity.
+/// Worktree- or revision-pinned source backed by `soopy`: enumeration happens
+/// once at construction, and later reads retain that pass's exact source
+/// identity for pinned revisions, or read the current worktree for the default
+/// worktree mode.
+///
+/// KEYS. `blob` is addressed by PROJECT-ROOT-relative path (the `ProjectCx`
+/// reader / `join_documents` contract), so entries are re-keyed from soopy's
+/// repo-root-relative paths at construction by stripping the project root's
+/// prefix under the repository root. A project root that is a subdirectory of
+/// the Git root (a monorepo package) is the normal SCIP case, and a source that
+/// keyed by repo-relative paths would miss every such document.
 pub struct SourceTreeBlobSource {
     tree: std::sync::Mutex<soopy::SourceTree>,
     entries: std::collections::BTreeMap<String, soopy::SourceEntry>,
 }
 
 impl SourceTreeBlobSource {
+    /// The default: a worktree snapshot. `Revision::Worktree` routes to soopy's
+    /// fs-glob enumeration (`_4_worktree`), which sees untracked and dirty
+    /// files, and later reads hit current disk.
+    pub fn open_worktree(
+        root: impl AsRef<Path>,
+        patterns: &[soopy::Pattern],
+    ) -> Result<Self, String> {
+        Self::open(root, soopy::Revision::Worktree, patterns)
+    }
+
+    /// Revision-pinned: content-verified reads at the named revision. Callers
+    /// that pass a revision opt into verification; the default above does not.
     pub fn open(
         root: impl AsRef<Path>,
         revision: soopy::Revision,
         patterns: &[soopy::Pattern],
     ) -> Result<Self, String> {
+        let root = root.as_ref();
         let repository = soopy::discover(root).map_err(|error| error.to_string())?;
+        let prefix = project_prefix(root, &repository.root)?;
         let mut tree = soopy::SourceTree::open(repository);
         let entries = tree
             .snapshot(&soopy::SourceQuery {
@@ -647,7 +760,67 @@ impl SourceTreeBlobSource {
             .map_err(|error| error.to_string())?
             .files
             .into_iter()
-            .map(|entry| (entry.source.path.0.to_string(), entry))
+            .filter_map(|entry| {
+                let repo_path = entry.source.path.0.to_string();
+                let key = if prefix.is_empty() {
+                    repo_path
+                } else {
+                    repo_path.strip_prefix(&format!("{prefix}/"))?.to_string()
+                };
+                Some((key, entry))
+            })
+            .collect();
+        Ok(Self {
+            tree: std::sync::Mutex::new(tree),
+            entries,
+        })
+    }
+
+    /// Open a worktree source over exactly the given project-relative files,
+    /// read in one batched `read_many`, without enumerating the whole
+    /// repository. Used where the caller already knows the paths it needs
+    /// (corpus ingest and the SCIP document reader), so it pays for the corpus,
+    /// not the repository.
+    pub fn open_files(root: impl AsRef<Path>, files: &[&str]) -> Result<Self, String> {
+        let root = root.as_ref();
+        let repository = soopy::discover(root).map_err(|error| error.to_string())?;
+        let prefix = project_prefix(root, &repository.root)?;
+        let mut tree = soopy::SourceTree::open(repository.clone());
+        let revision = tree
+            .resolve_revision(soopy::Revision::Worktree)
+            .map_err(|error| error.to_string())?;
+        let mut requests = Vec::with_capacity(files.len());
+        for file in files {
+            let repo_path = if prefix.is_empty() {
+                file.to_string()
+            } else {
+                format!("{prefix}/{file}")
+            };
+            requests.push(soopy::ReadRequest {
+                source: soopy::SourceRef {
+                    repository: repository.identity.clone(),
+                    revision: revision.clone(),
+                    path: soopy::RepoPath(std::sync::Arc::from(repo_path.as_str())),
+                },
+                expected: None,
+            });
+        }
+        let answers = tree
+            .read_many(&requests)
+            .map_err(|error| error.to_string())?;
+        let entries = files
+            .iter()
+            .zip(answers)
+            .map(|(file, answer)| {
+                (
+                    file.to_string(),
+                    soopy::SourceEntry {
+                        source: answer.source.clone(),
+                        content: answer.content.clone(),
+                        size: answer.bytes.len() as u64,
+                    },
+                )
+            })
             .collect();
         Ok(Self {
             tree: std::sync::Mutex::new(tree),
@@ -658,18 +831,89 @@ impl SourceTreeBlobSource {
     pub fn entries(&self) -> impl Iterator<Item = &soopy::SourceEntry> {
         self.entries.values()
     }
+
+    /// Read many project-relative paths in one batched `read_many`. Returns one
+    /// `Option` per input path, aligned by position; `None` means the path is
+    /// not in the enumerated corpus or could not be read.
+    pub fn read_many(&self, paths: &[&str]) -> Vec<Option<Vec<u8>>> {
+        let mut answers = vec![None; paths.len()];
+        let mut tree = match self.tree.lock() {
+            Ok(tree) => tree,
+            Err(_) => return answers,
+        };
+        let mut slot: Vec<Option<usize>> = vec![None; paths.len()];
+        let mut requests = Vec::new();
+        for (index, path) in paths.iter().enumerate() {
+            if let Some(entry) = self.entries.get(*path) {
+                slot[index] = Some(requests.len());
+                requests.push(soopy::ReadRequest {
+                    source: entry.source.clone(),
+                    expected: expected_for(entry),
+                });
+            }
+        }
+        let Ok(read) = tree.read_many(&requests) else {
+            return answers;
+        };
+        for (index, request_index) in slot.iter().enumerate() {
+            if let Some(request_index) = request_index {
+                answers[index] = Some(read[*request_index].bytes.to_vec());
+            }
+        }
+        answers
+    }
+
+    /// The `ProjectCx.reader` shape: a borrowed closure over this source.
+    pub fn reader(&self) -> impl Fn(&str) -> Option<Vec<u8>> + '_ {
+        |relative: &str| self.blob(relative)
+    }
+}
+
+/// The project root's `/`-separated prefix under the repository root, `""` when
+/// the two coincide. Both sides are canonical (soopy canonicalizes the
+/// repository root in `open`), so the strip is symlink-safe.
+fn project_prefix(root: &Path, repo_root: &Path) -> Result<String, String> {
+    let project_root = std::fs::canonicalize(root).map_err(|error| error.to_string())?;
+    Ok(project_root
+        .strip_prefix(repo_root)
+        .map_err(|_| {
+            format!(
+                "{} is outside the repository root {}",
+                project_root.display(),
+                repo_root.display()
+            )
+        })?
+        .to_string_lossy()
+        .replace('\\', "/"))
+}
+
+/// A pinned commit verifies the entry's content identity; a worktree read hits
+/// current disk so a dirty tree (a file edited after the snapshot) reads the
+/// same bytes a plain filesystem read would, never a stale-verification `None`.
+fn expected_for(entry: &soopy::SourceEntry) -> Option<soopy::ContentId> {
+    match &entry.source.revision {
+        soopy::RevisionId::Commit(_) => Some(entry.content.clone()),
+        soopy::RevisionId::Worktree { .. } => None,
+    }
 }
 
 impl BlobSource for SourceTreeBlobSource {
     fn blob(&self, path: &str) -> Option<Vec<u8>> {
+        // `None` is a corpus miss (the path was not enumerated/read at open). For
+        // the Worktree mode that is the only source of `None`; for a pinned
+        // Commit, a read that fails content verification also collapses to
+        // `None`, because this trait has no error channel to tell the two apart.
         let entry = self.entries.get(path)?;
         let request = soopy::ReadRequest {
             source: entry.source.clone(),
-            expected: Some(entry.content.clone()),
+            expected: expected_for(entry),
         };
         let mut tree = self.tree.lock().ok()?;
-        let mut answers = tree.read_many(&[request]).ok()?;
-        Some(answers.pop()?.bytes.to_vec())
+        let answers = tree.read_many(&[request]).ok()?;
+        answers
+            .into_iter()
+            .next()
+            .map(|answer| answer.bytes.to_vec())
     }
 }
 
