@@ -28,6 +28,8 @@ RECORD SHAPES
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
   record=reference  family=call            span={start,end}   functor=<name/arity>  position=<goal|head_arg|term_arg>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
+  record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>
+  record=doc_tag  family=type              owner={start,end}  tag=<string>  arg=<string|null>  text=<string>
   record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>

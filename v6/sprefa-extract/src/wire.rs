@@ -97,7 +97,7 @@ fn flatten_cst(bundle: &FamilyBundle<CstF>, strings: &Strings) -> Vec<FlatFact> 
 /// resolved type edges (field / impl / uses / ...) land with `Resolve<TypeF>`.
 fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact> {
     let mut out =
-        Vec::with_capacity(bundle.nodes.len() + bundle.aux.sigs.len() + bundle.aux.consts.len());
+        Vec::with_capacity(bundle.nodes.len() + bundle.aux.sigs.len() + bundle.aux.consts.len() + bundle.aux.docs.len());
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
             family: TypeF::TAG,
@@ -125,6 +125,24 @@ fn flatten_type(bundle: &FamilyBundle<TypeF>, strings: &Strings) -> Vec<FlatFact
             text: strings.lookup(c.text).to_string(),
             kind: c.kind.as_str().to_string(),
         });
+    }
+    for doc in &bundle.aux.docs {
+        let owner = SpanOut::new(doc.owner.start, doc.owner.end());
+        out.push(FlatFact::Doc {
+            family: TypeF::TAG,
+            owner,
+            parent: doc.parent.map(|id| strings.lookup(id).to_string()),
+            text: strings.lookup(doc.text).to_string(),
+        });
+        for tag in &doc.tags {
+            out.push(FlatFact::DocTagOut {
+                family: TypeF::TAG,
+                owner,
+                tag: strings.lookup(tag.tag).to_string(),
+                arg: tag.arg.map(|id| strings.lookup(id).to_string()),
+                text: strings.lookup(tag.text).to_string(),
+            });
+        }
     }
     out
 }
