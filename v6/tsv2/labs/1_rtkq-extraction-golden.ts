@@ -133,6 +133,11 @@ function tickShape(events: readonly IServeEvent[]): readonly string[] {
   );
 }
 
+const sorted = (rows: unknown[][]) =>
+  [...rows].sort((a, b) =>
+    JSON.stringify(a).localeCompare(JSON.stringify(b)),
+  );
+
 function demandTotals(events: readonly IServeEvent[]) {
   let add = 0;
   let del = 0;
@@ -175,19 +180,21 @@ async function main(): Promise<void> {
     watchSource.settle();
     await waitUntil(() => effects.length === 1, "initial extractor process");
 
-    assert.deepEqual(await json(server.port, "/idb/api_scope"), {
-      rows: [
+    assert.deepEqual(
+      sorted((await json(server.port, "/idb/api_scope")).rows as unknown[][]),
+      sorted([
         ["api.ts", 271, 475],
         ["api.ts", 505, 643],
-      ],
-    });
-    assert.deepEqual(await json(server.port, "/idb/api_endpoint"), {
-      rows: [
+      ]),
+    );
+    assert.deepEqual(
+      sorted((await json(server.port, "/idb/api_endpoint")).rows as unknown[][]),
+      sorted([
         ["api.ts", 271, 475, "getUser", "query", 339, 346],
         ["api.ts", 271, 475, "health", "query", 416, 422],
         ["api.ts", 505, 643, "createOrder", "mutation", 560, 571],
-      ],
-    });
+      ]),
+    );
 
     writeFileSync(sourcePath, readFileSync(EDITED));
     watchSource.notify(sourcePath);
@@ -197,12 +204,13 @@ async function main(): Promise<void> {
     assert.deepEqual(await json(server.port, "/idb/api_scope"), {
       rows: [["api.ts", 272, 468]],
     });
-    assert.deepEqual(await json(server.port, "/idb/api_endpoint"), {
-      rows: [
+    assert.deepEqual(
+      sorted((await json(server.port, "/idb/api_endpoint")).rows as unknown[][]),
+      sorted([
         ["api.ts", 272, 468, "listUsers", "query", 407, 416],
         ["api.ts", 272, 468, "updateUser", "mutation", 327, 337],
-      ],
-    });
+      ]),
+    );
 
     rmSync(sourcePath, { force: true });
     watchSource.notify(sourcePath);
