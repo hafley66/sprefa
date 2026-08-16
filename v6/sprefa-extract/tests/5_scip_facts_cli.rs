@@ -304,7 +304,7 @@ fn file_fact_prepends_one_row_without_disturbing_the_stream() {
     let (first, rest) = with_row.split_once('\n').expect("at least the file row");
     assert_eq!(
         first,
-        r#"{"record":"file","path":"tests/fixtures/scip_rel/animal.ts","digest":"baafb5a5209830bda1b0dd4a9265e014","bytes":137,"lines":9}"#
+        r#"{"record":"file","path":"tests/fixtures/scip_rel/animal.ts","digest":"blake3:baafb5a5209830bda1b0dd4a9265e014b895256daee5e9252e3cb71bff3e3968","bytes":137,"lines":9}"#
     );
     assert_eq!(rest, plain, "the file row must not perturb the fact stream");
 }

@@ -1,5 +1,5 @@
 use sprefa_extract::{
-    build_def_index, flatten, BlobHash, CallEdgeKind, CallF, FamilyMask, FamilyTag, FileSet,
+    build_def_index, content_id_of, flatten, CallEdgeKind, CallF, FamilyMask, FamilyTag, FileSet,
     IndexBag, ManifestMap, ProjectCx, ProjectDigest, PrologSource, Resolve, Source,
 };
 
@@ -69,7 +69,7 @@ fn prolog_all_families_and_names() {
 #[test]
 fn prolog_name_arity_resolution() {
     let output = PrologSource.extract(PATH, SOURCE, FamilyMask::ALL);
-    let blob = BlobHash::of(SOURCE);
+    let blob = content_id_of(SOURCE);
     let index = build_def_index(&[(blob, &output)]);
     let indexes = IndexBag::default();
     indexes.def_index.set(index).unwrap();

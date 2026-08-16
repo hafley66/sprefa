@@ -4,8 +4,9 @@
 use std::collections::BTreeSet;
 
 use sprefa_extract::{
-    build_def_index, dispatch, BlobHash, ExtractOutput, FamilyMask, FileSet, IndexBag, ManifestMap,
-    MarkdownSource, NodeRef, ProjectCx, ProjectDigest, Resolve, Span, TypeEdgeKind, TypeF,
+    build_def_index, content_id_of, dispatch, ContentId, ExtractOutput, FamilyMask, FileSet,
+    IndexBag, ManifestMap, MarkdownSource, NodeRef, ProjectCx, ProjectDigest, Resolve, Span,
+    TypeEdgeKind, TypeF,
 };
 
 const MD_PATH: &str = "v6/sprefa-extract/tests/fixtures/markdown/doc_node.md";
@@ -44,16 +45,16 @@ const EXPECTED_DOC_NODES: &[&str] = &[
 /// The corpus: the markdown fixture plus the rust/ts fixtures that declare the
 /// names its headings name. `Point` is declared twice, `Engine` once.
 fn with_resolve_cx<R>(
-    f: impl FnOnce(&ProjectCx, &[(BlobHash, ExtractOutput, &'static str)]) -> R,
+    f: impl FnOnce(&ProjectCx, &[(ContentId, ExtractOutput, &'static str)]) -> R,
 ) -> R {
-    let corpus: Vec<(BlobHash, ExtractOutput, &'static str)> = vec![
+    let corpus: Vec<(ContentId, ExtractOutput, &'static str)> = vec![
         (
-            BlobHash::of(MD),
+            content_id_of(MD),
             dispatch(MD_PATH, MD, TYPES_ONLY).expect("md"),
             "md",
         ),
         (
-            BlobHash::of(RUST_SAMPLE),
+            content_id_of(RUST_SAMPLE),
             dispatch(
                 "v6/sprefa-extract/tests/fixtures/rust/sample.rs",
                 RUST_SAMPLE,
@@ -63,7 +64,7 @@ fn with_resolve_cx<R>(
             "rust",
         ),
         (
-            BlobHash::of(TS_SAMPLE),
+            content_id_of(TS_SAMPLE),
             dispatch(
                 "v6/sprefa-extract/tests/fixtures/ts/sample.ts",
                 TS_SAMPLE,
@@ -73,7 +74,7 @@ fn with_resolve_cx<R>(
             "ts",
         ),
         (
-            BlobHash::of(TS_DOCS),
+            content_id_of(TS_DOCS),
             dispatch(
                 "v6/sprefa-extract/tests/fixtures/ts/docs.ts",
                 TS_DOCS,
@@ -83,8 +84,10 @@ fn with_resolve_cx<R>(
             "ts",
         ),
     ];
-    let pairs: Vec<(BlobHash, &ExtractOutput)> =
-        corpus.iter().map(|(hash, out, _)| (*hash, out)).collect();
+    let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
+        .iter()
+        .map(|(hash, out, _)| (hash.clone(), out))
+        .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
     let cx = ProjectCx {
@@ -146,7 +149,7 @@ fn doc_ref_bridges_unique_heading_only() {
         assert_eq!(edge.src, NodeRef(0), "src indexes the doc_nodes row");
         assert_eq!(edge.kind, TypeEdgeKind::DocRef);
         assert_eq!(
-            edge.dst_blob, *rust_blob,
+            &edge.dst_blob, rust_blob,
             "Engine bridges to rust/sample.rs"
         );
         // rust/sample.rs `pub struct Engine` spans bytes 169..175.

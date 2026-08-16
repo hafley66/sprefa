@@ -5,7 +5,7 @@
 //! inputs.
 
 use sprefa_extract::{
-    flow_edges, BlobHash, CallEdgeKind, CallF, DfArg, DfF, DfNodeKind, DfParam, ExtractOutput,
+    flow_edges, CallEdgeKind, CallF, ContentId, DfArg, DfF, DfNodeKind, DfParam, ExtractOutput,
     FamilyBundle, FlowEdgeKind, Node, NodeRef, ProjectEdge, Span,
 };
 
@@ -19,8 +19,8 @@ fn node(span: Span, kind: DfNodeKind) -> Node<DfF> {
 
 #[test]
 fn join_emits_arg_to_param_and_ret_to_call_res() {
-    let caller_blob = BlobHash([1u8; 16]);
-    let callee_blob = BlobHash([2u8; 16]);
+    let caller_blob = ContentId::Blake3([1u8; 32]);
+    let callee_blob = ContentId::Blake3([2u8; 32]);
 
     // Caller: `helper(42)`; the argument value node (span 20..22) feeds the
     // call-res node (span 18..25); the callee identifier sits at 18..24.
@@ -51,26 +51,26 @@ fn join_emits_arg_to_param_and_ret_to_call_res() {
 
     let edge = ProjectEdge::<CallF>::new(
         NodeRef(0),
-        callee_blob,
+        callee_blob.clone(),
         span(35, 15),
         CallEdgeKind::NameResolve,
     )
     .with_call_site(span(18, 6));
 
-    let inputs = vec![(caller_blob, &caller), (callee_blob, &callee)];
-    let resolved = vec![(caller_blob, vec![edge])];
+    let inputs = vec![(caller_blob.clone(), &caller), (callee_blob.clone(), &callee)];
+    let resolved = vec![(caller_blob.clone(), vec![edge])];
     let flows = flow_edges(&inputs, &resolved);
 
     assert_eq!(flows.len(), 2);
 
-    let arg = flows[0];
+    let arg = &flows[0];
     assert_eq!(arg.kind, FlowEdgeKind::ArgToParam);
     assert_eq!(arg.src_blob, caller_blob);
     assert_eq!(arg.src_span, span(20, 2));
     assert_eq!(arg.dst_blob, callee_blob);
     assert_eq!(arg.dst_span, span(40, 1));
 
-    let ret = flows[1];
+    let ret = &flows[1];
     assert_eq!(ret.kind, FlowEdgeKind::RetToCallRes);
     assert_eq!(ret.src_blob, caller_blob);
     assert_eq!(ret.src_span, span(18, 7));
@@ -82,8 +82,8 @@ fn join_emits_arg_to_param_and_ret_to_call_res() {
 /// the join must skip it rather than emit a bogus flow edge.
 #[test]
 fn receiver_slot_is_skipped() {
-    let caller_blob = BlobHash([3u8; 16]);
-    let callee_blob = BlobHash([4u8; 16]);
+    let caller_blob = ContentId::Blake3([3u8; 32]);
+    let callee_blob = ContentId::Blake3([4u8; 32]);
 
     let mut caller_df = FamilyBundle::<DfF>::default();
     let recv_ref = NodeRef(0);
@@ -109,13 +109,13 @@ fn receiver_slot_is_skipped() {
 
     let edge = ProjectEdge::<CallF>::new(
         NodeRef(0),
-        callee_blob,
+        callee_blob.clone(),
         span(25, 10),
         CallEdgeKind::NameResolve,
     )
     .with_call_site(span(8, 6));
 
-    let inputs = vec![(caller_blob, &caller), (callee_blob, &callee)];
+    let inputs = vec![(caller_blob.clone(), &caller), (callee_blob, &callee)];
     let resolved = vec![(caller_blob, vec![edge])];
     assert!(flow_edges(&inputs, &resolved).is_empty());
 }
