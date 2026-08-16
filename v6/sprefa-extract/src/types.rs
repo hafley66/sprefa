@@ -554,11 +554,39 @@ pub struct DfArg {
     pub arg: NodeRef,
 }
 
+/// One named value-flow-into-composite bridge: a `new` (composite) node, the
+/// field/property/named-argument name it fills, and the value node. The pseudo
+/// field `..` records a spread / functional-update base.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfField {
+    pub owner: NodeRef,
+    pub name: String,
+    pub value: NodeRef,
+}
+
+/// One string-carrying df node's text row: `kind` is lit|template|concat and
+/// `text` is the cooked literal value (`lit`) or the raw source slice
+/// (`template`/`concat` — a syntactic label, never a type judgment). Port of
+/// v5 `DataflowFacts::lits`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfLit {
+    pub node: NodeRef,
+    pub kind: &'static str,
+    pub text: String,
+}
+
 /// DfF side-channel rows that cannot be represented as uniform node/edge rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DfFAux {
     pub params: Vec<DfParam>,
     pub args: Vec<DfArg>,
+    pub fields: Vec<DfField>,
+    pub lits: Vec<DfLit>,
+    /// Pending (node, start, end, kind) spans for `template`/`concat` rows,
+    /// whose text is a source SLICE the per-node lift doesn't hold. The ts
+    /// DfF projector drains this into `lits` once, at the end of the walk, where
+    /// the file content is in hand (the same shape as v5's `lit_spans`).
+    pub lit_spans: Vec<(NodeRef, u32, u32, &'static str)>,
 }
 
 /// df_node kind. 23 variants.
@@ -782,8 +810,9 @@ fn call_node(bundle: &FamilyBundle<DfF>, site: Span) -> Option<NodeRef> {
             continue;
         }
         let contains = node.span.start <= site.start && site.end() <= node.span.end();
-        let tighter =
-            best.map_or(true, |(span, _)| node.span.end() - node.span.start < span.end() - span.start);
+        let tighter = best.map_or(true, |(span, _)| {
+            node.span.end() - node.span.start < span.end() - span.start
+        });
         if contains && tighter {
             best = Some((node.span, NodeRef(index as u32)));
         }
@@ -1665,6 +1694,25 @@ pub enum FlatFact {
         pos: i64,
         arg: SpanOut,
     },
+    /// DfF named value-into-composite bridge: composite node, field/property/
+    /// named-argument name, value node. The pseudo field `..` is a spread /
+    /// functional-update base.
+    #[serde(rename = "df_field")]
+    DfField {
+        family: FamilyTag,
+        owner: SpanOut,
+        name: String,
+        value: SpanOut,
+    },
+    /// DfF string-carrying value node: node, kind lit|template|concat, text
+    /// (cooked literal or raw source slice).
+    #[serde(rename = "df_lit")]
+    DfLit {
+        family: FamilyTag,
+        node: SpanOut,
+        kind: String,
+        text: String,
+    },
     /// TypeF arrow-type sig: owner = callable span, slot = param/ret, pos, ty.
     Sig {
         family: FamilyTag,
@@ -2085,7 +2133,9 @@ pub enum FlatFact {
 //   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); GO ASSERTED (4d-i-go, v5 go shape-only: field/impl/generic); rust ASSERTED (4d-i-rust; no sig-sourced rows per v5); kotlin DEFERRED to the traits/codegen arc (v5 kotlin DOES emit: field/impl/generic/variant - candidates + Resolve<TypeF> land there)
 //   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust); kotlin DEFERRED to the traits/codegen arc
 //   df aux (args/param_pos)                       [x]         [x]            [x]                 [x]
-//   df aux (fields/lits/loops/nests)              -> labels, follow-up
+//   df aux (fields)                               [x]         [x]            [x]                 [x]
+//   df aux (lits)                                 [x]         -              [x]                 -
+//   df aux (loops/nests)                          -> labels, follow-up
 //   inter-procedural flow (FlowF)                 -> landed; the resolve_project dispatch is the follow-up  // @comment-ok: the status table is one pre-existing prose run
 //
 // LEAF INFRA (pure CPU; still this leaf): parallel dispatch (rayon, arena-per-

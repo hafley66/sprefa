@@ -6,6 +6,8 @@
 {"record":"arg","family":"df","call":{"start":632,"end":676},"pos":0,"arg":{"start":642,"end":675}}
 {"record":"arg","family":"df","call":{"start":765,"end":789},"pos":0,"arg":{"start":774,"end":780}}
 {"record":"arg","family":"df","call":{"start":765,"end":789},"pos":1,"arg":{"start":782,"end":788}}
+{"record":"df_lit","family":"df","node":{"start":642,"end":675},"kind":"concat","text":"this.x * this.x + this.y * this.y"}
+{"record":"df_lit","family":"df","node":{"start":68,"end":80},"kind":"concat","text":"left + right"}
 {"record":"edge","family":"df","kind":"direct","from":{"start":20,"end":32},"from_kind":"param","to":{"start":68,"end":72},"to_kind":"var_read"}
 {"record":"edge","family":"df","kind":"direct","from":{"start":259,"end":267},"from_kind":"param","to":{"start":365,"end":366},"to_kind":"var_read"}
 {"record":"edge","family":"df","kind":"direct","from":{"start":259,"end":267},"from_kind":"param","to":{"start":377,"end":378},"to_kind":"var_read"}

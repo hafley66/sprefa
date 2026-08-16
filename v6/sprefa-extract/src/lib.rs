@@ -50,9 +50,9 @@ pub use deps::{resolve_specifier, Policy, TsconfigPaths};
 pub use dispatch::dispatch;
 pub use family::{
     flow_edges, CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF,
-    DfFAux, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind, FlowF,
-    ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind,
-    TypeF, TypeFAux, TypeSig,
+    DfFAux, DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind,
+    FlowF, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
+    TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
 pub use types::{CfgEdgeKind, CfgF, CfgNodeKind};
 pub use lang::{
@@ -65,9 +65,6 @@ pub use project::{
     FsBlobSource, ProjectError, ResolveArm, ResolveArms, ResolveRequest, ScipFamilyRequest,
     ScipMode, SourceTreeBlobSource, RESOLVE_ARMS,
 };
-pub use soopy::{ContentId as SourceContentId, Pattern as SourcePattern,
-    ReadRequest as SourceReadRequest, RepositoryId as SourceRepositoryId,
-    Revision as SourceRevision, RevisionId as SourceRevisionId, SourceEntry, SourceRef};
 pub use rows::{Edge, FamilyBundle, Node};
 pub use scip::{
     byte_range, definition_of, join_documents, site_occurrence, Fallback, IndexerSpec, ScipClang,
@@ -87,6 +84,11 @@ pub use seams::{
     ScipSignature, ScipSource, ScipSymbolInfo,
 };
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
+pub use soopy::{
+    ContentId as SourceContentId, Pattern as SourcePattern, ReadRequest as SourceReadRequest,
+    RepositoryId as SourceRepositoryId, Revision as SourceRevision, RevisionId as SourceRevisionId,
+    SourceEntry, SourceRef,
+};
 pub use source::{ExtractOutput, FamilyMask, Source};
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges,
