@@ -24,16 +24,16 @@ rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
 # differs from the TS one: int is i64, text is String, json is
 # serde_json::Value, and the float primitive maps to f64.
 rel leaf_type(id: int, text: text).
-leaf_type(Id, 'String') <- type_row(Id, _, _, 'text', 'primitive', _, _).
-leaf_type(Id, 'i64') <- type_row(Id, _, _, 'int', 'primitive', _, _).
-leaf_type(Id, 'f64') <- type_row(Id, _, _, 'float', 'primitive', _, _).
-leaf_type(Id, 'bool') <- type_row(Id, _, _, 'bool', 'primitive', _, _).
-leaf_type(Id, 'serde_json::Value') <- type_row(Id, _, _, 'json', 'primitive', _, _).
+leaf_type(Id, 'String') <- type_row(Id, name: 'text', kind: 'primitive').
+leaf_type(Id, 'i64') <- type_row(Id, name: 'int', kind: 'primitive').
+leaf_type(Id, 'f64') <- type_row(Id, name: 'float', kind: 'primitive').
+leaf_type(Id, 'bool') <- type_row(Id, name: 'bool', kind: 'primitive').
+leaf_type(Id, 'serde_json::Value') <- type_row(Id, name: 'json', kind: 'primitive').
 leaf_type(Id, TypeName) <- emitted_type_name(Id, TypeName).
 
 # A type parameter stands for itself inside its generic's body, uncased.
 leaf_type(Id, ParameterName) <-
-  type_row(Id, _, _, ParameterName, 'type_parameter', _, _).
+  type_row(Id, name: ParameterName, kind: 'type_parameter').
 
 # @comment-ok: the __ namespace filter; no contains/2 builtin, so instr marks it.
 # The `__` namespace marks compiler-minted rels (list companions, option enums,
@@ -42,14 +42,15 @@ leaf_type(Id, ParameterName) <-
 # past the first character.
 rel minted_rel(name: text).
 minted_rel(Name) <-
-  type_row(_, _, _, Name, 'rel', _, _),
+  type_row(Name, kind: 'rel'),
   Position := instr(Name, '__'),
   Position > 0.
 
 # A concrete_type row's parent is the rel id it instantiates; that rel reaches
 # the file even when minted, mirroring 8_emit_rust_types.pl's concrete_rel/2.
 rel concrete_type_row(id: int, rel_id: int).
-concrete_type_row(Id, RelId) <- type_row(Id, RelId, _, _, 'concrete_type', _, _).
+concrete_type_row(Id, RelId) <-
+  type_row(Id, parent: RelId, kind: 'concrete_type').
 
 rel concrete_rel(rel_id: int).
 concrete_rel(RelId) <- concrete_type_row(_, RelId).
@@ -57,11 +58,11 @@ concrete_rel(RelId) <- concrete_type_row(_, RelId).
 # The rels that reach the file, with the PascalCase name each one asks for.
 rel renderable_rel(rel_id: int, bare_type: text, module_id: int).
 renderable_rel(RelId, BareType, ModuleId) <-
-  type_row(RelId, _, _, RelName, 'rel', _, ModuleId),
+  type_row(id: RelId, name: RelName, kind: 'rel', module_id: ModuleId),
   not(minted_rel(RelName)),
   BareType := replace(initcap(RelName), '_', '').
 renderable_rel(RelId, BareType, ModuleId) <-
-  type_row(RelId, _, _, RelName, 'rel', _, ModuleId),
+  type_row(id: RelId, name: RelName, kind: 'rel', module_id: ModuleId),
   minted_rel(RelName),
   concrete_rel(RelId),
   BareType := replace(initcap(RelName), '_', '').
@@ -77,7 +78,7 @@ colliding_type_name(BareType) <-
 # mangling camelCase ("myModule" -> "Mymodule"), so this caps only each split word's first character, mirroring module_type_name/2.
 rel module_name_normalized(module_id: int, normalized: text).
 module_name_normalized(ModuleId, Normalized) <-
-  type_row(ModuleId, _, _, ModuleName, 'module', _, _),
+  type_row(id: ModuleId, name: ModuleName, kind: 'module'),
   Normalized := replace(replace(replace(ModuleName, '.', '_'), '-', '_'), '/', '_').
 
 rel module_name_parts(module_id: int, parts: list(text)).
@@ -124,7 +125,7 @@ emitted_type_name(RelId, TypeName) <-
 # without the list strata reading the option stratum that reads them back.
 rel option_of_leaf(id: int, text: text).
 option_of_leaf(Id, Text) <-
-  type_row(Id, _, _, _, 'option', ElemId, _),
+  type_row(Id, kind: 'option', type_id: ElemId),
   leaf_type(ElemId, Element),
   Text := concat(['Option<', Element, '>']).
 
@@ -137,8 +138,8 @@ list_element(Id, Text) <- option_of_leaf(Id, Text).
 # inline, list(T) carries the elements in a member rel, and a consumer sees
 # Vec<T>.
 rel list_row(id: int, element_id: int).
-list_row(Id, ElemId) <- type_row(Id, _, _, _, 'json_list', ElemId, _).
-list_row(Id, ElemId) <- type_row(Id, _, _, _, 'list', ElemId, _).
+list_row(Id, ElemId) <- type_row(Id, kind: 'json_list', type_id: ElemId).
+list_row(Id, ElemId) <- type_row(Id, kind: 'list', type_id: ElemId).
 
 # @comment-ok: nesting bound; a self-recursive stratum settles a tick late.
 # Nesting unrolls to five levels; a recursive list_type derives one level per tick, so a single arrival batch renders short.
@@ -187,7 +188,7 @@ element_type(Id, Text) <- list_type(Id, Text).
 # An option column renders its element type wrapped in Option<...>.
 rel option_type(id: int, text: text).
 option_type(Id, Text) <-
-  type_row(Id, _, _, _, 'option', ElemId, _),
+  type_row(Id, kind: 'option', type_id: ElemId),
   element_type(ElemId, Element),
   Text := concat(['Option<', Element, '>']).
 
@@ -200,7 +201,8 @@ type_of(Id, Text) <- option_type(Id, Text).
 # and the name is joined on only at the wrap. A Rust field carries `pub`.
 rel field_line(rel_id: int, ordinal: int, line_text: text).
 field_line(RelId, Ordinal, LineText) <-
-  type_row(_ColumnId, RelId, Ordinal, ColumnName, 'column', TypeId, _),
+  type_row(parent: RelId, ordinal: Ordinal, name: ColumnName,
+           kind: 'column', type_id: TypeId),
   renderable_rel(RelId, _, _),
   type_of(TypeId, Type),
   LineText := concat(['    pub ', ColumnName, ': ', Type, ',']).
@@ -223,14 +225,15 @@ rendered_type(TypeName, 2, RelId, FileText) <-
 # An interface declaration names a capability and holds no columns; its whole
 # text is the empty-brace pair on one line after the trait keyword.
 rendered_type(TypeName, 0, InterfaceId, FileText) <-
-  type_row(InterfaceId, _, _, InterfaceName, 'interface', _, _),
+  type_row(id: InterfaceId, name: InterfaceName, kind: 'interface'),
   TypeName := replace(initcap(InterfaceName), '_', ''),
   FileText := concat(['pub trait ', TypeName, ' {}\n']).
 
 # A constraint row hangs off the parameter it bounds; Rust joins bounds with ' + '.
 rel constraint_type(parameter_id: int, ordinal: int, type_name: text).
 constraint_type(ParameterId, Ordinal, TypeName) <-
-  type_row(_ConstraintId, ParameterId, Ordinal, InterfaceName, 'constraint', _, _),
+  type_row(parent: ParameterId, ordinal: Ordinal, name: InterfaceName,
+           kind: 'constraint'),
   TypeName := replace(initcap(InterfaceName), '_', '').
 
 rel parameter_bound(parameter_id: int, bound: text).
@@ -243,11 +246,13 @@ bounded_parameter(ParameterId) <- constraint_type(ParameterId, _, _).
 # An unbounded parameter is its bare name; a bounded one carries `: Bound`.
 rel parameter_text(generic_id: int, ordinal: int, parameter_text: text).
 parameter_text(GenericId, Ordinal, ParameterText) <-
-  type_row(ParameterId, GenericId, Ordinal, ParameterName, 'type_parameter', _, _),
+  type_row(id: ParameterId, parent: GenericId, ordinal: Ordinal,
+           name: ParameterName, kind: 'type_parameter'),
   parameter_bound(ParameterId, Bound),
   ParameterText := concat([ParameterName, ': ', Bound]).
 parameter_text(GenericId, Ordinal, ParameterName) <-
-  type_row(ParameterId, GenericId, Ordinal, ParameterName, 'type_parameter', _, _),
+  type_row(id: ParameterId, parent: GenericId, ordinal: Ordinal,
+           name: ParameterName, kind: 'type_parameter'),
   not(bounded_parameter(ParameterId)).
 
 rel parameters_text(generic_id: int, parameters: text).
@@ -256,23 +261,24 @@ parameters_text(GenericId, group_concat(ParameterText, ', ', Ordinal)) <-
 
 rel parameterized_generic(generic_id: int).
 parameterized_generic(GenericId) <-
-  type_row(_ParameterId, GenericId, _, _, 'type_parameter', _, _).
+  type_row(parent: GenericId, kind: 'type_parameter').
 
 # The declaration head: PascalCase name, then the parameter list when there is one.
 rel generic_head(generic_id: int, type_name: text, head_text: text).
 generic_head(GenericId, TypeName, HeadText) <-
-  type_row(GenericId, _, _, GenericName, 'generic_rel', _, _),
+  type_row(id: GenericId, name: GenericName, kind: 'generic_rel'),
   parameters_text(GenericId, Parameters),
   TypeName := replace(initcap(GenericName), '_', ''),
   HeadText := concat([TypeName, '<', Parameters, '>']).
 generic_head(GenericId, TypeName, TypeName) <-
-  type_row(GenericId, _, _, GenericName, 'generic_rel', _, _),
+  type_row(id: GenericId, name: GenericName, kind: 'generic_rel'),
   not(parameterized_generic(GenericId)),
   TypeName := replace(initcap(GenericName), '_', '').
 
 rel generic_field_line(generic_id: int, ordinal: int, line_text: text).
 generic_field_line(GenericId, Ordinal, LineText) <-
-  type_row(_ColumnId, GenericId, Ordinal, ColumnName, 'generic_column', TypeId, _),
+  type_row(parent: GenericId, ordinal: Ordinal, name: ColumnName,
+           kind: 'generic_column', type_id: TypeId),
   type_of(TypeId, Type),
   LineText := concat(['    pub ', ColumnName, ': ', Type, ',']).
 

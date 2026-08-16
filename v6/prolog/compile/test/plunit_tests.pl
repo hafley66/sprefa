@@ -6300,6 +6300,91 @@ test(named_args_on_a_dotted_body_atom_bind_the_mangled_rels_columns) :-
         _, Rules),
     Rules =@= [(ripe(T) <- (rel_path([orchard, tree], [T, P]), P > 1))].
 
+test(capitalized_variable_puns_the_matching_named_argument) :-
+    parsed_module_path_program(
+        'rel type_row(id: int, parent: int, name: text, kind: text).\nrel rendered(name: text).\nrendered(Name) <- type_row(Name, kind: \'rel\').',
+        _, Rules),
+    Rules =@= [(rendered(Name) <- type_row(_, _, Name, rel))].
+
+test(capitalized_variable_without_a_matching_column_stays_positional) :-
+    parsed_module_path_program(
+        'rel pick_event(tree_id: int, picker: text, kilos: float).\nrel picked(tree_id: int).\npicked(TreeId) <- pick_event(TreeId, picker: \'ada\').',
+        _, Rules),
+    Rules =@= [(picked(TreeId) <- pick_event(TreeId, ada, _))].
+
+test(capitalized_pun_before_an_explicit_keyword) :-
+    parsed_module_path_program(
+        'rel pair(source: text, target: text).\nrel selected(source: text, target: text).\nselected(Source, target: Target) <- pair(Source, Target).',
+        _, Rules),
+    Rules =@= [(selected(Source, Target) <- pair(Source, Target))].
+
+test(explicit_keyword_before_a_capitalized_pun) :-
+    parsed_module_path_program(
+        'rel pair(source: text, target: text).\nrel selected(source: text, target: text).\nselected(source: Source, Target) <- pair(Source, Target).',
+        _, Rules),
+    Rules =@= [(selected(Source, Target) <- pair(Source, Target))].
+
+test(multiple_capitalized_puns_with_an_explicit_keyword) :-
+    parsed_module_path_program(
+        'rel triple(source: text, target: text, kind: text).\nrel selected(source: text, target: text, kind: text).\nselected(Source, Target, kind: Kind) <- triple(Source, Target, Kind).',
+        _, Rules),
+    Rules =@= [(selected(Source, Target, Kind) <- triple(Source, Target, Kind))].
+
+test(unmatched_positional_value_mixes_with_a_pun_and_keyword) :-
+    parsed_module_path_program(
+        'rel triple(source: text, target: text, kind: text).\nrel selected(source: text, target: text, kind: text).\nselected(Source, target: Target, \'fixed\') <- triple(Source, Target, Kind).',
+        _, Rules),
+    Rules =@= [(selected(Source, Target, fixed) <- triple(Source, Target, _Kind))].
+
+test(capitalized_pun_can_omit_the_columns_between_it_and_a_keyword) :-
+    parsed_module_path_program(
+        'rel triple(source: text, target: text, kind: text).\nrel selected(source: text, target: text, kind: text).\nselected(Source, target: Target, kind: \'fixed\') <- triple(Source, kind: \'fixed\').',
+        _, Rules),
+    Rules = [(selected(Source, _Target, fixed) <-
+              triple(Source, BodyTarget, fixed))],
+    var(BodyTarget).
+
+test(a_head_atom_uses_a_capitalized_pun) :-
+    parsed_module_path_program(
+        'rel pair(source: text, target: text).\nrel selected(source: text, target: text).\nselected(Source, target: Target) <- pair(Source, Target).',
+        _, Rules),
+    Rules =@= [(selected(Source, Target) <- pair(Source, Target))].
+
+test(a_body_atom_uses_a_capitalized_pun) :-
+    parsed_module_path_program(
+        'rel pair(source: text, target: text).\nrel selected(source: text, target: text).\nselected(Source, Target) <- pair(source: \'alice\', Target).',
+        _, Rules),
+    Rules =@= [(selected(_, Target) <- pair(alice, Target))].
+
+test(a_dotted_head_uses_a_capitalized_pun) :-
+    parsed_module_path_program(
+        'rel orchard.tree(tree_id: int, picked: int).\nrel harvest(tree_id: int, picked: int).\norchard.tree(Tree_id, picked: Picked) <- harvest(Tree_id, Picked).',
+        _, Rules),
+    Rules =@= [(rel_path([orchard, tree], [Tree_id, Picked]) <-
+                 harvest(Tree_id, Picked))].
+
+test(a_dotted_body_uses_a_capitalized_pun) :-
+    parsed_module_path_program(
+        'rel orchard.tree(tree_id: int, picked: int).\nrel harvest(tree_id: int, picked: int).\nrel ripe(tree_id: int).\nripe(Tree_id) <- orchard.tree(picked: Picked, Tree_id).',
+        _, Rules),
+    Rules =@= [(ripe(Tree_id) <-
+                 rel_path([orchard, tree], [Tree_id, _Picked]))].
+
+test(fully_positional_calls_retain_their_existing_column_order) :-
+    parsed_module_path_program(
+        'rel pair(source: text, target: text).\nrel selected(source: text, target: text).\nselected(Source, Target) <- pair(Source, Target).',
+        _, Rules),
+    Rules =@= [(selected(Source, Target) <- pair(Source, Target))].
+
+test(named_and_punned_arguments_are_independent_of_source_order) :-
+    parsed_module_path_program(
+        'rel pair(source: text, target: text).\nrel selected(source: text, target: text).\nselected(Source, target: Target) <- pair(Source, Target).',
+        _, LeftRules),
+    parsed_module_path_program(
+        'rel pair(source: text, target: text).\nrel selected(source: text, target: text).\nselected(target: Target, Source) <- pair(Source, Target).',
+        _, RightRules),
+    LeftRules =@= RightRules.
+
 % ── the zero-column child ───────────────────────────────────────────────────
 
 % A child declaring no columns still captures: the parent ref IS its only

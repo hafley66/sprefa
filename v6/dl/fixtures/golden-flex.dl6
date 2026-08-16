@@ -463,6 +463,31 @@ heavy_pick(TreeId, Kilos) <-
 rel picked_by_ada(tree_id: int).
 picked_by_ada(TreeId) <- pick_event(tree_id: TreeId, picker: 'ada').
 
+# Go-style capitalized keyword puns: when a call has one explicit keyword,
+# an exact column-name variable can stay positional. The four rules below keep
+# the ordering and omission cases in the compiling composition fixture:
+# pun before keyword, keyword before pun, multiple puns, and an unmatched
+# positional value after a pun and keyword. The final body omits trailing
+# columns, while its head exercises a pun in a head atom.
+rel pun_before_keyword(tree_id: int, picker: text).
+pun_before_keyword(Tree_id, picker: Picker) <-
+  pick_event(Tree_id, picker: Picker).
+
+rel keyword_before_pun(tree_id: int, picker: text).
+keyword_before_pun(Tree_id, Picker) <-
+  pick_event(picker: Picker, Tree_id).
+
+rel multiple_puns(tree_id: int, picker: text, kilos: float).
+multiple_puns(Tree_id, Picker, kilos: Kilos) <-
+  pick_event(Tree_id, Picker, kilos: Kilos).
+
+rel unmatched_after_pun(tree_id: int, kilos: float).
+unmatched_after_pun(Tree_id, Kilos) <-
+  pick_event(Tree_id, picker: 'ada', Kilos).
+
+rel body_pun(tree_id: int).
+body_pun(Tree_id) <- pick_event(picker: 'ada', Tree_id).
+
 # ═══ aggregate heads: all five, over a plain grouping column ═══════════════
 rel pick_stats(tree_id: int, picks: int, total: int, lowest: int, highest: int).
 pick_stats(TreeId, count(Sugar), sum(Sugar), min(Sugar), max(Sugar)) <-
