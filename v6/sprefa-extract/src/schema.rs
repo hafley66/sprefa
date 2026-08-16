@@ -25,6 +25,8 @@ RECORD SHAPES
   record=sig    family=type                owner={start,end}  owner_start=<u32>  owner_end=<u32>  slot=<param|ret>  pos=<u32>  ty=<name>
   record=param  family=df                  span={start,end}   pos=<u32>
   record=arg    family=df                  call={start,end}   pos=<i64>  arg={start,end}
+  record=df_field  family=df               owner={start,end}  name=<string>  value={start,end}
+  record=df_lit    family=df               node={start,end}   kind=<lit|template|concat>  text=<string>
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
   record=reference  family=call            span={start,end}   functor=<name/arity>  position=<goal|head_arg|term_arg>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>
@@ -120,6 +122,7 @@ KIND VOCABULARIES (the `kind` field)
   cst node    the grammar node type as named by ast-grep / tree-sitter (open set)
   cst edge    child
   df edge     direct
+  df lit kind  lit (cooked literal) | template | concat (raw source slice)
   flow edge   arg_to_param | ret_to_call_res | lambda_elem | lambda_ret
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
