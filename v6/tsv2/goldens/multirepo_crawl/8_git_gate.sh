@@ -105,10 +105,9 @@ swipl -q -l "$REPO/v6/prolog/compile.pl" -l "$REPO/v6/prolog/emit_rust.pl" \
 [ -s "$GENERATED" ] || fail "emit_rust wrote no program"
 say "PASS  7_git_refs.dl6 compiled through emit_rust.pl ($(wc -c <"$GENERATED" | tr -d ' ') bytes)"
 
-if [ ! -x "$HARNESS" ]; then
-  cargo build --quiet --manifest-path "$ENGINE/Cargo.toml" --bin emit_rust_harness \
-    >"$WORK/build.log" 2>&1 || fail "harness build failed: $(tail -5 "$WORK/build.log")"
-fi
+# Always build: a stale binary predating a new host arm false-fails the gate.
+cargo build --quiet --manifest-path "$ENGINE/Cargo.toml" --bin emit_rust_harness \
+  >"$WORK/build.log" 2>&1 || fail "harness build failed: $(tail -5 "$WORK/build.log")"
 [ -x "$HARNESS" ] || fail "no harness at $HARNESS"
 
 # ── the run: one tick of want_refs and want_pair rows ───────────────────────
