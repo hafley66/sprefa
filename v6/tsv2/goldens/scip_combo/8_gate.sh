@@ -16,18 +16,18 @@
 # it claims to be equivalent to, and nothing else in the tree compares them.
 #
 # ─── THE EXPECTED ANSWER IS NOT "EVERYTHING AGREES" ─────────────────────────
-# Two programs are PINNED DISAGREEMENTS. They are graded MUST-DIFFER, and this
-# gate goes RED if they ever start agreeing, because that would mean either the
-# defect was fixed (rewrite the pin) or the rig stopped exercising it.
+# One program is a PINNED DISAGREEMENT. It is graded MUST-DIFFER, and this gate
+# goes RED if it ever starts agreeing, because that would mean either the defect
+# was fixed (rewrite the pin) or the rig stopped exercising it.
 #
-#   6_door_skew_files_at   TS over-answers a rev-pinned feed. `git rev-parse`
-#                          echoes its argument on failure, the template's
-#                          `[ -n "$oid" ]` guard passes, and absence becomes a
-#                          row whose digest is the string `<rev>:<path>`.
 #   7_door_skew_family     `--family diet_scip` is a whole-project MODE the CLI
 #                          implements and the in-process mask parser drops on
 #                          its `_ => {}` arm, so the Rust door answers zero rows
 #                          in silence.
+#
+# 6_door_skew_files_at WAS the other pin (the rev-parse phantom row). Its
+# template now carries the verified guard and both doors agree, so it is graded
+# MUST-AGREE; this gate goes RED if the phantom row returns.
 #
 # ─── ONE PROGRAM HAS ONE DOOR, AND ITS OWN TEXT PROVES IT ───────────────────
 # 4_crawl_extract's two `dep_crawl_*` templates end in `exit 3`. On the TS door
@@ -105,20 +105,10 @@ graded_rels() {
 
 both_doors() { [ "$1" != "4_crawl_extract" ]; }
 
-# THREE CLASSES, and every program is in exactly one.
+# TWO CLASSES, and every program is in exactly one.
 #   pinned      the program exists to hold a door disagreement
-#   inherited   the program differs because a PINNED defect reaches it, and the
-#               reason names the pin. 1_rev_file_skew reads at rev A, which is
-#               the one revision where the index and the tree disagree, so the
-#               same guard 6_door_skew_files_at shrinks is what it meets.
 #   agreeing    everything else, and a difference there is unexplained
-must_differ() { case "$1" in 6_door_skew_files_at | 7_door_skew_family) return 0 ;; *) return 1 ;; esac; }
-inherited_from() {
-  case "$1" in
-    1_rev_file_skew) echo "6_door_skew_files_at: the rev-A file feed meets the rev-parse echo guard" ;;
-    *) echo "" ;;
-  esac
-}
+must_differ() { case "$1" in 7_door_skew_family) return 0 ;; *) return 1 ;; esac; }
 
 # ── the corpus, and the pins every leg reads ────────────────────────────────
 bash "$HERE/0_corpus.sh" "$CORPUS" >"$WORK/corpus.log" 2>&1 \
@@ -278,18 +268,11 @@ for program in $PROGRAMS; do
       diff "$rust" "$ts" | sed 's/^/DOOR    /' | head -8
     fi
   done
-  inherited="$(inherited_from "$program")"
   if must_differ "$program"; then
     if [ "$program_differs" = "0" ]; then
       note_failure "PIN $program: BOTH DOORS AGREE -- the pinned defect is gone, rewrite or retire the pin"
     else
       say "PIN   $program: doors disagree on $program_differs rel(s), which is what this file exists to hold"
-    fi
-  elif [ -n "$inherited" ]; then
-    if [ "$program_differs" = "0" ]; then
-      note_failure "INHERIT $program: agrees now, so its stated cause ($inherited) no longer reaches it"
-    else
-      say "INHERIT $program: $program_differs rel(s) differ, cause pinned in $inherited"
     fi
   elif [ "$program_differs" != "0" ]; then
     note_failure "$program: $program_differs rel(s) differ across the doors and nothing in the program says why"
@@ -362,5 +345,5 @@ check_names 5_cross_repo_ref dangling_ref 3 "ghost_call,trim"
 [ "$failures" = "0" ] || { say "artifacts: $WORK"; stop "$failures gate assertion(s) failed"; }
 say "artifacts: $WORK"
 say "SCIP COMBO GRADED: 7 programs compiled, $agreeing rels byte-identical across the doors, \
-$differing differing under 2 pinned defects and 1 program that inherits one, \
+$differing differing under 1 pinned defect, \
 1 program Rust-door-only by its own templates, 0 unexplained"
