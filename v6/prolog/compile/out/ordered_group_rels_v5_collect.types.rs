@@ -8,6 +8,6 @@ pub struct GroupRels {
 pub struct RelCatalog {
     pub relation_name: String,
     pub group_name: String,
-    pub _column_text: String,
-    pub _documentation_text: String,
+    pub column_text: String,
+    pub documentation_text: String,
 }

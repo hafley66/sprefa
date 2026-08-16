@@ -6,6 +6,6 @@ export interface GroupRels {
 export interface RelCatalog {
   relation_name: string;
   group_name: string;
-  _column_text: string;
-  _documentation_text: string;
+  column_text: string;
+  documentation_text: string;
 }

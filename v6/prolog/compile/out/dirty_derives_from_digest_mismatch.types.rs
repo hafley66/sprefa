@@ -5,7 +5,7 @@ pub struct Dirty {
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Head {
-    pub _repo_id: i64,
+    pub repo_id: i64,
     pub rev_id: i64,
 }
 

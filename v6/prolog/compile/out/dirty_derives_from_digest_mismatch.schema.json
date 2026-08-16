@@ -8,8 +8,8 @@
     },
     "head": {
       "additionalProperties":false,
-      "properties": {"_repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
-      "required": ["_repo_id", "rev_id" ],
+      "properties": {"repo_id": {"type":"integer"},"rev_id": {"type":"integer"}},
+      "required": ["repo_id", "rev_id" ],
       "type":"object"
     },
     "tree_file": {

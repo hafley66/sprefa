@@ -3,7 +3,7 @@ export interface Dirty {
 }
 
 export interface Head {
-  _repo_id: number;
+  repo_id: number;
   rev_id: number;
 }
 

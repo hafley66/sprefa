@@ -9,12 +9,12 @@
     "rel_catalog": {
       "additionalProperties":false,
       "properties": {
-        "_column_text": {"type":"string"},
-        "_documentation_text": {"type":"string"},
+        "column_text": {"type":"string"},
+        "documentation_text": {"type":"string"},
         "group_name": {"type":"string"},
         "relation_name": {"type":"string"}
       },
-      "required": ["relation_name", "group_name", "_column_text", "_documentation_text" ],
+      "required": ["relation_name", "group_name", "column_text", "documentation_text" ],
       "type":"object"
     }
   },

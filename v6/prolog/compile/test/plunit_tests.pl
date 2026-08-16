@@ -37,7 +37,8 @@
                 plan_rule_level_statements/2,
                 program_text_intern_plan/3,
                 json_capture_json_type/2 ]).
-:- use_module('../../analyze', [ check_supported_subset/1, literal_witness/1 ]).
+:- use_module('../../analyze',
+              [ check_supported_subset/1, literal_witness/1, snake_name/2 ]).
 :- use_module('../../0_rel_record',
               [ inferred_cols/3, relplan_parts/6, relplan_shape/6,
                 relplan_columns/3, relplan_column_types/3, relplan_of/3,
@@ -9372,3 +9373,16 @@ test(oracle_mints_list_ids_in_content_sorted_order) :-
     msort(ByName, [alpha-[z, y], bravo-[a, b], charlie-[m, n]]).
 
 :- end_tests(list_mint_order).
+
+:- begin_tests(snake_name_allcaps).
+
+% Pinning table for snake_name/2 ALLCAPS handling: an underscore is inserted
+% only at a word boundary, and uppercase runs collapse to one word.
+test(snake_name_allcaps_pinning) :-
+    forall(member((Input, Output),
+                  [ ('G', g), ('FooBar', foo_bar), ('fooBar', foo_bar),
+                    ('URL', url), ('HTTPServer', http_server),
+                    ('VAR_CAPS_0', var_caps_0), ('already_snake', already_snake) ]),
+           snake_name(Input, Output)).
+
+:- end_tests(snake_name_allcaps).

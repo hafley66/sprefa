@@ -5,6 +5,6 @@ export interface Budget {
 
 export interface Spend {
   team: string;
-  _item: string;
+  item: string;
   cost: number;
 }

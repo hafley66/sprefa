@@ -9,11 +9,11 @@
     "spend": {
       "additionalProperties":false,
       "properties": {
-        "_item": {"type":"string"},
         "cost": {"type":"integer"},
+        "item": {"type":"string"},
         "team": {"type":"string"}
       },
-      "required": ["team", "_item", "cost" ],
+      "required": ["team", "item", "cost" ],
       "type":"object"
     }
   },
