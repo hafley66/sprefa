@@ -27,9 +27,9 @@
 //! Deferred follow-ups (the same set the other langs parked): df literal/loop/
 //! nesting aux. Named-argument field names are emitted. The type_edge
 //! candidates (`kotlin_decl_edges`) +
-//! `Resolve<TypeF>`/`Resolve<CallF>` arms - v5 kotlin DOES emit type_edge, and
-//! both resolve arms land with the traits/codegen arc, not this port. The
-//! const facet is NOT ported: v5 kotlin emits no const entities and no
+//! `Resolve<TypeF>` land here (v5 kotlin DOES emit type_edge); `Resolve<CallF>`
+//! landed with the call port. The const facet is NOT ported: v5 kotlin emits no
+//! const entities and no
 //! const_value rows (`extract` leaves `consts` at Default), so v6 matches by
 //! emitting none either.
 // @comment-ok: the module header is a crate-level doc block predating the rail
@@ -39,7 +39,8 @@ use std::collections::BTreeSet;
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEntityKind, TypeF, TypeSig,
+    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind,
+    TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
@@ -95,9 +96,10 @@ fn kt_first_child<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_si
 // entity span is anchored at the decl node's start byte so
 // `line_of(span.start)` equals v5's reported `entity.line` (the decl start
 // row, 1-based). The type-edge candidates (`kotlin_decl_edges`: field/impl/
-// variant/generic rows v5 kotlin DOES emit) are DEFERRED to the traits/codegen
-// arc with `Resolve<TypeF>` - this port ships phase 1 only. No const facet
+// variant/generic rows v5 kotlin DOES emit) are collected in phase 1 and bound
+// by `Resolve<TypeF>`. No const facet
 // (v5 kotlin leaves `consts` at Default; v6 matches by emitting none).
+// @comment-ok: pre-existing TypeF section header block
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Project the TypeF family: one entity node per class/object/fun declaration
@@ -140,8 +142,10 @@ fn walk_kotlin_entities(
                     };
                     let span = node_span(child);
                     push_entity(sink, strings, span, &name, kind);
-                    // v5 walk_kotlin_docs walks class/object only, not companion.
+                    // v5 walk_kotlin docs + edges walk class/object only, not
+                    // companion (kotlin_decl_edges runs on class/object only).
                     if child.kind() != "companion_object" {
+                        kt_decl_edges(child, span, src, strings, sink);
                         if let Some(text) = kotlin_leading_kdoc(child, src) {
                             push_kt_doc(sink, strings, span, &text);
                         }
@@ -174,6 +178,139 @@ fn push_entity(
 ) {
     sink.nodes
         .push(Node::new(span, kind).with_name(strings.intern(name)));
+}
+
+// ── type-edge candidates (the Resolve<TypeF> input) ──────────────────────────
+
+/// The type-edge candidates for one class/object decl: field/impl/generic/
+/// variant rows, `to` as written (a `Cache<Item>` yields Cache AND Item; a
+/// bare `ctor: Wire` primary-ctor arg with no val/var is not part of the
+/// shape). Port of v5 `kotlin_decl_edges` (src/graph/typegraph/kotlin.rs:649);
+/// `Resolve<TypeF>` binds them. `owner` is the decl node's span (the entity
+/// join key).
+// @comment-ok: function doc block mirroring the go/rust decl-edge walkers
+fn kt_decl_edges(
+    decl: tree_sitter::Node,
+    owner: Span,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+) {
+    let mut cursor = decl.walk();
+    let children: Vec<tree_sitter::Node> = decl.children(&mut cursor).collect();
+
+    let Some(owner_name) = children
+        .iter()
+        .find(|n| n.kind() == "type_identifier")
+        .map(|n| kt_text(*n, src))
+    else {
+        return;
+    };
+
+    // Keyword-level split: `interface` is an anonymous token under the same
+    // class_declaration node kind as `class`; its supertypes are generic.
+    let is_interface = children.iter().any(|n| n.kind() == "interface");
+    let super_kind = if is_interface {
+        TypeEdgeKind::Generic
+    } else {
+        TypeEdgeKind::Impl
+    };
+
+    // Declared type-parameter names: their bounds are generic edges and the
+    // names themselves are not type refs.
+    let mut params: BTreeSet<String> = BTreeSet::new();
+    for n in &children {
+        if n.kind() != "type_parameters" {
+            continue;
+        }
+        let mut c = n.walk();
+        for tp in n.children(&mut c).filter(|n| n.kind() == "type_parameter") {
+            let mut cc = tp.walk();
+            let kids: Vec<tree_sitter::Node> = tp.children(&mut cc).collect();
+            if let Some(name) = kids.iter().find(|n| n.kind() == "type_identifier") {
+                params.insert(kt_text(*name, src).to_string());
+            }
+            for bound in kids.iter().filter(|n| n.kind() != "type_identifier") {
+                for to in kotlin_type_refs(*bound, src, &params) {
+                    push_kt_candidate(sink, strings, owner, &to, TypeEdgeKind::Generic);
+                }
+            }
+        }
+    }
+
+    for n in &children {
+        match n.kind() {
+            "delegation_specifier" => {
+                // constructor_invocation = superclass call, bare user_type =
+                // interface; both are supertypes, kind set by the owner flavor.
+                for to in kotlin_type_refs(*n, src, &params) {
+                    push_kt_candidate(sink, strings, owner, &to, super_kind);
+                }
+            }
+            "primary_constructor" => {
+                let mut c = n.walk();
+                for param in n.children(&mut c).filter(|n| n.kind() == "class_parameter") {
+                    let mut cc = param.walk();
+                    let kids: Vec<tree_sitter::Node> = param.children(&mut cc).collect();
+                    // val/var (binding_pattern_kind) makes it a field; a bare
+                    // constructor arg is not part of the type's shape.
+                    if !kids.iter().any(|n| n.kind() == "binding_pattern_kind") {
+                        continue;
+                    }
+                    for kid in kids.iter().filter(|n| n.kind() != "simple_identifier") {
+                        for to in kotlin_type_refs(*kid, src, &params) {
+                            push_kt_candidate(sink, strings, owner, &to, TypeEdgeKind::Field);
+                        }
+                    }
+                }
+            }
+            "class_body" => {
+                let mut c = n.walk();
+                for prop in n
+                    .children(&mut c)
+                    .filter(|n| n.kind() == "property_declaration")
+                {
+                    let mut cc = prop.walk();
+                    for vd in prop
+                        .children(&mut cc)
+                        .filter(|n| n.kind() == "variable_declaration")
+                    {
+                        for to in kotlin_type_refs(vd, src, &params) {
+                            push_kt_candidate(sink, strings, owner, &to, TypeEdgeKind::Field);
+                        }
+                    }
+                }
+            }
+            "enum_class_body" => {
+                let mut c = n.walk();
+                for entry in n.children(&mut c).filter(|n| n.kind() == "enum_entry") {
+                    let mut cc = entry.walk();
+                    let name = entry
+                        .children(&mut cc)
+                        .find(|n| n.kind() == "simple_identifier");
+                    if let Some(name) = name {
+                        let variant = format!("{owner_name}::{}", kt_text(name, src));
+                        push_kt_candidate(sink, strings, owner, &variant, TypeEdgeKind::Variant);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn push_kt_candidate(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: Span,
+    to: &str,
+    kind: TypeEdgeKind,
+) {
+    sink.aux.candidates.push(TypeEdgeCandidate {
+        owner,
+        to: strings.intern(to),
+        kind,
+    });
 }
 
 // ── doc facet (port of v5 `walk_kotlin_docs`) ────────────────────────────────
@@ -1288,6 +1425,86 @@ impl Resolve<CallF> for KotlinSource {
                 ProjectEdge::new(caller, dst_blob, dst_span, CallEdgeKind::NameResolve)
                     .with_call_site(site.span),
             );
+        }
+        edges
+    }
+}
+
+impl KotlinSource {
+    /// The deduped, deterministically-ordered candidate list (v5's BTreeSet
+    /// shaping): the aux candidates, deduped on (owner, to, kind). `resolve`
+    /// emits its edges in EXACTLY this order, one per candidate; the parity
+    /// golden zips the two (the zip discipline: edge i resolves candidate i).
+    // @comment-ok: method doc mirroring the go/rust candidate accessors
+    pub fn type_edge_candidates(output: &ExtractOutput) -> Vec<TypeEdgeCandidate> {
+        let mut set: BTreeSet<TypeEdgeCandidate> = BTreeSet::new();
+        if let Some(types) = &output.types {
+            for candidate in &types.aux.candidates {
+                set.insert(candidate.clone());
+            }
+        }
+        set.into_iter().collect()
+    }
+}
+
+/// The dst leg of one candidate: same-file TypeF entity first (its span joined
+/// through the `DefIndex` for the blob), else a unique corpus site, else None
+/// (text stays text, the zero leg). Name-only resolution, per the 4a ADDENDUM
+/// site-key discipline (no receiver typing anywhere in commit 4).
+// @comment-ok: helper doc mirroring the go/rust resolve_type_dst
+fn resolve_type_dst(
+    types: &FamilyBundle<TypeF>,
+    strings: &Strings,
+    index: Option<&DefIndex>,
+    name: &str,
+) -> Option<(BlobHash, Span)> {
+    let same_file = types
+        .nodes
+        .iter()
+        .find(|node| node.name.map_or(false, |id| strings.lookup(id) == name));
+    if let (Some(node), Some(index)) = (same_file, index) {
+        return corpus_defs(index, name)
+            .iter()
+            .find(|site| site.span == node.span)
+            .map(|site| (site.blob, site.span));
+    }
+    let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
+    match sites {
+        [only] => Some((only.blob, only.span)),
+        _ => None,
+    }
+}
+
+impl Resolve<TypeF> for KotlinSource {
+    fn resolve(&self, output: &ExtractOutput, cx: &ProjectCx) -> Vec<ProjectEdge<TypeF>> {
+        let Some(types) = &output.types else {
+            return Vec::new();
+        };
+        let index = cx.indexes.def_index.get();
+        let mut edges = Vec::new();
+        for candidate in KotlinSource::type_edge_candidates(output) {
+            // src: the TypeF entity at the owner span (a miss is a collection
+            // bug, not hidden here: it would break the parity zip count).
+            let Some(src_ix) = types
+                .nodes
+                .iter()
+                .position(|node| node.span == candidate.owner)
+            else {
+                continue;
+            };
+            let (dst_blob, dst_span) = resolve_type_dst(
+                types,
+                &output.strings,
+                index,
+                output.strings.lookup(candidate.to),
+            )
+            .unwrap_or_default();
+            edges.push(ProjectEdge::new(
+                NodeRef(src_ix as u32),
+                dst_blob,
+                dst_span,
+                candidate.kind,
+            ));
         }
         edges
     }
