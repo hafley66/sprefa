@@ -37,9 +37,10 @@ pub mod wire;
 pub use deps::{resolve_specifier, Policy, TsconfigPaths};
 pub use dispatch::dispatch;
 pub use family::{
-    CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF, DfFAux,
-    DfNodeKind, DfParam, DocFact, DocTag, Family, ProjectEdge, SigSlot, Specifier, SpecifierKind,
-    TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeFAux, TypeSig,
+    flow_edges, CallEdgeKind, CallF, CallKind, CallSite, CstEdgeKind, CstF, DfArg, DfEdgeKind, DfF,
+    DfFAux, DfNodeKind, DfParam, DocFact, DocTag, Family, FlowEdge, FlowEdgeKind, FlowF,
+    ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind,
+    TypeF, TypeFAux, TypeSig,
 };
 pub use lang::{
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DlSource,
@@ -75,5 +76,6 @@ pub use seams::{
 pub use shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 pub use source::{ExtractOutput, FamilyMask, Source};
 pub use wire::{
-    file_fact, flatten, flatten_jsonl, flatten_scip, scip_file_edges, FlatFact, SpanOut, SCHEMA,
+    file_fact, flatten, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges, FlatFact,
+    SpanOut, SCHEMA,
 };

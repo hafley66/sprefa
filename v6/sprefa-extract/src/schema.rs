@@ -34,6 +34,7 @@ RECORD SHAPES
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
+  record=flow_edge  family=flow  kind=<slug>  from_blob=<hex>  from={start,end}  to_blob=<hex>  to={start,end}
   record=file_edge  src_path=<string>  dst_path=<string>  symbols=<u32>
   record=file  path=<string>  digest=<hex>  bytes=<u32>  lines=<u32>
   record=scip_metadata  version=<i32>  tool_name=<string>  tool_version=<string>  tool_arguments=[<string>]  project_root=<string>  text_document_encoding=<i32>
@@ -59,7 +60,8 @@ RECORD SHAPES
 
 FIELDS
   family       the graph plane: cst (concrete syntax tree), type (declarations),
-               call (callables + call sites), df (intra-procedural value flow).
+               call (callables + call sites), df (intra-procedural value flow),
+               flow (inter-procedural value flow, derived).
   span         a node location; half-open bytes.
   kind         the node/edge slug from the per-family vocabulary below.
   name         the declared identifier, when the node carries one (else null).
@@ -86,6 +88,8 @@ FIELDS
   owner_path   file holding the declaration that makes a resolved type reference.
   target_path  file holding the declaration a resolved type reference names.
   digest       the file's content key, the same one resolved edges are keyed on.
+  from_blob/to_blob  the content keys (hex) of the two files a flow edge
+               crosses; `from`/`to` are byte spans into those files.
   bytes        the file's length in bytes.
   lines        the file's line count as an editor shows it: an unterminated last
                line still counts, an empty file is 0.
@@ -116,6 +120,7 @@ KIND VOCABULARIES (the `kind` field)
   cst node    the grammar node type as named by ast-grep / tree-sitter (open set)
   cst edge    child
   df edge     direct
+  flow edge   arg_to_param | ret_to_call_res | lambda_elem | lambda_ret
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
   resolved_edge kind       name_resolve | scip_override
