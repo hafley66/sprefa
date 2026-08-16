@@ -2086,6 +2086,13 @@
     "final_detail": ""
   },
   {
+    "name": "recursive_closure_passes_both_build_guard_arms",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
     "name": "switch_as_keyed_replace",
     "bucket": "identical",
     "detail": "",
