@@ -4,6 +4,7 @@
 // declared here (or in the typed modules it re-exports) rather than as bare
 // free functions, satisfying the v6 interface-declaration law by construction.
 
+pub mod change_facts;
 pub mod dep_resolve;
 pub mod driver;
 pub mod hosts;

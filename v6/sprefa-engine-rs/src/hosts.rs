@@ -5,6 +5,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path};
 use std::sync::{Arc, LazyLock, Mutex};
 
+use crate::change_facts::{
+    IRevisionDiffer, RevisionDiff, SoopyRevisionDiffer, GIT_CHANGED_LINE_COLUMNS,
+    GIT_CHANGE_COLUMNS, GIT_RENAME_COLUMNS,
+};
 use crate::dep_resolve::{
     DepResolveOutcome, DepResolver, GoModFrontier, IDepFrontierSource, LocalRepoRoster,
     SpecifierFrontier, DEP_EDGE_COLUMNS, DEP_REPO_COLUMNS, DEP_UNRESOLVED_COLUMNS,
@@ -66,6 +70,9 @@ fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> 
     }
     if plan.execution == "shell" && GIT_REVISION_HOSTS.contains(&plan.name.as_str()) {
         return Some(&*GIT_REVISIONS);
+    }
+    if plan.execution == "shell" && GIT_CHANGE_HOSTS.contains(&plan.name.as_str()) {
+        return Some(&*GIT_CHANGES);
     }
     executor_for(&plan.execution)
 }
@@ -684,6 +691,114 @@ impl IHostExecutor for GitRevisionExecutor {
                 })
                 .collect(),
             _ => return Err(named("not a Git revision host".to_string())),
+        };
+        Ok(ndjson(&rows))
+    }
+}
+
+// ═══ the rev-pair change plane, linked the same way ═════════════════════════
+
+// Three names, ONE diff per (repo, rev_base, rev_head): the two tree listings
+// and every blob read are settled once and read three ways.
+const GIT_CHANGE_HOSTS: &[&str] = &["git_change", "git_rename", "git_changed_line"];
+
+static GIT_CHANGES: LazyLock<ChangeFactExecutor> = LazyLock::new(ChangeFactExecutor::default);
+
+#[derive(Default)]
+pub struct ChangeFactExecutor {
+    diffs: Mutex<BTreeMap<String, Arc<RevisionDiff>>>,
+    differ: SoopyRevisionDiffer,
+}
+
+impl ChangeFactExecutor {
+    fn diff(
+        &self,
+        host: &str,
+        repo: &str,
+        rev_base: &str,
+        rev_head: &str,
+    ) -> Result<Arc<RevisionDiff>, HostError> {
+        let key = format!("{repo}|{rev_base}|{rev_head}");
+        if let Some(memo) = self.diffs.lock().expect("change fact memo").get(&key) {
+            return Ok(memo.clone());
+        }
+        // A revision that does not resolve is a named stop: zero rows would
+        // read as "these two trees are identical", a different fact.
+        let answer = Arc::new(self.differ.diff(repo, rev_base, rev_head).map_err(|error| {
+            HostError {
+                host: host.to_string(),
+                message: format!("diff {rev_base}..{rev_head} in {repo}: {error:#}"),
+            }
+        })?);
+        self.diffs
+            .lock()
+            .expect("change fact memo")
+            .insert(key, answer.clone());
+        Ok(answer)
+    }
+}
+
+impl IHostExecutor for ChangeFactExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let required = |name: &str| {
+            env.get(name)
+                .cloned()
+                .ok_or_else(|| named(format!("missing required host input `{name}`")))
+        };
+        let repo = required("repo")?;
+        let rev_base = required("rev_base")?;
+        let rev_head = required("rev_head")?;
+        let answer = self.diff(host, &repo, &rev_base, &rev_head)?;
+        let rows: Vec<serde_json::Value> = match host {
+            "git_change" => answer
+                .changes
+                .iter()
+                .map(|change| {
+                    host_row(
+                        GIT_CHANGE_COLUMNS,
+                        vec![
+                            serde_json::Value::String(change.kind.as_str().to_string()),
+                            serde_json::Value::String(change.path.clone()),
+                        ],
+                    )
+                })
+                .collect(),
+            "git_rename" => answer
+                .renames
+                .iter()
+                .map(|rename| {
+                    host_row(
+                        GIT_RENAME_COLUMNS,
+                        vec![
+                            serde_json::Value::String(rename.path_from.clone()),
+                            serde_json::Value::String(rename.path_to.clone()),
+                        ],
+                    )
+                })
+                .collect(),
+            "git_changed_line" => answer
+                .changed_lines
+                .iter()
+                .map(|line| {
+                    host_row(
+                        GIT_CHANGED_LINE_COLUMNS,
+                        vec![
+                            serde_json::Value::String(line.path.clone()),
+                            serde_json::Value::Number(line.line_number.into()),
+                        ],
+                    )
+                })
+                .collect(),
+            _ => return Err(named("not a change-fact host".to_string())),
         };
         Ok(ndjson(&rows))
     }
