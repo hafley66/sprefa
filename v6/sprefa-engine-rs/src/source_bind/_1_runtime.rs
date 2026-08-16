@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::time::Duration;
 
 use rusqlite::{params, Connection};
 use serde_json::json;
@@ -14,6 +15,7 @@ use crate::{
     types::{Arrival, ArrivalSign, Value},
 };
 
+use super::_2_watch::{request_for_deltas, SourceBindWatchers};
 use super::{
     source_row, GitSourceRegistration, SourceBindError, SourceBindFrame, SourceBindRelations,
     SourceBindTickFrame, SourceInputs,
@@ -29,6 +31,7 @@ pub struct SourceBind {
     inputs: SourceInputs,
     roots: BTreeMap<soopy::RepositoryId, String>,
     receipts: ReceiptStore,
+    watchers: SourceBindWatchers,
 }
 
 impl SourceBind {
@@ -59,6 +62,7 @@ impl SourceBind {
             inputs: SourceInputs::default(),
             roots: BTreeMap::new(),
             receipts,
+            watchers: SourceBindWatchers::default(),
         }
     }
 
@@ -88,6 +92,19 @@ impl SourceBind {
             root.as_ref().to_string_lossy().to_string(),
         );
         self.host.register_root(root)?;
+        Ok(registration)
+    }
+
+    /// Register a Git worktree and open its debounced Soopy source watcher.
+    /// Watcher registration happens before Soopy's baseline snapshot, so a
+    /// mutation racing startup remains visible in the first receipt.
+    pub fn watch_git(
+        &mut self,
+        root: impl AsRef<Path>,
+        query: soopy::SourceQuery,
+    ) -> anyhow::Result<GitSourceRegistration> {
+        let registration = self.watchers.register(root.as_ref(), query)?;
+        self.register_git(root)?;
         Ok(registration)
     }
 
@@ -151,6 +168,36 @@ impl SourceBind {
         let source = self.execute(request)?;
         let deltas = program.run_tick(seam, &source.arrivals)?;
         Ok(SourceBindTickFrame { source, deltas })
+    }
+
+    /// Wait for one coalesced worktree watcher batch and route it through the
+    /// ordinary SourceBind identity, extraction, and engine tick path. Empty
+    /// Soopy batches represent relevant filesystem notifications with no
+    /// logical source change and therefore do not create an engine tick.
+    pub fn run_watch_tick(
+        &mut self,
+        program: &GenProgram,
+        seam: &SqliteSeam,
+        worktree: &soopy::WorktreeId,
+        clock: u64,
+        timeout: Duration,
+    ) -> anyhow::Result<Option<SourceBindTickFrame>> {
+        self.validate_program(program)?;
+        let started = std::time::Instant::now();
+        loop {
+            let elapsed = started.elapsed();
+            let Some(remaining) = timeout.checked_sub(elapsed) else {
+                return Ok(None);
+            };
+            let deltas = self.watchers.recv(worktree, remaining)?;
+            let Some(deltas) = deltas else {
+                return Ok(None);
+            };
+            let Some(request) = request_for_deltas(clock, &deltas) else {
+                continue;
+            };
+            return self.run_tick(program, seam, request).map(Some);
+        }
     }
 
     pub fn validate_program(&self, program: &GenProgram) -> anyhow::Result<()> {

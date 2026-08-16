@@ -1,5 +1,7 @@
 use std::process::Command;
+use std::time::Duration;
 
+use sprefa_engine_rs::driver::drive_watch_tick;
 use sprefa_engine_rs::source_bind::{
     SourceBind, SourceBindRelations, BLOB_COLUMNS, FILE_COLUMNS, REPO_COLUMNS, REV_COLUMNS,
     SPAN_COLUMNS, SPECIFIER_COLUMNS,
@@ -440,4 +442,119 @@ fn persistent_receipts_retract_after_runtime_restart_before_replacement_addition
         .rels
         .iter()
         .all(|delta| delta.add.is_empty() && delta.del.is_empty()));
+}
+
+#[test]
+fn watcher_changes_enter_one_source_bind_tick_and_match_disk() {
+    let fixture = fixture();
+    let program = emitted_source_program();
+    let seam = SqliteSeam::in_memory().unwrap();
+    seam.run_ddl(&program.ddl).unwrap();
+    run_boot(&seam, &program.boot);
+    let mut bind = SourceBind::in_memory(SourceBindRelations::default()).unwrap();
+    let registration = bind
+        .watch_git(
+            fixture.path(),
+            soopy::SourceQuery {
+                revision: soopy::Revision::Worktree,
+                patterns: vec![soopy::Pattern("**/*.dl6".into())],
+            },
+        )
+        .unwrap();
+
+    // The watcher is registered before the baseline request. Its opening
+    // snapshot therefore observes the same committed worktree state as the
+    // first identity tick, including any startup race.
+    let initial = worktree_entry(fixture.path());
+    bind.run_tick(&program, &seam, identity(1, initial))
+        .unwrap();
+
+    let next_watch_tick = |bind: &mut SourceBind, clock: u64| {
+        drive_watch_tick(
+            bind,
+            &program,
+            &seam,
+            &registration.worktree,
+            clock,
+            Duration::from_secs(2),
+        )
+        .unwrap()
+        .expect("logical file change produced one watcher tick")
+    };
+
+    let new_path = fixture.path().join("new.dl6");
+    std::fs::write(&new_path, b"rel added.\n").unwrap();
+    let created = next_watch_tick(&mut bind, 2);
+    assert!(created
+        .source
+        .arrivals
+        .iter()
+        .any(|arrival| arrival.rel == "file" && matches!(arrival.sign, ArrivalSign::Add)));
+
+    std::fs::write(&new_path, b"rel added.\n").unwrap();
+    assert!(
+        drive_watch_tick(
+            &mut bind,
+            &program,
+            &seam,
+            &registration.worktree,
+            3,
+            Duration::from_millis(400),
+        )
+        .unwrap()
+        .is_none(),
+        "identical re-save did not create a logical tick"
+    );
+
+    std::fs::write(&new_path, b"rel changed.\n").unwrap();
+    let changed = next_watch_tick(&mut bind, 4);
+    assert!(
+        changed
+            .source
+            .arrivals
+            .iter()
+            .any(|arrival| arrival.rel == "file" && matches!(arrival.sign, ArrivalSign::Del)),
+        "changed arrivals: {:?}",
+        changed.source.arrivals
+    );
+
+    let renamed_path = fixture.path().join("renamed.dl6");
+    std::fs::rename(&new_path, &renamed_path).unwrap();
+    let renamed = next_watch_tick(&mut bind, 5);
+    let file_arrivals = renamed
+        .source
+        .arrivals
+        .iter()
+        .filter(|arrival| arrival.rel == "file")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        file_arrivals
+            .iter()
+            .filter(|arrival| matches!(arrival.sign, ArrivalSign::Del))
+            .count(),
+        1
+    );
+    assert_eq!(
+        file_arrivals
+            .iter()
+            .filter(|arrival| matches!(arrival.sign, ArrivalSign::Add))
+            .count(),
+        1
+    );
+
+    std::fs::remove_file(&renamed_path).unwrap();
+    let deleted = next_watch_tick(&mut bind, 6);
+    assert!(deleted
+        .source
+        .arrivals
+        .iter()
+        .any(|arrival| arrival.rel == "file" && matches!(arrival.sign, ArrivalSign::Del)));
+
+    let files = decoded_rows(&program, &seam, "file");
+    assert!(files
+        .iter()
+        .any(|row| matches!(&row[1], sprefa_engine_rs::Value::Text(path) if path == "main.dl6")));
+    assert!(!files.iter().any(|row| {
+        matches!(&row[1], sprefa_engine_rs::Value::Text(path) if path == "new.dl6" || path == "renamed.dl6")
+    }));
 }
