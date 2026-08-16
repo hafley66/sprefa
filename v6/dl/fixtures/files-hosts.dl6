@@ -63,7 +63,7 @@ sh files(glob: text) -> (path: text, digest: text) =
 # that rev has no blob: `rev-parse` fails, the guard drops it, and it is no row
 # (absence is row absence, never an empty digest).
 sh files_at(rev: text, glob: text) -> (path: text, digest: text) =
-  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+  `git ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
 
 rel want(glob: text).
 rel want_at(rev: text, glob: text).
@@ -99,7 +99,7 @@ sh repo_files(repo: text, glob: text) -> (path: text, digest: text) =
   `git -C '{repo}' ls-files -- '{glob}' | while IFS= read -r entry; do printf '%s %s\n' "$entry" "$(git -C '{repo}' hash-object -- "$entry")"; done`.
 
 sh repo_files_at(repo: text, rev: text, glob: text) -> (path: text, digest: text) =
-  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse '{rev}':"$entry" 2>/dev/null)"; [ -n "$oid" ] && printf '%s %s\n' "$entry" "$oid"; done`.
+  `git -C '{repo}' ls-files --with-tree='{rev}' -- '{glob}' | while IFS= read -r entry; do oid="$(git -C '{repo}' rev-parse --verify --quiet '{rev}':"$entry")"; if [ -n "$oid" ]; then printf '%s %s\n' "$entry" "$oid"; fi; done`.
 
 rel want_repo(repo: text, glob: text).
 rel want_repo_at(repo: text, rev: text, glob: text).
