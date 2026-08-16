@@ -227,8 +227,9 @@ only working notification path.
   makes that distinction and is conformance-tested
   (`v6/prolog/conformance/fixtures/json_patch_fold.pl:128-144`, RFC 7396 sections
   1 and 2). The COLUMN
-  plane cannot. `4_emit_jsonschema.pl:121` papers over it by dropping option
-  columns from `required`, emitting a schema looser than the IR.
+  plane cannot. `4_emit_jsonschema.pl:121-146` renders option columns
+  required-and-nullable (`anyOf` with null): present-null is spellable, key-absent
+  is not (verified in docs/generics-wrapper-inspection.md, stale claim 2).
 - **Interprocedural dataflow is unbuilt.** `v6/sprefa-extract/src/types.rs`
   `DfEdgeKind` has only `Direct` (intra-procedural); the `Flow` union
   (arg to param, ret to call_res, higher-order) is commented out and marked
