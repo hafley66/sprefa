@@ -11,7 +11,7 @@
 //! no datalog, no async (the engine, another worktree).
 //!
 //! Planes:  RESOLUTION (SCIP-wire): CallF, TypeF, ModuleF*
-//!          VALUE-FLOW (native):   DfF  (+ typed Flow* edges)
+//!          VALUE-FLOW (native):   DfF, FlowF
 //!          STRUCTURE (lossless):  CstF        (* = pending, commented out)
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
@@ -91,6 +91,7 @@ pub struct NodeRef(pub u32);
 #[serde(rename_all = "lowercase")]
 pub enum FamilyTag {
     Df,
+    Flow,
     Call,
     Type,
     Module,
@@ -619,13 +620,12 @@ impl DfNodeKind {
     }
 }
 
-/// df_edge kind. `Direct` is v5's unkinded df_edge(from,to). `Flow` (the promoted
-/// interprocedural union: arg->param, ret->call_res, higher-order) is PENDING.
+/// df_edge kind. `Direct` is v5's unkinded df_edge(from,to). Cross-function
+/// value edges live in the `FlowF` family, not here (own plane, own closure).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum DfEdgeKind {
     /// An intra-procedural value edge: dst receives the value of src.
     Direct,
-    // Flow(FlowEdgeKind), // PENDING epic 5
 }
 
 impl DfEdgeKind {
@@ -641,6 +641,153 @@ impl Family for DfF {
     type EdgeKind = DfEdgeKind;
     type Aux = DfFAux;
     const TAG: FamilyTag = FamilyTag::Df;
+}
+
+// ── VALUE-FLOW plane: FlowF  (inter-procedural value flow) ───────────────────
+
+/// Cross-function value flow, a separate family from `DfF`. Phase-2 only: no
+/// `FamilyMask` bit, no `ExtractOutput` field; a pure join computes its edges.
+#[derive(Default, Copy, Clone, Debug)]
+pub struct FlowF;
+
+/// Cross-function value edge kind. `DfDirect` is absent: that is DfF's plane.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum FlowEdgeKind {
+    /// A caller argument value flows into the callee's parameter at the same
+    /// positional slot.
+    ArgToParam,
+    /// A callee return value reaches the caller's call-result node. The edge is
+    /// caller-local, so the VALUE travels dst to src for this kind alone.
+    RetToCallRes,
+    /// A captured value flows into the closure's element slot.
+    LambdaElem,
+    /// A closure's return value flows out to the closure node.
+    LambdaRet,
+}
+
+impl FlowEdgeKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            FlowEdgeKind::ArgToParam => "arg_to_param",
+            FlowEdgeKind::RetToCallRes => "ret_to_call_res",
+            FlowEdgeKind::LambdaElem => "lambda_elem",
+            FlowEdgeKind::LambdaRet => "lambda_ret",
+        }
+    }
+}
+
+impl Family for FlowF {
+    type NodeKind = DfNodeKind;
+    type EdgeKind = FlowEdgeKind;
+    type Aux = ();
+    const TAG: FamilyTag = FamilyTag::Flow;
+}
+
+/// One cross-function value-flow edge, BOTH endpoints (blob, span) because flow
+/// crosses files. Emitted only by the `flow_edges` join.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FlowEdge {
+    pub src_blob: BlobHash,
+    pub src_span: Span,
+    pub dst_blob: BlobHash,
+    pub dst_span: Span,
+    pub kind: FlowEdgeKind,
+}
+
+/// The pure inter-procedural value-flow join: `DfArg` x resolved call edge x
+/// `DfParam` (ArgToParam) plus callee `Ret` nodes (RetToCallRes).
+pub fn flow_edges(
+    inputs: &[(BlobHash, &ExtractOutput)],
+    resolved: &[(BlobHash, Vec<ProjectEdge<CallF>>)],
+) -> Vec<FlowEdge> {
+    let by_blob: std::collections::HashMap<BlobHash, &ExtractOutput> =
+        inputs.iter().map(|(blob, out)| (*blob, *out)).collect();
+    let mut edges = Vec::new();
+    for (caller_blob, call_edges) in resolved {
+        let Some(caller) = by_blob.get(caller_blob) else {
+            continue;
+        };
+        let Some(caller_df) = caller.df.as_ref() else {
+            continue;
+        };
+        for call_edge in call_edges {
+            let Some(site) = call_edge.call_site else {
+                continue;
+            };
+            let Some(call_node) = call_node(caller_df, site) else {
+                continue;
+            };
+            let Some(callee) = by_blob.get(&call_edge.dst_blob) else {
+                continue;
+            };
+            let Some(callee_df) = callee.df.as_ref() else {
+                continue;
+            };
+            for arg in &caller_df.aux.args {
+                if arg.call != call_node || arg.pos < 0 {
+                    continue;
+                }
+                for param in &callee_df.aux.params {
+                    let param_span = callee_df.node(param.node).span;
+                    let in_callee = call_edge.dst_span.start <= param_span.start
+                        && param_span.end() <= call_edge.dst_span.end();
+                    if !in_callee || param.pos as i64 != arg.pos {
+                        continue;
+                    }
+                    edges.push(FlowEdge {
+                        src_blob: *caller_blob,
+                        src_span: caller_df.node(arg.arg).span,
+                        dst_blob: call_edge.dst_blob,
+                        dst_span: param_span,
+                        kind: FlowEdgeKind::ArgToParam,
+                    });
+                }
+            }
+            let call_span = caller_df.node(call_node).span;
+            for node in &callee_df.nodes {
+                if node.kind != DfNodeKind::Ret {
+                    continue;
+                }
+                let in_callee = call_edge.dst_span.start <= node.span.start
+                    && node.span.end() <= call_edge.dst_span.end();
+                if !in_callee {
+                    continue;
+                }
+                edges.push(FlowEdge {
+                    src_blob: *caller_blob,
+                    src_span: call_span,
+                    dst_blob: call_edge.dst_blob,
+                    dst_span: node.span,
+                    kind: FlowEdgeKind::RetToCallRes,
+                });
+            }
+        }
+    }
+    edges
+}
+
+/// The caller's call node at `site`: the `CallRes`/`New` node whose span equals
+/// the site, else the smallest such span containing it, else `None`.
+fn call_node(bundle: &FamilyBundle<DfF>, site: Span) -> Option<NodeRef> {
+    let is_call = |kind: DfNodeKind| matches!(kind, DfNodeKind::CallRes | DfNodeKind::New);
+    for (index, node) in bundle.nodes.iter().enumerate() {
+        if is_call(node.kind) && node.span == site {
+            return Some(NodeRef(index as u32));
+        }
+    }
+    let mut best: Option<(Span, NodeRef)> = None;
+    for (index, node) in bundle.nodes.iter().enumerate() {
+        if !is_call(node.kind) {
+            continue;
+        }
+        let contains = node.span.start <= site.start && site.end() <= node.span.end();
+        let tighter =
+            best.map_or(true, |(span, _)| node.span.end() - node.span.start < span.end() - span.start);
+        if contains && tighter {
+            best = Some((node.span, NodeRef(index as u32)));
+        }
+    }
+    best.map(|(_, node)| node)
 }
 
 // ── RESOLUTION plane: ModuleF  (PENDING - collapsed; not yet a family) ──────
@@ -1528,6 +1675,17 @@ pub enum FlatFact {
         to_blob: String,
         to: SpanOut,
     },
+    /// One cross-function value-flow edge (FlowF), BOTH endpoints content-keyed
+    /// because flow crosses files. Flattened by `flatten_flow`.
+    #[serde(rename = "flow_edge")]
+    FlowEdgeOut {
+        family: FamilyTag,
+        kind: String,
+        from_blob: String,
+        from: SpanOut,
+        to_blob: String,
+        to: SpanOut,
+    },
     /// A project-mode CLI call edge. Paths and names are top-level fields so
     /// line-oriented consumers can decode the record without span joins.
     #[serde(rename = "resolved_edge")]
@@ -1860,6 +2018,7 @@ pub enum FlatFact {
 //   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust); kotlin DEFERRED to the traits/codegen arc
 //   df aux (args/param_pos)                       [x]         [x]            [x]                 [x]
 //   df aux (fields/lits/loops/nests)              -> labels, follow-up
+//   inter-procedural flow (FlowF)                 -> landed; the resolve_project dispatch is the follow-up  // @comment-ok: the status table is one pre-existing prose run
 //
 // LEAF INFRA (pure CPU; still this leaf): parallel dispatch (rayon, arena-per-
 //   worker); BlobSource impls + the (BlobHash, lang, mask) content-keyed cache.
