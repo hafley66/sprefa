@@ -20,6 +20,8 @@ use std::marker::PhantomData;
 
 use serde::Serialize;
 
+pub use soopy::ContentId;
+
 // ════════════════════════════════════════════════════════════════════════════
 // S1 ATOMS
 // ════════════════════════════════════════════════════════════════════════════
@@ -44,37 +46,20 @@ impl Span {
     }
 }
 
-/// Content key: blake3 truncated to 16 raw bytes (store `files.content_hash`).
-/// Computed by `BlobHash::of` (commit 4b-i; the human-approved blake3 dep); the
-/// (BlobHash, lang, mask) phase-1 cache that consumes it still lands with
-/// BlobSource.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub struct BlobHash(pub [u8; 16]);
-
-impl BlobHash {
-    /// Hash file bytes: blake3's 32-byte digest truncated to the first 16.
-    pub fn of(content: &[u8]) -> Self {
-        let digest = blake3::hash(content);
-        let mut bytes = [0u8; 16];
-        bytes.copy_from_slice(&digest.as_bytes()[..16]);
-        Self(bytes)
-    }
-
-    /// Lowercase hex (32 chars) — the wire form of the content key.
-    pub fn to_hex(self) -> String {
-        let mut out = String::with_capacity(32);
-        for b in self.0 {
-            out.push_str(&format!("{b:02x}"));
-        }
-        out
-    }
+/// Hash file bytes to `ContentId::Blake3`: soopy exposes no public constructor
+/// for the blake3 arm, so this replicates its expression on the crate's dep.
+pub fn content_id_of(content: &[u8]) -> ContentId {
+    ContentId::Blake3(*blake3::hash(content).as_bytes())
 }
+
+/// The no-blob sentinel: the dst leg of an edge with no corpus target.
+pub const ZERO_CONTENT_ID: ContentId = ContentId::Blake3([0u8; 32]);
 
 /// A digest of the file set that affects resolution (which files exist + their
 /// manifest membership), folded from the corpus so two identical blobs in
 /// identical file-set contexts share phase-2 work. The middle component of the
 /// phase-2 cache key (see `Resolve`). Spec: seed `_1_mask.rs`:78-82. Declared
-/// here; NOT computed yet (lands with the phase-2 cache, same as BlobHash).
+/// here; NOT computed yet (lands with the phase-2 cache).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ProjectDigest(pub [u8; 16]);
 
@@ -774,11 +759,11 @@ impl Family for FlowF {
 
 /// One cross-function value-flow edge, BOTH endpoints (blob, span) because flow
 /// crosses files. Emitted only by the `flow_edges` join.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlowEdge {
-    pub src_blob: BlobHash,
+    pub src_blob: ContentId,
     pub src_span: Span,
-    pub dst_blob: BlobHash,
+    pub dst_blob: ContentId,
     pub dst_span: Span,
     pub kind: FlowEdgeKind,
 }
@@ -786,11 +771,11 @@ pub struct FlowEdge {
 /// The pure inter-procedural value-flow join: `DfArg` x resolved call edge x
 /// `DfParam` (ArgToParam) plus callee `Ret` nodes (RetToCallRes).
 pub fn flow_edges(
-    inputs: &[(BlobHash, &ExtractOutput)],
-    resolved: &[(BlobHash, Vec<ProjectEdge<CallF>>)],
+    inputs: &[(ContentId, &ExtractOutput)],
+    resolved: &[(ContentId, Vec<ProjectEdge<CallF>>)],
 ) -> Vec<FlowEdge> {
-    let by_blob: std::collections::HashMap<BlobHash, &ExtractOutput> =
-        inputs.iter().map(|(blob, out)| (*blob, *out)).collect();
+    let by_blob: std::collections::HashMap<ContentId, &ExtractOutput> =
+        inputs.iter().map(|(blob, out)| (blob.clone(), *out)).collect();
     let mut edges = Vec::new();
     for (caller_blob, call_edges) in resolved {
         let Some(caller) = by_blob.get(caller_blob) else {
@@ -824,9 +809,9 @@ pub fn flow_edges(
                         continue;
                     }
                     edges.push(FlowEdge {
-                        src_blob: *caller_blob,
+                        src_blob: caller_blob.clone(),
                         src_span: caller_df.node(arg.arg).span,
-                        dst_blob: call_edge.dst_blob,
+                        dst_blob: call_edge.dst_blob.clone(),
                         dst_span: param_span,
                         kind: FlowEdgeKind::ArgToParam,
                     });
@@ -843,9 +828,9 @@ pub fn flow_edges(
                     continue;
                 }
                 edges.push(FlowEdge {
-                    src_blob: *caller_blob,
+                    src_blob: caller_blob.clone(),
                     src_span: call_span,
-                    dst_blob: call_edge.dst_blob,
+                    dst_blob: call_edge.dst_blob.clone(),
                     dst_span: node.span,
                     kind: FlowEdgeKind::RetToCallRes,
                 });
@@ -1046,12 +1031,12 @@ impl<F: Family> FamilyBundle<F> {
 /// family — the seed's `EdgeKind` sum is deleted per D-families, so `kind` is
 /// `F::EdgeKind`. Emitted ONLY by `Resolve<F>` (phase 2); the store seam
 /// resolves the dst to a `node_id` by joining `(dst_blob, dst_span, kind)`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct ProjectEdge<F: Family> {
     /// Local node in this file (into the producing file's node vec).
     pub src: NodeRef,
     /// The resolved target's content key.
-    pub dst_blob: BlobHash,
+    pub dst_blob: ContentId,
     /// The target node's coordinate inside `dst_blob`.
     pub dst_span: Span,
     pub kind: F::EdgeKind,
@@ -1062,7 +1047,7 @@ pub struct ProjectEdge<F: Family> {
 }
 
 impl<F: Family> ProjectEdge<F> {
-    pub fn new(src: NodeRef, dst_blob: BlobHash, dst_span: Span, kind: F::EdgeKind) -> Self {
+    pub fn new(src: NodeRef, dst_blob: ContentId, dst_span: Span, kind: F::EdgeKind) -> Self {
         Self {
             src,
             dst_blob,
@@ -1204,9 +1189,9 @@ pub struct IndexBag {
 /// leg is REQUIRED: a class constructor is BOTH a TypeF entity and a CallF def
 /// at the SAME span (the two facets join on one coordinate), so (blob, span)
 /// alone does not name one node.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DefSite {
-    pub blob: BlobHash,
+    pub blob: ContentId,
     pub span: Span,
     pub family: FamilyTag,
 }
@@ -1230,7 +1215,7 @@ pub struct DefIndex {
 /// `ProjectCx.indexes.def_index` — NOT an explicit param: whole-project state
 /// built once per refresh is exactly what the cx exists to carry, and a param
 /// would invite per-call rebuilds beside the cx.
-pub fn build_def_index(outputs: &[(BlobHash, &ExtractOutput)]) -> DefIndex {
+pub fn build_def_index(outputs: &[(ContentId, &ExtractOutput)]) -> DefIndex {
     let mut index = DefIndex::default();
     for (blob, output) in outputs {
         if let Some(call) = &output.call {
@@ -1241,7 +1226,7 @@ pub fn build_def_index(outputs: &[(BlobHash, &ExtractOutput)]) -> DefIndex {
                         .entry(output.strings.lookup(name).to_string())
                         .or_default()
                         .push(DefSite {
-                            blob: *blob,
+                            blob: blob.clone(),
                             span: node.span,
                             family: CallF::TAG,
                         });
@@ -1256,7 +1241,7 @@ pub fn build_def_index(outputs: &[(BlobHash, &ExtractOutput)]) -> DefIndex {
                         .entry(output.strings.lookup(name).to_string())
                         .or_default()
                         .push(DefSite {
-                            blob: *blob,
+                            blob: blob.clone(),
                             span: node.span,
                             family: TypeF::TAG,
                         });
@@ -1320,7 +1305,7 @@ pub fn corpus_defs<'a>(index: &'a DefIndex, name: &str) -> &'a [DefSite] {
 /// blob with NO path and NO bytes (the resolve seam carries neither). None
 /// when the output has no named def (a file with nothing to resolve FROM) or
 /// the output was not in the index's corpus.
-pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<BlobHash> {
+pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<ContentId> {
     let mut named_spans: Vec<Span> = Vec::new();
     if let Some(call) = &output.call {
         named_spans.extend(
@@ -1343,7 +1328,7 @@ pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<BlobHash> {
     named_spans.dedup();
     for span in named_spans {
         if let Some(site) = index.map.values().flatten().find(|site| site.span == span) {
-            return Some(site.blob);
+            return Some(site.blob.clone());
         }
     }
     None
@@ -1357,7 +1342,7 @@ pub fn own_blob(output: &ExtractOutput, index: &DefIndex) -> Option<BlobHash> {
 /// zero AST. Written ONCE here for the ts/rust/go resolve arms (4c/4d).
 pub fn containing_def_site(
     index: &DefIndex,
-    blob: BlobHash,
+    blob: ContentId,
     span: Span,
 ) -> Option<(&str, DefSite)> {
     let mut best: Option<(&str, DefSite)> = None;
@@ -1370,7 +1355,7 @@ pub fn containing_def_site(
             }
             let better = match best {
                 None => true,
-                Some((_, b)) => {
+                Some((_, ref b)) => {
                     let call_bias = (site.family == CallF::TAG, b.family == CallF::TAG);
                     call_bias.0 && !call_bias.1
                         || (call_bias.0 == call_bias.1
@@ -1378,7 +1363,7 @@ pub fn containing_def_site(
                 }
             };
             if better {
-                best = Some((name.as_str(), *site));
+                best = Some((name.as_str(), site.clone()));
             }
         }
     }
@@ -1389,8 +1374,8 @@ pub fn containing_def_site(
 /// a `Source` (spec: seed `_2_traits.rs`:80-97 `ProjectExtract`, adapted to the
 /// crate's type-level families + Epic U's uniform surface).
 ///
-/// CACHE KEY (vs phase 1): phase 2 keys on `(BlobHash, ProjectDigest,
-/// FamilyMask)` where phase 1 keys on `(BlobHash, lang, FamilyMask)`. Identical
+/// CACHE KEY (vs phase 1): phase 2 keys on `(ContentId, ProjectDigest,
+/// FamilyMask)` where phase 1 keys on `(ContentId, lang, FamilyMask)`. Identical
 /// BYTES anywhere extract once, but a file appearing/disappearing can change a
 /// resolution, so the project digest rides the phase-2 key (spec:
 /// `_2_traits.rs`:9-15,80-84; `_7_tasks.rs`:37-38).
@@ -2162,7 +2147,7 @@ pub enum FlatFact {
         symbols: u32,
     },
     /// One file, once: its byte length and line count. v5's `file_lines` and
-    /// the size half of `content`. `digest` is the same BlobHash the phase-2
+    /// the size half of `content`. `digest` is the same ContentId the phase-2
     /// cache and every resolved edge key on, so this row is what lets a
     /// consumer join a path to the content key without hashing the file again.
     #[serde(rename = "file")]
@@ -2218,7 +2203,7 @@ pub enum FlatFact {
 //   inter-procedural flow (FlowF)                 -> landed; the resolve_project dispatch is the follow-up  // @comment-ok: the status table is one pre-existing prose run
 //
 // LEAF INFRA (pure CPU; still this leaf): parallel dispatch (rayon, arena-per-
-//   worker); BlobSource impls + the (BlobHash, lang, mask) content-keyed cache.
+//   worker); BlobSource impls + the (ContentId, lang, mask) content-keyed cache.
 //
 // OUT OF SCOPE (engine, another worktree): store-seam wiring (seed Extract trait
 //   is todo!()), datalog fixpoint, reactivity, async-eval.

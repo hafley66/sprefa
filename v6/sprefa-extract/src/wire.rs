@@ -21,7 +21,7 @@ use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, FlowEdge, FlowF, Proj
 use crate::rows::FamilyBundle;
 pub use crate::schema::SCHEMA;
 pub use crate::scip_rows::{flatten_scip, scip_file_edges};
-use crate::shape::{BlobHash, Strings};
+use crate::shape::{content_id_of, Strings};
 use crate::source::ExtractOutput;
 use crate::types::CfgF;
 pub use crate::types::{FlatFact, SpanOut};
@@ -251,8 +251,8 @@ pub fn flatten_cfg(bundle: &FamilyBundle<CfgF>) -> Vec<FlatFact> {
 
 /// Flatten one file's resolved TypeF project edges (phase-2 output) to the ONE
 /// project-edge arm. `from` resolves the src `NodeRef` through the PRODUCING
-/// file's own TypeF bundle; `to_blob` is the resolved target's content key
-/// (hex). Deliberately OUT of `flatten`/`flatten_jsonl` (dispatch stays
+/// file's own TypeF bundle; `to_blob` is the resolved target's content key, in
+/// `ContentId`'s Display form (`git:`/`blake3:`). Deliberately OUT of `flatten`/`flatten_jsonl` (dispatch stays
 /// phase-1 in 4b); the parity golden calls this directly on a `Resolve<TypeF>`
 /// result. 4c generalizes to CallF when `Resolve<CallF>` lands.
 pub fn flatten_project_type(
@@ -267,7 +267,7 @@ pub fn flatten_project_type(
                 family: TypeF::TAG,
                 kind: edge.kind.as_str().to_string(),
                 from: SpanOut::new(from.span.start, from.span.end()),
-                to_blob: edge.dst_blob.to_hex(),
+to_blob: edge.dst_blob.to_string(),
                 to: SpanOut::new(edge.dst_span.start, edge.dst_span.end()),
             }
         })
@@ -282,9 +282,9 @@ pub fn flatten_flow(edges: &[FlowEdge]) -> Vec<FlatFact> {
         .map(|edge| FlatFact::FlowEdgeOut {
             family: FlowF::TAG,
             kind: edge.kind.as_str().to_string(),
-            from_blob: edge.src_blob.to_hex(),
+            from_blob: edge.src_blob.to_string(),
             from: SpanOut::new(edge.src_span.start, edge.src_span.end()),
-            to_blob: edge.dst_blob.to_hex(),
+            to_blob: edge.dst_blob.to_string(),
             to: SpanOut::new(edge.dst_span.start, edge.dst_span.end()),
         })
         .collect()
@@ -307,7 +307,7 @@ pub fn file_fact(path: &str, content: &[u8]) -> FlatFact {
     let unterminated = !content.is_empty() && !content.ends_with(b"\n");
     FlatFact::FileRow {
         path: path.to_string(),
-        digest: BlobHash::of(content).to_hex(),
+        digest: content_id_of(content).to_string(),
         bytes: content.len() as u32,
         lines: (newlines + usize::from(unterminated)) as u32,
     }

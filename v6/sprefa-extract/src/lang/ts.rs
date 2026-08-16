@@ -34,7 +34,7 @@ use crate::seams::{
     containing_def_site, corpus_defs, covering_def, def_named, own_blob, DefIndex, ParseError,
     Parser, Project, Resolve,
 };
-use crate::shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
+use crate::shape::{ContentId, FamilyTag, NameId, NodeRef, Span, Strings, ZERO_CONTENT_ID};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::types::ScipIndex;
 use crate::types::{Unresolved, UnresolvedReason};
@@ -2914,7 +2914,7 @@ impl Source for TsSource {
 // AST. The candidate row IS the parity target (user ruling 2026-07-24, option
 // (a)): v5's `type_edge.to` is free text, so text dsts STAY text — a candidate
 // whose `to` names no corpus node (v5's synthetic `Owner::Member`, externals)
-// emits a ZERO dst leg (BlobHash::default + Span::empty), never a fake node
+// emits a ZERO dst leg (ZERO_CONTENT_ID + Span::empty), never a fake node
 // join. The genuinely-resolved span->blob legs are a v6-only ADDITIVE layer
 // (reported, never asserted). Same-file blob leg: the TypeF node named `to` in
 // THIS bundle gives the span, and the DefIndex span-join gives the blob (the
@@ -2946,7 +2946,7 @@ fn resolve_type_dst(
     strings: &Strings,
     index: Option<&DefIndex>,
     name: &str,
-) -> Option<(BlobHash, Span)> {
+) -> Option<(ContentId, Span)> {
     let same_file = types
         .nodes
         .iter()
@@ -2955,11 +2955,11 @@ fn resolve_type_dst(
         return corpus_defs(index, name)
             .iter()
             .find(|site| site.span == node.span)
-            .map(|site| (site.blob, site.span));
+            .map(|site| (site.blob.clone(), site.span));
     }
     let sites = index.map(|index| corpus_defs(index, name)).unwrap_or(&[]);
     match sites {
-        [only] => Some((only.blob, only.span)),
+        [only] => Some((only.blob.clone(), only.span)),
         _ => None,
     }
 }
@@ -2988,7 +2988,7 @@ impl Resolve<TypeF> for TsSource {
                 index,
                 output.strings.lookup(candidate.to),
             )
-            .unwrap_or_default();
+            .unwrap_or((ZERO_CONTENT_ID, Span::empty()));
             edges.push(ProjectEdge::new(
                 NodeRef(src_ix as u32),
                 dst_blob,
@@ -3036,7 +3036,7 @@ impl TsSource {
         output: &ExtractOutput,
         index: &DefIndex,
         callee: &str,
-    ) -> Option<(BlobHash, Span)> {
+    ) -> Option<(ContentId, Span)> {
         let call = output.call.as_ref()?;
         if let Some(r) = def_named(call, &output.strings, callee) {
             let span = call.node(r).span;
@@ -3044,14 +3044,14 @@ impl TsSource {
                 .iter()
                 .find(|site| site.span == span)
             {
-                return Some((site.blob, site.span));
+                return Some((site.blob.clone(), site.span));
             }
         }
         let sites = corpus_defs(index, callee);
-        let mut blobs: Vec<BlobHash> = Vec::new();
+        let mut blobs: Vec<ContentId> = Vec::new();
         for site in sites {
             if !blobs.contains(&site.blob) {
-                blobs.push(site.blob);
+                blobs.push(site.blob.clone());
             }
         }
         let [blob] = blobs.as_slice() else {
@@ -3061,7 +3061,7 @@ impl TsSource {
             .iter()
             .find(|s| s.family == FamilyTag::Call)
             .unwrap_or(&sites[0]);
-        Some((*blob, site.span))
+        Some((blob.clone(), site.span))
     }
 }
 
@@ -3074,12 +3074,12 @@ impl TsSource {
 /// or the target document is outside the corpus).
 fn scip_call_target<'a>(
     index: &ScipIndex,
-    joined: &[Option<(BlobHash, Vec<u8>)>],
+    joined: &[Option<(ContentId, Vec<u8>)>],
     doc_ix: usize,
     site: &CallSite,
     callee: &str,
     def_index: &'a DefIndex,
-) -> Option<(BlobHash, Span, &'a str)> {
+) -> Option<(ContentId, Span, &'a str)> {
     let doc = &index.documents[doc_ix];
     let (_, content) = joined[doc_ix].as_ref()?;
     let occ = site_occurrence(doc, content, site.span, callee)?;
@@ -3087,8 +3087,8 @@ fn scip_call_target<'a>(
     let def_doc = &index.documents[def_doc_ix];
     let (def_blob, def_content) = joined[def_doc_ix].as_ref()?;
     let ident = byte_range(def_content, def_occ.range, def_doc.position_encoding)?;
-    let (name, def_site) = containing_def_site(def_index, *def_blob, ident)?;
-    Some((*def_blob, def_site.span, name))
+    let (name, def_site) = containing_def_site(def_index, def_blob.clone(), ident)?;
+    Some((def_blob.clone(), def_site.span, name))
 }
 
 impl Resolve<CallF> for TsSource {
