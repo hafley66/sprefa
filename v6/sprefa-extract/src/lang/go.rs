@@ -16,19 +16,21 @@
 //! phase 1) + lands `Resolve<TypeF>`; 4d-ii-go lands `Resolve<CallF>` (the
 //! scip-ratcheted twin of the TsSource arm).
 //!
-//! Deferred follow-ups: the docs facet (`walk_go_docs`); df literal/loop/
-//! nesting aux. Df argument slots, parameter positions and field names emitted.
+//! Deferred follow-ups: df literal/loop/nesting aux. Df argument slots,
+//! parameter positions and field names emitted.
 //! The const facet is
 //! NOT ported: v5 go emits no const entities and no const_value rows
 //! (`walk_go_entities` skips `const_declaration`; `extract` leaves `consts`
 //! empty), so v6 matches by emitting none either.
+// @comment-ok: the module header is a crate-level doc block predating the rail
 
 use std::collections::BTreeSet;
 
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind,
+    TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -122,6 +124,12 @@ fn walk_go_entities(
                     let span = node_span(spec);
                     let name = go_text(name_node, src).to_string();
                     push_entity(sink, strings, span, &name, kind);
+                    // A grouped `type ( ... )` decl carries its doc above the
+                    // spec; a lone `type X struct{}` has it above the decl.
+                    if let Some(text) = go_leading_doc(spec, src).or_else(|| go_leading_doc(child, src))
+                    {
+                        push_go_doc(sink, strings, span, None, &text);
+                    }
                     if spec.kind() == "type_spec" {
                         go_edge_candidates(spec, span, src, strings, sink);
                     }
@@ -132,6 +140,9 @@ fn walk_go_entities(
                     let span = node_span(child);
                     let name = go_text(name_node, src).to_string();
                     push_entity(sink, strings, span, &name, TypeEntityKind::Function);
+                    if let Some(text) = go_leading_doc(child, src) {
+                        push_go_doc(sink, strings, span, None, &text);
+                    }
                     fn_sigs(sink, strings, span, child, src);
                 }
             }
@@ -139,13 +150,16 @@ fn walk_go_entities(
                 // Gate on a resolvable receiver, matching v5: a malformed receiver
                 // skips the entity (so v6 emits-or-skips exactly as v5 does). The
                 // owner name itself is dropped (no parent sym in v6).
-                if let (Some(name_node), Some(())) = (
+                if let (Some(name_node), Some(owner)) = (
                     child.child_by_field_name("name"),
-                    go_receiver_type(child, src).map(|_| ()),
+                    go_receiver_type(child, src),
                 ) {
                     let span = node_span(child);
                     let name = go_text(name_node, src).to_string();
                     push_entity(sink, strings, span, &name, TypeEntityKind::Method);
+                    if let Some(text) = go_leading_doc(child, src) {
+                        push_go_doc(sink, strings, span, Some(&owner), &text);
+                    }
                     fn_sigs(sink, strings, span, child, src);
                 }
             }
@@ -172,6 +186,100 @@ fn node_span(node: tree_sitter::Node) -> Span {
         start: node.start_byte() as u32,
         len: (node.end_byte() - node.start_byte()) as u32,
     }
+}
+
+// ── doc facet (port of v5 `walk_go_docs`) ────────────────────────────────────
+
+/// The cleaned doc block directly above `node`, or None: walks BACKWARD over
+/// `prev_sibling` comments with no blank-line gap, so multi-line godoc joins.
+fn go_leading_doc(node: tree_sitter::Node, src: &[u8]) -> Option<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut expected_row = node.start_position().row;
+    let mut cur = node.prev_sibling()?;
+    loop {
+        if cur.kind() != "comment" || cur.end_position().row + 1 != expected_row {
+            break;
+        }
+        let raw = go_text(cur, src);
+        if raw.trim_start().starts_with("/*") {
+            lines.insert(0, clean_block_comment(raw));
+            break;
+        }
+        let body = raw
+            .trim_start()
+            .strip_prefix("//")
+            .unwrap_or(raw)
+            .trim_start()
+            .to_string();
+        lines.insert(0, body);
+        expected_row = cur.start_position().row;
+        let Some(prev) = cur.prev_sibling() else {
+            break;
+        };
+        cur = prev;
+    }
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn push_go_doc(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    span: Span,
+    parent: Option<&str>,
+    text: &str,
+) {
+    sink.aux.docs.push(DocFact {
+        owner: span,
+        parent: parent.map(|name| strings.intern(name)),
+        text: strings.intern(text),
+        tags: parse_go_doc_tags(text, strings),
+    });
+}
+
+/// Strip a `/** ... */` block down to its prose. Port of v5 `clean_block_comment`.
+fn clean_block_comment(raw: &str) -> String {
+    let inner = raw.trim();
+    let inner = inner
+        .strip_prefix("/**")
+        .or_else(|| inner.strip_prefix("/*!"))
+        .or_else(|| inner.strip_prefix("/*"))
+        .unwrap_or(inner);
+    let inner = inner.strip_suffix("*/").unwrap_or(inner);
+    let mut lines: Vec<String> = inner
+        .lines()
+        .map(|l| {
+            let t = l.trim_start();
+            let t = t.strip_prefix('*').unwrap_or(t);
+            t.strip_prefix(' ').unwrap_or(t).to_string()
+        })
+        .collect();
+    while lines.first().is_some_and(|s| s.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|s| s.trim().is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
+}
+
+/// godoc's one structured convention: a blank-line-separated paragraph starting
+/// `Deprecated:` marks the decl deprecated. No `@`-tags exist in plain godoc.
+fn parse_go_doc_tags(text: &str, strings: &mut Strings) -> Vec<DocTag> {
+    let mut out = Vec::new();
+    for para in text.split("\n\n") {
+        if let Some(rest) = para.trim_start().strip_prefix("Deprecated:") {
+            out.push(DocTag {
+                tag: strings.intern("deprecated"),
+                arg: None,
+                text: strings.intern(rest.trim()),
+            });
+        }
+    }
+    out
 }
 
 // ── type-edge candidates (port of v5 `go_type_spec_edges`) ───────────────────
