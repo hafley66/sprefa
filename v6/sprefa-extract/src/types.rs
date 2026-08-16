@@ -322,13 +322,33 @@ pub struct TypeEdgeCandidate {
     pub kind: TypeEdgeKind,
 }
 
+/// A doc block bound to a declared entity, keyed by the entity node's span.
+/// `parent` is a method's impl owner: TypeF method nodes are bare-named.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocFact {
+    pub owner: Span,
+    pub parent: Option<NameId>,
+    pub text: NameId,
+    pub tags: Vec<DocTag>,
+}
+
+/// One structured doc tag. `tag` is the bare tag word (`section` for a rustdoc
+/// `# Heading`); `arg` is the name the tag carries, None when it takes none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocTag {
+    pub tag: NameId,
+    pub arg: Option<NameId>,
+    pub text: NameId,
+}
+
 /// The TypeF side-channel: arrow-type sigs + the const facet + the unresolved
-/// type-edge candidates (4b-iii).
+/// type-edge candidates (4b-iii) + the doc facet.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TypeFAux {
     pub sigs: Vec<TypeSig>,
     pub consts: Vec<ConstValue>,
     pub candidates: Vec<TypeEdgeCandidate>,
+    pub docs: Vec<DocFact>,
 }
 
 impl Family for TypeF {
@@ -1463,6 +1483,23 @@ pub enum FlatFact {
         text: String,
         kind: String,
     },
+    /// TypeF doc block: the owning entity's span, its impl owner when it has
+    /// one, and the cleaned text.
+    Doc {
+        family: FamilyTag,
+        owner: SpanOut,
+        parent: Option<String>,
+        text: String,
+    },
+    /// TypeF doc tag: one structured tag off the block at `owner`.
+    #[serde(rename = "doc_tag")]
+    DocTagOut {
+        family: FamilyTag,
+        owner: SpanOut,
+        tag: String,
+        arg: Option<String>,
+        text: String,
+    },
     /// CallF module specifier (phase-1, as written): span, bound name, kind.
     /// v6-ONLY rows (no v5 oracle facet) — the parity golden reports them,
     /// never asserts them.
@@ -1829,7 +1866,6 @@ pub enum FlatFact {
 // DEFERRED (per-lang gates noted; the rest lands with Resolve<F>/follow-ups):
 //   type_edge (field/impl/variant/uses/generic)   -> TS ASSERTED (4b-iii); GO ASSERTED (4d-i-go, v5 go shape-only: field/impl/generic); rust ASSERTED (4d-i-rust; no sig-sourced rows per v5); kotlin DEFERRED to the traits/codegen arc (v5 kotlin DOES emit: field/impl/generic/variant - candidates + Resolve<TypeF> land there)
 //   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust); kotlin DEFERRED to the traits/codegen arc
-//   docs facet                                    -> follow-up
 //   df aux (args/param_pos)                       [x]         [x]            [x]                 [x]
 //   df aux (fields/lits/loops/nests)              -> labels, follow-up
 //

@@ -30,7 +30,8 @@
 
 pub use crate::types::{
     CallEdgeKind, CallF, CallFAux, CallKind, CallSite, ConstKind, ConstValue, CstEdgeKind, CstF,
-    DfArg, DfEdgeKind, DfF, DfFAux, DfNodeKind, DfParam, Family, ProjectEdge, RefPosition,
+    DfArg, DfEdgeKind, DfF, DfFAux, DfNodeKind, DfParam, DocFact, DocTag, Family, ProjectEdge,
+    RefPosition,
     Reference, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind,
     TypeF, TypeFAux, TypeSig,
 };

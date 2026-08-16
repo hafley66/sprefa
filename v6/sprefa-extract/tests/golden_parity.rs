@@ -15,9 +15,11 @@
 //!   PORTED for ts + go + rust {type_edge} — phase-2 rows: `Resolve<TypeF>`
 //!           over the fixture corpus, twin-normalized to the oracle's text
 //!           shape (per-lang tests below: 4b-iii ts, 4d-i-go go, 4d-i-rust).
-//!   DEFERRED v5-only {doc, df_param_pos/args/fields/lits/loop/nest} —
-//!           reported, not asserted. df-aux is labels-not-
-//!           graph; docs are a follow-up.
+//!   PORTED for rust {doc} — `rust_doc_parity` below asserts it; the ts, go
+//!           and kotlin walkers are the follow-up, which is why `doc` is not in
+//!           the global PORTED list.
+//!   DEFERRED v5-only {df_param_pos/args/fields/lits/loop/nest} —
+//!           reported, not asserted. df-aux is labels-not-graph.
 //!   v6-only {cst, specifier} — cst: v5 has NO TS tree-sitter grammar;
 //!           incomparable. specifier: module import/export-from rows (4b-ii);
 //!           v5's module_binding is a modgraph rel the captured normalize does
@@ -146,8 +148,23 @@ fn facet_of(line: &str) -> &str {
 /// v6's canonical PORTED-facet lines (cst dropped — v6-only, incomparable).
 fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
     let out = dispatch(path, bytes, FamilyMask::ALL).expect("a Source matches the fixture");
+    let facts = flatten(&out);
+    // v5's doc row is keyed by the entity SYM, so the doc arm below needs the
+    // kind and name of the type node at the doc's owner span.
+    let entity: std::collections::BTreeMap<(u32, u32), (String, String)> = facts
+        .iter()
+        .filter_map(|fact| match fact {
+            FlatFact::Node {
+                family: FamilyTag::Type,
+                span,
+                kind,
+                name: Some(name),
+            } => Some(((span.start, span.end), (kind.clone(), name.clone()))),
+            _ => None,
+        })
+        .collect();
     let mut set = BTreeSet::new();
-    for fact in flatten(&out) {
+    for fact in facts {
         match fact {
             FlatFact::Node {
                 family,
@@ -219,6 +236,23 @@ fn v6_ported(path: &str, bytes: &[u8]) -> BTreeSet<String> {
                     field.as_deref().unwrap_or(""),
                 ));
             }
+            // v5's `doc` row is `doc\t<path>::<kind>::<name>\t<line>`, the one
+            // ported facet that carries the path; a method's name is qualified
+            // by its impl owner.
+            FlatFact::Doc { owner, parent, .. } => {
+                if let Some((kind, name)) = entity.get(&(owner.start, owner.end)) {
+                    let qualified = match parent {
+                        Some(owner_type) => format!("{owner_type}.{name}"),
+                        None => name.clone(),
+                    };
+                    set.insert(format!(
+                        "doc\t{path}::{kind}::{qualified}\t{}",
+                        line_of(bytes, owner.start)
+                    ));
+                }
+            }
+            // The captured oracle carries no tag rows; v6-only, never asserted.
+            FlatFact::DocTagOut { .. } => {}
             // Phase-2 rows: `flatten` never produces these (dispatch stays
             // phase-1); the Resolve<TypeF> twin-normalize lands with the
             // type_edge DEFERRED->PORTED flip.
@@ -289,7 +323,12 @@ fn ported_facets_match_v5() {
             .filter(|l| PORTED.contains(&facet_of(l)))
             .map(str::to_owned)
             .collect();
-        let v6 = v6_ported(case.path, case.fixture);
+        // Both sides filter by PORTED. Without it, a facet v6 emits ahead of its
+        // global flip (rust `doc`) reads as a diff on every other case.
+        let v6: BTreeSet<String> = v6_ported(case.path, case.fixture)
+            .into_iter()
+            .filter(|line| PORTED.contains(&facet_of(line)))
+            .collect();
 
         let only_v5: Vec<&String> = v5_ported.difference(&v6).collect();
         let only_v6: Vec<&String> = v6.difference(&v5_ported).collect();
@@ -1482,4 +1521,40 @@ struct RatchetCounts {
 /// The first 6 hex chars of a blob, for divergence listings.
 fn short(blob: BlobHash) -> String {
     blob.to_hex()[..6].to_string()
+}
+
+/// THE DOC FACET, RUST ONLY, ASSERTED BYTE-FOR-BYTE.
+///
+/// `PORTED` stays global across every case, so `"doc"` cannot join it until the
+/// ts, go and kotlin walkers land. This is the same set-difference as
+/// `ported_facets_match_v5`, narrowed to the one case and the one facet.
+///
+/// FAIL-FIRST: run before `doc_facts` existed, this reported 5 rows only in v5.
+#[test]
+fn rust_doc_parity() {
+    let case = CASES
+        .iter()
+        .find(|case| case.name == "rust_docs")
+        .expect("the rust_docs case");
+    let v5: BTreeSet<&str> = case
+        .baseline
+        .lines()
+        .filter(|line| facet_of(line) == "doc")
+        .collect();
+    assert!(!v5.is_empty(), "the oracle must carry doc rows to assert on");
+
+    let v6: BTreeSet<String> = v6_ported(case.path, case.fixture)
+        .into_iter()
+        .filter(|line| facet_of(line) == "doc")
+        .collect();
+    let v6_refs: BTreeSet<&str> = v6.iter().map(String::as_str).collect();
+
+    let only_v5: Vec<&&str> = v5.difference(&v6_refs).collect();
+    let only_v6: Vec<&&str> = v6_refs.difference(&v5).collect();
+    assert!(
+        only_v5.is_empty() && only_v6.is_empty(),
+        "rust doc parity diff vs the v5 oracle:\n  only in v5 ({}): {only_v5:#?}\n  only in v6 ({}): {only_v6:#?}",
+        only_v5.len(),
+        only_v6.len()
+    );
 }
