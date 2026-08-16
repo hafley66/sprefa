@@ -16,10 +16,8 @@
 # it claims to be equivalent to, and nothing else in the tree compares them.
 #
 # ─── THE EXPECTED ANSWER IS NOT "EVERYTHING AGREES" ─────────────────────────
-# One program is a PINNED DISAGREEMENT. Its two doors answer DIFFERENTLY by
-# design (a named stop on one, rows on the other), and the Rust door's STOP is
-# itself graded: this gate goes RED if that stop degrades to a silent rc=0 with
-# zero rows, the exact defect the pin exists to hold.
+# Two programs are PINNED DISAGREEMENTS. Their doors answer DIFFERENTLY by
+# design, and the difference is what each pin grades:
 #
 #   7_door_skew_family     `--family diet_scip` is a whole-project MODE the CLI
 #                          implements and the in-process mask parser refuses by
@@ -27,8 +25,15 @@
 #                          gate grades the STOP: a silent rc=0 with zero rows is
 #                          the regression, and it is what this pin turns RED on.
 #
-# 6_door_skew_files_at WAS the other pin (the rev-parse phantom row). Its
-# template now carries the verified guard and both doors agree, so it is graded
+#   2_extract_rev_skew     the Rust door's SprefaExtractExecutor reads extract
+#                          bytes by blob oid, so the HEAD-pinned feed answers a
+#                          DIFFERENT callable set than the dirty worktree feed;
+#                          the TS door's emitted template reads the worktree for
+#                          both. The doors differ on the dirty-worktree arm, and
+#                          that difference is the point of the pin.
+#
+# 6_door_skew_files_at WAS a third pin (the rev-parse phantom row). Its template
+# now carries the verified guard and both doors agree, so it is graded
 # MUST-AGREE; this gate goes RED if the phantom row returns.
 #
 # ─── ONE PROGRAM HAS ONE DOOR, AND ITS OWN TEXT PROVES IT ───────────────────
@@ -110,7 +115,7 @@ both_doors() { [ "$1" != "4_crawl_extract" ]; }
 # TWO CLASSES, and every program is in exactly one.
 #   pinned      the program exists to hold a door disagreement
 #   agreeing    everything else, and a difference there is unexplained
-must_differ() { case "$1" in 7_door_skew_family) return 0 ;; *) return 1 ;; esac; }
+must_differ() { case "$1" in 7_door_skew_family|2_extract_rev_skew) return 0 ;; *) return 1 ;; esac; }
 
 # program 7 pins a named STOP on the Rust door: the extract twin refuses the
 # mode name. Grading the stop means rc nonzero AND stderr naming the family.
@@ -346,9 +351,10 @@ check_nonempty 1_rev_file_skew removed_path 1
 check_nonempty 1_rev_file_skew rewritten_path 1
 check_names 1_rev_file_skew removed_path 2 "main.go"
 
-check_empty 2_extract_rev_skew worktree_only_proc agreed_proc "the extractor reads disk, so both feeds must answer the same callables"
-check_empty 2_extract_rev_skew pinned_only_proc agreed_proc "the extractor reads disk, so both feeds must answer the same callables"
 check_nonempty 2_extract_rev_skew pinned_digest_skew 1
+check_empty 2_extract_rev_skew pinned_only_proc agreed_proc "the pinned feed must not answer a callable that exists only in the dirty worktree"
+check_nonempty 2_extract_rev_skew worktree_only_proc 1
+check_names 2_extract_rev_skew worktree_only_proc 3 "beta_uncommitted"
 
 check_empty 3_span_in_file span_outside_file contained_span "a def span past its own file's byte count is an extractor defect"
 check_empty 3_span_in_file orphan_span contained_span "a span whose file the feed never reported means the two disagree about the corpus"
@@ -365,5 +371,5 @@ check_names 5_cross_repo_ref dangling_ref 3 "ghost_call,trim"
 [ "$failures" = "0" ] || { say "artifacts: $WORK"; stop "$failures gate assertion(s) failed"; }
 say "artifacts: $WORK"
 say "SCIP COMBO GRADED: 7 programs compiled, $agreeing rels byte-identical across the doors, \
-$differing differing under 1 pinned defect, \
+$differing differing under 2 pinned defects, \
 1 program Rust-door-only by its own templates, 0 unexplained"

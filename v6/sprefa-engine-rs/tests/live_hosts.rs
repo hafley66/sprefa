@@ -102,14 +102,16 @@ async fn live_extract_runs_in_process_with_no_binary_configured() {
         "{}/tests/fixtures/live_extract_target.rs",
         env!("CARGO_MANIFEST_DIR")
     );
-    let schedule = vec![vec![add("file", vec![text(&target), text("digest-1")])]];
+    // An empty digest names the no-digest branch: the unscoped extract host
+    // reads the worktree file, unchanged.
+    let schedule = vec![vec![add("file", vec![text(&target), text("")])]];
     run_schedule_live(&program, &seam, &schedule, 100)
         .await
         .expect("live run");
     let rows = table_rows(&program, &seam, "call_site");
     assert!(
         rows.iter()
-            .any(|row| row == &vec![text(&target), text("digest-1"), text("helper")]),
+            .any(|row| row == &vec![text(&target), text(""), text("helper")]),
         "extracted call facts must include main's call to helper, got {rows:?}"
     );
 }
@@ -169,7 +171,7 @@ fn unknown_family_name_is_a_named_stop_in_the_extract_twin() {
     );
     let env = BTreeMap::new();
 
-    let mode = SprefaExtractExecutor
+    let mode = SprefaExtractExecutor::default()
         .run(
             "extract",
             &format!("$DL_EXTRACT_BIN --family diet_scip {target}"),
@@ -180,7 +182,7 @@ fn unknown_family_name_is_a_named_stop_in_the_extract_twin() {
     assert!(mode.message.contains("diet_scip"), "{mode}");
     assert!(mode.message.contains("not linked in-process"), "{mode}");
 
-    let unknown = SprefaExtractExecutor
+    let unknown = SprefaExtractExecutor::default()
         .run(
             "extract",
             &format!("$DL_EXTRACT_BIN --family nonsense {target}"),
@@ -246,6 +248,79 @@ fn git_fixture_repo() -> std::path::PathBuf {
 
 fn output_lines(output: String) -> Vec<String> {
     output.lines().map(str::to_string).collect()
+}
+
+fn git_run(root: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .env("GIT_AUTHOR_NAME", "sprefa-engine-rs")
+        .env("GIT_AUTHOR_EMAIL", "sprefa-engine-rs@example.invalid")
+        .env("GIT_COMMITTER_NAME", "sprefa-engine-rs")
+        .env("GIT_COMMITTER_EMAIL", "sprefa-engine-rs@example.invalid")
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// A digest-carrying demand must extract the BLOB named by that oid, not the
+/// worktree bytes. The committed file defines `committed_fn`; the dirty worktree
+/// replaces it with `worktree_fn`; a demand pinned to the committed oid extracts
+/// only `committed_fn`. This proves the executor reads by oid at the unit level,
+/// independent of the door diff the fixture grades.
+#[test]
+fn digest_carrying_demand_reads_the_blob_not_the_worktree() {
+    let root = std::env::temp_dir().join(format!(
+        "sprefa_engine_soopy_ts_{}_{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(root.join("src")).expect("fixture directory");
+    git_run(&root, &["init", "-q"]);
+    std::fs::write(
+        root.join("src/file.ts"),
+        "export function committed_fn(): number { return 1; }\n",
+    )
+    .expect("committed file");
+    git_run(&root, &["add", "."]);
+    git_run(&root, &["commit", "-qm", "initial"]);
+    let committed_oid = git_run(&root, &["rev-parse", "HEAD:src/file.ts"]);
+    std::fs::write(
+        root.join("src/file.ts"),
+        "export function worktree_fn(): number { return 2; }\n",
+    )
+    .expect("dirty file");
+
+    let env = BTreeMap::from([
+        ("repo".to_string(), root.display().to_string()),
+        ("digest".to_string(), committed_oid),
+    ]);
+    let command_line = format!(
+        "$DL_EXTRACT_BIN --family call {}/src/file.ts",
+        root.display()
+    );
+    let output = SprefaExtractExecutor::default()
+        .run("extract", &command_line, &env)
+        .expect("extract the committed blob");
+    assert!(
+        output.contains("committed_fn"),
+        "committed function missing: {output}"
+    );
+    assert!(
+        !output.contains("worktree_fn"),
+        "worktree function leaked through the digest: {output}"
+    );
+
+    std::fs::remove_dir_all(root).expect("remove fixture repository");
 }
 
 #[test]

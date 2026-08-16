@@ -44,7 +44,7 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
         "shell" => Some(&ShellExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
-        "sprefa_extract" | "sprefa_extract_repo" => Some(&SprefaExtractExecutor),
+        "sprefa_extract" | "sprefa_extract_repo" => Some(&*EXTRACT),
         _ => None,
     }
 }
@@ -112,7 +112,14 @@ impl IHostExecutor for ShellExecutor {
     }
 }
 
-pub struct SprefaExtractExecutor;
+// One long-lived `git cat-file --batch` per repository root, so a digest-
+// carrying demand is one blob read and never one process per blob.
+#[derive(Default)]
+pub struct SprefaExtractExecutor {
+    batches: Mutex<BTreeMap<String, soopy::GitBatch>>,
+}
+
+static EXTRACT: LazyLock<SprefaExtractExecutor> = LazyLock::new(SprefaExtractExecutor::default);
 
 /// Linked implementation of the four ruled Git file-feed hosts. The emitted
 /// templates still document the portable shell contract; this executor reads
@@ -804,12 +811,35 @@ impl IHostExecutor for ChangeFactExecutor {
     }
 }
 
+impl SprefaExtractExecutor {
+    // An oid missing from the object database is a named stop; one batch
+    // process per repository root, never one per blob.
+    fn read_blob(&self, host: &str, repo_root: &Path, digest: &str) -> Result<Vec<u8>, HostError> {
+        let named = |message: String| HostError {
+            host: host.to_string(),
+            message,
+        };
+        let key = repo_root.to_string_lossy().into_owned();
+        let mut batches = self.batches.lock().expect("extract batch memo");
+        if !batches.contains_key(&key) {
+            let batch = soopy::GitBatch::open(repo_root)
+                .map_err(|error| named(format!("open a blob batch in {key}: {error}")))?;
+            batches.insert(key.clone(), batch);
+        }
+        let batch = batches.get_mut(&key).expect("just inserted the batch");
+        batch
+            .read(&soopy::ObjectId(Arc::from(digest)))
+            .map(|bytes| bytes.to_vec())
+            .map_err(|error| named(format!("read blob {digest} in {key}: {error}")))
+    }
+}
+
 impl IHostExecutor for SprefaExtractExecutor {
     fn run(
         &self,
         host: &str,
         command_line: &str,
-        _env: &BTreeMap<String, String>,
+        env: &BTreeMap<String, String>,
     ) -> Result<String, HostError> {
         let named = |message: String| HostError {
             host: host.to_string(),
@@ -849,8 +879,30 @@ impl IHostExecutor for SprefaExtractExecutor {
             }
         }
         let path = path.ok_or_else(|| named(format!("no path in `{command_line}`")))?;
-        let content = std::fs::read(&path)
-            .map_err(|failure| named(format!("read {path} failed: {failure}")))?;
+        let digest = env
+            .get("digest")
+            .map(String::as_str)
+            .filter(|d| !d.is_empty());
+        let content = match digest {
+            Some(digest) => {
+                let repo_root = env
+                    .get("repo")
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| {
+                        soopy::discover(std::path::PathBuf::from(&path))
+                            .ok()
+                            .map(|repository| repository.root)
+                    })
+                    .ok_or_else(|| {
+                        named(format!("no repository root for digest read of {path}"))
+                    })?;
+                self.read_blob(host, &repo_root, digest)?
+            }
+            // The no-digest branch: a demand that never names a revision reads
+            // the worktree bytes off disk, unchanged.
+            None => std::fs::read(&path)
+                .map_err(|failure| named(format!("read {path} failed: {failure}")))?,
+        };
         let mask = match &family {
             None => sprefa_extract::FamilyMask::ALL,
             Some(spec) => {
