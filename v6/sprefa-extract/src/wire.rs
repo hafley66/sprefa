@@ -18,12 +18,12 @@
 //! re-exported here so no import path moved.
 
 use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, FlowEdge, FlowF, ProjectEdge, TypeF};
-use crate::types::CfgF;
 use crate::rows::FamilyBundle;
 pub use crate::schema::SCHEMA;
 pub use crate::scip_rows::{flatten_scip, scip_file_edges};
 use crate::shape::{BlobHash, Strings};
 use crate::source::ExtractOutput;
+use crate::types::CfgF;
 pub use crate::types::{FlatFact, SpanOut};
 
 /// Flatten one file's `ExtractOutput` to flat facts: every present family, in
@@ -162,7 +162,8 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
         bundle.nodes.len()
             + bundle.aux.sites.len()
             + bundle.aux.specifiers.len()
-            + bundle.aux.refs.len(),
+            + bundle.aux.refs.len()
+            + bundle.aux.unresolved.len(),
     );
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
@@ -195,6 +196,14 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             span: SpanOut::new(reference.span.start, reference.span.end()),
             functor: strings.lookup(reference.functor).to_string(),
             position: reference.position.as_str().to_string(),
+        });
+    }
+    for unresolved in &bundle.aux.unresolved {
+        out.push(FlatFact::Unresolved {
+            family: CallF::TAG,
+            span: SpanOut::new(unresolved.span.start, unresolved.span.end()),
+            reason: unresolved.reason.as_str().to_string(),
+            detail: strings.lookup(unresolved.detail).to_string(),
         });
     }
     out

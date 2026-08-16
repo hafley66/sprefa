@@ -33,6 +33,7 @@ RECORD SHAPES
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>
   record=doc_tag  family=type              owner={start,end}  tag=<string>  arg=<string|null>  text=<string>
   record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>
+  record=unresolved  family=call           span={start,end}   reason=<slug>  detail=<string>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
@@ -98,6 +99,8 @@ FIELDS
                line still counts, an empty file is 0.
   module       a specifier's source module as written, null when the language
                puts the module in `name` (path-only forms).
+  reason       why a runtime-computed edge marker fired (see its vocabulary).
+  detail       the computed expression's source text, exactly the text at `span`.
   symbol       a SCIP symbol string; `local `-prefixed symbols are document-scoped.
   roles        the raw scip.proto SymbolRole bitfield, kept whole.
   definition / import / write_access / read_access / generated / test /
@@ -129,6 +132,7 @@ KIND VOCABULARIES (the `kind` field)
   cfg edge    next arm jump exit
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
+  unresolved reason  dynamic-import | computed-member-call | spread-call-args
   resolved_edge kind       name_resolve | scip_override
   resolved_type_edge kind  field | impl | variant | generic | uses
 

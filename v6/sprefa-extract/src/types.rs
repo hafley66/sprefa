@@ -480,6 +480,34 @@ pub struct Specifier {
     pub module: Option<NameId>,
 }
 
+/// An edge whose target is computed at runtime. `span` is the computed
+/// expression itself, so `detail` is exactly the source text at `span`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Unresolved {
+    pub span: Span,
+    pub reason: UnresolvedReason,
+    pub detail: NameId,
+}
+
+/// The closed v5 vocabulary (`src/engine/family/mod.rs:552-570`). A fourth
+/// reason needs its own issue, never a silent addition.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum UnresolvedReason {
+    DynamicImport,
+    ComputedMemberCall,
+    SpreadCallArgs,
+}
+
+impl UnresolvedReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UnresolvedReason::DynamicImport => "dynamic-import",
+            UnresolvedReason::ComputedMemberCall => "computed-member-call",
+            UnresolvedReason::SpreadCallArgs => "spread-call-args",
+        }
+    }
+}
+
 /// How the name enters scope. The seed's `BindingKind` vocabulary
 /// (`_0_shape.rs`:127-129; v5 `module_binding.kind`), renamed for the row.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -516,6 +544,9 @@ impl SpecifierKind {
 pub struct CallFAux {
     pub sites: Vec<CallSite>,
     pub specifiers: Vec<Specifier>,
+    /// Runtime-computed edge markers (dynamic import / computed member call /
+    /// spread call args). Port of v5 `UnresolvedRef`.
+    pub unresolved: Vec<Unresolved>,
     /// Prolog term-occurrence references. Only the Prolog front-end populates
     /// this; other languages leave it empty.
     pub refs: Vec<Reference>,
@@ -1778,6 +1809,16 @@ pub enum FlatFact {
         functor: String,
         /// goal | head_arg | term_arg
         position: String,
+    },
+    /// CallF runtime-computed edge marker: `detail` is the source text at
+    /// `span`. v6-ONLY, no v5 oracle facet.
+    #[serde(rename = "unresolved")]
+    Unresolved {
+        family: FamilyTag,
+        span: SpanOut,
+        /// dynamic-import | computed-member-call | spread-call-args
+        reason: String,
+        detail: String,
     },
     /// A project-phase (cross-file) resolved edge: `to` lives in ANOTHER blob,
     /// content-keyed by `to_blob` (hex). The 4a wire ruling: ONE arm carries

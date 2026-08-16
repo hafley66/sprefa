@@ -37,6 +37,7 @@ use crate::seams::{
 use crate::shape::{BlobHash, FamilyTag, NameId, NodeRef, Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, ProjectCx, Source};
 use crate::types::ScipIndex;
+use crate::types::{Unresolved, UnresolvedReason};
 
 /// `oxc_span::Span` (start + end) -> our byte `Span` (start + len). One
 /// coordinate; the engine derives line/col from the file bytes when needed.
@@ -231,11 +232,9 @@ fn ts_doc_anchors(program: &Program<'_>) -> Vec<(u32, Span, Option<String>)> {
                 ts::ExportDefaultDeclarationKind::ClassDeclaration(c) => {
                     ts_class_anchor(c, at, &mut out)
                 }
-                ts::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => out.push((
-                    at,
-                    to_span(i.span),
-                    None,
-                )),
+                ts::ExportDefaultDeclarationKind::TSInterfaceDeclaration(i) => {
+                    out.push((at, to_span(i.span), None))
+                }
                 ts::ExportDefaultDeclarationKind::FunctionDeclaration(f) => {
                     if f.id.is_some() {
                         out.push((at, to_span(f.span), None));
@@ -1069,9 +1068,13 @@ fn enum_edge_candidates(
 /// The CallF projector: emits one def node per callable (Free / Method /
 /// Lambda) and one site per call expression. Sites are unresolved in phase 1
 /// (the callee as written); `Resolve<CallF>` binds them at commit 4.
-pub struct CallProjector;
+pub struct CallProjector<'a> {
+    /// The source text, needed for the `unresolved` detail slice (the computed
+    /// expression's exact source at its span). Same shape as `DfProjector`.
+    pub content: &'a str,
+}
 
-impl Project<CallF> for CallProjector {
+impl Project<CallF> for CallProjector<'_> {
     type Parsed<'a> = Program<'a>;
 
     fn project(
@@ -1116,6 +1119,20 @@ impl Project<CallF> for CallProjector {
         // Module specifiers (4b-ii): import/export-from rows, as written, into
         // the CallF aux (the 4a ADDENDUM home). Same one parse, same top level.
         module_specifiers(program, strings, sink);
+        // Runtime-computed edge markers: same one parse, same top level; the
+        // walker needs the source text for the detail slice.
+        let mut unresolved = UnresolvedWalker {
+            content: self.content,
+            out: Vec::new(),
+        };
+        unresolved.visit_program(program);
+        for (span, reason, detail) in unresolved.out {
+            sink.aux.unresolved.push(Unresolved {
+                span: to_span(span),
+                reason,
+                detail: strings.intern(&detail),
+            });
+        }
     }
 }
 
@@ -1572,6 +1589,70 @@ fn callee_name(expr: &ts::Expression) -> Option<String> {
         E::Identifier(id) => Some(id.name.to_string()),
         E::StaticMemberExpression(member) => Some(member.property.name.to_string()),
         _ => None,
+    }
+}
+
+// ── unresolved (CallFAux.unresolved; port of v5 `TsUnresolvedWalker`) ────────
+
+/// Collects `(span, reason, detail)`; the projector interns and drains after
+/// the walk (no `&mut strings` inside the visitor).
+struct UnresolvedWalker<'s> {
+    content: &'s str,
+    out: Vec<(oxc_span::Span, UnresolvedReason, String)>,
+}
+
+impl UnresolvedWalker<'_> {
+    fn slice(&self, span: oxc_span::Span) -> String {
+        self.content
+            .get(span.start as usize..span.end as usize)
+            .unwrap_or_default()
+            .to_string()
+    }
+}
+
+impl<'a> OxcVisit<'a> for UnresolvedWalker<'_> {
+    fn visit_import_expression(&mut self, it: &ts::ImportExpression<'a>) {
+        if !matches!(it.source, ts::Expression::StringLiteral(_)) {
+            self.out.push((
+                it.source.span(),
+                UnresolvedReason::DynamicImport,
+                self.slice(it.source.span()),
+            ));
+        }
+        oxc_ast_visit::walk::walk_import_expression(self, it);
+    }
+
+    fn visit_call_expression(&mut self, it: &ts::CallExpression<'a>) {
+        if let ts::Expression::Identifier(callee) = &it.callee {
+            if callee.name == "require" {
+                if let Some(arg) = it.arguments.first().and_then(|a| a.as_expression()) {
+                    if !matches!(arg, ts::Expression::StringLiteral(_)) {
+                        self.out.push((
+                            arg.span(),
+                            UnresolvedReason::DynamicImport,
+                            self.slice(arg.span()),
+                        ));
+                    }
+                }
+            }
+        }
+        if let ts::Expression::ComputedMemberExpression(m) = &it.callee {
+            self.out.push((
+                m.span,
+                UnresolvedReason::ComputedMemberCall,
+                self.slice(m.span),
+            ));
+        }
+        for arg in &it.arguments {
+            if let ts::Argument::SpreadElement(sp) = arg {
+                self.out.push((
+                    sp.span,
+                    UnresolvedReason::SpreadCallArgs,
+                    self.slice(sp.span),
+                ));
+            }
+        }
+        oxc_ast_visit::walk::walk_call_expression(self, it);
     }
 }
 
@@ -2798,7 +2879,10 @@ impl Source for TsSource {
                 }
                 if mask.call {
                     let mut bundle = FamilyBundle::<CallF>::default();
-                    CallProjector.project(&parsed, &mut strings, &mut bundle);
+                    if let Ok(src) = std::str::from_utf8(content) {
+                        let call_projector = CallProjector { content: src };
+                        call_projector.project(&parsed, &mut strings, &mut bundle);
+                    }
                     call = Some(bundle);
                 }
                 if mask.df {
