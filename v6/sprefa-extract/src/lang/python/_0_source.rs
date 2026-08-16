@@ -20,11 +20,13 @@
 //!
 //! @comment-ok: the commit-split + deferral ledger mirrors lang/go.rs:1-24.
 
-use crate::family::{CallF, CstF, TypeF};
+use std::collections::BTreeSet;
+
+use crate::family::{CallF, CstF, SigSlot, TypeEntityKind, TypeF, TypeSig};
 use crate::lang::{AstGrepParser, CstProjector};
-use crate::rows::FamilyBundle;
+use crate::rows::{FamilyBundle, Node};
 use crate::seams::{Parser, Project};
-use crate::shape::Strings;
+use crate::shape::{Span, Strings};
 use crate::source::{ExtractOutput, FamilyMask, Source};
 
 // ── the tree-sitter-python parse (one parse feeds type/call) ─────────────────
@@ -51,6 +53,16 @@ fn node_span(node: tree_sitter::Node) -> crate::shape::Span {
     }
 }
 
+/// Unwrap `decorated_definition` to its inner `class`/`function_definition`;
+/// any other node passes through. Port of v5 `py_unwrap_decorated`.
+fn py_unwrap_decorated(node: tree_sitter::Node) -> tree_sitter::Node {
+    if node.kind() == "decorated_definition" {
+        node.child_by_field_name("definition").unwrap_or(node)
+    } else {
+        node
+    }
+}
+
 // ── TypeF: entity nodes + arrow-type sigs (commit B) ───────────────────────
 
 fn project_types(
@@ -59,7 +71,273 @@ fn project_types(
     strings: &mut Strings,
     sink: &mut FamilyBundle<TypeF>,
 ) {
-    let _ = (root, src, strings, sink);
+    walk_py_entities(root, src, strings, sink, None);
+}
+
+/// One entity per class/function/method; `class_owner` is the enclosing class's
+/// name (method vs function) and resets to None inside a function body.
+fn walk_py_entities(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<TypeF>,
+    class_owner: Option<&str>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        let target = py_unwrap_decorated(child);
+        match target.kind() {
+            "class_definition" => {
+                if let Some(name_node) = target.child_by_field_name("name") {
+                    let name = py_text(name_node, src).to_string();
+                    let span = node_span(target);
+                    push_entity(sink, strings, span, &name, TypeEntityKind::Class);
+                    if let Some(body) = target.child_by_field_name("body") {
+                        walk_py_entities(body, src, strings, sink, Some(&name));
+                    }
+                }
+            }
+            "function_definition" => {
+                if let Some(name_node) = target.child_by_field_name("name") {
+                    let name = py_text(name_node, src).to_string();
+                    let kind = if class_owner.is_some() {
+                        TypeEntityKind::Method
+                    } else {
+                        TypeEntityKind::Function
+                    };
+                    let span = node_span(target);
+                    push_entity(sink, strings, span, &name, kind);
+                    fn_sigs(sink, strings, span, target, src);
+                    if let Some(body) = target.child_by_field_name("body") {
+                        walk_py_entities(body, src, strings, sink, None);
+                    }
+                }
+            }
+            _ => walk_py_entities(target, src, strings, sink, class_owner),
+        }
+    }
+}
+
+fn push_entity(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    span: Span,
+    name: &str,
+    kind: TypeEntityKind,
+) {
+    sink.nodes
+        .push(Node::new(span, kind).with_name(strings.intern(name)));
+}
+
+/// Param type-refs (positional, `self`/`cls` receiver skipped) + return refs
+/// (pos 0), one TypeSig per named ref. Port of v5 `py_fn_type`.
+fn fn_sigs(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: Span,
+    node: tree_sitter::Node,
+    src: &[u8],
+) {
+    let tparams = py_collect_type_params(node, src, "type_parameters");
+    let mut pos: u32 = 0;
+    if let Some(plist) = node.child_by_field_name("parameters") {
+        let mut cursor = plist.walk();
+        let mut first = true;
+        for param in plist.named_children(&mut cursor) {
+            if matches!(param.kind(), "keyword_separator" | "positional_separator") {
+                continue;
+            }
+            let (name_opt, type_node) = py_param_name_and_type(param, src);
+            if first {
+                first = false;
+                if matches!(name_opt.as_deref(), Some("self") | Some("cls")) {
+                    continue;
+                }
+            }
+            let refs = type_node
+                .map(|ty| py_type_refs_collect(ty, src, &tparams))
+                .unwrap_or_default();
+            for name in refs {
+                push_sig(sink, strings, owner, SigSlot::Param, pos, &name);
+            }
+            pos += 1;
+        }
+    }
+    if let Some(ret) = node.child_by_field_name("return_type") {
+        for name in py_type_refs_collect(ret, src, &tparams) {
+            push_sig(sink, strings, owner, SigSlot::Ret, 0, &name);
+        }
+    }
+}
+
+fn push_sig(
+    sink: &mut FamilyBundle<TypeF>,
+    strings: &mut Strings,
+    owner: Span,
+    slot: SigSlot,
+    pos: u32,
+    ty: &str,
+) {
+    sink.aux.sigs.push(TypeSig {
+        owner,
+        slot,
+        pos,
+        ty: strings.intern(ty),
+    });
+}
+
+/// (name, type-annotation node) for one `parameter` subtype; only
+/// `typed_parameter`/`typed_default_parameter` carry a type. Port of v5.
+fn py_param_name_and_type<'t>(
+    param: tree_sitter::Node<'t>,
+    src: &[u8],
+) -> (Option<String>, Option<tree_sitter::Node<'t>>) {
+    match param.kind() {
+        "identifier" => (Some(py_text(param, src).to_string()), None),
+        "typed_parameter" => {
+            let mut cursor = param.walk();
+            let name = param
+                .named_children(&mut cursor)
+                .find(|node| node.kind() == "identifier")
+                .map(|node| py_text(node, src).to_string());
+            (name, param.child_by_field_name("type"))
+        }
+        "default_parameter" => {
+            let name = param
+                .child_by_field_name("name")
+                .filter(|node| node.kind() == "identifier")
+                .map(|node| py_text(node, src).to_string());
+            (name, None)
+        }
+        "typed_default_parameter" => {
+            let name = param
+                .child_by_field_name("name")
+                .map(|node| py_text(node, src).to_string());
+            (name, param.child_by_field_name("type"))
+        }
+        "list_splat_pattern" | "dictionary_splat_pattern" => {
+            let mut cursor = param.walk();
+            let name = param
+                .named_children(&mut cursor)
+                .find(|node| node.kind() == "identifier")
+                .map(|node| py_text(node, src).to_string());
+            (name, None)
+        }
+        _ => (None, None),
+    }
+}
+
+/// PEP-695 type-parameter names under `field`, excluded from ref collection.
+fn py_collect_type_params(node: tree_sitter::Node, src: &[u8], field: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    if let Some(tp) = node.child_by_field_name(field) {
+        py_collect_identifiers_rec(tp, src, &mut out);
+    }
+    out
+}
+
+fn py_collect_identifiers_rec(node: tree_sitter::Node, src: &[u8], out: &mut BTreeSet<String>) {
+    if node.kind() == "identifier" {
+        out.insert(py_text(node, src).to_string());
+    }
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        py_collect_identifiers_rec(child, src, out);
+    }
+}
+
+/// Named type refs under an annotation: `subscript` recurses into container +
+/// args; `attribute` keeps only the trailing name. Port of v5 `py_type_refs`.
+fn py_type_refs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    tparams: &BTreeSet<String>,
+    out: &mut Vec<String>,
+) {
+    match node.kind() {
+        "identifier" => {
+            let name = py_text(node, src).to_string();
+            if !tparams.contains(&name) && !is_noise_python(&name) {
+                out.push(name);
+            }
+        }
+        "attribute" => {
+            if let Some(attr) = node.child_by_field_name("attribute") {
+                let name = py_text(attr, src).to_string();
+                if !tparams.contains(&name) && !is_noise_python(&name) {
+                    out.push(name);
+                }
+            }
+        }
+        "subscript" => {
+            if let Some(value) = node.child_by_field_name("value") {
+                py_type_refs(value, src, tparams, out);
+            }
+            let mut cursor = node.walk();
+            for sub in node.children_by_field_name("subscript", &mut cursor) {
+                py_type_refs(sub, src, tparams, out);
+            }
+        }
+        "string" | "concatenated_string" => {}
+        _ => {
+            let mut cursor = node.walk();
+            for child in node.named_children(&mut cursor) {
+                py_type_refs(child, src, tparams, out);
+            }
+        }
+    }
+}
+
+fn py_type_refs_collect(
+    node: tree_sitter::Node,
+    src: &[u8],
+    tparams: &BTreeSet<String>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    py_type_refs(node, src, tparams, &mut out);
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Builtin scalar/container + `typing` wrapper names: noise for ref collection.
+fn is_noise_python(name: &str) -> bool {
+    matches!(
+        name,
+        "int"
+            | "str"
+            | "float"
+            | "bool"
+            | "bytes"
+            | "complex"
+            | "object"
+            | "type"
+            | "list"
+            | "dict"
+            | "set"
+            | "tuple"
+            | "frozenset"
+            | "None"
+            | "Self"
+            | "Any"
+            | "Optional"
+            | "Union"
+            | "List"
+            | "Dict"
+            | "Tuple"
+            | "Set"
+            | "FrozenSet"
+            | "Callable"
+            | "ClassVar"
+            | "Final"
+            | "Type"
+            | "Sequence"
+            | "Iterable"
+            | "Iterator"
+            | "Mapping"
+            | "Awaitable"
+            | "Coroutine"
+    )
 }
 
 // ── CallF: callable definitions (nodes) + call sites (aux, commit C) ───────
