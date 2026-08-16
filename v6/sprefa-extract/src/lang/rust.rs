@@ -20,8 +20,8 @@
 //! `Resolve<CallF>` (the 4c-ii ts arm mirrored: NameResolve primary,
 //! ScipOverride on scip disagreement; the rust-analyzer `local `-symbol
 //! adaptation documented on the arm) + the scip ratchet. Deferred follow-ups:
-//! the docs facet (`rust_docs_from`); df field/literal/loop/nesting aux.
-//! Df argument slots and parameter positions are emitted.
+//! the docs facet (`rust_docs_from`); df loop/nesting aux. Df argument slots,
+//! parameter positions, field names and literal texts are emitted.
 
 use std::collections::BTreeSet;
 
@@ -34,8 +34,8 @@ use syn::{
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
-    DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind,
-    TypeEntityKind, TypeF, TypeSig,
+    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEdgeCandidate,
+    TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -130,15 +130,26 @@ fn doc_facts(
 ) {
     for item in &parsed.items {
         match item {
-            syn::Item::Struct(s) => push_doc(sink, strings, line_starts, s.ident.span(), &s.attrs, None),
+            syn::Item::Struct(s) => {
+                push_doc(sink, strings, line_starts, s.ident.span(), &s.attrs, None)
+            }
             syn::Item::Enum(en) => {
                 push_doc(sink, strings, line_starts, en.ident.span(), &en.attrs, None)
             }
-            syn::Item::Union(u) => push_doc(sink, strings, line_starts, u.ident.span(), &u.attrs, None),
-            syn::Item::Trait(t) => push_doc(sink, strings, line_starts, t.ident.span(), &t.attrs, None),
-            syn::Item::Fn(f) => {
-                push_doc(sink, strings, line_starts, f.sig.ident.span(), &f.attrs, None)
+            syn::Item::Union(u) => {
+                push_doc(sink, strings, line_starts, u.ident.span(), &u.attrs, None)
             }
+            syn::Item::Trait(t) => {
+                push_doc(sink, strings, line_starts, t.ident.span(), &t.attrs, None)
+            }
+            syn::Item::Fn(f) => push_doc(
+                sink,
+                strings,
+                line_starts,
+                f.sig.ident.span(),
+                &f.attrs,
+                None,
+            ),
             syn::Item::Impl(i) => {
                 let owner = primary_type(&i.self_ty);
                 for ii in &i.items {
@@ -1435,9 +1446,17 @@ fn flow_expr(
             node
         }
         syn::Expr::Lit(lit_expr) => {
-            // (v5 records string-lit text in `lits` aux; dropped here.)
-            let _ = lit_expr;
-            df_push(sink, strings, line_starts, node_span, DfNodeKind::Lit, None)
+            let node = df_push(sink, strings, line_starts, node_span, DfNodeKind::Lit, None);
+            // A string literal carries its cooked value into `df_lit` (v5
+            // `rust` mints `lit` rows for `syn::Lit::Str` only).
+            if let syn::Lit::Str(string) = &lit_expr.lit {
+                sink.aux.lits.push(DfLit {
+                    node,
+                    kind: "lit",
+                    text: string.value(),
+                });
+            }
+            node
         }
         // f(args): each argument flows into the call result. A capitalized last
         // path segment is a tuple-struct / enum-variant constructor -> a `new`
@@ -1528,7 +1547,8 @@ fn flow_expr(
             node
         }
         // `Foo { a: x, ..base }`: an instantiation; each field value flows into
-        // the `new` node. (Field names are deferred `fields` aux.)
+        // the `new` node and records a `df_field` row (the functional-update
+        // base under "..").
         syn::Expr::Struct(struct_expr) => {
             let type_name = struct_expr
                 .path
@@ -1536,9 +1556,9 @@ fn flow_expr(
                 .last()
                 .map(|segment| segment.ident.to_string())
                 .unwrap_or_default();
-            let mut values = Vec::new();
+            let mut filled: Vec<(String, NodeRef)> = Vec::new();
             for field in &struct_expr.fields {
-                values.push(flow_expr(
+                let value = flow_expr(
                     &field.expr,
                     fn_sym,
                     line_starts,
@@ -1546,7 +1566,12 @@ fn flow_expr(
                     scope,
                     sink,
                     loop_breaks,
-                ));
+                );
+                let name = match &field.member {
+                    syn::Member::Named(ident) => ident.to_string(),
+                    syn::Member::Unnamed(index) => index.index.to_string(),
+                };
+                filled.push((name, value));
             }
             let base = struct_expr.rest.as_ref().map(|rest| {
                 flow_expr(rest, fn_sym, line_starts, strings, scope, sink, loop_breaks)
@@ -1559,11 +1584,21 @@ fn flow_expr(
                 DfNodeKind::New,
                 Some(type_name.as_str()),
             );
-            for value in values {
+            for (name, value) in filled {
                 df_edge(sink, value, node);
+                sink.aux.fields.push(DfField {
+                    owner: node,
+                    name,
+                    value,
+                });
             }
             if let Some(base) = base {
                 df_edge(sink, base, node);
+                sink.aux.fields.push(DfField {
+                    owner: node,
+                    name: "..".to_string(),
+                    value: base,
+                });
             }
             node
         }
