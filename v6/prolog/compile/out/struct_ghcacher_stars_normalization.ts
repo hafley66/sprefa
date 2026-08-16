@@ -210,6 +210,12 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   stars: ["text", "int"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  current_body: ["text", "ref"],
+  repo_body: ["text", "int"],
+  stars: ["text", "int"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },

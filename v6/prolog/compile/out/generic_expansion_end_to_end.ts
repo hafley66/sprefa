@@ -429,6 +429,33 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   ticket_copy: ["int", "int"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  __gen__list_text_df210f232c1299bd: ["text"],
+  __gen__list_text_df210f232c1299bd__member: ["int", "int", "text"],
+  __opt_int_none: ["int"],
+  __opt_int_some: ["int", "int"],
+  __opt_int_tag: ["int", "text"],
+  __opt_text_none: ["int"],
+  __opt_text_some: ["int", "text"],
+  __opt_text_tag: ["int", "text"],
+  author_audit: ["int", "text"],
+  bucket: ["int"],
+  bucket__entries: ["int", "int"],
+  metric: ["int", "int"],
+  metric_copy: ["int", "int"],
+  person: ["int", "text"],
+  priority_high: ["int"],
+  priority_low: ["int"],
+  priority_tag: ["int", "text"],
+  review: ["int"],
+  review__reviewer: ["int", "int"],
+  seen_bucket: ["int", "int"],
+  seen_review: ["int", "text"],
+  seen_ticket: ["int", "text"],
+  ticket: ["int", "int"],
+  ticket_copy: ["int", "int"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },

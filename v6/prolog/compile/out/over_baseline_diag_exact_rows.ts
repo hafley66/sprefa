@@ -281,6 +281,18 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   waiver_trailing_comment: ["text", "int"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  diag: ["text", "int", "text", "text", "text", "text", "text"],
+  eprintln_baseline: ["text", "int"],
+  eprintln_count: ["text", "int"],
+  eprintln_counted: ["text", "int"],
+  eprintln_hit: ["text", "int"],
+  eprintln_waived: ["text", "int"],
+  eprintln_waiver_line: ["text", "int"],
+  waiver_block_comment: ["text", "text"],
+  waiver_trailing_comment: ["text", "int"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },

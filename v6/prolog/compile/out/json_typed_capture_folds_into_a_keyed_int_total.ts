@@ -215,6 +215,12 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   total: ["text", "int"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  event: ["json"],
+  star_event: ["text", "int"],
+  total: ["text", "int"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -285,9 +291,9 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    event: select_rows(seam, `SELECT "payload" FROM "event"`, rel_columns.event!, rel_column_types.event!),
-    star_event: select_rows(seam, `SELECT "repo", "stars" FROM "star_event"`, rel_columns.star_event!, rel_column_types.star_event!),
-    total: select_rows(seam, `SELECT "repo", "sum" FROM "total"`, rel_columns.total!, rel_column_types.total!),
+    event: select_rows(seam, `SELECT "payload" FROM "event"`, rel_columns.event!, rel_stored_column_types.event!),
+    star_event: select_rows(seam, `SELECT "repo", "stars" FROM "star_event"`, rel_columns.star_event!, rel_stored_column_types.star_event!),
+    total: select_rows(seam, `SELECT "repo", "sum" FROM "total"`, rel_columns.total!, rel_stored_column_types.total!),
   });
 }
 

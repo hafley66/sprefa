@@ -203,6 +203,11 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   set_value: ["text", "text"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  latest: ["text", "text"],
+  set_value: ["text", "text"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -261,8 +266,8 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    latest: select_rows(seam, `SELECT "key", "value" FROM "latest"`, rel_columns.latest!, rel_column_types.latest!),
-    set_value: select_rows(seam, `SELECT "key", "value" FROM "set_value"`, rel_columns.set_value!, rel_column_types.set_value!),
+    latest: select_rows(seam, `SELECT "key", "value" FROM "latest"`, rel_columns.latest!, rel_stored_column_types.latest!),
+    set_value: select_rows(seam, `SELECT "key", "value" FROM "set_value"`, rel_columns.set_value!, rel_stored_column_types.set_value!),
   });
 }
 

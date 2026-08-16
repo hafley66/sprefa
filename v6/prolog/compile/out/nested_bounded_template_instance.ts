@@ -228,6 +228,14 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   index: ["int", "ref"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  __gen__couple_wrap_int_wrap_text_fea7bde20e4f244e: ["ref", "ref"],
+  __gen__wrap_int_74568235536ee9d4: ["int"],
+  __gen__wrap_text_2bd6acc46ade78fd: ["text"],
+  carry: ["int", "ref"],
+  index: ["int", "ref"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },

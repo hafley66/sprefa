@@ -190,6 +190,12 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   dispatch_winner: ["int", "text"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  dispatch_ack: ["int"],
+  dispatch_seal: ["int"],
+  dispatch_winner: ["int", "text"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },

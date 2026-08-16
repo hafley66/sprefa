@@ -203,6 +203,11 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   log_text: ["text", "text"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  append_line: ["text", "text"],
+  log_text: ["text", "text"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -261,8 +266,8 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    append_line: select_rows(seam, `SELECT "channel", "piece" FROM "append_line"`, rel_columns.append_line!, rel_column_types.append_line!),
-    log_text: select_rows(seam, `SELECT "channel", "next" FROM "log_text"`, rel_columns.log_text!, rel_column_types.log_text!),
+    append_line: select_rows(seam, `SELECT "channel", "piece" FROM "append_line"`, rel_columns.append_line!, rel_stored_column_types.append_line!),
+    log_text: select_rows(seam, `SELECT "channel", "next" FROM "log_text"`, rel_columns.log_text!, rel_stored_column_types.log_text!),
   });
 }
 

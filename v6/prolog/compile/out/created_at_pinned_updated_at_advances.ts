@@ -205,6 +205,11 @@ const rel_column_types: Record<string, readonly IRowColumnType[]> = {
   thing: ["int", "text", "int", "int"],
 };
 
+const rel_stored_column_types: Record<string, readonly IRowColumnType[]> = {
+  arrive: ["int", "text"],
+  thing: ["int", "text", "int", "int"],
+};
+
 const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 1, parent_id: 0, ordinal: 0, local_name: "text", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
   { rel_id: 2, parent_id: 0, ordinal: 0, local_name: "int", kind: "primitive", type_id: 0, arity: 0, module_id: 0, h_id: "", h_schema: "", h_rule: "" },
@@ -264,8 +269,8 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrive: select_rows(seam, `SELECT "id", "payload" FROM "arrive"`, rel_columns.arrive!, rel_column_types.arrive!),
-    thing: select_rows(seam, `SELECT "id", "payload", "born", "tick" FROM "thing"`, rel_columns.thing!, rel_column_types.thing!),
+    arrive: select_rows(seam, `SELECT "id", "payload" FROM "arrive"`, rel_columns.arrive!, rel_stored_column_types.arrive!),
+    thing: select_rows(seam, `SELECT "id", "payload", "born", "tick" FROM "thing"`, rel_columns.thing!, rel_stored_column_types.thing!),
   });
 }
 
