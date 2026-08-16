@@ -18,6 +18,7 @@
 //! re-exported here so no import path moved.
 
 use crate::family::{CallF, CstEdgeKind, CstF, DfF, Family, FlowEdge, FlowF, ProjectEdge, TypeF};
+use crate::types::CfgF;
 use crate::rows::FamilyBundle;
 pub use crate::schema::SCHEMA;
 pub use crate::scip_rows::{flatten_scip, scip_file_edges};
@@ -190,6 +191,36 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             span: SpanOut::new(reference.span.start, reference.span.end()),
             functor: strings.lookup(reference.functor).to_string(),
             position: reference.position.as_str().to_string(),
+        });
+    }
+    out
+}
+
+/// Flatten one CfgF bundle: control-point NODES + successor EDGES. Entry and
+/// Exit share the callable's span, so both endpoint kinds ride every edge.
+
+/// Out of `flatten` on purpose: the CFG is derived from the CstF bundle by
+/// `crate::cfg`, never projected by a `Source`, so nothing carries it here.
+pub fn flatten_cfg(bundle: &FamilyBundle<CfgF>) -> Vec<FlatFact> {
+    let mut out = Vec::with_capacity(bundle.nodes.len() + bundle.edges.len());
+    for node in &bundle.nodes {
+        out.push(FlatFact::Node {
+            family: CfgF::TAG,
+            span: SpanOut::new(node.span.start, node.span.end()),
+            kind: node.kind.as_str().to_string(),
+            name: None,
+        });
+    }
+    for edge in &bundle.edges {
+        let from = bundle.node(edge.src);
+        let to = bundle.node(edge.dst);
+        out.push(FlatFact::Edge {
+            family: CfgF::TAG,
+            kind: edge.kind.as_str().to_string(),
+            from: SpanOut::new(from.span.start, from.span.end()),
+            from_kind: Some(from.kind.as_str().to_string()),
+            to: SpanOut::new(to.span.start, to.span.end()),
+            to_kind: Some(to.kind.as_str().to_string()),
         });
     }
     out

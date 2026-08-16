@@ -18,7 +18,8 @@ use std::time::Instant;
 use clap::Parser;
 
 use sprefa_extract::{
-    deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact, flatten, query_patterns,
+    cfg_bundle, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact, flatten,
+    flatten_cfg, query_patterns,
     resolve_project_jsonl, scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl,
     scip_index_location, source_for, AstPatternQuery, FamilyMask, IndexBudget, ResolveArms,
     ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, SCHEMA,
@@ -329,10 +330,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(families) => parse_mask(families)?,
         None => FamilyMask::ALL,
     };
+    let cfg = cli
+        .family
+        .as_deref()
+        .is_some_and(|families| families.iter().any(|family| family.trim() == "cfg"));
     if cli.bench {
         bench(&path_str, &content, mask)?;
     } else {
-        stream(&path_str, &content, mask)?;
+        stream(&path_str, &content, mask, cfg)?;
     }
     Ok(())
 }
@@ -484,10 +489,12 @@ fn parse_mask(families: &[String]) -> Result<FamilyMask, String> {
             "type" | "types" => mask.types = true,
             "call" => mask.call = true,
             "df" => mask.df = true,
+            // The cfg plane is derived from the cst parse, so it turns cst on.
+            "cfg" => mask.cst = true,
             other => {
                 return Err(format!(
                     "--family '{other}' is not a mask family; per-file families are \
-                     cst, type, call, df"
+                     cst, type, call, df, cfg"
                 ))
             }
         }
@@ -495,10 +502,23 @@ fn parse_mask(families: &[String]) -> Result<FamilyMask, String> {
     Ok(mask)
 }
 
-fn stream(path: &str, content: &[u8], mask: FamilyMask) -> Result<(), Box<dyn std::error::Error>> {
+fn stream(
+    path: &str,
+    content: &[u8],
+    mask: FamilyMask,
+    cfg: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(out) = dispatch(path, content, mask) {
         for fact in flatten(&out) {
             println!("{}", serde_json::to_string(&fact)?);
+        }
+        // The cfg plane rides the SAME parse: it is derived from `out.cst`.
+        if cfg {
+            if let Some(bundle) = cfg_bundle(path, &out, content) {
+                for fact in flatten_cfg(&bundle) {
+                    println!("{}", serde_json::to_string(&fact)?);
+                }
+            }
         }
     }
     Ok(())
