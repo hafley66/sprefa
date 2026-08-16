@@ -292,6 +292,11 @@ multirepo-golden:
 dep-crawl-golden:
     bash {{ v6 }}/tsv2/goldens/multirepo_crawl/5_dep_gate.sh
 
+# git_ref/tag/merge_base/ahead_behind/ancestor vs an independent plumbing dump.
+# (expect: REFS AND ANCESTRY GRADED: 5/5 rels byte-identical, exit 0)
+git-refs-golden:
+    bash {{ v6 }}/tsv2/goldens/multirepo_crawl/8_git_gate.sh
+
 # Extraction x soopy combinations on BOTH doors, byte-diffed; 2 programs are
 # pinned DISAGREEMENTS and this goes red if they agree. Table: the dir README.
 scip-combo:
@@ -482,4 +487,4 @@ green-all:
     bash {{ v6 }}/tools/green-parallel.sh
 
 # the original one-leg-at-a-time chain, kept for bisecting a parallel-only red
-green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden dep-crawl-golden rtkq-golden precommit-changed watch-scale getting-started
+green-all-serial: green dl6-budget serve-endurance serve-leak-soak memory-soak extraction-live files flagship lsp-diags ghcacher-golden sweep staleness-gate compile-speed scale-floor multirepo-golden dep-crawl-golden git-refs-golden scip-combo rtkq-golden precommit-changed watch-scale getting-started
