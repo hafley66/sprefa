@@ -31,7 +31,7 @@ crate. The dl6 program IS the API and the CLI is a generic client of it.
 | API | `sprefa-engine-rs` grows a `serve` seam: axum 0.8 router on `tokio::net::UnixListener`, copied from v5 `src/daemon/shell/http.rs:117-142`; `GET /rel/<name>` reads rows typed by the emitted `.types.rs`, `POST /arrive` folds a tick through `driver.rs` |
 | CLI | one generic binary that reads `cli_verb`/`cli_arg` rows from the running socket and dispatches; `--help` is a rel read |
 | upstream calls (`pokemon get 25` reaches pokeapi) | one host row per operation, from->to like every `sh` host |
-| yaml -> json | new extract family `yaml`, hosted through the existing extract executor on both doors (user 2026-08-17) |
+| yaml/toml/json | one sprefa-extract `data` family, v5 datapath.rs shape (extension dispatch, tree-sitter json/yaml/toml, spans), hosted on both doors; `decode/2` queries its rows. No conversion step | user 2026-08-17 |
 
 rx lowering of the server: `arrivals$.pipe(concatMap(batch => driver.tick(batch)))`; reads are a `latest` projection.
 
@@ -100,12 +100,13 @@ feature on.
 
 ## 4. Q1b candidates: YAML to JSON
 
-The dl6 route needs only this. yaml is a sprefa-extract family, hosted on
-both doors through the existing extract executor (user 2026-08-17).
+The dl6 route needs only this. yaml/toml/json are one sprefa-extract `data`
+family, the v5 `src/datapath.rs` plane ported, hosted on both doors (user
+2026-08-17). `decode/2` is the query. No conversion step.
 
 | candidate | latest (date) | what it gives | what it lacks | verdict |
 |---|---|---|---|---|
-| `serde-saphyr` 1.1.0 (2026-08-15) inside sprefa-extract as family `yaml` | YAML 1.2, serde, aliases; one `doc` record per file; hosted on both doors through the existing extract executor (TS spawn per digest, Rust in-process) | a new family in `lang/mod.rs` | **WINNER** (user 2026-08-17: sprefa-extract hosts file-type work in every env) |
+| `data` family in sprefa-extract: `tree-sitter-json` + `tree-sitter-yaml` + `tree-sitter-toml-ng`, the v5 `datapath.rs` plane ported | extension dispatch, byte spans per hit, jsonl too; hosted on both doors | port work, no new design | **WINNER** (user 2026-08-17: how v3/v4/v5 treated yaml/toml/json) |
 | system `ruby -ryaml -rjson` | ships with macOS today | one line, zero crate | an OS interpreter as a runtime dep of a Rust engine; Apple has deprecated scripting runtimes and CI images differ | rejected (user decision 2026-08-17) |
 | `serde_yaml` | 0.9.34**+deprecated** (2024-03-25) | 86.8M recent downloads, dtolnay | the version string is literally `+deprecated`; upstream retired it | rejected. Adding a self-declared deprecated crate is a defect |
 | `serde_norway` | 0.9.42 (2024-12-21) | maintained fork of `serde_yaml`, 2.58M recent, API-compatible | fork governance; a Rust dep for a job a one-line host does | second choice if `serde-saphyr` misbehaves on the corpus; API-compatible with the retired crate. Only if the pipeline moves inside a Rust binary |
@@ -235,9 +236,10 @@ Two receipts:
 # ── the source ──────────────────────────────────────────────────────────────
 rel spec_file(spec_id: int, path: text, digest: text) key(1).
 
-sh extract(path: text, digest: text) -> (doc: json) =
-  `"$DL_EXTRACT_BIN" --family yaml {path}`.
-# hosted extract on both doors: TS spawns it (serve/1_hosts.ts:253
-# runSprefaExtract -> runShellLine), Rust links it (hosts.rs
-# SprefaExtractExecutor). yaml is a new extract family (lang/mod.rs
-# sources()); userland never calls a CLI, this is the engine's own host spelling.
+sh extract(path: text, digest: text) -> (record: text, doc: json) =
+  `"$DL_EXTRACT_BIN" --family data {path}`.
+# `data` family = v5's datapath.rs plane (src/datapath.rs:1-8): json, jsonl,
+# yaml, toml are ONE plane, dispatched by extension, one tree-sitter grammar
+# each, every hit with a byte span. Hosted on both doors like every family.
+# `decode/2` is v5's `json(p, rev, q:{...})` brace pattern over its rows.
+# No yaml-to-json conversion step exists (user 2026-08-17).
