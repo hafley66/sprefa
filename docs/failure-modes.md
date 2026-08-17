@@ -1931,6 +1931,46 @@ sites but not against new code. **missing** = nothing.
   file:line, not a property of the universe. Trace the delivery branch for
   YOUR receiver kind before building a polling workaround.
 
+## 52. A pane fed a body one keystroke at a time (transport, not the model, misses the deadline)
+
+- WHAT IT LOOKS LIKE: every lane dies `rc=1 (stalled: 30s with no harness
+  activity)` with an empty worktree and no session row in the harness store,
+  while a human watching the pane sees text slowly appearing. Coordinator hails
+  into an interactive pane arrive concatenated, three messages fused into one.
+- HOW IT BIT US: 2026-08-16 23:03-23:13 EDT, five flash4 lanes. `send_keys_literal`
+  and `send_text` (hafley-rs `crates/boop-mux/src/lib.rs`) spelled the body as
+  `tmux send-keys -t <pane> -l -- <body>`, which types it rune by rune. Measured
+  against a live opencode TUI with the 10540-byte
+  `TASKS/extract-flow-cli-dispatch.BRIEF.md`: still ingesting at 70s, first
+  session row ~110s after Enter. boop's `FIRST_SIGNAL_LIMIT` is 30s
+  (`crates/boop/src/supervise.rs:21`), so the watchdog killed the lane before
+  the harness had read its brief. Same root cause for the hail concatenation: a
+  TUI that groups a burst of typed input as one paste reads the Enter typed
+  inside that window as a newline.
+- THE FIRST RCA WAS WRONG, AND MEASUREMENT CAUGHT IT: the card blamed control
+  mode (`ControlClient::command` writing a multi-line `send-keys` as one line;
+  tmux really does answer `%error` for `hello\nworld` unquoted). But
+  `git log -S'command(&["send-keys"'` returns nothing, ever: control mode was
+  never on the brief path. The parser fact was true and irrelevant.
+- THE LAW: text going to a pane is a PASTE, never keystrokes. `load-buffer` +
+  `paste-buffer -d -p`, then the submit key as a separate send after a gap.
+  `-p` brackets the paste only when the pane's application requested bracketed
+  paste, so a shell pane still receives plain bytes.
+- THE RAIL: three tests in hafley-rs `crates/boop-mux/src/lib.rs` against a
+  scratch pane running `sh -c 'printf "\033[?2004h"; cat > file'`, so the exact
+  bytes the pane received are inspectable:
+  `a_multiline_body_reaches_a_pasting_pane_bracketed_and_byte_exact`,
+  `a_brief_sized_body_arrives_whole`, `a_plain_pane_receives_the_body_unwrapped`.
+  Fail-pre-fix with the impl reverted to `send-keys -l`: the first two RED,
+  `10K of brief must land whole: 10401 of 10413 bytes in 10.101423709s`.
+  Post-fix 11 passed. Live receipt: same 10540-byte brief pasted into opencode
+  renders `[Pasted ~263 lines]` in ~2s and creates its session row 3s after
+  Enter; three multi-line hails into a Claude Code pane land as three separate
+  user messages. Landed hafley-rs PR #10.
+- SAY THIS TO AN AGENT: when a lane dies with no bytes anywhere, ask what the
+  TRANSPORT delivered before blaming the model or the provider. Watch the pane
+  and time the arrival; a body that is still being typed is a transport defect.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
@@ -1984,6 +2024,7 @@ sites but not against new code. **missing** = nothing.
 | 52 | a rel-typed column whose NAME collides with a column of its referenced type renders null (unqualified outer column inside the correlated render subquery) | enforced | incident 2026-08-14: template-bounds arc, `pair(pair(int))` rendered its second column null. RCA: `dictionary_render_expr/3` at v6/prolog/lower.pl:2752 emits the outer row's column UNQUALIFIED inside a subquery whose FROM aliases the child ref view `d`, so sqlite resolves `d."__id" = d."first"` self-referentially; `relation_render_column_expr/5` (:2723-2730) qualifies with `t.~w` and is correct. Generics-free probes: equal parent/child column names WRONG, disjoint names identical, one-of-two shadowed WRONG on that column only. Same-template nesting guarantees the collision. Fail-pre-fix repro: three-fixture file in the d73eeedb commit message (branch feature/template-bounds-parens). Rail landed in PR #256 (05c21477): `dictionary_render_expr/3` qualifies the outer row as `t.~w`, enforced by v6/prolog/conformance/fixtures/22_ref_column_collision.pl (fail-pre-fix WRONGs `colliding_ref_column_names_render_the_child_tree` + `one_colliding_ref_column_beside_a_disjoint_sibling` in the PR body) and plunit `sql_text_snapshots:ref_render_expr_qualifies_the_outer_column` + `:both_delta_reads_supply_the_render_alias` |
 | 53 | half a node's identity crosses the wire, so a span-keyed consumer merges distinct nodes and reads the merge as a cycle | enforced | incident 2026-08-15 (`issues/df-span-identity-aliasing`, filed by the report_extract.dl6 rail): sprefa-extract declared df node identity as `(span.start, kind)` yet pushed every Rust value node with `len: 0` (`src/lang/rust.rs` df_push) and serialized `FlatFact::Edge` with endpoint spans and NO kind. Measured on the crate's own 33-file corpus: 22078 df node facts, 100% zero-width, 2144 spans carrying more than one kind, 2548 self-reaching nodes over 89463 reachable pairs, 430 of 462 ranked callables saturating the rail's depth-8 ladder cap in an intra-procedural graph that is a DAG. RCA chain: (1) the start-only span was justified by v5 `(line, col, kind)` parity, and v5 never shipped the span across a wire, (2) the wire's edge arm names only spans, so the kind half is unrecoverable downstream, (3) the depth ladder then needs an artificial cap to terminate and the cap reads as a measurement. Fail-pre-fix: `v6/sprefa-extract/tests/12_df_identity.rs`, three cases over the `src/dispatch.rs` shape (zero-width spans, missing `from_kind`/`to_kind`, `call_res`+`ret` merging into a 2-cycle), all three RED with the fix stashed. Rail = the Rust lift stores each value node's full syn extent and `FlatFact::Edge` carries `from_kind`/`to_kind` (skipped for cst, whose parent/child roles already separate a shared span), plus `v6/dl/dataflow/report_extract.dl6` keying every node rel on `(span, kind)` and reporting self-reaching nodes as a defect count. Receipt: self-reaching 2548 -> 0, aliased spans 2144 -> 581 (all implicit-`ret`-over-tail-expression, now separable), depth histogram 430-at-cap-8 -> a real 0..30 spread under a 32 termination guard. Still start-only: `src/lang/go.rs` and `src/lang/kotlin.rs` df_push, and the `FlatFact::DfArg`/`DfParam` aux arms |
 | 54 | a test fixture names its temp directory from a clock reading, so two parallel threads draw the same path and race | enforced | incident 2026-08-16 (dl6-git-ref-ancestry arc): `v6/sprefa-engine-rs/tests/git_refs.rs` named fixtures `sprefa_git_refs_{pid}_{SystemTime::now().as_nanos()}`; the suite read 15/15, 15/15, then 13 passed 2 failed on the third whole-suite run, always inside the fixture builder with `git ["init", "-q"]: fatal: cannot copy '.../templates/description' to '.../\.git/description': File exists`. RCA: `SystemTime::now()` does not advance once per nanosecond on this machine, so two of the binary's parallel threads read one value, built one path, and ran `git init` into the same directory; the loser saw a half-written template tree. The clock reading looked like an identifier and was not one. Load-dependent, so it survives `--test-threads=1` and the first two runs -- which is exactly what the repo's measure-a-leg-three-times law is for. Fail-pre-fix: the suite itself under thread pressure, 1 red inside 12 attempts at `--test-threads=8` before the fix, 20/20 green at `--test-threads=8` after. Rail = a process-local `static FIXTURE_SEQUENCE: AtomicU64` supplies the name (`tests/git_refs.rs`), and `build()` clears any leftover at that path first, since the name now carries only this process's own pid and sequence. Remaining exposure: `tests/dep_resolve.rs:323` `checkout_root_fixture` still reads the clock; one test calls it today so it cannot collide with itself, and it will the moment a second does |
+| 55 | pane fed a body one keystroke at a time (transport misses the watchdog deadline) | enforced | incident 2026-08-16: five flash4 lanes rc=1 `stalled: 30s with no harness activity`, empty worktrees, no opencode session rows. `send-keys -l` types a body rune by rune -- 10540 bytes measured still ingesting at 70s into a live opencode TUI, first session row ~110s after Enter, against a 30s `FIRST_SIGNAL_LIMIT` (hafley-rs crates/boop/src/supervise.rs:21). Second leg of the same defect: a TUI grouping a burst of typed input as one paste reads the Enter typed inside that window as a newline, fusing several coordinator hails into one message. The card's first RCA blamed control-mode `%error`, which is a real tmux parser fact and was never on the brief path (`git log -S'command(&["send-keys"'` is empty). Fail-pre-fix: `a_multiline_body_reaches_a_pasting_pane_bracketed_and_byte_exact` + `a_brief_sized_body_arrives_whole` (hafley-rs crates/boop-mux/src/lib.rs), RED with the impl reverted (`10401 of 10413 bytes in 10.101423709s`). Rail = `paste_body` sends every body through `load-buffer` + `paste-buffer -d -p` (bracketed only when the pane asked for bracketed paste) and the submit key waits `SUBMIT_GAP` 400ms after the paste; hafley-rs PR #10. Residual: the full `boop beep lane create` end-to-end spawn was not re-run under the rebuilt binary |
 
 ## How a new rail gets born here
 
