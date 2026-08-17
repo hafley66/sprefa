@@ -20,7 +20,7 @@ trap 'rm -rf "$WORK"' EXIT
 PHASE_WALL=(scale-floor)
 
 PHASE_A=(conformance roundtrip text-door sweep import-gate
-         staleness-gate golden-flex tsv2-test getting-started)
+         staleness-gate docs-staleness golden-flex tsv2-test getting-started)
 
 # Each entry is "leg[:ENV=VALUE...]". Ordered longest-first: on a bounded pool
 # the makespan is set by the slowest job if it starts last.
