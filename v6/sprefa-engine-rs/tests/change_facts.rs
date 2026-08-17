@@ -1,23 +1,30 @@
-//! CONTROL: 14 passed, 0 failed.
+//! CONTROL: 17 passed, 0 failed.
 //!
 //! SABOTAGE 1, drop the exact-content rename pass (return an empty Vec from
-//! `take_renames`): 5 passed, 9 failed. `moved.txt` falls back into `deleted`
+//! `take_renames`): 8 passed, 9 failed. `moved.txt` falls back into `deleted`
 //! and `elsewhere.txt` into `created`, so every kind assertion moves and
 //! `elsewhere.txt` starts contributing a changed line it should not have.
 //!
-//! SABOTAGE 2, drop the `is_binary` guard in `changed_lines_of`: 10 passed,
+//! SABOTAGE 2, drop the `is_binary` guard in `changed_lines_of`: 13 passed,
 //! 4 failed. The two NUL-bearing blobs are diffed as text and `shot.bin` gains
 //! line rows in every changed_line assertion.
 //!
-//! SABOTAGE 3, key the diff memo on `repo` alone: 13 passed, 1 failed. Only
+//! SABOTAGE 3, key the diff memo on `repo` alone: 16 passed, 1 failed. Only
 //! `the_diff_memo_keys_on_the_whole_triple` can see it, which is the test that
 //! exists for it.
+//!
+//! SABOTAGE 4, memoise a `WORK` pair anyway (`let memoisable = true;` in
+//! `ChangeFactExecutor::diff`): 16 passed, 1 failed. Only
+//! `work_revision_is_not_memoised` can see it: the second run reads the first
+//! edit's line 2 back out of the memo instead of the second edit's line 3.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use sprefa_engine_rs::change_facts::{ChangeKind, IRevisionDiffer, SoopyRevisionDiffer};
+use sprefa_engine_rs::change_facts::{
+    parse_revision, ChangeKind, IRevisionDiffer, SoopyRevisionDiffer,
+};
 use sprefa_engine_rs::hosts::{
     decode_output, ChangeFactExecutor, HostLiveRunner, IHostExecutor,
 };
@@ -48,6 +55,9 @@ const FRESH_HEAD: &str = "new one\nnew two\n";
 const MOVED_BODY: &str = "identical content\n";
 const BINARY_BASE: &[u8] = b"\x00\x01header\nbody\n";
 const BINARY_HEAD: &[u8] = b"\x00\x01header\nbody changed\n";
+const KEEP_DIRTY: &str = "alpha\nBETA\ngamma\n";
+const KEEP_DIRTY_AGAIN: &str = "alpha\nbeta\nGAMMA\n";
+const ADDED_DIRTY: &str = "added one\nadded two\n";
 
 impl Fixture {
     fn build() -> Self {
@@ -113,6 +123,13 @@ impl Fixture {
         std::fs::write(self.root.join(name), bytes).expect("write fixture file");
     }
 
+    /// `git ls-files` reads the index, so an uncommitted path is a tracked
+    /// worktree path only once it is added.
+    fn dirty(&self, name: &str, bytes: &[u8]) {
+        self.write(name, bytes);
+        self.git(&["add", name]);
+    }
+
     fn commit(&self, message: &str) {
         self.git(&["add", "-A"]);
         self.git(&["commit", "-qm", message]);
@@ -133,7 +150,11 @@ impl Drop for Fixture {
 
 fn kinds(fixture: &Fixture, kind: ChangeKind) -> Vec<String> {
     SoopyRevisionDiffer
-        .diff(&fixture.path(), "at_base", "at_head")
+        .diff(
+            &fixture.path(),
+            &parse_revision("at_base"),
+            &parse_revision("at_head"),
+        )
         .expect("the differ answers")
         .changes
         .into_iter()
@@ -171,7 +192,11 @@ fn a_changed_blob_is_modified_and_an_unchanged_one_is_absent() {
 fn a_rename_is_not_a_creation_plus_a_deletion() {
     let fixture = Fixture::build();
     let answer = SoopyRevisionDiffer
-        .diff(&fixture.path(), "at_base", "at_head")
+        .diff(
+            &fixture.path(),
+            &parse_revision("at_base"),
+            &parse_revision("at_head"),
+        )
         .expect("the differ answers");
     let renames: Vec<(String, String)> = answer
         .renames
@@ -196,7 +221,11 @@ fn a_rename_is_not_a_creation_plus_a_deletion() {
 fn changed_line_names_the_head_side_lines() {
     let fixture = Fixture::build();
     let lines: Vec<(String, i64)> = SoopyRevisionDiffer
-        .diff(&fixture.path(), "at_base", "at_head")
+        .diff(
+            &fixture.path(),
+            &parse_revision("at_base"),
+            &parse_revision("at_head"),
+        )
         .expect("the differ answers")
         .changed_lines
         .into_iter()
@@ -219,7 +248,11 @@ fn changed_line_names_the_head_side_lines() {
 fn a_binary_change_names_no_line() {
     let fixture = Fixture::build();
     let answer = SoopyRevisionDiffer
-        .diff(&fixture.path(), "at_base", "at_head")
+        .diff(
+            &fixture.path(),
+            &parse_revision("at_base"),
+            &parse_revision("at_head"),
+        )
         .expect("the differ answers");
     assert!(answer
         .changes
@@ -237,7 +270,11 @@ fn a_binary_change_names_no_line() {
 fn the_pair_is_ordered() {
     let fixture = Fixture::build();
     let backwards = SoopyRevisionDiffer
-        .diff(&fixture.path(), "at_head", "at_base")
+        .diff(
+            &fixture.path(),
+            &parse_revision("at_head"),
+            &parse_revision("at_base"),
+        )
         .expect("the differ answers");
     let created: Vec<&str> = backwards
         .changes
@@ -253,11 +290,63 @@ fn the_pair_is_ordered() {
 fn a_revision_against_itself_answers_no_row() {
     let fixture = Fixture::build();
     let answer = SoopyRevisionDiffer
-        .diff(&fixture.path(), "at_head", "at_head")
+        .diff(
+            &fixture.path(),
+            &parse_revision("at_head"),
+            &parse_revision("at_head"),
+        )
         .expect("the differ answers");
     assert_eq!(answer.changes.len(), 0);
     assert_eq!(answer.renames.len(), 0);
     assert_eq!(answer.changed_lines.len(), 0);
+}
+
+/// `WORK` names the dirty checkout. Its oids are `git hash-object` answers that
+/// were never written to the object database, so a passing line assertion is
+/// also the receipt that the bytes came off disk.
+#[test]
+fn work_revision_diffs_the_dirty_worktree() {
+    let fixture = Fixture::build();
+    let head_sha = fixture.git(&["rev-parse", "HEAD"]);
+    fixture.dirty("keep.txt", KEEP_DIRTY.as_bytes());
+    fixture.dirty("added.txt", ADDED_DIRTY.as_bytes());
+    let answer = SoopyRevisionDiffer
+        .diff(
+            &fixture.path(),
+            &parse_revision(&head_sha),
+            &parse_revision("WORK"),
+        )
+        .expect("the differ answers");
+    let changes: Vec<(ChangeKind, &str)> = answer
+        .changes
+        .iter()
+        .map(|change| (change.kind, change.path.as_str()))
+        .collect();
+    assert_eq!(
+        changes,
+        vec![
+            (ChangeKind::Created, "added.txt"),
+            (ChangeKind::Modified, "keep.txt"),
+        ]
+    );
+    let lines: Vec<(&str, i64)> = answer
+        .changed_lines
+        .iter()
+        .map(|line| (line.path.as_str(), line.line_number))
+        .collect();
+    assert_eq!(
+        lines,
+        vec![("added.txt", 1), ("added.txt", 2), ("keep.txt", 2)]
+    );
+}
+
+#[test]
+fn parse_revision_maps_work_and_names() {
+    assert_eq!(parse_revision("WORK"), soopy::Revision::Worktree);
+    assert_eq!(
+        parse_revision("main"),
+        soopy::Revision::Named(std::sync::Arc::from("main"))
+    );
 }
 
 // ═══ the executor ═══════════════════════════════════════════════════════════
@@ -402,6 +491,22 @@ fn a_missing_host_input_is_a_named_stop() {
         )
         .expect_err("rev_base is required");
     assert!(failure.message.contains("`rev_base`"), "{}", failure.message);
+}
+
+/// A worktree moves under a fixed memo key, so a `WORK` pair is computed fresh
+/// and the second answer is the second edit.
+#[test]
+fn work_revision_is_not_memoised() {
+    let fixture = Fixture::build();
+    let executor = ChangeFactExecutor::default();
+    let head_sha = fixture.git(&["rev-parse", "HEAD"]);
+    let inputs = pair_inputs(&fixture.path(), &head_sha, "WORK");
+    fixture.dirty("keep.txt", KEEP_DIRTY.as_bytes());
+    let first = answer(&executor, "git_changed_line", &inputs, CHANGED_LINE_OUTPUTS);
+    assert_eq!(first, vec![vec![text("keep.txt"), Value::Integer(2)]]);
+    fixture.dirty("keep.txt", KEEP_DIRTY_AGAIN.as_bytes());
+    let second = answer(&executor, "git_changed_line", &inputs, CHANGED_LINE_OUTPUTS);
+    assert_eq!(second, vec![vec![text("keep.txt"), Value::Integer(3)]]);
 }
 
 // ═══ the arm itself ═════════════════════════════════════════════════════════

@@ -725,22 +725,34 @@ impl ChangeFactExecutor {
         rev_base: &str,
         rev_head: &str,
     ) -> Result<Arc<RevisionDiff>, HostError> {
+        let base_selection = crate::change_facts::parse_revision(rev_base);
+        let head_selection = crate::change_facts::parse_revision(rev_head);
+        // A worktree moves under a fixed key, so a WORK side is answered fresh
+        // every time and never enters the memo.
+        let memoisable = !matches!(base_selection, soopy::Revision::Worktree)
+            && !matches!(head_selection, soopy::Revision::Worktree);
         let key = format!("{repo}|{rev_base}|{rev_head}");
-        if let Some(memo) = self.diffs.lock().expect("change fact memo").get(&key) {
-            return Ok(memo.clone());
+        if memoisable {
+            if let Some(memo) = self.diffs.lock().expect("change fact memo").get(&key) {
+                return Ok(memo.clone());
+            }
         }
         // A revision that does not resolve is a named stop: zero rows would
         // read as "these two trees are identical", a different fact.
-        let answer = Arc::new(self.differ.diff(repo, rev_base, rev_head).map_err(|error| {
-            HostError {
-                host: host.to_string(),
-                message: format!("diff {rev_base}..{rev_head} in {repo}: {error:#}"),
-            }
-        })?);
-        self.diffs
-            .lock()
-            .expect("change fact memo")
-            .insert(key, answer.clone());
+        let answer = Arc::new(
+            self.differ
+                .diff(repo, &base_selection, &head_selection)
+                .map_err(|error| HostError {
+                    host: host.to_string(),
+                    message: format!("diff {rev_base}..{rev_head} in {repo}: {error:#}"),
+                })?,
+        );
+        if memoisable {
+            self.diffs
+                .lock()
+                .expect("change fact memo")
+                .insert(key, answer.clone());
+        }
         Ok(answer)
     }
 }

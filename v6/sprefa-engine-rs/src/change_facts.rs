@@ -61,7 +61,22 @@ pub struct RevisionDiff {
 }
 
 pub trait IRevisionDiffer: Sync {
-    fn diff(&self, repository_root: &str, rev_base: &str, rev_head: &str) -> Result<RevisionDiff>;
+    fn diff(
+        &self,
+        repository_root: &str,
+        rev_base: &soopy::Revision,
+        rev_head: &soopy::Revision,
+    ) -> Result<RevisionDiff>;
+}
+
+/// The host wire spells a revision as text; `WORK` is the worktree, matching
+/// soopy's own CLI spelling (`soopy/src/main.rs`, `fn revision`).
+pub fn parse_revision(value: &str) -> soopy::Revision {
+    if value == "WORK" {
+        soopy::Revision::Worktree
+    } else {
+        soopy::Revision::Named(Arc::from(value))
+    }
 }
 
 /// Two Soopy tracked-file listings for the tree shape, one `cat-file --batch`
@@ -69,21 +84,18 @@ pub trait IRevisionDiffer: Sync {
 #[derive(Default)]
 pub struct SoopyRevisionDiffer;
 
-type Listing = BTreeMap<String, String>;
+type Listing = BTreeMap<String, soopy::ContentId>;
 
-fn listing_at(tree: &mut soopy::SourceTree, revision: &str) -> Result<Listing> {
+fn listing_at(tree: &mut soopy::SourceTree, revision: &soopy::Revision) -> Result<Listing> {
     let entries = tree
         .git_files(&soopy::GitFilesQuery {
-            revision: soopy::Revision::Named(Arc::from(revision)),
+            revision: revision.clone(),
             pathspecs: Vec::new(),
         })
-        .with_context(|| format!("enumerate tracked files at {revision}"))?;
+        .with_context(|| format!("enumerate tracked files at {revision:?}"))?;
     let mut listing = Listing::new();
     for entry in entries {
-        let soopy::ContentId::GitBlob(oid) = entry.content else {
-            bail!("the tracked-file feed returned a non-Git content id at {revision}");
-        };
-        listing.insert(entry.source.path.0.to_string(), oid.0.to_string());
+        listing.insert(entry.source.path.0.to_string(), entry.content);
     }
     Ok(listing)
 }
@@ -96,11 +108,14 @@ fn take_renames(
     base: &Listing,
     head: &Listing,
 ) -> Vec<PathRename> {
-    let group = |paths: &[String], at: &Listing| -> BTreeMap<String, Vec<String>> {
-        let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let group = |paths: &[String], at: &Listing| -> BTreeMap<soopy::ContentId, Vec<String>> {
+        let mut grouped: BTreeMap<soopy::ContentId, Vec<String>> = BTreeMap::new();
         for path in paths {
-            if let Some(oid) = at.get(path) {
-                grouped.entry(oid.clone()).or_default().push(path.clone());
+            if let Some(content) = at.get(path) {
+                grouped
+                    .entry(content.clone())
+                    .or_default()
+                    .push(path.clone());
             }
         }
         grouped
@@ -110,8 +125,8 @@ fn take_renames(
     let mut renames = Vec::new();
     let mut paired_from: Vec<String> = Vec::new();
     let mut paired_to: Vec<String> = Vec::new();
-    for (oid, from_paths) in &departed {
-        let Some(to_paths) = arrived.get(oid) else {
+    for (content, from_paths) in &departed {
+        let Some(to_paths) = arrived.get(content) else {
             continue;
         };
         for (from, to) in from_paths.iter().zip(to_paths) {
@@ -148,8 +163,36 @@ pub fn changed_lines_of(base: &[u8], head: &[u8]) -> Vec<i64> {
         .collect()
 }
 
+/// A worktree side is dirty bytes whose oid `git hash-object` never wrote to the
+/// object database, so those bytes come from disk; a commit side comes from the
+/// one batch process.
+fn read_side(
+    batch: &mut soopy::GitBatch,
+    root: &std::path::Path,
+    revision: &soopy::Revision,
+    path: &str,
+    content: &soopy::ContentId,
+) -> Result<Arc<[u8]>> {
+    if matches!(revision, soopy::Revision::Worktree) {
+        let bytes =
+            std::fs::read(root.join(path)).with_context(|| format!("read worktree {path}"))?;
+        return Ok(Arc::from(bytes));
+    }
+    match content {
+        soopy::ContentId::GitBlob(oid) => batch
+            .read(oid)
+            .with_context(|| format!("read {path} at {revision:?}")),
+        other => bail!("a committed revision answered a non-Git content id for {path}: {other:?}"),
+    }
+}
+
 impl IRevisionDiffer for SoopyRevisionDiffer {
-    fn diff(&self, repository_root: &str, rev_base: &str, rev_head: &str) -> Result<RevisionDiff> {
+    fn diff(
+        &self,
+        repository_root: &str,
+        rev_base: &soopy::Revision,
+        rev_head: &soopy::Revision,
+    ) -> Result<RevisionDiff> {
         let repository = soopy::discover(std::path::PathBuf::from(repository_root))
             .with_context(|| format!("open repository {repository_root}"))?;
         let root = repository.root.clone();
@@ -169,7 +212,7 @@ impl IRevisionDiffer for SoopyRevisionDiffer {
             .collect();
         let modified: Vec<String> = head
             .iter()
-            .filter(|(path, oid)| matches!(base.get(*path), Some(was) if was != *oid))
+            .filter(|(path, content)| matches!(base.get(*path), Some(was) if was != *content))
             .map(|(path, _)| path.clone())
             .collect();
 
@@ -195,14 +238,10 @@ impl IRevisionDiffer for SoopyRevisionDiffer {
         let empty: Arc<[u8]> = Arc::from(Vec::new());
         let mut changed_lines = Vec::new();
         for path in created.iter().chain(modified.iter()) {
-            let head_bytes = batch
-                .read(&soopy::ObjectId(Arc::from(head[path].as_str())))
-                .with_context(|| format!("read {path} at {rev_head}"))?;
+            let head_bytes = read_side(&mut batch, &root, rev_head, path, &head[path])?;
             let base_bytes = match base.get(path) {
                 None => empty.clone(),
-                Some(oid) => batch
-                    .read(&soopy::ObjectId(Arc::from(oid.as_str())))
-                    .with_context(|| format!("read {path} at {rev_base}"))?,
+                Some(content) => read_side(&mut batch, &root, rev_base, path, content)?,
             };
             changed_lines.extend(changed_lines_of(&base_bytes, &head_bytes).into_iter().map(
                 |line_number| ChangedLine {
@@ -232,7 +271,12 @@ mod tests {
     fn at(pairs: &[(&str, &str)]) -> Listing {
         pairs
             .iter()
-            .map(|(path, oid)| ((*path).to_string(), (*oid).to_string()))
+            .map(|(path, oid)| {
+                (
+                    (*path).to_string(),
+                    soopy::ContentId::GitBlob(soopy::ObjectId(Arc::from(*oid))),
+                )
+            })
             .collect()
     }
 
