@@ -4,8 +4,8 @@
 use prost::Message;
 
 use crate::cpg_types::{
-    edge_kind_or_stop, node_kind_or_stop, CpgEdge, CpgImport, CpgImportError, CpgNode,
-    CpgProperty, CpgPropertyValue,
+    edge_kind_or_stop, node_kind_or_stop, CpgEdge, CpgImport, CpgImportError, CpgNode, CpgProperty,
+    CpgPropertyValue,
 };
 
 #[doc(hidden)]

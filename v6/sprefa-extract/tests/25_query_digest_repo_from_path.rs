@@ -30,7 +30,10 @@ impl Fixture {
         let fixture = Fixture { root };
         fixture.git(&["init", "-q"]);
         fixture.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
-        fixture.commit("sample.rs", "pub fn trim(value: String) -> String {\n    value\n}\n");
+        fixture.commit(
+            "sample.rs",
+            "pub fn trim(value: String) -> String {\n    value\n}\n",
+        );
         fixture
     }
 
@@ -40,9 +43,15 @@ impl Fixture {
             .arg(&self.root)
             .args(args)
             .env("GIT_AUTHOR_NAME", "query-digest-repo-from-path")
-            .env("GIT_AUTHOR_EMAIL", "query-digest-repo-from-path@example.invalid")
+            .env(
+                "GIT_AUTHOR_EMAIL",
+                "query-digest-repo-from-path@example.invalid",
+            )
             .env("GIT_COMMITTER_NAME", "query-digest-repo-from-path")
-            .env("GIT_COMMITTER_EMAIL", "query-digest-repo-from-path@example.invalid")
+            .env(
+                "GIT_COMMITTER_EMAIL",
+                "query-digest-repo-from-path@example.invalid",
+            )
             .output()
             .expect("run git");
         assert!(

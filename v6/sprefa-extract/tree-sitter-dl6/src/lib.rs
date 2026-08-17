@@ -59,6 +59,10 @@ path(X, Y) <- edge(X, Y).
     fn parses_format_input_fixture() {
         let src = include_str!("../fixtures/format-input.dl6");
         let result = parse_check(src);
-        assert!(result.is_ok(), "format-input fixture error: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "format-input fixture error: {:?}",
+            result.err()
+        );
     }
 }

@@ -57,7 +57,10 @@ fn join_emits_arg_to_param_and_ret_to_call_res() {
     )
     .with_call_site(span(18, 6));
 
-    let inputs = vec![(caller_blob.clone(), &caller), (callee_blob.clone(), &callee)];
+    let inputs = vec![
+        (caller_blob.clone(), &caller),
+        (callee_blob.clone(), &callee),
+    ];
     let resolved = vec![(caller_blob.clone(), vec![edge])];
     let flows = flow_edges(&inputs, &resolved);
 

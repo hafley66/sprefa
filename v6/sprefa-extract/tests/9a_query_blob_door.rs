@@ -34,7 +34,11 @@ fn temp_repo() -> std::path::PathBuf {
 fn query_reads_a_staged_blob_through_the_batch_door() {
     let dir = temp_repo();
     let source = dir.join("sample.rs");
-    std::fs::write(&source, "pub fn trim(value: String) -> String {\n    value\n}\n").unwrap();
+    std::fs::write(
+        &source,
+        "pub fn trim(value: String) -> String {\n    value\n}\n",
+    )
+    .unwrap();
     let hash = git(&dir, &["hash-object", "-w", source.to_str().unwrap()]);
     let oid = String::from_utf8(hash.stdout).unwrap().trim().to_string();
 
@@ -60,7 +64,11 @@ fn query_reads_a_staged_blob_through_the_batch_door() {
 fn query_rejects_a_non_blob_oid_with_one_stderr_line() {
     let dir = temp_repo();
     let source = dir.join("sample.rs");
-    std::fs::write(&source, "pub fn trim(value: String) -> String {\n    value\n}\n").unwrap();
+    std::fs::write(
+        &source,
+        "pub fn trim(value: String) -> String {\n    value\n}\n",
+    )
+    .unwrap();
     git(&dir, &["add", "."]);
     let tree = git(&dir, &["write-tree"]);
     let tree_oid = String::from_utf8(tree.stdout).unwrap().trim().to_string();

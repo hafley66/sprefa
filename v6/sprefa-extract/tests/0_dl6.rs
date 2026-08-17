@@ -45,7 +45,12 @@ fn dl6_extraction_exact_nodes_edges_and_spans() {
                 callee_path,
                 span,
                 ..
-            } => Some((callee.as_str(), callee_path.as_deref(), span.start, span.end)),
+            } => Some((
+                callee.as_str(),
+                callee_path.as_deref(),
+                span.start,
+                span.end,
+            )),
             _ => None,
         })
         .collect();
@@ -59,7 +64,13 @@ fn dl6_extraction_exact_nodes_edges_and_spans() {
                 name,
                 span,
                 ..
-            } => Some((kind.as_str(), module.as_deref(), name.as_str(), span.start, span.end)),
+            } => Some((
+                kind.as_str(),
+                module.as_deref(),
+                name.as_str(),
+                span.start,
+                span.end,
+            )),
             _ => None,
         })
         .collect();
@@ -85,13 +96,7 @@ fn dl6_extraction_exact_nodes_edges_and_spans() {
         ]
     );
 
-    assert_eq!(
-        type_entities,
-        [
-            ("edge", 34, 65),
-            ("path", 66, 97),
-        ]
-    );
+    assert_eq!(type_entities, [("edge", 34, 65), ("path", 66, 97),]);
 
     assert_eq!(
         definitions,

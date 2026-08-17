@@ -126,7 +126,8 @@ fn walk_go_entities(
                     push_entity(sink, strings, span, &name, kind);
                     // A grouped `type ( ... )` decl carries its doc above the
                     // spec; a lone `type X struct{}` has it above the decl.
-                    if let Some(text) = go_leading_doc(spec, src).or_else(|| go_leading_doc(child, src))
+                    if let Some(text) =
+                        go_leading_doc(spec, src).or_else(|| go_leading_doc(child, src))
                     {
                         push_go_doc(sink, strings, span, None, &text);
                     }
