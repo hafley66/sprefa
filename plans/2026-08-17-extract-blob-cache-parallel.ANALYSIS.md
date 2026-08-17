@@ -59,27 +59,34 @@ Release binary at 55e15e747, this machine, 12 logical cores (8 performance).
 
 | measurement | value | how |
 |---|---|---|
-| per-file extraction | 10.4 ms mean | 2343 tracked source files, one process each |
-| whole-corpus pass, single thread | **24.3 s** | same run |
-| process startup | under 5 ms, not the cost | empty `.rs` file |
-| wire output per source byte | 35-37x | 120-file random sample and a 60-file sample |
+| whole-corpus IN-PROCESS pass, single thread | **4.3-4.7 s** wall, 4.0 s user | `extract --resolve` over all 2343 tracked source files, three runs |
+| peak RSS holding all 2343 `ExtractOutput`s resident | **400 MB** (170 KB per file mean) | `/usr/bin/time -l` on that run |
+| whole-corpus pass, one process PER FILE | 24.3 s, 10.4 ms each | 2343 spawns, full JSONL emission |
 | whole-corpus wire output | 1084 MB JSONL | same full pass |
-| per-file output spread | p50 306 KB, p90 1.24 MB, max 2.9 MB | 120-file sample |
+| process startup | under 5 ms, not the cost | empty `.rs` file |
+| wire output per source byte | 35-37x | 120-file and 60-file samples |
+| per-file wire output spread | p50 306 KB, p90 1.24 MB, max 2.9 MB | 120-file sample |
 | in-corpus duplicate blobs (sprefa) | 164 of 2346 files, **7.0%** | sha256 over tracked source files |
 | in-corpus duplicate blobs (hafley-rs) | 0 of 95, **0.0%** | same |
-| RSS delta for one 126 KB file | +27 MB over a 5 MB baseline | `/usr/bin/time -l` |
+
+The two pass numbers measure different things and both matter. 4.3 s is the
+parse-and-extract cost with nothing serialized, one thread, `user` time within
+7% of `real` (so it is genuinely single-threaded and CPU-bound). 24.3 s is what
+the same corpus costs when every file also pays a process spawn and writes its
+full wire form; the 20 s difference is serialization and process setup, not
+parsing.
 
 Three conclusions fall straight out.
 
-1. A full pass is 24.3 s single-threaded, which the **10-second law** names a
-   defect to investigate now. The parallel half has the bigger measured payoff.
+1. The parallelizable core is 4.3 s on one core with 8 performance cores idle.
+   That is the parallel half's payoff and it is measured, not projected.
 2. The intra-run cache win is 7% at best on this corpus and 0% on a smaller one.
    The cache pays across TICKS, in the engine's long-lived process, not inside a
    one-shot CLI run.
-3. Per-file value size spans p50 306 KB to max 2.9 MB, and the corpus total is
-   ~1 GB of equivalent wire bytes. **An entry-count bound does not bound memory
-   here.** Any cache that lands must be WEIGHT-bounded, which by itself kills
-   three of the five candidates.
+3. Holding the WHOLE corpus resident costs 400 MB measured, and per-file value
+   size spans 170 KB mean against a 2.9 MB worst case on the wire. **An
+   entry-count bound does not bound memory here.** Any cache that lands must be
+   WEIGHT-bounded, which by itself kills three of the five candidates.
 
 ## 4. Candidate-by-candidate: the cache
 
@@ -141,7 +148,7 @@ usable ("nothing seizes the machine").
 
 | arc | verdict | payoff |
 |---|---|---|
-| PARALLEL | rayon, dedicated capped pool, `par_iter` at `project.rs:456` and `:472` | 24.3 s -> ~4 s on 8 performance cores |
+| PARALLEL | rayon, dedicated capped pool, `par_iter` at `project.rs:456` and `:472` | 4.3 s -> under 1 s on 8 performance cores, whole corpus |
 | CACHE | `quick_cache::sync::Cache` with a hand-written `ExtractOutput` weigher | zero intra-run gain on a cold pass; the whole win is cross-tick in the engine |
 
 Dispatch order is PARALLEL first: it is mechanical, its payoff is measured, and
@@ -151,9 +158,9 @@ it does not touch the seam the cache changes.
 
 The cache half is NOT dispatchable until two numbers exist.
 
-1. **The memory cap.** A weight-bounded cache needs a byte budget. The corpus
-   would ask for ~1 GB to hold everything; anything smaller is a policy choice
-   about what the engine may hold resident. No default in the repo covers this.
+1. **The memory cap.** A weight-bounded cache needs a byte budget. Holding this
+   whole corpus resident measured 400 MB; anything smaller is a policy choice
+   about what the engine may keep. No default in the repo covers this.
 2. **The public signature.** Handing back a cached value means
    `dispatch(path, content, mask)` returns `Option<Arc<ExtractOutput>>` rather
    than `Option<ExtractOutput>`, which changes the leaf's public API at
