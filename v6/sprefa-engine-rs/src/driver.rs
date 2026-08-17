@@ -4,6 +4,7 @@
 // carries the tick log and nothing else.
 
 use futures::StreamExt;
+use std::time::Duration;
 
 use crate::program::{run_boot, GenProgram};
 use crate::sql::SqliteSeam;
@@ -148,4 +149,19 @@ pub async fn drive_tick(
 ) -> BoundaryResult<TickDeltas> {
     let mut stream = program.tick(seam, arrivals);
     stream.next().await.expect("tick stream produced no item")
+}
+
+/// Feed one debounced Soopy worktree batch through the same SourceBind tick
+/// path used by explicit source requests. The optional result lets a driver
+/// keep waiting through identical re-saves and backend notifications that
+/// produce no logical source delta.
+pub fn drive_watch_tick(
+    bind: &mut crate::source_bind::SourceBind,
+    program: &GenProgram,
+    seam: &SqliteSeam,
+    worktree: &soopy::WorktreeId,
+    clock: u64,
+    timeout: Duration,
+) -> anyhow::Result<Option<crate::source_bind::SourceBindTickFrame>> {
+    bind.run_watch_tick(program, seam, worktree, clock, timeout)
 }
