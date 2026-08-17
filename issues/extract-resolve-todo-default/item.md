@@ -7,7 +7,6 @@ priority: high
 epic: extract-port-closeout
 labels:
 - pkg:extract
-- needs-chris
 ---
 
 # Resolve<F> ships a todo!() default body
@@ -47,3 +46,9 @@ calls them.
 
 Recommendation withheld. The `todo!()` in a shipped binary is the part that
 needs a decision either way.
+
+## Decisions
+
+### 2026-08-16T19:27:47Z · @chris
+
+Fork B: delete the todo!() default body; Resolve becomes non-defaulted and the compiler demands an arm (or an explicit empty impl) per Source. Rationale: the default was expired scaffolding from the 4b freeze (types.rs:823-826), never a design; silent-empty (A) violates the familymask named-stop precedent. Ruled from Chris's reaction 2026-08-16; implementation dispatchable.

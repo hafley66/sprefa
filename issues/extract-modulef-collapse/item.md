@@ -49,3 +49,9 @@ v5 distinguishes import / edge / unresolved / binding / crate_edge.
 | A. keep collapsed | specifiers stay `CallFAux` aux; `file_edge` stays the only module-level output; v5's five distinctions never come back |
 | B. revive `ModuleF` | the sketch at `types.rs:637-645` becomes real; a fifth plane, its own Resolve arm, its own wire records |
 | C. middle | no new family, but the `file_edge` record grows a `kind` column carrying v5's import/unresolved/binding distinction |
+
+## Comments
+
+### 2026-08-16T19:52:24Z · @chris
+
+Deferred 2026-08-16: no call yet. User wants the port census absorbed first; the fold stands meanwhile. extract-module-plane-non-ts holds with it.

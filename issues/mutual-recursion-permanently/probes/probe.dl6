@@ -1,0 +1,723 @@
+# golden-flex.dl6 -- ONE program that exercises every live surface construct.
+#
+# WHY THIS FILE EXISTS. The fixture corpus is one-construct-per-fixture: it
+# proves each construct in isolation and almost never COMPOSES two of them.
+# That shape let real defects through with every gate green (depth>=2 relation
+# references silently empty in both directions, chained decode oracle-dead,
+# two-door decl normalization disagreement, keyed-arrival divergence). This is
+# the composition program: one coherent file, every live construct, graded at
+# three cardinalities (0 rows / 1 row / >=100 rows per input rel) plus a
+# perturbed schedule, oracle vs BOTH emitter modes, tick log AND final state,
+# and then again end to end through the served HTTP engine.
+#
+# THE DOMAIN, contrived on purpose so composition has somewhere to happen: an
+# ORCHARD. Trees sit at plots inside patches, get picked, get graded, get
+# weighed by a shell host, and a clock bind drives the roll-call.
+#
+# EVERY CONSTRUCT CARRIES A COMMENT NAMING IT. compile/scripts/golden_coverage.pl
+# reads registry.pl's live surface rows and this file's own parsed term and
+# FAILS, naming the construct, if any live registry row is not exercised here.
+# A construct added to the registry therefore breaks this golden until the
+# golden flexes it. That is the language-kept-in-check mechanism; it is a gate,
+# not a doc.
+#
+# ═══ NAMED UNSUPPORTED CONSTRUCTS (part of the flex; the coverage gate asserts each one) ═══
+# Every line below is a construct or composition this program CANNOT express.
+# None of them is worked around: the unsupported name is the record.
+#
+#   json_each/2                    registry status `refused`.
+#   json_array/1                   aggregate head, registry status `refused`
+#                                  (ruling json_ticklog_encoding executed on the
+#                                  log side; emission still owed). json_object/2
+#                                  went LIVE off the same ruling and is GRADED
+#                                  HERE (orchard_tag_document below), not absent.
+#   sg_pattern/3                   registry status `refused`
+#                                  (slot_sg_metavariable_semantics).
+#   spread/1, $/1, **/0, {}/0      the json value/pattern axis. LIVE and graded
+#                                  -- seven fixtures in conformance/fixtures/
+#                                  json_arm.pl, sweep 140 compiled / 138
+#                                  identical / 0 wrong on BOTH the tick log and
+#                                  the final state, both emitter modes. This
+#                                  golden now exercises the axis below after
+#                                  the two arrival doors were closed:
+#                                  golden-schedules.ts uses the existing tsv2
+#                                  canonicalizer for object/array JSON columns,
+#                                  and the shared oracle arrival mapper parses
+#                                  that canonical text into obj/list terms.
+#   tagged_brace/1                 reserved. `_{...}` and `Tag{...}` are SWI
+#                                  DICT syntax (measured: term_to_atom gives a
+#                                  dict, not `{}`/1), so the term door could
+#                                  never agree with a text door that read them
+#                                  as json. parse_dl.pl refuses them by name and
+#                                  the spelling stays free for the directive's
+#                                  stated future use of `{`.
+#   set/0                          removed word: unsupported_surface(
+#                                  removed_word(set)).
+#   scan/variadic                  reserved removed word (ruling files_naming). v5's
+#                                  corpus-walk spelling; file enumeration here
+#                                  is the files/files_at host pair
+#                                  (fixtures/files-hosts.dl6). Reserved rather
+#                                  than absent so a ported v5 body is a named
+#                                  refusal instead of a silently empty EDB
+#                                  relation: reserved_body_word(scan/N) on both
+#                                  doors, covered by conformance
+#                                  scan_is_a_named_refusal{,_at_five_arguments}.
+#   zip/2                          reserved.
+#   subscribe/1, unsubscribe/1,    reserved lifecycle wrappers; their kernel
+#   complete/1, error/1            forms are next/finalize on the demand rel.
+#   pre/2                          seeded pre is covered by conformance only.
+#
+#   BRACES AND LIST VALUES         MEASURED writing this file. A braces literal
+#                                  in a head or a `:=` right-hand side is
+#                                  unsupported_construct(json_value_expression(
+#                                  {row: _, col: _})) -- braces/list VALUES were
+#                                  un-refused for a while and silently stored
+#                                  "null"/`{}(...)`, and the refusal is the fix.
+#                                  Consequence for this file: struct values
+#                                  cannot be BUILT in a rule, so the value plane
+#                                  below arrives from the world (an arrival row
+#                                  or a host's JSON stdout), which is the only
+#                                  live path. `concat([...])` still carries the
+#                                  list-literal grammar, since concat is an
+#                                  expression call rather than a stored value.
+#   NESTED BRACES                  same refusal, one level deeper, so a two-hop
+#                                  struct value can never be assembled in-language
+#                                  at all -- it only ever arrives whole.
+#   float / bool IN sh AND bind    THE DECL SURFACE IS FIXED, the layer under it
+#                                  is not. decl_b_column_type/5 knew only
+#                                  int|text|json and degraded everything else to
+#                                  the untyped `none`; it now reads
+#                                  typed_column_type/3, the same vocabulary
+#                                  `rel` decls and host OUTPUT columns read, so
+#                                  float, bool and struct names all SPELL. What
+#                                  is still refused is one layer down and was
+#                                  found by trying it here: a float or bool host
+#                                  INPUT reaches the witness-digest concat as a
+#                                  typed value and is refused
+#                                  concat_non_display_piece(concat([...,kilos,
+#                                  ":",float,"=",_]), _). MEASURED both ways:
+#                                  `kilos: float` and `healthy: bool` as a third
+#                                  `weigh` input both produce exactly that, and
+#                                  the same shape with `lane: int` gets past it.
+#                                  So the host below still carries INT grams --
+#                                  now for a reason one layer deeper, and a
+#                                  named one.
+#   BARE TOP-LEVEL FACT            `quarantined('weed').` at top level lowers to
+#                                  a level rule over a minted literal seed and is
+#                                  refused level_rule_no_positive_body. Every
+#                                  seed here arrives over the wire.
+#   keyed ON A LEVEL HEAD          keyed_level_head. Every keyed rel below is an
+#                                  EDGE head.
+#   edge INTO AN UNKEYED SET       edge_into_unkeyed_set(Ref). Every `<+` head
+#                                  below is either `log` or `key(...)`.
+#   sh TEMPLATE CONTRACT           a template must reference every declared
+#                                  input, else template_mismatch(
+#                                  unreferenced_input(Column)).
+#   CONCAT TAKES VALUES ONLY       an expression CALL inside concat's list is
+#                                  non_display_in_concat(Call); binding it
+#                                  through `:=` first does not help, because
+#                                  `:=` stores the unevaluated call.
+#
+#   norm/1  --  WAS a live defect and is now GRADED HERE (display_key below).
+#                                  `expression(norm/1, text_scalar, ...)` shipped
+#                                  as a live registry row with a SQL rendering,
+#                                  no reference implementation, and zero
+#                                  conformance coverage, so the two engines
+#                                  disagreed:
+#                                    program  route_key(Raw, norm(Raw)) <- route(Raw).
+#                                    arrival  route("Hello World")
+#                                    oracle   route_key["Hello World","norm(Hello World)"]
+#                                    emitter  route_key["Hello World","helloworld"]
+#                                  The oracle held the unevaluated term; the
+#                                  emitter lowered it to SQL and evaluated it.
+#                                  conformance/body.pl now evaluates the whole
+#                                  text_scalar FAMILY off the registry row, the
+#                                  inverted receipt that guarded this absence is
+#                                  gone from scripts/golden-flex.sh, and norm is
+#                                  graded on all four cardinalities like every
+#                                  other live row.
+#
+#   upper/1, lower/1, trim/1,2, ltrim/1,2, rtrim/1, reverse/1, initcap/1,
+#   substr/2,3, instr/2, length/1, split/2, json_object/2, json_patch/2  --
+#   the string-family and json landing (issue golden-flex-coverage) added ONE
+#   registry row apiece with zero golden coverage. Each is now graded here:
+#   the text-only and typed-scalar rows fold RouteName (route_* below), split
+#   fans display's concat'd Note out through the same relational-list idiom
+#   orchard_list_tag already proves, json_object groups orchard_tag's decoded
+#   pairs into one document per tree (orchard_tag_document), and json_patch
+#   folds a keyed snapshot the same shape as conformance/fixtures/
+#   json_patch_fold.pl (orchard_snapshot below) -- one working fold, not a
+#   restatement of that corpus's RFC-clause coverage.
+#
+# ═══ DEFECTS THIS PROGRAM SURFACED (index; each is written up where it lives)
+#
+#   norm/1 diverged oracle vs emitter  FIXED             header above; graded by
+#                                                     display_key below
+#   float/bool unspellable in sh + bind decls  FIXED   header above; the
+#                                                     REMAINING half is the
+#                                                     witness-digest concat
+#                                                     (concat_non_display_piece)
+#   JSON schedule cannot carry an object value        CLOSED in this lane:
+#                                                     the TS schedule seam and
+#                                                     shared oracle arrival mapper
+#   .dl6 text has no final-state oracle leg           same header
+#   one ITickOutcome renders a struct column TWO      tsv2/tests/
+#   ways: outcome.line canonical, outcome.deltas      goldenFlexServed.test.ts
+#   and GET /idb the raw arrival key order
+#   IRowValue cannot type a struct value the          tsv2/scripts/
+#   engine both accepts and prints                    golden-schedules.ts
+#   a self-referential level rule runs ONE round      COMPOSE.md finding 1;
+#   per tick in the emitter and to full fixpoint      the fold below therefore
+#   in the oracle, so a chain arriving inside one     takes one link per tick,
+#   tick diverges and never converges on later        and stops at two links
+#   ticks either; and INSIDE THIS PROGRAM it stops
+#   at depth two whatever the tick, while the same
+#   fold in a two-rule program chains freely
+#   two negation-guarded arms on one head compile     COMPOSE.md finding 2;
+#   on both doors and pick opposite winners: the      ledger in conformance/
+#   oracle by arrival order, the emitter by           fixtures/one_vs_any.pl
+#   source arm order
+#   an edge arm triggered by a LEVEL-headed rel       COMPOSE.md finding 3;
+#   loses the level plane's retractions in the        the `any` arms below
+#   emitter when the trigger's own source is a        trigger off arrival
+#   keyed rel taking same-batch replacements          rels for this reason
+#
+# None of them is fixed here. Two are routed around inside this lane (its own
+# oracle door, its own schedule types) and the routes are named at the site.
+#
+# ═══ the value plane: struct types, one chain two deep ══════════════════════
+# A bare `rel` whose NAME is used as another column's TYPE is a struct type
+# (type_decl/2 in term form; ruling compound_storage = struct_as_rows). `plot`
+# is the leaf, `patch` carries a plot, and `tree.site` carries a patch -- so
+# reading one `tree` row is a two-hop dictionary chain. Both hop targets are
+# ordinary public rels and appear in the tick log in the same tick as the parent.
+rel plot(row: int, col: int).                      # type_decl/2 leaf; col_type/3 int
+rel patch(label: text, at: plot).                  # depth 1: a struct field typed by a struct
+
+# ═══ the world's arrival targets (EDB) ══════════════════════════════════════
+# Nothing derives these; the schedule pushes them. Every column carries a
+# col_type/3 entry, `bool` and `float` among them -- the two types a `rel` decl
+# accepts and an `sh`/`bind` decl does not (the door disagreement above).
+rel tree(tree_id: int, species: text, site: patch).   # depth 2: patch -> plot
+rel pick_event(tree_id: int, picker: text, kilos: float, sugar: int).
+rel retire_event(tree_id: int).
+rel quarantined(species: text).
+rel sensor(tree_id: int, healthy: bool).
+
+# ═══ json value and pattern axis ════════════════════════════════════════════
+# JSON object pattern `{k: v}` over a decoded object.
+rel orchard_json(tree_id: int, payload: json).
+rel orchard_card(tree_id: int, species: text).
+orchard_card(TreeId, Species) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {species: Species}).
+
+# Open object pattern with a typed capture `{stars: Stars: int}`.
+rel orchard_stars(tree_id: int, stars: int).
+orchard_stars(TreeId, Stars) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {stars: Stars: int}).
+
+# `$key` capture over the dynamic tag object, with an integer value capture.
+rel orchard_tag(tree_id: int, tag: text, value: int).
+orchard_tag(TreeId, TagKey, TagValue) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {tags: {$TagKey: TagValue: int}}).
+
+# json_object/2: aggregate head, one document per group, keys sorted. Reads
+# the same decoded (key, value) pairs orchard_tag already produced, so this is
+# a second consumer of one source rather than an eleventh json arrival shape.
+rel orchard_tag_document(tree_id: int, snapshot: json).
+orchard_tag_document(TreeId, json_object(TagKey, TagValue)) <-
+  orchard_tag(TreeId, TagKey, TagValue).
+
+# ═══ json_patch/2: RFC 7396 merge patch as a pre/1 fold over a keyed snapshot,
+# the same shape conformance/fixtures/json_patch_fold.pl grades clause by
+# clause. This golden needs only ONE working fold to prove the construct
+# composes with a keyed edge head and a log arrival; the seed row is a direct
+# arrival (like `metric_doc` in that corpus), and every later sample folds in.
+rel orchard_patch_sample(tree_id: int, patch: json) log keep(all).
+rel orchard_snapshot(tree_id: int, document: json) key(1).
+orchard_snapshot(TreeId, Next) <+
+  orchard_patch_sample(TreeId, Patch),
+  pre(orchard_snapshot(TreeId, Prior)),
+  Next := json_patch(Prior, Patch).
+
+# `**` descent reaches the nested leaf at any object depth.
+rel orchard_leaf(tree_id: int, leaf: int).
+orchard_leaf(TreeId, Leaf) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {'**': {leaf: Leaf: int}}).
+
+# Array spread `[... {…}]` fans out correlated item fields.
+rel orchard_item(tree_id: int, fruit: text, item_stars: int).
+orchard_item(TreeId, Fruit, ItemStars) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {items: spread({fruit: Fruit, stars: ItemStars: int})}).
+
+# `{}` empty-object match accepts the empty object and excludes arrays/scalars.
+rel orchard_has_empty(tree_id: int).
+orchard_has_empty(TreeId) <-
+  orchard_json(TreeId, JsonPayload),
+  decode(JsonPayload, {empty: {}}).
+
+# An arriving list(T) carrier fans out through spread.
+rel orchard_list(tree_id: int, tags: json_list(text)).
+rel orchard_list_tag(tree_id: int, tag: text).
+orchard_list_tag(TreeId, Tag) <-
+  orchard_list(TreeId, Tags),
+  decode(Tags, spread(Tag)).
+
+# Rows -> json_group_array -> decode(spread) -> rows, with list(T) as the
+# aggregate carrier type.
+rel orchard_tag_source(tree_id: int, tag: text).
+rel orchard_tag_list(tree_id: int, tags: json_list(text)).
+orchard_tag_list(TreeId, json_group_array(Tag)) <-
+  orchard_tag_source(TreeId, Tag).
+
+rel orchard_tag_roundtrip(tree_id: int, tag: text).
+orchard_tag_roundtrip(TreeId, Tag) <-
+  orchard_tag_list(TreeId, Tags),
+  decode(Tags, spread(Tag)).
+
+# `log` + `keep(all)`: the append-only picking journal, nothing pruned.
+rel pick_log(tree_id: int, picker: text) log keep(all).
+# `log` + `keep(count(N))`: the same journal, bounded. Retention lowers to one
+# set-based DELETE ... RETURNING into the negative-delta path.
+rel recent_pick(tree_id: int, picker: text) log keep(count(2)).
+
+# `seq/1`: one global order when its argument is an atom, one order per value
+# when its argument is a variable. The cursor is compiler-minted and visible
+# in the tick log; this rule uses one order per tree.
+rel pick_ordinal(tree_id: int, ordinal: int) log keep(all).
+pick_ordinal(TreeId, PickOrdinal) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar), PickOrdinal := seq(TreeId).
+
+# `pre/1`: the occurrence-ordered fold reads the evolving keyed row, so the
+# base arm handles the first pick and the step arm chains later picks.
+rel pick_count(tree_id: int, count: int) key(1).
+pick_count(TreeId, 1) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar), not(pick_count(TreeId, _Previous)).
+pick_count(TreeId, PickCountValue) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar),
+  pre(pick_count(TreeId, PickPreviousCount)),
+  PickCountValue := PickPreviousCount + 1.
+
+# enum_decl/2 with the `;` variant separator. Variants become typed variant rels
+# (grade_ripe/2, grade_green/2, grade_bruised/2, each carrying a leading
+# reference id column) plus the derived tag view grade_tag/2.
+rel grade(ripe(sugar: int) ; green(days: int) ; bruised(reason: text)).
+
+# ═══ the shell host (sh_decl/4) and the clock bind (bind_decl/2) ════════════
+# Hermetic: printf only, no network, no filesystem. The answer is
+# content-addressed on the declared inputs, so the same (tree, grams) pair is
+# one subprocess no matter how many rules demand it.
+sh weigh(tree_id: int, grams: int) -> (label: text) =
+  `printf '%s' "tree-{tree_id}-at-{grams}g"`.
+
+# The cadence is the literal `1` the roll_call rule reads in the bind atom's
+# first column. Nothing outside the program chose it.
+bind interval(period: int, bucket: int).
+
+# ═══ level rules (<-) ═══════════════════════════════════════════════════════
+
+# decode/2 over a struct-typed column: one hop out of the dictionary.
+rel tree_label(tree_id: int, label: text).
+tree_label(TreeId, Label) <- tree(TreeId, _Species, Site), decode(Site, {label: Label}).
+
+# ═══ GENERICS: four relational list constructors and their row artifacts ════
+# Conformance grades arrivals and retractions for all four relational list
+# constructors, preserving author column order.
+
+# not/1 as a level-body anti-join, plus `\==` (identity comparison), `>`
+# (ordered comparison), and `:=` binding an arithmetic expression that uses
+# `*`, `+` and `mod` -- the three arithmetic operators with no other home here.
+rel pickable(tree_id: int, species: text, lane: int).
+pickable(TreeId, Species, Lane) <-
+  tree(TreeId, Species, _Site),
+  not(quarantined(Species)),
+  Species \== 'weed',
+  TreeId > 0,
+  Lane := (TreeId * 3 + 1) mod 7.
+
+# ═══ MINTED ARTIFACTS: what a nested decl becomes ════════════════════════════
+# A declaration can mint companion relations, enum relations, and member
+# relations. Each example has an existing arrival source and a departure path.
+
+# The grade payload enum mints grade_ripe/2 and grade_bruised/2 variant rels
+# sharing the id space, plus grade_tag/2 as the which-one view. Read one variant
+# and the tag view in ordinary rules.
+rel grade_artifact_read(grade_id: int, tag: text).
+grade_artifact_read(GradeId, Tag) <-
+  grade_ripe(GradeId, _Sugar),
+  grade_tag(GradeId, Tag).
+
+# A variant payload typed as another rel mints a reference-valued field. The
+# ref arrives through pick_event and is read back through the parent relation.
+rel harvest(ripe(site: patch) ; bruised(reason: text)).
+rel harvest_site_read(tree_id: int, label: text).
+harvest_site_read(TreeId, Label) <-
+  harvest_ripe(TreeId, Site),
+  decode(Site, {label: Label}).
+
+# pre/2 is the seeded one-arm spelling beside pick_count/2's older pre/1 fold.
+rel pick_count_seeded(tree_id: int, count: int) key(1).
+pick_count_seeded(TreeId, Count) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar),
+  pre(pick_count_seeded(TreeId, Previous), 0),
+  Count := Previous + 1.
+pick_count_seeded(TreeId, Count) <+
+  retire_event(TreeId),
+  pre(pick_count_seeded(TreeId, Previous), 0),
+  Count := Previous - 1.
+
+# option(T) mints an enum for scalar T; a rel-valued option mints a companion.
+# The scalar id is read back by the ordinary relation path.
+rel optional_picker(tree_id: int, picker: option(text)).
+rel optional_picker_read(tree_id: int, option_id: int).
+optional_picker_read(TreeId, OptionId) <-
+  optional_picker(TreeId, OptionId).
+# list(rel_name) mints a carrier and member rel. Read members through spread
+# and join them to the referenced relation.
+rel tree_bundle(tree_id: int, sites: list(patch)).
+rel tree_bundle_read(tree_id: int, label: text).
+tree_bundle_read(TreeId, Label) <-
+  tree_bundle(TreeId, ListId),
+  __gen__list_patch_ad51169ab9220e8a__member(ListId, _Index, Site),
+  decode(Site, {label: Label}).
+# `is`, the second registered bind operator, carrying `-` and `/`. Kept beside
+# `:=` deliberately: both are live registry rows and the corpus only ever wrote
+# one of them.
+rel lane_gap(tree_id: int, gap: int).
+lane_gap(TreeId, Gap) <- pickable(TreeId, _Species, Lane), Gap is (Lane - 1) / 2.
+
+# regexp/2, the registered pattern guard: concat/norm BUILD text and this is the
+# only construct that reads it. Anchor, class and wildcard in one pattern.
+rel heirloom(tree_id: int, species: text).
+heirloom(TreeId, Species) <- tree(TreeId, Species, _Site), regexp(Species, "^[ap].*e").
+
+# combine/variadic: the registered splice sugar. Its atoms become one
+# conjunction, so this is the long way to write a join -- written the long way
+# precisely because nothing in the corpus ever did. `==` compares the bool.
+rel monitored(tree_id: int, species: text).
+monitored(TreeId, Species) <-
+  combine(pickable(TreeId, Species, _Lane), sensor(TreeId, Healthy)),
+  Healthy == true.
+
+# next/1: the same splice around one atom. `norm(...)` is the registered text
+# scalar; `concat([...])` carries the list-literal grammar and mixes an atom, an
+# int, a bound variable and a string in one list.
+#
+rel display(tree_id: int, note: text).
+display(TreeId, Note) <-
+  next(monitored(TreeId, Species)),
+  Note := concat(['tree ', TreeId, ' is ', Species, " (monitored)"]).
+
+# norm/1, the registered text scalar (V5 `sprf_norm`): ASCII letters and digits
+# retained, letters lowercased, everything else dropped. The input is the
+# concat above, which carries spaces and parentheses, so the dropping is
+# visible in the graded row and not only the lowercasing.
+rel display_key(tree_id: int, key: text).
+display_key(TreeId, norm(Note)) <- display(TreeId, Note).
+
+# `<`, `=<` and `>=`, the three remaining ordered comparisons, over the float
+# column -- so the float type is exercised by more than storage.
+rel heavy_pick(tree_id: int, kilos: float).
+heavy_pick(TreeId, Kilos) <-
+  pick_event(TreeId, _Picker, Kilos, _Sugar),
+  Kilos >= 1.5,
+  Kilos < 100.0,
+  Kilos =< 99.5.
+
+# kwargs partial application: a body atom naming SOME declared columns; the
+# omitted ones become fresh anonymous variables. `_` wildcards and a
+# single-quoted atom constant appear here too.
+rel picked_by_ada(tree_id: int).
+picked_by_ada(TreeId) <- pick_event(tree_id: TreeId, picker: 'ada').
+
+# ═══ aggregate heads: all five, over a plain grouping column ═══════════════
+rel pick_stats(tree_id: int, picks: int, total: int, lowest: int, highest: int).
+pick_stats(TreeId, count(Sugar), sum(Sugar), min(Sugar), max(Sugar)) <-
+  pick_event(TreeId, _Picker, _Kilos, Sugar).
+
+rel mean_kilos(tree_id: int, kilos: float).
+mean_kilos(TreeId, avg(Kilos)) <- pick_event(TreeId, _Picker, Kilos, _Sugar).
+
+# ═══ ordered aggregates: both axes, array and text ═════════════════════════
+# json_group_array/1 sorts by the VALUE itself (v5 parity, digest-stable);
+# json_group_array/2 orders by the int ordinal (tree ids are unique per
+# picker, so the order is tie-free); group_concat/2 joins text sorted by
+# value (equal values are indistinguishable, so value-axis ties are
+# harmless); group_concat/3 joins in ordinal order. Empty group = absent
+# head row on all four. An aggregate whose group key is NOT bound by the
+# delta-carrying atom is the named refusal aggregate_group_not_delta_local
+# (a joined-body group_concat/3 hit it while this section was written).
+rel picker_roster(picker: text, tree_ids: json).
+picker_roster(Picker, json_group_array(TreeId)) <-
+  pick_event(TreeId, Picker, _Kilos, _Sugar).
+
+rel sugar_ladder(picker: text, sugars: json).
+sugar_ladder(Picker, json_group_array(Sugar, TreeId)) <-
+  pick_event(TreeId, Picker, _Kilos, Sugar).
+
+rel lane_manifest(lane: int, species_list: text).
+lane_manifest(Lane, group_concat(Species, ', ')) <-
+  pickable(_TreeId, Species, Lane).
+
+rel pick_story(story: text).
+pick_story(group_concat(Picker, ' > ', TreeId)) <-
+  pick_event(TreeId, Picker, _Kilos, _Sugar).
+
+# group_concat/1 defaults its separator to ',': byte-identical to /2 with ','.
+rel picker_dump(roster: text).
+picker_dump(group_concat(Picker)) <- pick_event(_TreeId, Picker, _Kilos, _Sugar).
+
+# The numeric (arithmetically-evaluated) equality pair, =:= and =\=.
+rel sugar_equals_two(tree_id: int).
+sugar_equals_two(TreeId) <- pick_event(TreeId, _Picker, _Kilos, Sugar), Sugar =:= 2.
+rel sugar_is_not_two(tree_id: int).
+sugar_is_not_two(TreeId) <- pick_event(TreeId, _Picker, _Kilos, Sugar), Sugar =\= 2.
+
+# ═══ edge rules (<+) ═══════════════════════════════════════════════════════
+
+# A bare positive atom in an edge body is the TRIGGER (an occurrence, not a
+# state read). now/1 reads the emitted __tick counter.
+rel pick_tick(tree_id: int, tick: int) log keep(all).
+pick_tick(TreeId, Tick) <+ pick_event(TreeId, _Picker, _Kilos, _Sugar), now(Tick).
+
+# The two journals, one unbounded and one bounded, off the same trigger.
+pick_log(TreeId, Picker) <+ pick_event(TreeId, Picker, _Kilos, _Sugar).
+recent_pick(TreeId, Picker) <+ pick_event(TreeId, Picker, _Kilos, _Sugar).
+
+# key(...) on an EDGE head: last picker wins per tree, replace not accumulate.
+# latest/1 samples the current base table of a level rel (the N->(0|1)
+# coercion) without becoming a second trigger, which is what keeps this rule
+# firing once per pick rather than once per (pick x pickable) pair.
+rel last_picker(tree_id: int, picker: text) key(1).
+last_picker(TreeId, Picker) <+
+  pick_event(TreeId, Picker, _Kilos, _Sugar),
+  latest(pickable(TreeId, _Species, _Lane)).
+
+# coalesce/2, the use-site total read (ruling null_design =
+# get_else_use_site_never_storage). `last_picker` is SPARSE by construction:
+# the trees arrive on tick 2 and the picks on tick 3, so on tick 2 every
+# pickable tree has no picker at all. Without coalesce those tuples drop out of
+# the join -- an inner-join effect nobody wants. With it, every pickable tree
+# answers, the pickerless ones with a value THIS rule chose, and the row flips
+# to the real picker on tick 3 and departs on tick 8 with its `pickable` row.
+# Null never enters storage or the type system; absence stays row absence and
+# the default is an ordinary `text` value spelled by the consumer that wanted
+# totality. It is SUGAR: one rule, two ordinary clauses, no new lowering.
+rel picker_of(tree_id: int, picker: text).
+picker_of(TreeId, Picker) <-
+  pickable(TreeId, _Species, _Lane),
+  coalesce(last_picker(TreeId, Picker), 'nobody').
+
+# finalize/1 in an edge body: the departure frontier. A tree whose `pickable`
+# row left last tick shows up here exactly once, one tick later.
+rel fell_out(tree_id: int, species: text) log keep(all).
+fell_out(TreeId, Species) <+ finalize(pickable(TreeId, Species, _Lane)).
+
+# not/1 in an EDGE body, around one plain relation atom (the guard seam).
+rel unmonitored_pick(tree_id: int) key(1).
+unmonitored_pick(TreeId) <+
+  pick_event(TreeId, _Picker, _Kilos, _Sugar),
+  not(monitored(TreeId, _Species)).
+
+# ═══ the host call and the bind read ═══════════════════════════════════════
+# `weigh` resolves to the sh signature above, so this body atom is a host call
+# (probe/4 in term form): declared inputs first, declared outputs after. The
+# grams come from the sum aggregate, so the host's demand is derived, not fed.
+rel weighed(tree_id: int, grams: int, label: text).
+weighed(TreeId, Grams, Label) <-
+  pick_stats(TreeId, _Picks, Grams, _Lowest, _Highest),
+  weigh(TreeId, Grams, Label).
+
+# The bind read: `interval(1, Bucket)` -- the literal 1 IS the cadence the
+# emitted bind plan carries, and Bucket is floor(epoch_secs / period).
+rel roll_call(tree_id: int, bucket: int).
+roll_call(TreeId, Bucket) <- pickable(TreeId, _Species, _Lane), interval(1, Bucket).
+
+# ═══ match/2 block sugar ═══════════════════════════════════════════════════
+# Arms expand to one ordinary rule each; enum coverage is checked against the
+# variants (a missing variant with no catch-all is match_nonexhaustive). `true`
+# is the registered zero-arity guard on the catch-all arm, and `==` guards the
+# other two.
+rel graded(grade_id: int, verdict: text).
+match grade_tag(GradeId, Tag) (
+  ; Tag == 'ripe'  |-> graded(GradeId, "pick it")
+  ; Tag == 'green' |-> graded(GradeId, "wait")
+  ; true           |-> graded(GradeId, "compost")
+).
+
+# The same sugar on the EDGE arrow, so both arm arrows are exercised.
+rel retired_tree(tree_id: int) key(1).
+match retire_event(TreeId) (
+  ; TreeId > 0 |+> retired_tree(TreeId)
+).
+
+# ═══ ts_query/1: a tree-sitter query as a compiled VALUE ═══════════════════
+# The value compiles to exact query text. Its HOST EXECUTION is phase 2 and is
+# named unsupported_host_execution_phase_2(tree_sitter_query); the value is the
+# live half of the registry row and is what this carries.
+rel orchard_query(query: text).
+orchard_query(ts_query([node('call_expression', [capture('callee', 'wildcard')])])) <-
+  quarantined(_Species).
+
+# ═══ THE COMPOSITION SCENARIO: one story through five constructs ═══════════
+# Everything above proves a construct. This section proves they hold hands: a
+# json manifest is decoded into a route, an enum says how the crate travels, a
+# match block reads BOTH of those in one guard set, a self-referential level
+# rule folds the legs into a running weight, and two edge arms write the same
+# tagged head on one tick without either row losing.
+#
+# THE FOLD IS THE RX `scan`, SPELLED AS THE LANGUAGE HAS IT: a base arm for the
+# first leg and a step arm that reads the head at the previous leg. `scan` the
+# WORD is a reserved removed word (files_naming) and is not spelled here.
+# CONSTRAINTS THE SPELLING RESTS ON, both measured against the two doors: the
+# legs of one dispatch arrive on SUCCESSIVE ticks (a chain inside one batch
+# diverges), and the chain is TWO links (a third never lands in the emitter at
+# any tick, while the oracle always has it). Header index below.
+
+rel dispatch_manifest(dispatch_id: int, payload: json).
+rel dispatch_leg(leg_id: int, dispatch_id: int, previous_leg: int, kilos: int,
+                 origin: patch).
+rel dispatch_ack(dispatch_id: int).
+rel dispatch_seal(dispatch_id: int).
+
+# The second enum_decl/2 in this file, and the one whose tag view is READ by a
+# match block rather than only produced.
+rel dispatch(air(hours: int) ; road(miles: int) ; rail(stops: int)).
+
+# decode/2 into a NESTED object pattern that captures two keys at depth two --
+# a plain capture and a typed one in one pattern. The single-capture and
+# `**`-descent forms are above; this is the composed shape.
+rel dispatch_route(dispatch_id: int, route: text, hops: int).
+dispatch_route(DispatchId, RouteName, HopCount) <-
+  dispatch_manifest(DispatchId, ManifestPayload),
+  decode(ManifestPayload, {route: {name: RouteName, hops: HopCount: int}}).
+
+# The str-stratum minimum: replace/3 and rtrim/2, both native SQLite scalars.
+rel route_flattened(dispatch_id: int, flat: text).
+route_flattened(DispatchId, Flat) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Flat := replace(RouteName, '/', '_').
+rel route_bare(dispatch_id: int, bare: text).
+route_bare(DispatchId, Bare) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Bare := rtrim(RouteName, '/').
+
+# ═══ THE STRING FAMILY: every remaining text_scalar and typed_scalar row,
+# folded off the same RouteName the str-stratum minimum above already reads,
+# so nine registry rows share one source column instead of nine islands.
+rel route_upper(dispatch_id: int, shouted: text).
+route_upper(DispatchId, Shouted) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Shouted := upper(RouteName).
+
+rel route_lower(dispatch_id: int, mumbled: text).
+route_lower(DispatchId, Mumbled) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Mumbled := lower(RouteName).
+
+rel route_trimmed(dispatch_id: int, trimmed: text).
+route_trimmed(DispatchId, Trimmed) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Trimmed := trim(RouteName).
+
+rel route_trimmed_charset(dispatch_id: int, trimmed: text).
+route_trimmed_charset(DispatchId, Trimmed) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Trimmed := trim(RouteName, 'h').
+
+rel route_ltrimmed(dispatch_id: int, led: text).
+route_ltrimmed(DispatchId, Led) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Led := ltrim(RouteName).
+
+rel route_ltrimmed_charset(dispatch_id: int, led: text).
+route_ltrimmed_charset(DispatchId, Led) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Led := ltrim(RouteName, 'e').
+
+rel route_rtrimmed(dispatch_id: int, written: text).
+route_rtrimmed(DispatchId, Written) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Written := rtrim(RouteName).
+
+rel route_reversed(dispatch_id: int, mirrored: text).
+route_reversed(DispatchId, Mirrored) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Mirrored := reverse(RouteName).
+
+rel route_titled(dispatch_id: int, titled: text).
+route_titled(DispatchId, Titled) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Titled := initcap(RouteName).
+
+# The typed string scalars: substr/instr/length mix text and int operands.
+rel route_clipped(dispatch_id: int, clipped: text).
+route_clipped(DispatchId, Clipped) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Clipped := substr(RouteName, 2).
+
+rel route_middle(dispatch_id: int, middle: text).
+route_middle(DispatchId, Middle) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Middle := substr(RouteName, 2, 2).
+
+rel route_found_at(dispatch_id: int, found_at: int).
+route_found_at(DispatchId, FoundAt) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), FoundAt := instr(RouteName, 'o').
+
+rel route_length(dispatch_id: int, measured: int).
+route_length(DispatchId, Measured) <-
+  dispatch_route(DispatchId, RouteName, _HopCount), Measured := length(RouteName).
+
+# split/2: the multi-row string primitive, fanned through the same
+# relational-list idiom orchard_list_tag proves above (a list(text) column,
+# then decode/spread over the minted member rel) -- here off `display`'s own
+# concat'd Note rather than a fresh arrival shape.
+# The join that makes the match block a COMPOSITION rather than a second copy
+# of `graded`: the scrutinee carries the enum's tag AND the json's numbers, so
+# the arms below can guard on either.
+rel dispatch_ticket(dispatch_id: int, tag: text, route: text, hops: int).
+dispatch_ticket(DispatchId, DispatchTag, RouteName, HopCount) <-
+  dispatch_tag(DispatchId, DispatchTag),
+  dispatch_route(DispatchId, RouteName, HopCount).
+
+# Arms are independent rules, so overlapping guards fire together (the `graded`
+# block above rides its `true` catch-all on top of every ripe row). This guard
+# set is disjoint by construction instead: only the rail variant is fed hops
+# above two, so exactly one arm answers per ticket.
+rel dispatch_plan(dispatch_id: int, route: text, verdict: text).
+match dispatch_ticket(DispatchId, DispatchTag, RouteName, HopCount) (
+  ; DispatchTag == 'air'  |-> dispatch_plan(DispatchId, RouteName, "fly it")
+  ; DispatchTag == 'road' |-> dispatch_plan(DispatchId, RouteName, "truck it")
+  ; HopCount > 2          |-> dispatch_plan(DispatchId, RouteName, "stage it")
+).
+
+# decode/2 over the struct-typed column of the NEW flow, so the value plane and
+# the scenario share one dictionary chain (`origin` is a patch, whose `at` is a
+# plot) rather than the scenario carrying flat columns.
+rel leg_origin(leg_id: int, label: text).
+leg_origin(LegId, OriginLabel) <-
+  dispatch_leg(LegId, _DispatchId, _PreviousLeg, _Kilos, Origin),
+  decode(Origin, {label: OriginLabel}).
+
+# THE FOLD. Base arm: a leg whose previous_leg is 0 starts the accumulator.
+# Step arm: the head reads ITSELF at the previous leg and adds this leg's
+# kilos. Nothing outside the two rules holds the running value.
+rel leg_total(leg_id: int, dispatch_id: int, kilos_so_far: int).
+leg_total(LegId, DispatchId, Kilos) <-
+  dispatch_leg(LegId, DispatchId, 0, Kilos, _Origin).
+leg_total(LegId, DispatchId, KilosSoFar) <-
+  dispatch_leg(LegId, DispatchId, PreviousLeg, Kilos, _Origin),
+  leg_total(PreviousLeg, DispatchId, KilosBefore),
+  KilosSoFar := KilosBefore + Kilos.
+
+# `any`: two edge arms on ONE unbounded log head, two triggers arriving in the
+# SAME batch, both rows landing with distinct tags. Nothing arbitrates, which
+# is exactly what makes this the expressible half of the any/one pair. The
+# UNEXPRESSIBLE half -- one arm winning, named by the program -- is the ledger
+# in conformance/fixtures/one_vs_any.pl; every attempt at it either loses the
+# loser silently, is refused, or becomes a race the two doors referee
+# differently.
+rel dispatch_note(dispatch_id: int, note_tag: text) log keep(all).
+dispatch_note(DispatchId, 'acked') <+ dispatch_ack(DispatchId).
+dispatch_note(SealedId, 'sealed') <+ dispatch_seal(SealedId).
+
+# ═══ query/1: the read surface ═════════════════════════════════════════════
+? display(_TreeId, _Note).
+? pick_stats(_StatTree, _Picks, _Total, _Lowest, _Highest).
+? dispatch_plan(_PlanDispatch, _PlanRoute, _PlanVerdict).
+? leg_total(_TotalLeg, _TotalDispatch, _KilosSoFar).
+? dispatch_note(_NoteDispatch, _NoteTag).
+? heirloom(_HeirloomTree, _HeirloomSpecies).

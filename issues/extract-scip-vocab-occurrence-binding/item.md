@@ -2,12 +2,13 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: task
-status: open
+status: done
 priority: normal
 epic: extract-port-closeout
 labels:
 - pkg:extract
 - needs-chris
+closed: 2026-08-16
 ---
 
 # scip_occurrence and scip_binding outside the v5-vocab door
@@ -62,3 +63,15 @@ JSONL alone. It needs the corpus bytes beside it.
 v5's stated purpose for the row is the alias hop: `import { foo as bar }`, where
 `scip_name`'s canonical-only name drops `bar` (`src/rels/scip.rs:88`). Whether
 v6 owes that answer at all is the actual question.
+
+## Decisions
+
+### 2026-08-17T00:39:43Z · @chris
+
+DECIDED 2026-08-16: adopt scip's own vocabulary, no parallel vocab. scip_occurrence = doc close, no code owed (passthrough record already carries byte spans + every SymbolRole bit). scip_binding = fork B: the record=scip_occurrence passthrough row grows an optional text field carrying the source slice at the span, populated only behind a CLI flag; goldens byte-identical with the flag off.
+
+## Resolution
+
+### 2026-08-17T00:52:59Z · @issuectl
+
+Merged PR #325: scip_occurrence doc-close (passthrough superset), scip_binding fork B via --occurrence-text optional text field, flag-off byte-identical golden receipt, 2x lane + 1x coordinator test runs green.
