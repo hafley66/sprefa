@@ -1,0 +1,8 @@
+# NARROW for p21: does the comparison path catch what the aggregate path let
+# through? Same option(int) column, read by a `>` guard instead of by sum().
+rel tree(tree_id: int, grams: option(int)).
+rel heavy(tree_id: int).
+
+heavy(TreeId) <-
+  tree(TreeId, Grams),
+  Grams > 100.

@@ -1,0 +1,6 @@
+# NARROW: does the rel_atom wrapper gap reach the atom_list shape (combine)?
+rel orchard.tree(tree_id: int) log keep(all).
+rel orchard.plot(tree_id: int, plot: text) log keep(all).
+rel sited(tree_id: int, plot: text) log keep(all).
+
+sited(TreeId, Plot) <+ combine(orchard.tree(TreeId), orchard.plot(TreeId, Plot)).

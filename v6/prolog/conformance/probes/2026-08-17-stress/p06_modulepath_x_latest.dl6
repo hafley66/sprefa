@@ -1,0 +1,8 @@
+# PAIR module_path x latest. latest/1 sampling a dotted rel from an edge body.
+rel orchard.roster(tree_id: int, owner: text).
+rel bell(tree_id: int) log keep(all).
+rel called(tree_id: int, owner: text) log keep(all).
+
+called(TreeId, Owner) <+
+  bell(TreeId),
+  latest(orchard.roster(TreeId, Owner)).

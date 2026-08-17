@@ -1,0 +1,6 @@
+# PAIR module_path x edge_rule+keyed. Corpus has module paths only in level
+# rules over flat rels; no fixture writes a dotted rel from an edge arm.
+rel orchard.tree(tree_id: int, state: text) key(1).
+rel picked(tree_id: int) log keep(all).
+
+orchard.tree(TreeId, 'picked') <+ picked(TreeId).

@@ -1,0 +1,8 @@
+# PAIR spread x bind. Arithmetic over a typed capture the spread produced.
+rel doc(id: int, body: json).
+rel doubled(id: int, twice: int).
+
+doubled(Id, Twice) <-
+  doc(Id, Body),
+  decode(Body, {items: [... {n: N: int}]}),
+  Twice := N * 2.

@@ -1,0 +1,8 @@
+# PAIR module_path x seq. The ordinal bind writing into a dotted head from an
+# edge arm triggered by a dotted rel.
+rel orchard.arrival(payload: text) log keep(all).
+rel orchard.numbered(ordinal: int, payload: text) log keep(all).
+
+orchard.numbered(Ordinal, Payload) <+
+  orchard.arrival(Payload),
+  Ordinal := seq('q').

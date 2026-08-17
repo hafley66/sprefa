@@ -1,0 +1,7 @@
+# PAIR module_path x aggregate. A group-by whose source and head are both
+# dotted. Corpus aggregates only over flat rels.
+rel orchard.harvest(patch: text, tree_id: int, grams: int).
+rel orchard.patch_total(patch: text, grams: int).
+
+orchard.patch_total(Patch, sum(Grams)) <-
+  orchard.harvest(Patch, _TreeId, Grams).

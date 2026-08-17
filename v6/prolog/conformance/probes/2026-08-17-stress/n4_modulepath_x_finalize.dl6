@@ -1,0 +1,5 @@
+# NARROW: does the rel_atom wrapper gap reach finalize/1?
+rel orchard.reading(key: text, value: int) key(1).
+rel changed(key: text, old: int) log keep(all).
+
+changed(Key, Old) <+ finalize(orchard.reading(Key, Old)).

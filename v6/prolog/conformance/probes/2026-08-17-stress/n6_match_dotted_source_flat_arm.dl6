@@ -1,0 +1,7 @@
+# NARROW for p08: DOTTED match source, flat arm head only.
+rel orchard.resp(tree_id: int, status: int) log keep(all).
+rel ok(tree_id: int).
+
+match orchard.resp(TreeId, Status) (
+  ; Status == 200 |-> ok(TreeId)
+).

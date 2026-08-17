@@ -1,0 +1,9 @@
+# PAIR spread x keyed. A one-to-many fan-out landing in a KEYED head, so the
+# key collapses the fan. The interesting question is which element wins and
+# whether the compiler names the collapse at all.
+rel doc(id: int, body: json).
+rel latest_item(id: int, n: int) key(1).
+
+latest_item(Id, N) <-
+  doc(Id, Body),
+  decode(Body, {items: [... {n: N: int}]}).

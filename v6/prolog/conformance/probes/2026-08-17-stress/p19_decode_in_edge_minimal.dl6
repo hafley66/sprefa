@@ -1,0 +1,9 @@
+# PAIR decode x edge_rule, minimal. This is the shape blocking all nine
+# temporal_pipe.pl fixtures. Reduced to three lines so the stop can be read
+# without the pipe fixture's schedule around it.
+rel resp(endpoint: text, body: json) log keep(all).
+rel stars(endpoint: text, count: int) log keep(all).
+
+stars(Endpoint, Count) <+
+  resp(Endpoint, Body),
+  decode(Body, {stars: Count: int}).
