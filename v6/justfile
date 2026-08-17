@@ -183,6 +183,13 @@ comment-rails:
     bash {{ v6 }}/tsv2/scripts/comment-rails.sh
     bash {{ v6 }}/tsv2/scripts/comment-parity.sh
 
+# the two workspaces that build soopy must resolve its transitives identically:
+# `ignore` decides worktree membership, so two resolutions of it are two answers
+# to "which files exist" from one library
+# (expect: PASS: one soopy closure, N crates; exit 0)
+soopy-lockstep:
+    python3 {{ v6 }}/tools/soopy-lockstep.py
+
 # the file-set feed against THIS repo: files = git ls-files exactly, zero
 # node_modules rows, files_at reports git's own blob oids; then the REPO-SCOPED
 # pair (repo_files / repo_files_at) against a scratch two-file repository that
