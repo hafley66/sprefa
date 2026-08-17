@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use ast_grep_language::{LanguageExt, SupportLang};
@@ -51,14 +51,14 @@ where
 
 fn source_bytes(path: &PathBuf, digest: Option<&str>) -> Result<Vec<u8>, String> {
     match digest {
-        Some(oid) => cat_blob(oid),
+        Some(oid) => cat_blob(path, oid),
         None => std::fs::read(path)
             .map_err(|error| format!("query input '{}': {error}", path.display())),
     }
 }
 
-fn cat_blob(oid: &str) -> Result<Vec<u8>, String> {
-    let repository = soopy::discover(".")
+fn cat_blob(path: &Path, oid: &str) -> Result<Vec<u8>, String> {
+    let repository = soopy::discover(path.parent().unwrap_or(path))
         .map_err(|error| one_line_text(format!("git cat-file blob {oid}: {error}")))?;
     let mut batch = soopy::GitBatch::open(&repository.root)
         .map_err(|error| one_line_text(format!("git cat-file blob {oid}: {error}")))?;

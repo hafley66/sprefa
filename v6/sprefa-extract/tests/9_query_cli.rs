@@ -123,10 +123,18 @@ fn query_with_digest_reads_the_staged_blob() {
 
     let query = "(function_item name: (identifier) @name) @item";
     let via_path = run(&["query", "--lang", "rust", "--query", query, RUST]);
+    let blob_path = dir.join("sample.rs");
     let via_digest = run_in(
         &dir,
         &[
-            "query", "--lang", "rust", "--query", query, "--digest", &oid, RUST,
+            "query",
+            "--lang",
+            "rust",
+            "--query",
+            query,
+            "--digest",
+            &oid,
+            blob_path.to_str().unwrap(),
         ],
     );
 
