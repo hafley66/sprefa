@@ -376,9 +376,7 @@ fn project_directive(
         return;
     };
     match name.as_str() {
-        "use_module" | "ensure_loaded" | "consult" => {
-            import_directive(operand, src, strings, sink)
-        }
+        "use_module" | "ensure_loaded" | "consult" => import_directive(operand, src, strings, sink),
         "module" => module_declaration(operand, src, strings, sink),
         _ => (),
     }
@@ -471,7 +469,11 @@ fn collect_predicate_indicators(
                 if let Ok(arity) = text(arity_node, src).trim().parse::<usize>() {
                     out.push(PredicateIndicator {
                         span: span(node),
-                        key: predicate_key(&atom_text(name_node, src), arity, operator_text == "//"),
+                        key: predicate_key(
+                            &atom_text(name_node, src),
+                            arity,
+                            operator_text == "//",
+                        ),
                     });
                 }
             }

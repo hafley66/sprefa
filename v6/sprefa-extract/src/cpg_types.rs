@@ -98,7 +98,10 @@ pub enum CpgPropertyValue {
     LongList(Vec<i64>),
     FloatList(Vec<f32>),
     DoubleList(Vec<f64>),
-    ContainedRefs { local_name: String, refs: Vec<i64> },
+    ContainedRefs {
+        local_name: String,
+        refs: Vec<i64>,
+    },
     /// The oneof was absent on the wire (proto3 allows this).
     Absent,
 }

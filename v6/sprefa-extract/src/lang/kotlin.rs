@@ -39,8 +39,8 @@ use std::collections::BTreeSet;
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind,
-    TypeEntityKind, TypeF, TypeSig,
+    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
+    TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::seams::{corpus_defs, covering_def, def_named, DefIndex, Parser, Project, Resolve};
@@ -592,6 +592,88 @@ fn project_call(
 ) {
     kt_walk_call_defs(root, src, strings, sink, None, false);
     kt_walk_call_sites(root, src, strings, sink);
+    kt_module_specifiers(root, src, strings, sink);
+}
+
+// ── module specifiers (CallFAux.specifiers) ─────────────────────────────────
+// @comment-ok: the kind/name/module contract, pinned row-for-row by
+// tests/26_kotlin_specifiers.rs. `Default`, `SideEffect` and `Reexport` are
+// unreachable from kotlin.
+//
+// | kotlin source                    | kind      | name  | module                  |
+// |----------------------------------|-----------|-------|-------------------------|
+// | `import kotlin.collections.List` | Named     | List  | kotlin.collections.List |
+// | `import java.util.Map as JMap`   | Named     | JMap  | java.util.Map           |
+// | `import kotlin.text.*`           | Namespace | text  | kotlin.text             |
+//
+// Kotlin imports are symbol-level like rust's `use`, so `module` carries the
+// full path as written (`src/graph/modgraph/kotlin.rs:203-207`). The alias
+// overrides the bound name; a wildcard binds the last dotted segment.
+
+/// Kotlin module specifiers: one row per `import_header`. Rides the one
+/// tree-sitter parse `project_call` already holds. v5 reads the same facts
+/// with a regex over stripped text (`src/graph/modgraph/kotlin.rs:19-26`).
+fn kt_module_specifiers(
+    root: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut rows = Vec::new();
+    kt_walk_import_headers(root, src, strings, &mut rows);
+    sink.aux.specifiers.extend(rows);
+}
+
+/// Recurse the tree for every `import_header` node, appending one row each.
+fn kt_walk_import_headers(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    rows: &mut Vec<Specifier>,
+) {
+    if node.kind() == "import_header" {
+        let identifier = kt_child_kind(node, "identifier");
+        let path = identifier.map(|child| kt_text(child, src)).unwrap_or("");
+        let span = match identifier {
+            Some(identifier) => Span {
+                start: identifier.start_byte() as u32,
+                len: (node.end_byte() - identifier.start_byte()) as u32,
+            },
+            None => node_span(node),
+        };
+        let (kind, name) = if let Some(alias) = kt_child_kind(node, "import_alias") {
+            let alias_text = kt_child_kind(alias, "type_identifier")
+                .map(|child| kt_text(child, src))
+                .unwrap_or("");
+            (SpecifierKind::Named, alias_text)
+        } else if kt_child_kind(node, "wildcard_import").is_some() {
+            (SpecifierKind::Namespace, last_segment(path))
+        } else {
+            (SpecifierKind::Named, last_segment(path))
+        };
+        rows.push(Specifier {
+            span,
+            name: strings.intern(name),
+            kind,
+            module: Some(strings.intern(path)),
+        });
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        kt_walk_import_headers(child, src, strings, rows);
+    }
+}
+
+/// The first named child of `node` with `kind`.
+fn kt_child_kind<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
+    node.named_children(&mut node.walk())
+        .find(|child| child.kind() == kind)
+}
+
+/// The segment after the last `.` of a dotted path, or the whole text when the
+/// path has no dot.
+fn last_segment(path: &str) -> &str {
+    path.rsplit('.').next().unwrap_or(path)
 }
 
 /// Walk every callable declaration, minting one def node per Free function /

@@ -267,7 +267,7 @@ pub fn flatten_project_type(
                 family: TypeF::TAG,
                 kind: edge.kind.as_str().to_string(),
                 from: SpanOut::new(from.span.start, from.span.end()),
-to_blob: edge.dst_blob.to_string(),
+                to_blob: edge.dst_blob.to_string(),
                 to: SpanOut::new(edge.dst_span.start, edge.dst_span.end()),
             }
         })

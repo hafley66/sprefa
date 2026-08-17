@@ -855,8 +855,10 @@ pub fn flow_edges(
     inputs: &[(ContentId, &ExtractOutput)],
     resolved: &[(ContentId, Vec<ProjectEdge<CallF>>)],
 ) -> Vec<FlowEdge> {
-    let by_blob: std::collections::HashMap<ContentId, &ExtractOutput> =
-        inputs.iter().map(|(blob, out)| (blob.clone(), *out)).collect();
+    let by_blob: std::collections::HashMap<ContentId, &ExtractOutput> = inputs
+        .iter()
+        .map(|(blob, out)| (blob.clone(), *out))
+        .collect();
     let mut edges = Vec::new();
     for (caller_blob, call_edges) in resolved {
         let Some(caller) = by_blob.get(caller_blob) else {

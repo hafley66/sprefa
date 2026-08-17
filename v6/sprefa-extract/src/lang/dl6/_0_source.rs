@@ -81,7 +81,10 @@ fn unwrap_statement(statement: tree_sitter::Node) -> Option<tree_sitter::Node> {
 }
 
 fn unquote(raw: &str) -> String {
-    if raw.len() >= 2 && ((raw.starts_with('"') && raw.ends_with('"')) || (raw.starts_with('\'') && raw.ends_with('\''))) {
+    if raw.len() >= 2
+        && ((raw.starts_with('"') && raw.ends_with('"'))
+            || (raw.starts_with('\'') && raw.ends_with('\'')))
+    {
         raw[1..raw.len() - 1].to_string()
     } else {
         raw.to_string()
@@ -106,9 +109,8 @@ fn project_types(
                 let rel_name = text(name_node, src);
                 let rel_span = span(inner);
                 let rel_name_id = strings.intern(rel_name);
-                sink.nodes.push(
-                    Node::new(rel_span, TypeEntityKind::Struct).with_name(rel_name_id),
-                );
+                sink.nodes
+                    .push(Node::new(rel_span, TypeEntityKind::Struct).with_name(rel_name_id));
 
                 // The columns are not wrapped: every column binds to the same
                 // `columns` field name, so `field()` would return only the first.
@@ -193,13 +195,10 @@ fn project_calls(
             "rule" => {
                 let rule_span = span(inner);
                 let head = field(inner, "head");
-                let head_name = head
-                    .and_then(|h| field(h, "name"))
-                    .map(|n| text(n, src));
+                let head_name = head.and_then(|h| field(h, "name")).map(|n| text(n, src));
                 if let Some(name) = head_name {
-                    sink.nodes.push(
-                        Node::new(rule_span, CallKind::Free).with_name(strings.intern(name)),
-                    );
+                    sink.nodes
+                        .push(Node::new(rule_span, CallKind::Free).with_name(strings.intern(name)));
                 }
                 if let Some(body) = field(inner, "body") {
                     walk_goal_list_calls(body, src, strings, sink);
@@ -211,7 +210,8 @@ fn project_calls(
                         if let Some(name_node) = field(atom, "name") {
                             let name = text(name_node, src);
                             sink.nodes.push(
-                                Node::new(span(inner), CallKind::Free).with_name(strings.intern(name)),
+                                Node::new(span(inner), CallKind::Free)
+                                    .with_name(strings.intern(name)),
                             );
                         }
                     }
@@ -234,9 +234,7 @@ fn project_calls(
                     if child.kind() == "match_arm" {
                         let arm_span = span(child);
                         let head = field(child, "head");
-                        let head_name = head
-                            .and_then(|h| field(h, "name"))
-                            .map(|n| text(n, src));
+                        let head_name = head.and_then(|h| field(h, "name")).map(|n| text(n, src));
                         if let Some(name) = head_name {
                             sink.nodes.push(
                                 Node::new(arm_span, CallKind::Free).with_name(strings.intern(name)),

@@ -1077,11 +1077,27 @@ mod tests {
         assert_eq!(thread_cap_from(Some("3"), 12), 3);
         assert_eq!(thread_cap_from(Some("  4 "), 12), 4);
         assert_eq!(thread_cap_from(Some("0"), 12), 7, "zero falls back");
-        assert_eq!(thread_cap_from(Some("many"), 12), 7, "unparseable falls back");
-        assert_eq!(thread_cap_from(None, 12), 7, "12 cores clamp to 8, hold one back");
-        assert_eq!(thread_cap_from(None, 64), 7, "the clamp is 8, not the core count");
+        assert_eq!(
+            thread_cap_from(Some("many"), 12),
+            7,
+            "unparseable falls back"
+        );
+        assert_eq!(
+            thread_cap_from(None, 12),
+            7,
+            "12 cores clamp to 8, hold one back"
+        );
+        assert_eq!(
+            thread_cap_from(None, 64),
+            7,
+            "the clamp is 8, not the core count"
+        );
         assert_eq!(thread_cap_from(None, 2), 1);
-        assert_eq!(thread_cap_from(None, 1), 1, "a single core still gets a worker");
+        assert_eq!(
+            thread_cap_from(None, 1),
+            1,
+            "a single core still gets a worker"
+        );
     }
 
     /// SABOTAGE, reverse the flattened results (any collect that loses index
@@ -1102,7 +1118,10 @@ mod tests {
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect();
-        assert_eq!(actual, expected, "input order must survive the parallel map");
+        assert_eq!(
+            actual, expected,
+            "input order must survive the parallel map"
+        );
     }
 
     /// Unmatched files are dropped without disturbing the survivors' order.
