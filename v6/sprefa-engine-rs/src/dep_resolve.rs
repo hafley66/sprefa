@@ -55,7 +55,11 @@ impl DepResolveRelations {
             DepResolveRelation {
                 name: self.unresolved.clone(),
                 columns: DEP_UNRESOLVED_COLUMNS,
-                column_types: &[RowColumnType::Text, RowColumnType::Text, RowColumnType::Text],
+                column_types: &[
+                    RowColumnType::Text,
+                    RowColumnType::Text,
+                    RowColumnType::Text,
+                ],
             },
             DepResolveRelation {
                 name: self.visited.clone(),

@@ -25,9 +25,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sprefa_engine_rs::change_facts::{
     parse_revision, ChangeKind, IRevisionDiffer, SoopyRevisionDiffer,
 };
-use sprefa_engine_rs::hosts::{
-    decode_output, ChangeFactExecutor, HostLiveRunner, IHostExecutor,
-};
+use sprefa_engine_rs::hosts::{decode_output, ChangeFactExecutor, HostLiveRunner, IHostExecutor};
 use sprefa_engine_rs::types::{HostColumnPlan, HostPlanData, RelDelta, TickDeltas, Value};
 
 // ═══ the fixture ════════════════════════════════════════════════════════════
@@ -490,7 +488,11 @@ fn a_missing_host_input_is_a_named_stop() {
             &BTreeMap::from([("repo".to_string(), "/does/not/matter".to_string())]),
         )
         .expect_err("rev_base is required");
-    assert!(failure.message.contains("`rev_base`"), "{}", failure.message);
+    assert!(
+        failure.message.contains("`rev_base`"),
+        "{}",
+        failure.message
+    );
 }
 
 /// A worktree moves under a fixed memo key, so a `WORK` pair is computed fresh

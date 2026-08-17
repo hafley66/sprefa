@@ -30,6 +30,7 @@ in `v6/dl/fixtures/golden-flex.dl6`.
 | compile-speed | `COMPILE_SPEED regressions=17 improvements=0 FAIL` (baseline written 2026-08-07; golden-flex lower +178%, emit +120%). The 17th row is `door-handwritten parse 42941 -> 50165 (+16.8%)`, added when the classic parser was deleted and `use_item/3` moved onto the DCG. | `v6/prolog/compile/scripts/1_compile_speed.sh:248` |
 | memory-soak | `FAIL sqlite_page_count_flat: second-quarter mean 24.8, final-quarter mean 49.5, ceiling 27.2` | `v6/tsv2/scripts/memory-soak.ts:327` |
 | lsp-diags | `phase B1: the real LSP client never received both diagnostics for b.ts: READY`; needs the v5 `dl` binary present, then fails B1 deterministically (driver.log stalls at READY) | `v6/tsv2/scripts/lsp-diags.sh:266` |
+| dd-grade | `GRADE REGRESSION, these were byte-clean and are not:` then `list_bare_column_round_trips`, `list_bare_text_door`, `nested_list_text_door`, followed by `GRADE RATCHET, newly byte-clean; copy the run into graded.dd-diet-rust-sqlite.tsv:` listing 42 names. `DD-GRADE arm=--dd-diet-rust-sqlite graded=245 byte-clean=173`. The runner renders a `list` column as the JSON text SQLite holds (`"[]"`, `"[\"alpha\",\"beta\"]"`) where the oracle renders the parsed array (`[]`, `["alpha","beta"]`); `sql_ref_to_json` has no column-type arm. Out of scope: commit 54cca49de moved both emitters' list boundary type int -> json and states in its own message that "the runtime readers need no arm yet (that is F3, next slice)", so the Rust arm is a deliberately unfinished slice, not a fault of this base. The ratchet file is left untouched so the three regressed names stay recorded as byte-clean. | `v6/dd-runner/grade.sh:73` (verdict), `v6/dd-runner/src/main.rs:590` `sql_ref_to_json` (cause) |
 
 `leak-soak` and `endurance` were the v6/dl app's legs and no longer exist; the
 app was deleted 2026-08-12. `serve-leak-soak` and `serve-endurance` are tsv2's
@@ -50,3 +51,4 @@ allow: lsp-diags
 allow: memory-soak
 allow: roundtrip
 allow: serve-leak-soak
+allow: dd-grade

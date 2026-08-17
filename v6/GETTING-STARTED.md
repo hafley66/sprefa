@@ -44,13 +44,12 @@ $ node --version && pnpm --version && swipl --version | head -1
 setting alone). `NODE_NO_WARNINGS=1` only silences node's experimental-features
 banner on stderr; nothing else depends on it.
 
-Install per package. Each of the three has its own `node_modules`; a symlink to
+Install per package. Each of the two has its own `node_modules`; a symlink to
 a parent directory's is not a supported layout here.
 
 <!-- gs:run nodiff -->
 ```console
 $ (cd "$SPREFA/v6/tsv2" && pnpm install) > /dev/null
-$ (cd "$SPREFA/v6/dl" && pnpm install) > /dev/null
 $ (cd "$SPREFA/v6/sprefa-store/js" && pnpm install) > /dev/null
 ```
 
@@ -371,16 +370,15 @@ grep the compiler for — that check lives in `v6/prolog/0_program_check.pl`
 with the one-sentence reason above it. Dropping `log keep(all)` from line 3 is
 the fix.
 
-`bop check` below reports the diagnostic with the source line set (line 3).
+`bop check` above reports the diagnostic with the source line set (line 3).
 Running the same file through the compile script directly reaches the same
-refusal, but the compile door emits the rule-index form with no source line
-(line 0):
+stop, and the compile door carries that same line:
 
 <!-- gs:run -->
 ```console
 $ bash "$SPREFA/v6/prolog/compile/scripts/compile_dl6.sh" broken.dl6 /dev/null; echo "exit $?"
-{"code":"log_on_level_headed_rel/1","message":"rule-index unavailable: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)","range": {"end": {"character":0,"line":0},"start": {"character":0,"line":0}},"severity":1,"source":"dl6","uri":"file://broken.dl6"}
-ERROR: [Thread main] -g compile_dl6('broken.dl6', '/dev/null'): rule-index unavailable: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
+{"code":"log_on_level_headed_rel/1","message":"broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)","range": {"end": {"character":0,"line":3},"start": {"character":0,"line":3}},"severity":1,"source":"dl6","uri":"file://broken.dl6"}
+ERROR: [Thread main] -g compile_dl6('broken.dl6', '/dev/null'): broken.dl6:4: unsupported_construct: compiler refused rule 'log_on_level_headed_rel' for rel 'beat/1' (log_on_level_headed_rel)
 exit 2
 ```
 

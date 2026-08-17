@@ -2,6 +2,7 @@ anchor
 as_str
 build
 build_def_index
+compute_nests
 containing_def_site
 contains
 corpus_defs
@@ -13,9 +14,12 @@ empty
 end
 extract
 file_fact
+flatten_flow
 flatten_jsonl
 flatten_project_type
+flow_edges
 fmt
+heap_bytes
 indexer
 intern
 is_empty
@@ -29,15 +33,11 @@ matches
 name
 new
 node
-of
 ordinal
 own_blob
 parse
-parse_mask
 project
-resolve
 site_occurrence
-to_hex
 tool
 with_call_site
 with_name

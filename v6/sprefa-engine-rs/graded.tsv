@@ -23,6 +23,8 @@ bounded_measure_recursion_still_closes	clean	byte-clean
 bounded_template_ground_instance	clean	byte-clean
 braces_in_head_position	clean	byte-clean
 braces_literal_canonicalizes	clean	byte-clean
+built_list_in_recursive_head_is_refused	unsupported	built_list_in_recursive_head(mark/2)
+built_text_in_recursive_head_is_refused	unsupported	built_text_in_recursive_head(chain/1)
 callgraph_derivation_over_extraction	clean	byte-clean
 callgraph_unused_inverts_with_the_call_set	clean	byte-clean
 chain_into_keyed_head_replaces	unsupported	edge_body_needs_json_destructure((demand_row(_,_),decode(_,fresh(_,_))))
@@ -309,6 +311,8 @@ pre_in_level_rule_rejected	unsupported	pre_in_level_rule(source_item/1)
 probe_output_comparison_guard	clean	byte-clean
 quote_in_literal_doubles_the_escape	clean	byte-clean
 range_join_over_arithmetic	clean	byte-clean
+recursive_closure_passes_both_build_guard_arms	clean	byte-clean
+recursive_cte_multiple_self_reads_is_refused	unsupported	recursive_cte_multiple_self_reads(reachable/2,2)
 recursive_enum_acyclic_tree_round_trips	clean	byte-clean
 recursive_enum_cyclic_values_store_and_render	clean	byte-clean
 recursive_list_arg_parent_holds_child_node_values	clean	byte-clean

@@ -281,13 +281,17 @@ decl_line(_, _, _, rel_template(Segments, Parameters, Specs), Line) :-
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
     format(atom(Line), "rel ~w(~w)(~w).~n", [Name, ParametersText, ColumnsText]).
 
+% shadowed_by_type_decl/2 suppresses this ref's bare decl line, so the
+% modifiers carried by its kind/keep/keyed entries have nowhere else to print.
 decl_line(Decls, _, _, type_decl(Name, Specs), Line) :-
     !,
     maplist(print_host_column, Specs, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColumnsText),
     length(Specs, Arity),
+    decl_modifiers_text(Decls, Name/Arity, Sep, ModifiersText),
     is_clause_text(Decls, Name/Arity, ConformanceText),
-    format(atom(Line), "rel ~w(~w)~w.~n", [Name, ColumnsText, ConformanceText]).
+    format(atom(Line), "rel ~w(~w)~w~w~w.~n",
+           [Name, ColumnsText, Sep, ModifiersText, ConformanceText]).
 decl_line(_, _, _, sh_decl(Name, Inputs, Outputs, template(Template)), Line) :-
     !,
     maplist(print_host_column, Inputs, InputTexts),
@@ -306,13 +310,7 @@ decl_line(_, _, _, bind_decl(Name, Columns), Line) :-
 decl_line(Decls, _Rules, _Bindings, Name/0, Line) :-
     !,
     decl_ref_spelling(Decls, Name/0, Spelling),
-    findall(Decl, ( member(Decl, Decls), decl_is_modifier(Decl, Name/0) ),
-            RefDecls),
-    maplist(print_decl_modifier, RefDecls, ModifierTexts),
-    ( ModifierTexts == []
-    -> ModifiersText = '', Sep = ''
-    ; atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
-    ),
+    decl_modifiers_text(Decls, Name/0, Sep, ModifiersText),
     is_clause_text(Decls, Name/0, ConformanceText),
     format(atom(Line), "rel ~w()~w~w~w.~n",
            [Spelling, Sep, ModifiersText, ConformanceText]).
@@ -321,15 +319,20 @@ decl_line(Decls, Rules, Bindings, Ref, Line) :-
     rel_columns(Decls, Rules, Bindings, Ref, Columns),
     maplist(print_decl_column(Decls, Ref), Columns, ColumnTexts),
     atomic_list_concat(ColumnTexts, ', ', ColsText),
-    findall(Decl, ( member(Decl, Decls), decl_is_modifier(Decl, Ref) ), RefDecls),
-    maplist(print_decl_modifier, RefDecls, ModifierTexts),
-    ( ModifierTexts == []
-    -> ModifiersText = '', Sep = ''
-    ; atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
-    ),
+    decl_modifiers_text(Decls, Ref, Sep, ModifiersText),
     is_clause_text(Decls, Ref, ConformanceText),
     format(atom(Line), "rel ~w(~w)~w~w~w.~n",
            [Name, ColsText, Sep, ModifiersText, ConformanceText]).
+
+% Sep is '' rather than ' ' when the ref carries no modifier, so a decl line
+% with none closes straight onto the column list.
+decl_modifiers_text(Decls, Ref, Sep, ModifiersText) :-
+    findall(Decl, ( member(Decl, Decls), decl_is_modifier(Decl, Ref) ), RefDecls),
+    maplist(print_decl_modifier, RefDecls, ModifierTexts),
+    (   ModifierTexts == []
+    ->  ModifiersText = '', Sep = ''
+    ;   atomic_list_concat(ModifierTexts, ' ', ModifiersText), Sep = ' '
+    ).
 
 % The `is` clause follows every modifier, so it prints as one suffix rather
 % than joining the modifier list.

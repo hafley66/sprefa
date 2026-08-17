@@ -2,13 +2,17 @@ src/bin/extract.rs	Err
 src/bin/extract.rs	Ok
 src/bin/extract.rs	Some
 src/bin/extract.rs	bench
+src/bin/extract.rs	cfg_bundle
 src/bin/extract.rs	diet_file_edges_jsonl
 src/bin/extract.rs	diet_scip_jsonl
 src/bin/extract.rs	dispatch
 src/bin/extract.rs	family_mode
 src/bin/extract.rs	flatten
+src/bin/extract.rs	flatten_cfg
+src/bin/extract.rs	package_edges_jsonl
 src/bin/extract.rs	parse_arms
 src/bin/extract.rs	parse_ast_queries
+src/bin/extract.rs	parse_mask
 src/bin/extract.rs	print_schema
 src/bin/extract.rs	query_patterns
 src/bin/extract.rs	resolve_project_jsonl
@@ -23,6 +27,9 @@ src/bin/extract.rs	stream
 src/bin/extract.rs	stream_ast_queries
 src/bin/extract.rs	stream_resolve
 src/bin/extract.rs	stream_scip_family
+src/dispatch.rs	Some
+src/dispatch.rs	content_id_of
+src/dispatch.rs	get_or_extract
 src/dispatch.rs	source_for
 src/lang/astgrep.rs	Err
 src/lang/astgrep.rs	NodeRef
@@ -33,6 +40,7 @@ src/scip.rs	Err
 src/scip.rs	Ok
 src/scip.rs	Some
 src/scip.rs	attempt
+src/scip.rs	build_indexer
 src/scip.rs	byte_col
 src/scip.rs	byte_range
 src/scip.rs	copy_sources
@@ -46,6 +54,10 @@ src/types.rs	NameId
 src/types.rs	NodeRef
 src/types.rs	Self
 src/types.rs	Some
+src/types.rs	call_node
+src/types.rs	is_call
+src/wire.rs	Some
+src/wire.rs	content_id_of
 src/wire.rs	flatten
 src/wire.rs	flatten_call
 src/wire.rs	flatten_cst
