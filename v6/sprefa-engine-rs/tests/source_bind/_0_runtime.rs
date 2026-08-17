@@ -349,3 +349,95 @@ fn offline_git_files_blob_extract_span_and_tick_retraction() {
     }
     assert!(decoded_rows(&program, &seam, "dependency").iter().any(|row| matches!(&row[0], sprefa_engine_rs::Value::Text(owner) if serde_json::from_str::<serde_json::Value>(owner).unwrap()["file"]["path"] == "main.dl6")));
 }
+
+#[test]
+fn persistent_receipts_retract_after_runtime_restart_before_replacement_additions() {
+    let fixture = fixture();
+    let identity_store = tempfile::NamedTempFile::new().unwrap();
+    let program = emitted_source_program();
+    let seam = SqliteSeam::in_memory().unwrap();
+    seam.run_ddl(&program.ddl).unwrap();
+    run_boot(&seam, &program.boot);
+
+    let initial = worktree_entry(fixture.path());
+    let first = {
+        let mut bind =
+            SourceBind::open(identity_store.path(), SourceBindRelations::default()).unwrap();
+        bind.register_root(fixture.path()).unwrap();
+        bind.run_tick(&program, &seam, identity(1, initial))
+            .unwrap()
+    };
+    let first_additions = first.source.arrivals;
+    assert!(first_additions.iter().any(|arrival| arrival.rel == "file"));
+    assert!(first_additions.iter().any(|arrival| arrival.rel == "span"));
+    assert!(first_additions
+        .iter()
+        .any(|arrival| arrival.rel == "source_specifier"));
+
+    std::fs::write(
+        fixture.path().join("main.dl6"),
+        b"use \"next.dl6\" as next.\nrel changed.\n",
+    )
+    .unwrap();
+    let replacement = worktree_entry(fixture.path());
+    let mut bind = SourceBind::open(identity_store.path(), SourceBindRelations::default()).unwrap();
+    bind.register_root(fixture.path()).unwrap();
+    let second = bind
+        .run_tick(&program, &seam, identity(2, replacement.clone()))
+        .unwrap();
+
+    let deletion_count = second
+        .source
+        .arrivals
+        .iter()
+        .take_while(|arrival| arrival.sign == ArrivalSign::Del)
+        .count();
+    assert_eq!(deletion_count, first_additions.len());
+    assert_eq!(
+        second.source.arrivals[..deletion_count]
+            .iter()
+            .map(|arrival| (&arrival.rel, &arrival.row))
+            .collect::<Vec<_>>(),
+        first_additions
+            .iter()
+            .map(|arrival| (&arrival.rel, &arrival.row))
+            .collect::<Vec<_>>(),
+        "the empty-runtime process reconstructs the exact authored deletion projection"
+    );
+    assert!(second.source.arrivals[deletion_count..]
+        .iter()
+        .all(|arrival| arrival.sign == ArrivalSign::Add));
+    for relation in ["file", "span", "source_specifier", "dependency"] {
+        let delta = second
+            .deltas
+            .rels
+            .iter()
+            .find(|delta| delta.rel == relation)
+            .unwrap();
+        assert!(!delta.del.is_empty(), "{relation} deletions: {delta:?}");
+        assert!(!delta.add.is_empty(), "{relation} additions: {delta:?}");
+    }
+    let specifiers = decoded_rows(&program, &seam, "source_specifier");
+    assert!(
+        specifiers.iter().any(
+            |row| matches!(&row[1], sprefa_engine_rs::Value::Text(module) if module == "next.dl6")
+        ),
+        "replacement specifiers: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.iter().any(
+            |row| matches!(&row[1], sprefa_engine_rs::Value::Text(module) if module == "other.dl6")
+        ),
+        "stale specifiers: {specifiers:?}"
+    );
+
+    let replay = bind
+        .run_tick(&program, &seam, identity(3, replacement))
+        .unwrap();
+    assert!(replay.source.arrivals.is_empty());
+    assert!(replay
+        .deltas
+        .rels
+        .iter()
+        .all(|delta| delta.add.is_empty() && delta.del.is_empty()));
+}
