@@ -88,3 +88,35 @@ fn unknown_arm_names_flow_in_its_error() {
 fn resolve_without_family_is_byte_identical() {
     assert_eq!(run(&["--resolve", CALLER, CALLEE]), CALL_GOLDEN);
 }
+
+/// FAIL-PRE-FIX, same base sha: `bench` took no `cfg` flag, so
+/// `--bench --family cfg` printed
+/// `ts: extract 95.542µs serial 1.125µs (cst=10 type=0 call=0 df=0 facts=19)`
+/// with the cfg pass never run and nothing in the summary naming it.
+#[test]
+fn bench_runs_the_cfg_pass_when_the_family_names_it() {
+    let bench = |args: &[&str]| -> String {
+        let output = Command::new(env!("CARGO_BIN_EXE_extract"))
+            .args(args)
+            .output()
+            .expect("extract binary runs");
+        assert!(output.status.success(), "{args:?} did not exit clean");
+        String::from_utf8_lossy(&output.stderr).to_string()
+    };
+
+    let with_cfg = bench(&["--bench", "--family", "cfg", CALLER]);
+    assert!(
+        with_cfg.contains(" cfg "),
+        "the cfg pass was never timed: {with_cfg}"
+    );
+    assert!(
+        !with_cfg.contains("cfg=0"),
+        "the cfg pass produced no nodes: {with_cfg}"
+    );
+
+    let without_cfg = bench(&["--bench", "--family", "cst", CALLER]);
+    assert!(
+        !without_cfg.contains(" cfg "),
+        "a run that never named cfg timed it anyway: {without_cfg}"
+    );
+}

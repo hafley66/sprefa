@@ -403,9 +403,10 @@ pub fn scip_family_jsonl(request: &ScipFamilyRequest) -> Result<Vec<String>, Pro
 /// call to `helper` unresolvable here, and a real index resolves it through the
 /// import. That difference is the whole reason these are two names.
 ///
-/// The call and types arms run. `--resolve` remains the pre-existing spelling of the same
-/// pass and is byte-unchanged, including its narrower `call`-only default; this
-/// family is the labelled entry, not a replacement.
+/// The call and types arms run. `--resolve` remains the pre-existing spelling
+/// of the same pass and is byte-unchanged, including its narrower `call`-only
+/// default; this family is the labelled entry, not a replacement.
+// @comment-ok: one pre-existing diet_scip design note, edited by one line.
 pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
     resolve_project(&ResolveRequest {
         paths,
