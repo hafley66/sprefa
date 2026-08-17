@@ -210,6 +210,16 @@ asked for.
 An unknown kind is an error, never a silent drop: a typo would otherwise print
 an empty stream that reads as 'this index has no such facts'.";
 
+pub const OCCURRENCE_TEXT_LONG: &str = "\
+Ask each scip_occurrence row to also carry `text`: the source slice at its byte
+span, lossy-utf8, sliced from the same corpus bytes the row is already read
+against. This is the v6 answer to v5's scip_binding `local_name` (an alias or
+default import binds its local spelling, which the canonical-only symbol drops).
+
+Off by default so a plain --scip-facts run stays byte-identical. A span past the
+file's end drops the field rather than failing, and the field is JSON-absent
+(not null) when it cannot be produced.";
+
 pub const DEPS_LONG: &str = "\
 DIET module resolution: parse the supplied TypeScript files, read their import
 and export-from specifiers, and resolve each one to a file path syntactically.

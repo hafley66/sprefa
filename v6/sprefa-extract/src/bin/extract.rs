@@ -19,19 +19,18 @@ use clap::Parser;
 
 use sprefa_extract::{
     cfg_bundle, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact, flatten,
-    flatten_cfg, query_patterns,
-    resolve_project_jsonl, scip_facts_jsonl, scip_family_jsonl, scip_file_edges_jsonl,
-    scip_index_location, source_for, AstPatternQuery, FamilyMask, IndexBudget, ResolveArms,
-    ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, SCHEMA,
+    flatten_cfg, query_patterns, resolve_project_jsonl, scip_facts_jsonl, scip_family_jsonl,
+    scip_file_edges_jsonl, scip_index_location, source_for, AstPatternQuery, FamilyMask,
+    IndexBudget, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, SCHEMA,
 };
 
 #[path = "extract/help.rs"]
 mod help;
 
 use help::{
-    BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, PATH_LONG, PROJECT_ROOT_LONG,
-    SCIP_BUILD_LONG, SCIP_CACHE_LONG, SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG,
-    SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG,
+    BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, OCCURRENCE_TEXT_LONG,
+    PATH_LONG, PROJECT_ROOT_LONG, SCIP_BUILD_LONG, SCIP_CACHE_LONG, SCIP_DEPS_LONG,
+    SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG,
 };
 
 #[path = "../0_query.rs"]
@@ -110,6 +109,14 @@ struct Cli {
         long_help = SCIP_RECORD_LONG,
     )]
     scip_record: Option<String>,
+
+    /// Also carry the source slice at each scip_occurrence span, as `text`.
+    #[arg(
+        long = "occurrence-text",
+        requires = "scip_facts",
+        long_help = OCCURRENCE_TEXT_LONG,
+    )]
+    occurrence_text: bool,
 
     /// Stream file_edge rows resolved syntactically, with no SCIP index.
     #[arg(
@@ -358,6 +365,7 @@ fn scip_request(cli: &Cli) -> Result<ResolveRequest<'_>, String> {
             Some(spec) => ScipRecords::parse(spec)?,
             None => ScipRecords::all(),
         },
+        occurrence_text: cli.occurrence_text,
     })
 }
 

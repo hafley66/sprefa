@@ -43,7 +43,7 @@ RECORD SHAPES
   record=file  path=<string>  digest=<hex>  bytes=<u32>  lines=<u32>
   record=scip_metadata  version=<i32>  tool_name=<string>  tool_version=<string>  tool_arguments=[<string>]  project_root=<string>  text_document_encoding=<i32>
   record=scip_document  path=<string>  language=<string>  position_encoding=<i32>  text=<string|null>
-  record=scip_occurrence  path=<string>  symbol=<string>  start=<u32>  end=<u32>  roles=<i32>  definition=<bool>  import=<bool>  write_access=<bool>  read_access=<bool>  generated=<bool>  test=<bool>  forward_definition=<bool>  syntax_kind=<i32>  enclosing_start=<u32|null>  enclosing_end=<u32|null>
+  record=scip_occurrence  path=<string>  symbol=<string>  start=<u32>  end=<u32>  roles=<i32>  definition=<bool>  import=<bool>  write_access=<bool>  read_access=<bool>  generated=<bool>  test=<bool>  forward_definition=<bool>  syntax_kind=<i32>  enclosing_start=<u32|null>  enclosing_end=<u32|null>  text=<string|null>
   record=scip_occurrence_doc  path=<string>  start=<u32>  end=<u32>  pos=<u32>  text=<string>
   record=scip_diagnostic  path=<string>  start=<u32>  end=<u32>  severity=<i32>  code=<string>  message=<string>  source=<string>  tags=[<i32>]
   record=scip_symbol  path=<string|null>  symbol=<string>  display_name=<string>  kind=<i32>  enclosing_symbol=<string>
@@ -109,6 +109,9 @@ FIELDS
   syntax_kind  raw scip.proto SyntaxKind ordinal (0 = unspecified).
   enclosing_start/enclosing_end  the nearest enclosing AST node's byte span,
                null when the indexer emitted none.
+  text         on scip_occurrence only, the source slice at the occurrence's
+               byte span (lossy-utf8), carried only under --occurrence-text and
+               absent (not null) when the flag is off or the span is past EOF.
   display_name the symbol's name as scip records it.
   enclosing_symbol  the owner of a local symbol; empty for global symbols.
   related_symbol  the other end of a scip.proto Relationship.
@@ -200,7 +203,8 @@ THE TWO NAMED FAMILIES (--family scip | --family diet_scip)
   --scip-facts) with different fields, and two shapes under one tag is exactly
   the silent drift the goldens exist to stop. Both are one consumer join off
   --scip-facts --scip-record scip_occurrence, which carries the spans and every
-  role bit; scip_binding additionally wants the source slice at those spans.
+  role bit; scip_binding's source-slice need is answered by that row's optional
+  `text` field under --occurrence-text (issue extract-scip-vocab-occurrence-binding).
   --family diet_scip PATH... runs this crate's own front-ends plus name-match
   resolution over the supplied files, emitting resolved_edge and
   resolved_type_edge. No indexer, no type checker, no index. It is wrong

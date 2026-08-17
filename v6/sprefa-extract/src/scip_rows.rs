@@ -106,14 +106,18 @@ impl ScipRecords {
 /// relationships but no occurrences, and an occurrence whose range does not
 /// convert is dropped rather than clamped into a lie (the `byte_range` law).
 pub fn flatten_scip(index: &ScipIndex, reader: &dyn Fn(&str) -> Option<Vec<u8>>) -> Vec<FlatFact> {
-    flatten_scip_records(index, reader, &ScipRecords::all())
+    flatten_scip_records(index, reader, &ScipRecords::all(), false)
 }
 
 /// `flatten_scip` narrowed to the requested record kinds. See `ScipRecords`.
+/// `occurrence_text` asks the `scip_occurrence` row to also carry the source
+/// slice at its span (lossy-utf8), the v6 answer to v5 scip_binding's
+/// `local_name`; off, the row is byte-identical to before the field existed.
 pub fn flatten_scip_records(
     index: &ScipIndex,
     reader: &dyn Fn(&str) -> Option<Vec<u8>>,
     records: &ScipRecords,
+    occurrence_text: bool,
 ) -> Vec<FlatFact> {
     let mut out = Vec::new();
     if records.wants("scip_metadata") {
@@ -142,7 +146,13 @@ pub fn flatten_scip_records(
         if wants_occurrences(records) {
             if let Some(content) = reader(&document.relative_path) {
                 for occurrence in &document.occurrences {
-                    out.extend(occurrence_rows(document, occurrence, &content, records));
+                    out.extend(occurrence_rows(
+                        document,
+                        occurrence,
+                        &content,
+                        records,
+                        occurrence_text,
+                    ));
                 }
             }
         }
@@ -173,6 +183,7 @@ fn occurrence_rows(
     occurrence: &ScipOccurrence,
     content: &[u8],
     records: &ScipRecords,
+    occurrence_text: bool,
 ) -> Vec<FlatFact> {
     let encoding = document.position_encoding;
     let Some(span) = byte_range(content, occurrence.range, encoding) else {
@@ -184,6 +195,13 @@ fn occurrence_rows(
         .enclosing_range
         .and_then(|range| byte_range(content, range, encoding));
     let roles = occurrence.roles;
+    let text = occurrence_text
+        .then(|| {
+            let s = start as usize;
+            let e = end as usize;
+            (e <= content.len()).then(|| String::from_utf8_lossy(&content[s..e]).into_owned())
+        })
+        .flatten();
     let mut out = Vec::new();
     if records.wants("scip_occurrence") {
         out.push(FlatFact::ScipOccurrenceRow {
@@ -202,6 +220,7 @@ fn occurrence_rows(
             syntax_kind: occurrence.syntax_kind,
             enclosing_start: enclosing.map(|span| span.start),
             enclosing_end: enclosing.map(Span::end),
+            text,
         });
     }
     for (pos, text) in occurrence
