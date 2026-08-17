@@ -1386,8 +1386,8 @@ fn peel_parens(expr: &syn::Expr) -> &syn::Expr {
 //    the name derives from the walk's containment path + the closure's span.
 //  - `line`/`col`: a node is a byte Span (start via line_col_to_byte), never a
 //    line/col pair.
-//  - the enrichment aux: `args`, `fields`, `lits`, `param_pos`, `loops`,
-//    `nests`, `allocators`. The EDGES already carry every value flow.
+//  - the enrichment aux: `args`, `fields`, `lits`, `param_pos`. The EDGES
+//    already carry every value flow.
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Transient scope: a variable name -> its binding node (param or `let`).

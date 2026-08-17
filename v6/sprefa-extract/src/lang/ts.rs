@@ -1674,7 +1674,7 @@ impl<'a> OxcVisit<'a> for UnresolvedWalker<'_> {
 //    HashMap (var name -> NodeRef) for intra-procedural resolution is kept.
 //  - `line_at` / `line_index` / `line_col`: a node is a byte Span, never a line.
 //  - the enrichment aux: `args` (positional slots), `fields` (object/array
-//    field names), `lits` (literal texts), `param_pos`, `loops`, `nests`. Args
+//    field names), `lits` (literal texts), `param_pos`. Args
 //    and parameter positions are emitted as DfArg/DfParam rows. The
 //    EDGES already carry every value flow; the aux only labels slots/names/texts
 //    for the later interprocedural (arg->param) + string-flow queries.

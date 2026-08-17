@@ -755,11 +755,11 @@ fn kt_callee<'a>(
 //    method, roots at `{file}::function::{name}` per v5's kt_flow_fn). No sym
 //    store: the name derives from the walk's containment path + span data.
 //  - the enrichment aux: `args` (incl. the receiver slot -1 and named-arg
-//    source positions), `fields` (named-arg labels), `param_pos`, `loops`,
-//    `nests`. The EDGES already carry every value flow.
-//  - `for`/`while`/`do-while` mint NO Loop node in v5 kotlin (the loop FACT is
-//    aux, dropped); they fall to the conservative recursion, and the for-loop
-//    variable is NEVER scope-bound (v5 exact).
+//    source positions), `fields` (named-arg labels), `param_pos`. The EDGES
+//    already carry every value flow.
+//  - `for`/`while`/`do-while` mint NO Loop node in v5 kotlin (only the aux loop
+//    row lands); the body falls to the conservative recursion, and the for-loop
+//    variable is NEVER scope-bound (v5 exact).  // @comment-ok: one pre-existing header prose run
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Transient scope: a variable name -> its binding node (param or `let`).
@@ -770,9 +770,8 @@ type Scope = std::collections::HashMap<String, NodeRef>;
 
 /// Project the DfF family: each callable's body lifted to its value-flow
 /// graph. Port of v5 `kotlin_dataflow_from` (the driver half). Unlike v5, no
-/// post-pass bumps (v6 stores bytes directly, not 0-based rows), and
-/// `loops`/`nests` aux is dropped. `file` roots each fn_sym (the closure value
-/// node's name derives from it).
+/// post-pass bumps (v6 stores bytes directly, not 0-based rows). `file` roots
+/// each fn_sym (the closure value node's name derives from it).
 fn project_df(
     root: tree_sitter::Node,
     src: &[u8],
