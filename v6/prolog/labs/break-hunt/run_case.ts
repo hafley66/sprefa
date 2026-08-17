@@ -20,8 +20,8 @@ import { TickFold } from "../runtime/tickLoop.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
 import { BootRunner } from "../runtime/2_boot.ts";
 import { row_value_from_sql } from "../runtime/rows.ts";
+import { decode_json_arrivals } from "../runtime/boundary.ts";
 import type {
-  IArrivalBatch,
   IBootStatement,
   IGenProgram,
   IRowColumnType,
@@ -35,6 +35,9 @@ type EmittedProgram = IGenProgram & {
 };
 
 function final_value_json(value: unknown, type?: IRowColumnType): string {
+  if (type === "bytes" && (value instanceof Uint8Array || value instanceof ArrayBuffer)) {
+    return TickLogEmitter.value_text(value instanceof ArrayBuffer ? new Uint8Array(value) : value, type);
+  }
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number" || typeof value === "boolean") {
     return TickLogEmitter.value_text(value as IRowValue, type);
@@ -93,10 +96,11 @@ function main(): void {
     process.exitCode = 2;
     return;
   }
-  const schedule = JSON.parse(readFileSync(schedule_path, "utf8")) as readonly IArrivalBatch[];
+  const schedule_json: unknown = JSON.parse(readFileSync(schedule_path, "utf8"));
   void import(["..", "gen_emitted", `${module_name}.ts`].join("/"))
     .then((loaded: { program: EmittedProgram }) => loaded.program)
     .then((program) => {
+      const schedule = decode_json_arrivals(schedule_json, program.rel_column_types ?? {});
       const seam = ScratchStore.open(":memory:");
       return new Promise<void>((resolve, reject) => {
         ScratchStore.boot(seam, program.ddl)

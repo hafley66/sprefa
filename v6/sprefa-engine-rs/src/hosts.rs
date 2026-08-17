@@ -1265,6 +1265,7 @@ pub fn shell_text(value: &ScalarValue) -> String {
         ScalarValue::Integer(number) => number.to_string(),
         ScalarValue::Real(number) => crate::ticklog::js_float_text(*number),
         ScalarValue::Bool(flag) => if *flag { "true" } else { "false" }.to_string(),
+        ScalarValue::Bytes(_) => "bytes_host_transport_unsupported".to_string(),
     }
 }
 
@@ -1338,6 +1339,26 @@ fn coerce(
         message,
     };
     match column.column_type.as_str() {
+        "bytes" => match raw {
+            serde_json::Value::Object(map) if map.len() == 1 => match map.get("$bytes") {
+                Some(serde_json::Value::String(encoded)) => crate::types::base64_to_bytes(encoded)
+                    .map(Value::Bytes)
+                    .map_err(|error| {
+                        named(format!(
+                            "invalid_bytes_base64 for bytes column '{}': {error}",
+                            column.name
+                        ))
+                    }),
+                _ => Err(named(format!(
+                    "bytes_host_transport_unsupported for bytes column '{}'",
+                    column.name
+                ))),
+            },
+            _ => Err(named(format!(
+                "bytes_host_transport_unsupported for bytes column '{}'",
+                column.name
+            ))),
+        },
         "bool" => match raw {
             serde_json::Value::Bool(flag) => Ok(Value::Bool(*flag)),
             serde_json::Value::String(text) if text == "true" => Ok(Value::Bool(true)),

@@ -76,6 +76,7 @@ fn to_param(value: &ScalarValue) -> rusqlite::types::Value {
         ScalarValue::Real(v) => rusqlite::types::Value::Real(*v),
         ScalarValue::Bool(b) => rusqlite::types::Value::Integer(if *b { 1 } else { 0 }),
         ScalarValue::Text(v) => rusqlite::types::Value::Text(v.clone()),
+        ScalarValue::Bytes(v) => rusqlite::types::Value::Blob(v.clone()),
     }
 }
 
@@ -88,8 +89,9 @@ fn row_to_values(row: &Row, columns: &[String]) -> Vec<Value> {
             Ok(rusqlite::types::ValueRef::Text(v)) => {
                 Value::Text(String::from_utf8_lossy(v).into_owned())
             }
+            Ok(rusqlite::types::ValueRef::Blob(v)) => Value::Bytes(v.to_vec()),
             Ok(rusqlite::types::ValueRef::Null) => Value::Text(String::new()),
-            Ok(_) | Err(_) => Value::Text(String::new()),
+            Err(_) => Value::Text(String::new()),
         };
         out.push(value);
     }
@@ -199,6 +201,10 @@ fn normalize_boundary_value(
                 }),
             }
         }
+        (Some(crate::types::RowColumnType::Bytes), Value::Bytes(bytes)) => Ok(Value::Bytes(bytes)),
+        (Some(crate::types::RowColumnType::Bytes), _value) => Err(
+            BoundaryError::BytesAtScalarSeam(crate::types::ScalarSeam::SqlParameter),
+        ),
         (_, value) => Ok(value),
     }
 }

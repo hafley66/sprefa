@@ -25,6 +25,7 @@ import type {
   ITickLogEmitter,
   ITickLogLine,
 } from "./types.ts";
+import { bytes_to_base64 } from "./boundary.ts";
 
 function canonicalize_json(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalize_json);
@@ -52,6 +53,7 @@ function canonical_json_text(value: string): string | null {
 }
 
 function encode_value(value: IRowValue, type?: IRowColumnType): string {
+  if (value instanceof Uint8Array) return `{"$bytes":${JSON.stringify(bytes_to_base64(value))}}`;
   if (typeof value === "number") {
     if (!Number.isFinite(value)) throw new Error(`non-finite float at tick boundary: ${String(value)}`);
     return JSON.stringify(value);

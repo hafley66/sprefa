@@ -11,6 +11,7 @@ import type {
   IIncrementalRuntime,
   IRelDelta,
   IRow,
+  IRowColumnType,
   IRowValue,
   ISqlSeam,
   IStageOrderedFrontiers,
@@ -71,18 +72,27 @@ function quote_identifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
 
-function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {
+function bind_args(values: readonly IRowValue[]): (string | number | bigint | Uint8Array)[] {
   return values.map((value) => {
     if (typeof value === "boolean") return BigInt(value ? 1 : 0);
     if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;
     if (typeof value === "string") return value;
+    if (value instanceof Uint8Array) return value;
     throw list_at_scalar_seam("sql_parameter");
   });
 }
 
-function result_rows(result: QueryResult, columns: readonly string[]): readonly IRow[] {
+function result_rows(result: QueryResult, columns: readonly string[], types: readonly IRowColumnType[] = []): readonly IRow[] {
   return result.rows.map((row) =>
-    columns.map((column) => normalize_integer_value(row[column])),
+    columns.map((column, index) => {
+      const value = row[column];
+      if (types[index] === "bytes") {
+        if (value instanceof Uint8Array) return value;
+        if (value instanceof ArrayBuffer) return new Uint8Array(value);
+        throw new Error(`bytes column '${columns[index]}' crossed SQLite with ${JSON.stringify(value)}`);
+      }
+      return normalize_integer_value(value);
+    }),
   );
 }
 
@@ -124,6 +134,9 @@ function boundary_stage_statement(
   relation: IIncrementalRelationPlan,
   events: readonly DeltaEvent[],
 ): SqlStatement {
+  if (relation.column_types?.includes("bytes") === true) {
+    return direct_stage_statement(relation, relation.delta_table_name, "delta", 0, events);
+  }
   const columns = ["_sign", "_sequence", ...relation.columns].map(quote_identifier);
   const value_expressions = columns.map(
     (_column, index) => `json_extract(value, '$[${index}]')`,
@@ -145,6 +158,9 @@ function frontier_stage_statement(
   phase: number,
   events: readonly DeltaEvent[],
 ): SqlStatement {
+  if (relation.column_types?.includes("bytes") === true) {
+    return direct_stage_statement(relation, table_name, "frontier", phase, events);
+  }
   const columns = ["_phase", "_sequence", ...relation.columns].map(quote_identifier);
   const value_expressions = columns.map(
     (_column, index) => `json_extract(value, '$[${index}]')`,
@@ -275,6 +291,47 @@ function storage_row(relation: IIncrementalRelationPlan, row: IRow): IRow {
   );
 }
 
+function has_bytes(relation: IIncrementalRelationPlan): boolean {
+  return relation.column_types?.includes("bytes") === true;
+}
+
+function direct_arrival_statement(
+  relation: IIncrementalRelationPlan,
+  sign: 1 | -1,
+  rows: readonly IRow[],
+): SqlStatement {
+  const columns = relation.columns.map(quote_identifier);
+  if (sign === -1) {
+    return {
+      sql: `DELETE FROM ${quote_identifier(relation.table_name)} WHERE (${columns.join(", ")}) IN (${values_sql(rows.length, columns.length)}) RETURNING ${columns.join(", ")}`,
+      args: rows.flatMap(bind_args),
+    };
+  }
+  const key_indices = relation.key_indices ?? [];
+  const conflict = key_indices.length === 0 ? " OR IGNORE" : key_indices.length > 0
+    ? ` ON CONFLICT(${key_indices.map((index) => columns[index]!).join(", ")}) DO ${key_indices.length === columns.length ? "NOTHING" : `UPDATE SET ${columns.filter((_column, index) => !key_indices.includes(index)).map((column) => `${column} = excluded.${column}`).join(", ")}`}`
+    : "";
+  return {
+    sql: `INSERT${conflict.startsWith(" OR") ? conflict : ""} INTO ${quote_identifier(relation.table_name)} (${columns.join(", ")}) VALUES ${values_sql(rows.length, columns.length)}${conflict.startsWith(" ON") ? conflict : ""} RETURNING ${columns.join(", ")}`,
+    args: rows.flatMap(bind_args),
+  };
+}
+
+function direct_stage_statement(
+  relation: IIncrementalRelationPlan,
+  table_name: string,
+  mode: "delta" | "frontier",
+  phase: number,
+  events: readonly DeltaEvent[],
+): SqlStatement {
+  const columns = (mode === "delta" ? ["_sign", "_sequence", ...relation.columns] : ["_phase", "_sequence", ...relation.columns]).map(quote_identifier);
+  const rows = events.map((event) => [mode === "delta" ? event.sign : phase, event.sequence, ...event.row]);
+  return {
+    sql: `INSERT INTO ${quote_identifier(table_name)} (${columns.join(", ")}) VALUES ${values_sql(rows.length, columns.length)}`,
+    args: rows.flatMap(bind_args),
+  };
+}
+
 function keyed_write_statement(
   statement: IIncrementalEdgeStatement,
   rows: readonly IRow[],
@@ -341,7 +398,7 @@ function apply_keyed_edge(
     .execute(seam.db, { sql: keyed_rows_sql(statement, rows.length), args: key_args })
     .pipe(
       concatMap((before_result) => {
-        const before_rows = result_rows(before_result, statement.head_columns);
+        const before_rows = result_rows(before_result, statement.head_columns, relation.column_types);
         const before_by_key = new Map(
           before_rows.map((row) => [row_key(row, statement.key_indices), row]),
         );
@@ -381,7 +438,7 @@ function apply_edge_statement(
   const started_at = RuntimeTrace.enabled ? performance.now() : 0;
   return intern_then_execute(seam, statement.intern_sql, statement.project_sql).pipe(
     concatMap((result) => {
-      const rows = result_rows(result, statement.head_columns);
+      const rows = result_rows(result, statement.head_columns, relation.column_types);
       RuntimeTrace.rule(statement.rule_id, rows.length, performance.now() - started_at);
       return statement.head_kind === "log"
         ? apply_log_edge(seam, statement, relation, rows)
@@ -428,7 +485,7 @@ function apply_aggregate_level_statement(
   return seam.runner.batch(seam.db, scope_statements).pipe(
     concatMap(() => seam.runner.execute(seam.db, aggregate.delete_scoped_sql)),
     concatMap((delete_result) => {
-      const removed_rows = result_rows(delete_result, statement.head_columns);
+      const removed_rows = result_rows(delete_result, statement.head_columns, relation.column_types);
       return seam.runner
         .batch(
           seam.db,
@@ -443,7 +500,7 @@ function apply_aggregate_level_statement(
               row,
             }));
             for (const insert_result of insert_results) {
-              for (const row of result_rows(insert_result, statement.head_columns)) {
+              for (const row of result_rows(insert_result, statement.head_columns, relation.column_types)) {
                 events.push({
                   rel: statement.head_rel,
                   sign: 1,
@@ -487,7 +544,7 @@ function apply_level_statement(
   const started_at = RuntimeTrace.enabled ? performance.now() : 0;
   return intern_then_execute(seam, statement.intern_sql, statement.insert_sql).pipe(
     concatMap((result) => {
-      const rows = result_rows(result, statement.head_columns);
+      const rows = result_rows(result, statement.head_columns, relation.column_types);
       RuntimeTrace.rule(statement.rule_id, rows.length, performance.now() - started_at);
       if (rows.length === 0) return of(0);
       const events = rows.map(
@@ -947,7 +1004,7 @@ function apply_retention_statement(
   }
   return seam.runner.execute(seam.db, statement.delete_sql).pipe(
     concatMap((result) => {
-      const rows = result_rows(result, relation.columns);
+      const rows = result_rows(result, relation.columns, relation.column_types);
       if (rows.length === 0) return of(undefined);
       const events = rows.map(
         (row): DeltaEvent => ({
@@ -993,6 +1050,11 @@ function boundary_delta(
           throw new Error(`float column '${relation.rel}.${column}' crossed SQLite with ${JSON.stringify(value)}`);
         }
         return Object.is(value, -0) ? 0 : value;
+      }
+      if (type === "bytes") {
+        if (value instanceof Uint8Array) return value;
+        if (value instanceof ArrayBuffer) return new Uint8Array(value);
+        throw new Error(`bytes column '${relation.rel}.${column}' crossed SQLite with ${JSON.stringify(value)}`);
       }
       return normalize_integer_value(value);
     });
@@ -1075,10 +1137,9 @@ export const IncrementalRuntime: IIncrementalRuntime = {
     }
     return sequence_work(grouped_arrivals, ({ relation, sign, entries }) => {
       const sql = (sign === 1 ? relation.arrival_add_sql : relation.arrival_del_sql)!;
-      const write_statement: SqlStatement = {
-        sql,
-        args: [JSON.stringify(entries.map((entry) => entry.row))],
-      };
+      const write_statement: SqlStatement = has_bytes(relation)
+        ? direct_arrival_statement(relation, sign, entries.map((entry) => entry.row))
+        : { sql, args: [JSON.stringify(entries.map((entry) => entry.row))] };
       const key_indices = relation.key_indices ?? [];
       if (relation.kind === "set" && sign === 1 && key_indices.length > 0) {
         return seam.runner
@@ -1086,7 +1147,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
           .pipe(
             concatMap((before_result) => {
               const current_by_key = new Map(
-                result_rows(before_result, relation.columns).map((row) => [
+                result_rows(before_result, relation.columns, relation.column_types).map((row) => [
                   row_key(row, key_indices),
                   row,
                 ]),
@@ -1144,7 +1205,7 @@ export const IncrementalRuntime: IIncrementalRuntime = {
               [{ table_name: (plan) => plan.frontier_table_name, phase: 1 }],
             );
           }
-          const changed_rows = result_rows(result, relation.columns);
+          const changed_rows = result_rows(result, relation.columns, relation.column_types);
           const staged_rows = new Set<string>();
           for (const [index, entry] of entries.entries()) {
             const stored_row = changed_rows[index];

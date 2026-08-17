@@ -211,7 +211,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
       'import { SubscribeCone } from "../runtime/3_subscribe.ts";',
       'import { multiset_diff } from "../runtime/diff.ts";',
       'import { select_rows } from "../runtime/rows.ts";',
-      'import { list_at_scalar_seam } from "../runtime/boundary.ts";'
+      'import { bytes_at_scalar_seam, list_at_scalar_seam } from "../runtime/boundary.ts";'
       ],
       StructImport,
       TextImport,
@@ -583,11 +583,12 @@ host_column_json(col(Name, Type), Json) :-
 % already returns a fresh mutable array; the annotation was simply too
 % narrow).
 bind_args_helper_lines(
-    [ 'function bind_args(values: readonly IRowValue[]): (string | number | bigint)[] {',
+    [ 'function bind_args(values: readonly IRowValue[]): (string | number | bigint | Uint8Array)[] {',
       '  return values.map((value) => {',
       '    if (typeof value === "boolean") return BigInt(value ? 1 : 0);',
       '    if (typeof value === "number") return Number.isSafeInteger(value) ? BigInt(value) : value;',
       '    if (typeof value === "string") return value;',
+      '    if (value instanceof Uint8Array) return value;',
       '    throw list_at_scalar_seam("sql_parameter");',
       '  });',
       '}'
@@ -660,6 +661,10 @@ arrival_value_guard_lines(
       '        : type === "float" ? false',
       '        : wide_integer_witness(value);',
       '      if (scanned) throw new Error(`int_out_of_range ${arrival.rel}[${index}]`);',
+      '      if (type === "bytes") {',
+      '        if (!(value instanceof Uint8Array)) throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bytes`);',
+      '        return value;',
+      '      }',
       '      if (type === "bool") {',
       '        if (typeof value !== "boolean") throw new Error(`type_arrival_shape_mismatch ${arrival.rel}[${index}] field_not_bool`);',
       '        return value;',
@@ -844,6 +849,7 @@ gate_column_type(bool,  bool)  :- !.
 gate_column_type(text,  text)  :- !.
 gate_column_type(json,  json)  :- !.
 gate_column_type(json_list(_), json) :- !.
+gate_column_type(bytes, bytes) :- !.
 % The stored id is what the gate sees; the elements live in the member rel.
 gate_column_type(list(_), int) :- !.
 gate_column_type(_,     other).
@@ -865,6 +871,7 @@ boundary_column_type(ref(_), ref) :- !.
 % default text does); the seam that switches on it is ticklog.ts's encoder.
 boundary_column_type(json, json) :- !.
 boundary_column_type(json_list(_), json) :- !.
+boundary_column_type(bytes, bytes) :- !.
 % F3: the runtime parses the read surface's array text into Array<T> at the
 % row seam, so the boundary type names the list rather than borrowing json's.
 boundary_column_type(list(_), list) :- !.

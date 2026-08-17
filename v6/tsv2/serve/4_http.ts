@@ -64,6 +64,7 @@ import { ScratchStore } from "../runtime/scratchStore.ts";
 import { ServeStats } from "../runtime/serveStats.ts";
 import type {
   IArrivalBatch,
+  IArrivalRow,
   IRelCatalogRow,
   IReloadOutcome,
   IReloadPlan,
@@ -82,6 +83,7 @@ import { IntervalBindRunner, NodeWatchSource, WatchBindRunner, bind_plans_for } 
 import { LiveEngine, boot_served_program } from "./3_engine.ts";
 import { ReloadPlanner } from "./reloadPlan.ts";
 import { buildOpenapi } from "./openapiDoc.ts";
+import { base64_to_bytes } from "../runtime/boundary.ts";
 
 export const ROUTE_LIST: readonly string[] = [
   "POST /program",
@@ -283,6 +285,13 @@ function is_row_value(value: unknown): value is IRowValue {
  */
 function column_problem(type: IRowColumnType | undefined, value: unknown): string | null {
   if (value === null || value === undefined) return "must not be null";
+  if (type === "bytes") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return "must be a tagged $bytes object";
+    const keys = Object.keys(value);
+    if (keys.length !== 1 || keys[0] !== "$bytes" || typeof (value as { readonly $bytes?: unknown }).$bytes !== "string") return "must be a tagged $bytes object";
+    try { base64_to_bytes((value as { readonly $bytes: string }).$bytes); } catch { return "has invalid_bytes_base64"; }
+    return null;
+  }
   if (type === "int") return Number.isInteger(value) ? null : "must be an int";
   if (type === "float") return typeof value === "number" && Number.isFinite(value) ? null : "must be a float";
   if (type === "bool") return typeof value === "boolean" ? null : "must be a bool";
@@ -339,7 +348,14 @@ function check_arrival_body(program: IServedProgram, text: string): BatchCheck {
   }
   // Every field of every arrival has now been checked against the program's own
   // declaration, which is what makes this the one honest place to name the type.
-  return { kind: "ok", batch: batch as IArrivalBatch };
+  const typed_batch = (batch as readonly { readonly rel: string; readonly sign: IArrivalRow["sign"]; readonly row: readonly unknown[] }[]).map((arrival) => {
+    const types = program.rel_column_types?.[arrival.rel] ?? [];
+    const row = arrival.row.map((value, index) => types[index] === "bytes"
+      ? base64_to_bytes((value as { readonly $bytes: string }).$bytes)
+      : value) as IRowValue[];
+    return { rel: arrival.rel, sign: arrival.sign, row };
+  });
+  return { kind: "ok", batch: typed_batch };
 }
 
 function handle_arrivals$(state: ServerState, exchange: Exchange): Observable<IServeEvent> {

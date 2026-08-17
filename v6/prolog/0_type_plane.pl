@@ -613,7 +613,8 @@ column_value_shape_error(_, text, Value, field_not_text(Value)) :-
 % lowering. Until then the type is usable in declarations and derived rows,
 % while an authored world value stops here instead of entering BLOB storage
 % through SQLite's affinity coercions.
-column_value_shape_error(_, bytes, Value, bytes_arrival_unavailable(Value)) :- !.
+column_value_shape_error(_, bytes, Value, field_not_bytes(Value)) :-
+    \+ bytes_value(Value), !.
 % A list column's arrival value is a json array whose elements must satisfy
 % the element type's own shape check. Runs here even though a json column is
 % not checked: the shared arrival reader only verifies the value is a
@@ -640,6 +641,9 @@ text_column_value(Value) :- string(Value).
 
 bool_value(bool_lit(true)).
 bool_value(bool_lit(false)).
+
+bytes_value(bytes(Base64)) :- atom(Base64), !.
+bytes_value(bytes(Base64)) :- string(Base64).
 
 finite_float(Value) :-
     float(Value),

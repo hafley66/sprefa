@@ -9544,10 +9544,10 @@ test(bytes_catalog_primitive_and_column_type_are_stable) :-
     memberchk(row(6, 0, 0, bytes, primitive, 0, 0, 0, '', '', ''), Rows),
     memberchk(row(_, _, 1, value, column, 6, 0, _, _, '', ''), Rows).
 
-test(bytes_world_arrival_stops_until_tagged_transport_exists,
+test(bytes_world_arrival_rejects_untagged_transport,
      [throws(unsupported_construct(type_arrival_shape_mismatch(
                  byte_source/1, value, bytes,
-                 bytes_arrival_unavailable(raw))))]) :-
+                 field_not_bytes(raw))))]) :-
     Program = prog([col_type(byte_source/1, value, bytes)], []),
     program_plan(fixture(bytes_world_arrival_stops_until_tagged_transport_exists,
                          Program, [byte_source(raw)], [], [])-[], _).
