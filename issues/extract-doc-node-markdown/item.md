@@ -2,13 +2,17 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: feature
-status: open
+status: done
 priority: low
 epic: extract-port-closeout
 labels:
 - pkg:extract
 - size:small
 blocked_by: ['@extract-dl6-resolve-unwired']
+closed: 2026-08-16
+commits:
+- hash: d295a0768532f98a75b2e943398ef59bb86becfc
+  summary: markdown doc_node + doc_ref bridge
 ---
 
 # markdown doc_node and the doc-to-code doc_ref bridge

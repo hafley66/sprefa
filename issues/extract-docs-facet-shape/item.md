@@ -2,12 +2,13 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: feature
-status: testing
+status: done
 priority: normal
 epic: extract-port-closeout
 labels:
 - pkg:extract
 - size:med
+closed: 2026-08-16
 ---
 
 # docs facet: DocFact/DocTag shape plus the rust arm

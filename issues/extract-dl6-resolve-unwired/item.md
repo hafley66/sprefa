@@ -2,12 +2,13 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: bug
-status: testing
+status: fixed
 priority: high
 epic: extract-port-closeout
 labels:
 - pkg:extract
 - size:small
+closed: 2026-08-16
 ---
 
 # dl6 phase-2 arms exist and are never dispatched

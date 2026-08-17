@@ -97,7 +97,8 @@ spawn, never `bus dispatch` (that spelling is dead).
 ```bash
 boop beep lane create --branch <kind>/<name> --brief <ABS path> \
   --goal "..." --preset <preset> --base-sha <origin/main sha>
-boop beep lane wait <lane-name> &      # ARM THIS. Nothing else notifies you.
+boop beep lane wait <lane-name> &      # optional backstop; completion also
+                                       # arrives typed into the coordinator pane
 ```
 
 Presets live in `~/Library/Application Support/boop/config.json`. The
@@ -107,14 +108,21 @@ moved to `hafley66/hafley-rs`, nothing under `v6/boop` exists anymore).
 `--dry-run` prints the exact spawn line; use it before a shape you have not
 used before.
 
+**Lane models (user-set 2026-08-16, supersedes flash4/pro4 rotation for
+sprefa dispatch):** sonnet-level work goes to native opus subagents or the
+`luna` preset (`gpt-5.6-luna@medium`, codex harness, never through opencode);
+opus-level work goes to opus.
+
 **A lane's `rc=0` means nothing.** `opencode run` exits 0 on a provider error
 with zero tokens emitted, and a lane can write its whole deliverable and exit 0
 without committing. ALWAYS check `git log` and `git status` in the lane's
 worktree before reporting its result. Verify its gate numbers yourself.
 
-**Nothing delivers boop mail.** Hails addressed to a coordinator sit in
-`~/.agent/mail/bus.ndjson` with `to_timestamp: null` forever. `lane wait` is the
-only working notification path.
+**Coordinator mail is delivered by pane injection** (hafley-rs PR #6,
+2026-08-17): `boop adopt` writes a `kind=coordinator` route and lane-completion
+hails get typed into the coordinator pane, mid-turn or idle; no `lane wait`
+needs arming. `lane wait` remains the blocking/backstop form. Failure-mode 51
+records the era when this leg was unwired and mail queued forever.
 
 - Every worktree agent's FIRST action: `git merge --ff-only <sha>`, coordinator
   states the sha. Failure or missing tree = STOP AND REPORT. Working around a
@@ -187,6 +195,8 @@ only working notification path.
 
 ## User decisions, act on these without re-asking
 
+- **"always merge fixes"** (2026-08-16): a fix PR the coordinator graded green
+  merges without waiting for a per-PR word.
 - **"no coercions."** An untyped column does not silently take part in a
   comparison or a numeric aggregate. In code at `lower.pl:1826`
   (`comparison_type_mismatch`) and `lower.pl:335` (`join_column_type_mismatch`),
@@ -230,21 +240,21 @@ only working notification path.
   plane cannot. `4_emit_jsonschema.pl:121-146` renders option columns
   required-and-nullable (`anyOf` with null): present-null is spellable, key-absent
   is not (verified in docs/generics-wrapper-inspection.md, stale claim 2).
-- **Interprocedural dataflow is unbuilt.** `v6/sprefa-extract/src/types.rs`
-  `DfEdgeKind` has only `Direct` (intra-procedural); the `Flow` union
-  (arg to param, ret to call_res, higher-order) is commented out and marked
-  PENDING. `ModuleF` is collapsed at `types.rs:632-645` and flagged for human
-  review.
+- **Interprocedural dataflow is BUILT, CLI dispatch pending.** `FlowF` landed
+  (PR #313): `flow_edges` + `flatten_flow` are working tested code, but
+  `parse_mask` has no `flow` name and `resolve_project` never dispatches the
+  join — card `extract-flow-cli-dispatch`. `ModuleF` is collapsed at
+  `types.rs` (grep `ModuleF`), deferred by user 2026-08-16.
 - **`sprefa-extract` has no markdown extractor.** `.dl6` landed (PR #241:
   `tree-sitter-dl6` crate + `src/lang/dl6/`), but `source_for` still returns
   `None` for `.md`, so a `.dl6` rail cannot read a `.md` file today.
   Roster: `v6/sprefa-extract/src/lang/mod.rs` `sources()`.
 - **Awaiting user word:** prolog folder names/numbering; flash-prolog worktree
   fate; bop-run idle-exit vs rail receipts; push + tag (gated on
-  `release_gate_v620`, `rulings.pl:532`); extraction ambiguity A14 comment_span;
-  string split/substr primitive; the ~780
-  untracked `.types.rs` / `.types.ts` files in `v6/prolog/compile/out/`, neither
-  tracked nor gitignored.
+  `release_gate_v620`, `rulings.pl:532`); string split/substr primitive.
+  A14 comment_span default picked (issues/a14-comment-span-default); the
+  `.types.*` files in `compile/out/` were already tracked, stragglers landed
+  (PR #324).
 
 **Open defect and feature rows are `ARCH.pl` task rows with status
 unbuilt/labbed.** Do not duplicate them here.

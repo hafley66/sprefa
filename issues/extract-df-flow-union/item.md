@@ -7,7 +7,6 @@ priority: normal
 epic: extract-port-closeout
 labels:
 - pkg:extract
-- needs-chris
 ---
 
 # DfEdgeKind Flow union is commented out
@@ -44,3 +43,15 @@ stops at a function boundary.
 
 Fork C is the only one that adds no type. Whether that is a feature or a dodge
 is the question for Chris.
+
+## Decisions
+
+### 2026-08-16T19:32:03Z · @chris
+
+Fork B: cross-function value edges are a SEPARATE family (FlowF), own plane, own closure. Existing df rules keep their intra-function meaning; cross-wall walks opt in by naming the new family. Consistent with the CfgF-as-new-family lock (2026-08-16). Implementation dispatchable: glue = DfArg x resolved_edge x DfParam.
+
+## Comments
+
+### 2026-08-16T21:14:04Z · @coordinator
+
+FLAG FOR CHRIS: shipped FlowEdgeKind has FOUR variants (ArgToParam, RetToCallRes, LambdaElem, LambdaRet), not the three in the decision note. Lane's evidence: sprefa-seed _3_extract/_0_shape.rs:141-148 already reserves this vocabulary; 'higher-order' maps to the two lambda hops. Only ArgToParam and RetToCallRes are produced today. Merged in PR #313; rename/veto is cheap while nothing downstream reads the lambda variants.

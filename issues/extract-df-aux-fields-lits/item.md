@@ -56,3 +56,13 @@ cargo test --features cli --test golden_parity
 ### 2026-08-16T17:29:18Z · @extract-closeout-driver
 
 Oracle rows already committed and byte-gradable: 8 df_lits and 8 df_fields across v6/sprefa-extract/tests/fixtures/*/*.v5.jsonl. Count them with: cat v6/sprefa-extract/tests/fixtures/*/*.v5.jsonl | cut -f1 | sort | uniq -c. The parity leg is a normalize arm in golden_parity.rs plus a narrowed per-facet test, the same move the docs facet used in PR #304.
+
+### 2026-08-16T21:32:36Z · @coordinator
+
+FLAG FOR CHRIS (scope expansion, merged): the lane flipped df_field/df_lit into the global PORTED list with a normalize arm mapping v6 push order to v5 dense node index — an asserted v5/v6 index-order coupling nobody decided. Green across 9 fixtures / 16 oracle rows today. Loosening is a one-line PORTED revert if you want the coupling gone.
+
+## Decisions
+
+### 2026-08-16T23:24:05Z · @chris
+
+PORTED order-coupling declined ('idgaf about v5'): df_field/df_lit dropped from golden_parity PORTED, content grade in 18_df_aux_fields_lits stands. Pushed direct to main ac86acb32.
