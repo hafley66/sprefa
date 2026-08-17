@@ -1405,6 +1405,7 @@ type LoopBreaks = Vec<(Option<String>, Vec<NodeRef>)>;
 fn project_df(
     parsed: &syn::File,
     file: &str,
+    src: &str,
     line_starts: &[u32],
     strings: &mut Strings,
     sink: &mut FamilyBundle<DfF>,
@@ -1424,6 +1425,11 @@ fn project_df(
                     &mut scope,
                     sink,
                     &mut loop_breaks,
+                );
+                claim_allocator_hits(
+                    sink,
+                    0,
+                    def_span(line_starts, f.sig.ident.span(), f.block.span()),
                 );
             }
             syn::Item::Impl(i) => {
@@ -1446,11 +1452,96 @@ fn project_df(
                             sink,
                             &mut loop_breaks,
                         );
+                        claim_allocator_hits(
+                            sink,
+                            0,
+                            def_span(line_starts, m.sig.ident.span(), m.block.span()),
+                        );
                     }
                 }
             }
             _ => {}
         }
+    }
+    for (index, start, end) in std::mem::take(&mut sink.aux.loop_collection_spans) {
+        sink.aux.loops[index].collection =
+            src.get(start as usize..end as usize).map(str::to_string);
+    }
+    sink.aux.nests = crate::types::compute_nests(&sink.nodes, &sink.aux.loops);
+}
+
+/// v5 keys `allocators` on `fn_sym`, which a closure rebinds to its `lam_sym`
+/// (rust/mod.rs:1149,1176): the INNERMOST callable claims the hit and truncates.
+fn claim_allocator_hits(sink: &mut FamilyBundle<DfF>, mark: usize, owner: Span) {
+    if sink.aux.allocator_hits.len() > mark {
+        sink.aux.allocator_hits.truncate(mark);
+        sink.aux.allocates.push(crate::types::DfAllocates { owner });
+    }
+}
+
+/// Port of v5 `is_allocator_call` (rust/mod.rs:1056): a collection constructor
+/// callee marks its enclosing callable as allocating.
+fn is_allocator_call(expr: &syn::Expr) -> bool {
+    let syn::Expr::Path(path) = expr else {
+        return false;
+    };
+    let segments: Vec<String> = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect();
+    let full = segments.join("::");
+    if full.ends_with("::new") {
+        return segments.iter().any(|segment| {
+            matches!(
+                segment.as_str(),
+                "Vec"
+                    | "HashMap"
+                    | "BTreeMap"
+                    | "HashSet"
+                    | "BTreeSet"
+                    | "VecDeque"
+                    | "String"
+                    | "LinkedList"
+            )
+        });
+    }
+    matches!(
+        full.as_str(),
+        "Vec::with_capacity" | "HashMap::with_capacity" | "String::with_capacity"
+    )
+}
+
+/// A collecting method call marks its enclosing callable as allocating. Port of
+/// v5 `is_allocator_method` (src/graph/typegraph/rust/mod.rs:1094).
+fn is_allocator_method(ident: &syn::Ident) -> bool {
+    matches!(
+        ident.to_string().as_str(),
+        "collect" | "to_vec" | "to_string" | "to_owned" | "clone" | "format"
+    )
+}
+
+/// One loop row, with the iterated expression's byte range parked on
+/// `loop_collection_spans` for `project_df` to slice once the source is in hand.
+fn df_loop_row(
+    sink: &mut FamilyBundle<DfF>,
+    line_starts: &[u32],
+    loop_span: proc_macro2::Span,
+    var: Option<String>,
+    collection: Option<proc_macro2::Span>,
+) {
+    let index = sink.aux.loops.len();
+    sink.aux.loops.push(crate::types::DfLoop {
+        span: syn_span(line_starts, loop_span),
+        var,
+        collection: None,
+    });
+    if let Some(collection) = collection {
+        let span = syn_span(line_starts, collection);
+        sink.aux
+            .loop_collection_spans
+            .push((index, span.start, span.end()));
     }
 }
 
@@ -1640,6 +1731,11 @@ fn flow_expr(
         // path segment is a tuple-struct / enum-variant constructor -> a `new`
         // node carrying the type name.
         syn::Expr::Call(call) => {
+            if is_allocator_call(&call.func) {
+                sink.aux
+                    .allocator_hits
+                    .push(syn_span(line_starts, node_span));
+            }
             let constructor = ctor_name(&call.func);
             let mut children = Vec::new();
             for arg in &call.args {
@@ -1679,6 +1775,11 @@ fn flow_expr(
         // recv.m(args): receiver + args flow into the result. The node sits at
         // the METHOD ident (the same line the call-site extractor records).
         syn::Expr::MethodCall(call) => {
+            if is_allocator_method(&call.method) {
+                sink.aux
+                    .allocator_hits
+                    .push(syn_span(line_starts, node_span));
+            }
             let receiver = flow_expr(
                 &call.receiver,
                 fn_sym,
@@ -1976,6 +2077,13 @@ fn flow_expr(
                 .first()
                 .map(|(name, _)| name.clone())
                 .unwrap_or_default();
+            df_loop_row(
+                sink,
+                line_starts,
+                node_span,
+                Some(loop_var.clone()).filter(|name| !name.is_empty()),
+                Some(for_loop.expr.span()),
+            );
             flow_block(
                 &for_loop.body,
                 fn_sym,
@@ -2008,6 +2116,7 @@ fn flow_expr(
             if let syn::Expr::Let(let_expr) = &*while_expr.cond {
                 let _ = bind_pat(&let_expr.pat, line_starts, strings, scope, sink);
             }
+            df_loop_row(sink, line_starts, node_span, None, None);
             flow_block(
                 &while_expr.body,
                 fn_sym,
@@ -2030,6 +2139,7 @@ fn flow_expr(
         // frame before walking the body, pop it after, and edge every collected
         // break tail into this loop's node.
         syn::Expr::Loop(loop_expr) => {
+            df_loop_row(sink, line_starts, node_span, None, None);
             loop_breaks.push((
                 loop_expr
                     .label
@@ -2177,6 +2287,7 @@ fn flow_expr(
         // col; chains when nested). The enclosing scope is shared so captures
         // resolve.
         syn::Expr::Closure(closure) => {
+            let allocator_mark = sink.aux.allocator_hits.len();
             let lam_sym = format!("{fn_sym}::closure::{line}_{col}");
             for (pos, input) in closure.inputs.iter().enumerate() {
                 let ident_pat = match input {
@@ -2232,6 +2343,7 @@ fn flow_expr(
                 let ret = df_push(sink, strings, line_starts, ret_span, DfNodeKind::Ret, None);
                 df_edge(sink, value, ret);
             }
+            claim_allocator_hits(sink, allocator_mark, syn_span(line_starts, node_span));
             df_push(
                 sink,
                 strings,
@@ -2443,7 +2555,7 @@ impl Source for RustSource {
                     }
                     if mask.df {
                         let mut bundle = FamilyBundle::<DfF>::default();
-                        project_df(&parsed, path, &line_starts, &mut strings, &mut bundle);
+                        project_df(&parsed, path, src, &line_starts, &mut strings, &mut bundle);
                         df = Some(bundle);
                     }
                 }
