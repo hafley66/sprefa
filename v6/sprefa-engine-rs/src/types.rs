@@ -94,6 +94,9 @@ pub(crate) fn base64_to_bytes(text: &str) -> Result<Vec<u8>, String> {
             out.push((c << 6) | d);
         }
     }
+    if bytes_to_base64(&out) != text {
+        return Err("invalid_bytes_base64".into());
+    }
     Ok(out)
 }
 

@@ -26,10 +26,6 @@ export function list_at_scalar_seam(seam: ScalarSeam): BoundaryError {
   return new BoundaryError(`a list value reached ${SCALAR_SEAM_NAMES[seam]}`);
 }
 
-export function bytes_at_scalar_seam(seam: ScalarSeam): BoundaryError {
-  return new BoundaryError(`bytes reached ${SCALAR_SEAM_NAMES[seam]}`);
-}
-
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /** RFC 4648 base64, with no platform Buffer dependency. */
@@ -62,6 +58,7 @@ export function base64_to_bytes(text: string): Uint8Array {
     if (cursor < output.length) output[cursor++] = ((b & 15) << 4) | (c >> 2);
     if (cursor < output.length) output[cursor++] = ((c & 3) << 6) | d;
   }
+  if (bytes_to_base64(output) !== text) throw new Error("invalid_bytes_base64");
   return output;
 }
 

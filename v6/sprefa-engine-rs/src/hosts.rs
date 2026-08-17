@@ -1265,8 +1265,24 @@ pub fn shell_text(value: &ScalarValue) -> String {
         ScalarValue::Integer(number) => number.to_string(),
         ScalarValue::Real(number) => crate::ticklog::js_float_text(*number),
         ScalarValue::Bool(flag) => if *flag { "true" } else { "false" }.to_string(),
-        ScalarValue::Bytes(_) => "bytes_host_transport_unsupported".to_string(),
+        ScalarValue::Bytes(_) => unreachable!("bytes must be rejected before shell interpolation"),
     }
+}
+
+fn reject_binary_host_transport(
+    host: &str,
+    inputs: &BTreeMap<String, ScalarValue>,
+) -> Result<(), HostError> {
+    if inputs
+        .values()
+        .any(|value| matches!(value, ScalarValue::Bytes(_)))
+    {
+        return Err(HostError {
+            host: host.to_string(),
+            message: "bytes_host_transport_unsupported".to_string(),
+        });
+    }
+    Ok(())
 }
 
 pub fn fill_template(template: &str, inputs: &BTreeMap<String, ScalarValue>) -> String {
@@ -1610,8 +1626,16 @@ impl<'p> HostLiveRunner<'p> {
                 .position(|column| *column == input.name)
                 .and_then(|index| row.get(index).cloned())
                 .unwrap_or(Value::Text(String::new()));
-            let scalar =
-                ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument).map_err(&named)?;
+            let scalar = match ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument) {
+                Ok(scalar) => scalar,
+                Err(BoundaryError::BytesAtScalarSeam(_)) => {
+                    return Err(HostError {
+                        host: plan.name.clone(),
+                        message: "bytes_host_transport_unsupported".to_string(),
+                    })
+                }
+                Err(error) => return Err(named(error)),
+            };
             inputs.insert(input.name.clone(), scalar);
         }
         let witness = columns
@@ -1620,9 +1644,16 @@ impl<'p> HostLiveRunner<'p> {
             .and_then(|index| row.get(index).cloned());
         let witness_digest = match witness {
             None => String::new(),
-            Some(value) => shell_text(
-                &ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument).map_err(&named)?,
-            ),
+            Some(value) => match ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument) {
+                Ok(scalar) => shell_text(&scalar),
+                Err(BoundaryError::BytesAtScalarSeam(_)) => {
+                    return Err(HostError {
+                        host: plan.name.clone(),
+                        message: "bytes_host_transport_unsupported".to_string(),
+                    })
+                }
+                Err(error) => return Err(named(error)),
+            },
         };
         Ok(HostDemand {
             plan,
@@ -1705,6 +1736,7 @@ impl<'p> HostLiveRunner<'p> {
         let mut group_index: HashMap<String, usize> = HashMap::new();
         let mut groups: Vec<Vec<&HostDemand<'p>>> = Vec::new();
         for demand in &claimed {
+            reject_binary_host_transport(&demand.plan.name, &demand.inputs)?;
             if !is_applicative(&demand.plan.execution) {
                 groups.push(vec![demand]);
                 continue;

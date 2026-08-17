@@ -211,7 +211,7 @@ imports_lines(_HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
       'import { SubscribeCone } from "../runtime/3_subscribe.ts";',
       'import { multiset_diff } from "../runtime/diff.ts";',
       'import { select_rows } from "../runtime/rows.ts";',
-      'import { bytes_at_scalar_seam, list_at_scalar_seam } from "../runtime/boundary.ts";'
+      'import { list_at_scalar_seam } from "../runtime/boundary.ts";'
       ],
       StructImport,
       TextImport,

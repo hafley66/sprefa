@@ -7,7 +7,7 @@
 // their JSON text; no spaces; no trailing newline (the caller adds it). Number
 // rendering matches the oracle's JS-float text so the diff stays empty.
 
-use crate::types::{RelDelta, Row, RowColumnType, TickDeltas, Value};
+use crate::types::{bytes_to_base64, RelDelta, Row, RowColumnType, TickDeltas, Value};
 
 pub fn tick_line(
     tick: usize,
@@ -108,29 +108,6 @@ fn encode_value(value: &Value, ty: Option<RowColumnType>) -> String {
             }
         }
     }
-}
-
-fn bytes_to_base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::new();
-    for chunk in bytes.chunks(3) {
-        let a = chunk[0];
-        let b = *chunk.get(1).unwrap_or(&0);
-        let c = *chunk.get(2).unwrap_or(&0);
-        out.push(ALPHABET[(a >> 2) as usize] as char);
-        out.push(ALPHABET[(((a & 3) << 4) | (b >> 4)) as usize] as char);
-        out.push(if chunk.len() > 1 {
-            ALPHABET[((b & 15) << 2 | c >> 6) as usize] as char
-        } else {
-            '='
-        });
-        out.push(if chunk.len() > 2 {
-            ALPHABET[(c & 63) as usize] as char
-        } else {
-            '='
-        });
-    }
-    out
 }
 
 pub fn canonical_json_text(value: &str) -> Option<String> {

@@ -21,4 +21,6 @@ test("bytes use RFC 4648 tagged transport and deterministic tick rendering", () 
     '{"tick":1,"deltas":{"payload":{"add":[[{"$bytes":"AH+A/w=="}]],"del":[]}}}',
   );
   assert.throws(() => base64_to_bytes("%%%"), /invalid_bytes_base64/);
+  assert.throws(() => base64_to_bytes("AB=="), /invalid_bytes_base64/);
+  assert.throws(() => base64_to_bytes("AAB="), /invalid_bytes_base64/);
 });

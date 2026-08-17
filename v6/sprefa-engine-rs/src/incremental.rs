@@ -384,22 +384,6 @@ pub fn apply_arrivals(
         groups.push((relation, sign, vec![entry]));
     }
     for (relation, sign, entries) in groups {
-        let sql = if sign == 1 {
-            relation
-                .arrival_add_sql
-                .clone()
-                .expect("incremental add statement missing")
-        } else {
-            relation
-                .arrival_del_sql
-                .clone()
-                .expect("incremental delete statement missing")
-        };
-        let encoded_rows: String = entries
-            .iter()
-            .map(|(_, row)| json_array_text(row))
-            .collect::<BoundaryResult<Vec<_>>>()?
-            .join(",");
         let write_statement = if relation
             .column_types
             .contains(&crate::types::RowColumnType::Bytes)
@@ -413,6 +397,22 @@ pub fn apply_arrivals(
                     .collect::<Vec<_>>(),
             )?
         } else {
+            let sql = if sign == 1 {
+                relation
+                    .arrival_add_sql
+                    .clone()
+                    .expect("incremental add statement missing")
+            } else {
+                relation
+                    .arrival_del_sql
+                    .clone()
+                    .expect("incremental delete statement missing")
+            };
+            let encoded_rows: String = entries
+                .iter()
+                .map(|(_, row)| json_array_text(row))
+                .collect::<BoundaryResult<Vec<_>>>()?
+                .join(",");
             SqlStatement {
                 sql,
                 args: vec![ScalarValue::Text(format!("[{}]", encoded_rows))],
