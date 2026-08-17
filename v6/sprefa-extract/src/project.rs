@@ -22,6 +22,9 @@
 //! context they read.
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
+
+use rayon::prelude::*;
 
 use crate::lang::{
     source_for, DlSource, GoSource, KotlinSource, MarkdownSource, PrologSource, RustSource,
@@ -453,27 +456,77 @@ pub(crate) fn read_inputs(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, Projec
     }
 }
 
-fn read_inputs_plain(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {
-    let mut inputs = Vec::with_capacity(paths.len());
-    for path in paths {
-        let content = std::fs::read(path).map_err(|err| ProjectError::Read(path.clone(), err))?;
-        let path = path.to_string_lossy().to_string();
-        if let Some(output) = crate::dispatch(&path, &content, FamilyMask::ALL) {
-            inputs.push(ProjectInput {
-                blob: content_id_of(&content),
-                path,
-                output,
-            });
+/// Extraction thread budget. One worker is held back below the clamp so the
+/// machine stays usable while a corpus extracts.
+fn extract_thread_cap() -> usize {
+    let requested = std::env::var("SPREFA_EXTRACT_THREADS").ok();
+    let cores = std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1);
+    thread_cap_from(requested.as_deref(), cores)
+}
+
+/// The cap rule with its two inputs passed in, so it is testable without
+/// mutating process environment from a threaded test binary.
+fn thread_cap_from(requested: Option<&str>, cores: usize) -> usize {
+    if let Some(raw) = requested {
+        if let Ok(value) = raw.trim().parse::<usize>() {
+            if value != 0 {
+                return value;
+            }
+        }
+    }
+    cores.min(8).saturating_sub(1).max(1)
+}
+
+/// The dedicated extraction pool. Never rayon's global pool, so nothing else in
+/// the process inherits this cap.
+static EXTRACT_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(extract_thread_cap())
+        .thread_name(|index| format!("extract-{index}"))
+        .build()
+        .expect("extract thread pool builds")
+});
+
+/// Flatten per-path results in path order, dropping the skipped files and
+/// surfacing the first error by path order.
+fn flatten_inputs(
+    results: Vec<Result<Option<ProjectInput>, ProjectError>>,
+) -> Result<Vec<ProjectInput>, ProjectError> {
+    let mut inputs = Vec::with_capacity(results.len());
+    for result in results {
+        if let Some(input) = result? {
+            inputs.push(input);
         }
     }
     Ok(inputs)
+}
+
+fn read_inputs_plain(paths: &[PathBuf]) -> Result<Vec<ProjectInput>, ProjectError> {
+    let results: Vec<Result<Option<ProjectInput>, ProjectError>> = EXTRACT_POOL.install(|| {
+        paths
+            .par_iter()
+            .map(|path| {
+                let content =
+                    std::fs::read(path).map_err(|err| ProjectError::Read(path.clone(), err))?;
+                let path = path.to_string_lossy().to_string();
+                let output = crate::dispatch(&path, &content, FamilyMask::ALL);
+                Ok(output.map(|output| ProjectInput {
+                    blob: content_id_of(&content),
+                    path,
+                    output,
+                }))
+            })
+            .collect()
+    });
+    flatten_inputs(results)
 }
 
 fn read_inputs_batched(
     repository: &soopy::Repository,
     paths: &[PathBuf],
 ) -> Result<Vec<ProjectInput>, ProjectError> {
-    let mut inputs = Vec::with_capacity(paths.len());
     let keys: Vec<String> = paths
         .iter()
         .map(|path| repo_relative(&repository.root, path))
@@ -486,23 +539,31 @@ fn read_inputs_batched(
         )
     })?;
     let answers = source.read_many(&key_refs);
-    for (path, answer) in paths.iter().zip(answers) {
-        let Some(content) = answer else {
-            return Err(ProjectError::Read(
-                path.clone(),
-                std::io::Error::new(std::io::ErrorKind::NotFound, "not in the worktree snapshot"),
-            ));
-        };
-        let path = path.to_string_lossy().to_string();
-        if let Some(output) = crate::dispatch(&path, &content, FamilyMask::ALL) {
-            inputs.push(ProjectInput {
-                blob: content_id_of(&content),
-                path,
-                output,
-            });
-        }
-    }
-    Ok(inputs)
+    let results: Vec<Result<Option<ProjectInput>, ProjectError>> = EXTRACT_POOL.install(|| {
+        paths
+            .par_iter()
+            .enumerate()
+            .map(|(index, path)| {
+                let Some(content) = answers[index].as_ref() else {
+                    return Err(ProjectError::Read(
+                        path.clone(),
+                        std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "not in the worktree snapshot",
+                        ),
+                    ));
+                };
+                let path = path.to_string_lossy().to_string();
+                let output = crate::dispatch(&path, content, FamilyMask::ALL);
+                Ok(output.map(|output| ProjectInput {
+                    blob: content_id_of(content),
+                    path,
+                    output,
+                }))
+            })
+            .collect()
+    });
+    flatten_inputs(results)
 }
 
 fn repo_relative(repo_root: &Path, path: &Path) -> Result<String, ProjectError> {
@@ -970,5 +1031,111 @@ impl FsBlobSource {
 impl BlobSource for FsBlobSource {
     fn blob(&self, path: &str) -> Option<Vec<u8>> {
         std::fs::read(self.root.join(path)).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Fixture {
+        root: PathBuf,
+    }
+
+    impl Fixture {
+        fn build() -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "parallel_dispatch_order_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("fixture directory");
+            Fixture { root }
+        }
+
+        fn write(&self, name: &str, body: &str) -> PathBuf {
+            let path = self.root.join(name);
+            std::fs::write(&path, body).expect("write fixture file");
+            path
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    /// SABOTAGE, drop the `saturating_sub(1)` from the cap: 5 passed, 1 failed,
+    /// only this test, the 12-core row reading 8 where 7 is held back.
+    #[test]
+    fn thread_cap_honors_the_request_then_clamps() {
+        assert_eq!(thread_cap_from(Some("3"), 12), 3);
+        assert_eq!(thread_cap_from(Some("  4 "), 12), 4);
+        assert_eq!(thread_cap_from(Some("0"), 12), 7, "zero falls back");
+        assert_eq!(thread_cap_from(Some("many"), 12), 7, "unparseable falls back");
+        assert_eq!(thread_cap_from(None, 12), 7, "12 cores clamp to 8, hold one back");
+        assert_eq!(thread_cap_from(None, 64), 7, "the clamp is 8, not the core count");
+        assert_eq!(thread_cap_from(None, 2), 1);
+        assert_eq!(thread_cap_from(None, 1), 1, "a single core still gets a worker");
+    }
+
+    /// SABOTAGE, reverse the flattened results (any collect that loses index
+    /// order): 4 passed, 2 failed, this test and the skips one.
+    #[test]
+    fn read_inputs_preserves_path_order() {
+        let fixture = Fixture::build();
+        let mut paths = Vec::new();
+        for index in 0..32 {
+            paths.push(fixture.write(
+                &format!("file_{index:02}.rs"),
+                &format!("pub fn f{index}() -> i32 {{ {index} }}\n"),
+            ));
+        }
+        let inputs = read_inputs(&paths).expect("read inputs");
+        let actual: Vec<String> = inputs.iter().map(|input| input.path.clone()).collect();
+        let expected: Vec<String> = paths
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(actual, expected, "input order must survive the parallel map");
+    }
+
+    /// Unmatched files are dropped without disturbing the survivors' order.
+    /// Same sabotage as above, same 4 passed 2 failed.
+    #[test]
+    fn read_inputs_skips_unmatched_in_order() {
+        let fixture = Fixture::build();
+        let mut paths = Vec::new();
+        for index in 0..10 {
+            paths.push(fixture.write(
+                &format!("src_{index:02}.rs"),
+                &format!("pub fn g{index}() -> i32 {{ {index} }}\n"),
+            ));
+        }
+        for index in 0..4 {
+            paths.push(fixture.write(&format!("notes_{index:02}.txt"), "plain text\n"));
+        }
+        for index in 10..20 {
+            paths.push(fixture.write(
+                &format!("src_{index:02}.rs"),
+                &format!("pub fn g{index}() -> i32 {{ {index} }}\n"),
+            ));
+        }
+        let inputs = read_inputs(&paths).expect("read inputs");
+        let actual: Vec<String> = inputs.iter().map(|input| input.path.clone()).collect();
+        let expected: Vec<String> = paths
+            .iter()
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs"))
+            .map(|path| path.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "skips must drop unmatched files without reordering"
+        );
     }
 }
