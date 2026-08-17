@@ -19,5 +19,7 @@ use crate::source::{ExtractOutput, FamilyMask};
 pub fn dispatch(path: &str, content: &[u8], mask: FamilyMask) -> Option<Arc<ExtractOutput>> {
     let src = source_for(path)?;
     let key = CacheKey::new(content_id_of(content), src.name(), mask);
-    Some(get_or_extract(key, || Arc::new(src.extract(path, content, mask))))
+    Some(get_or_extract(key, || {
+        Arc::new(src.extract(path, content, mask))
+    }))
 }

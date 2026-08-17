@@ -121,4 +121,3 @@ pub fn get_or_extract(
         })
         .expect("extraction is infallible")
 }
-

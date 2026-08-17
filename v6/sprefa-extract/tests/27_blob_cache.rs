@@ -15,12 +15,14 @@ use std::sync::{Arc, Mutex};
 
 use sprefa_extract::{
     cache::{self, CacheKey},
-    content_id_of, dispatch, source_for, FamilyMask, ExtractOutput,
+    content_id_of, dispatch, source_for, ExtractOutput, FamilyMask,
 };
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {
     static CACHE_LOCK: Mutex<()> = Mutex::new(());
-    CACHE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    CACHE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 const PATH_A: &str = "blob_cache_a.rs";
@@ -45,7 +47,10 @@ fn hit_skips_the_parse() {
         start + 1,
         "identical bytes must not re-parse"
     );
-    assert!(Arc::ptr_eq(&first, &second), "hit returns the same shared entry");
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "hit returns the same shared entry"
+    );
 }
 
 #[test]
@@ -84,7 +89,11 @@ fn eviction_binds_at_the_weight_cap() {
         .map(|index| {
             (
                 format!("evict_{index}.rs"),
-                format!("pub fn f{index}() {{ let s = \"{}\"; }}\n", "x".repeat(4000)).into_bytes(),
+                format!(
+                    "pub fn f{index}() {{ let s = \"{}\"; }}\n",
+                    "x".repeat(4000)
+                )
+                .into_bytes(),
             )
         })
         .collect();
@@ -104,10 +113,7 @@ fn eviction_binds_at_the_weight_cap() {
     for (key, output) in keys.iter().zip(outputs.iter()) {
         tight.insert(key.clone(), output.clone());
     }
-    assert!(
-        tight.weight() <= one_weight * 2,
-        "weight bound must bind"
-    );
+    assert!(tight.weight() <= one_weight * 2, "weight bound must bind");
     let present: usize = keys.iter().filter(|key| tight.peek(*key).is_some()).count();
     assert!(
         present <= 2,
@@ -133,7 +139,10 @@ fn cached_and_uncached_wire_output_are_identical() {
 
     let cached = dispatch(PATH_A, BLOB, FamilyMask::ALL).expect("rust source");
     let cached_wire = wire_bytes(&cached);
-    assert_eq!(cached_wire, uncached_wire, "cached and uncached wire output match");
+    assert_eq!(
+        cached_wire, uncached_wire,
+        "cached and uncached wire output match"
+    );
 }
 
 fn wire_bytes(output: &ExtractOutput) -> Vec<u8> {
