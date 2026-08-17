@@ -320,7 +320,10 @@ mod tests {
     /// Non-UTF-8 with no NUL is TEXT to Git, so the diff runs over bytes.
     #[test]
     fn latin1_bytes_are_text_and_keep_their_lines() {
-        assert_eq!(changed_lines_of(b"caf\xe9\n", b"caf\xe9\nth\xe9\n"), vec![2]);
+        assert_eq!(
+            changed_lines_of(b"caf\xe9\n", b"caf\xe9\nth\xe9\n"),
+            vec![2]
+        );
     }
 
     #[test]

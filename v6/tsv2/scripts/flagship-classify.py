@@ -31,6 +31,11 @@ The four proofs, one per rel:
                           (`ExtractOutput { .. }`); syn lifts a struct
                           expression as a constructor call, tree-sitter's
                           `call_expression` never matches one.
+            generic call  the site span is the callee followed by `::<`
+                          (`size_of::<String>`); the turbofish makes the callee
+                          a `generic_function` node, not an `identifier`, and
+                          the span covers the type arguments, so this reads the
+                          span content rather than the byte after it.
           One bare occurrence anywhere in the file would have put the row in
           BOTH sets, so "every occurrence" is the right quantifier.
 
@@ -120,6 +125,10 @@ def occurrence_shape(data, site):
     start, end = site["span"]["start"], site["span"]["end"]
     if data[max(0, start - 1):start] == b".":
         return "method call"
+    span_text = data[start:end]
+    callee = site["callee"].encode()
+    if span_text.startswith(callee) and span_text[len(callee):].startswith(b"::<"):
+        return "generic call"
     tail = data[end:end + 64].lstrip()
     if tail.startswith(b"{"):
         return "struct literal"

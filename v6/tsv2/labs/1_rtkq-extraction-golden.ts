@@ -113,6 +113,14 @@ async function json(port: number, path: string, init?: RequestInit): Promise<unk
   return JSON.parse(body);
 }
 
+/** The /idb read, narrowed to its row block. `json` answers `unknown`, so every
+ *  caller that reaches for `.rows` needs the shape named once rather than
+ *  per call site. */
+async function idbRows(port: number, path: string): Promise<unknown[][]> {
+  const body = (await json(port, path)) as { readonly rows: unknown[][] };
+  return body.rows;
+}
+
 async function waitUntil(predicate: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + 10_000;
   while (!predicate()) {
@@ -181,14 +189,14 @@ async function main(): Promise<void> {
     await waitUntil(() => effects.length === 1, "initial extractor process");
 
     assert.deepEqual(
-      sorted((await json(server.port, "/idb/api_scope")).rows as unknown[][]),
+      sorted(await idbRows(server.port, "/idb/api_scope")),
       sorted([
         ["api.ts", 271, 475],
         ["api.ts", 505, 643],
       ]),
     );
     assert.deepEqual(
-      sorted((await json(server.port, "/idb/api_endpoint")).rows as unknown[][]),
+      sorted(await idbRows(server.port, "/idb/api_endpoint")),
       sorted([
         ["api.ts", 271, 475, "getUser", "query", 339, 346],
         ["api.ts", 271, 475, "health", "query", 416, 422],
@@ -205,7 +213,7 @@ async function main(): Promise<void> {
       rows: [["api.ts", 272, 468]],
     });
     assert.deepEqual(
-      sorted((await json(server.port, "/idb/api_endpoint")).rows as unknown[][]),
+      sorted(await idbRows(server.port, "/idb/api_endpoint")),
       sorted([
         ["api.ts", 272, 468, "listUsers", "query", 407, 416],
         ["api.ts", 272, 468, "updateUser", "mutation", 327, 337],

@@ -694,8 +694,11 @@ fn the_roster_reads_manifests_at_head_not_the_worktree() {
 
     let plain = root.join("plain");
     std::fs::create_dir_all(&plain).expect("plain directory");
-    std::fs::write(plain.join("go.mod"), "module example.com/plain\n\ngo 1.21\n")
-        .expect("plain go.mod");
+    std::fs::write(
+        plain.join("go.mod"),
+        "module example.com/plain\n\ngo 1.21\n",
+    )
+    .expect("plain go.mod");
 
     let roster = LocalRepoRoster::scan_checkout_root(&root).expect("scan");
 
