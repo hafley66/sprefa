@@ -108,6 +108,7 @@ fn type_edges(paths: &[PathBuf]) -> Result<Vec<TypeEdge>, String> {
         arms: ResolveArms {
             call: false,
             types: true,
+            flow: false,
         },
         scip: ScipMode::Off,
         project_root: None,
