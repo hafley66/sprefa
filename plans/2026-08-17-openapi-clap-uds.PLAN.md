@@ -31,7 +31,7 @@ crate. The dl6 program IS the API and the CLI is a generic client of it.
 | API | `sprefa-engine-rs` grows a `serve` seam: axum 0.8 router on `tokio::net::UnixListener`, copied from v5 `src/daemon/shell/http.rs:117-142`; `GET /rel/<name>` reads rows typed by the emitted `.types.rs`, `POST /arrive` folds a tick through `driver.rs` |
 | CLI | one generic binary that reads `cli_verb`/`cli_arg` rows from the running socket and dispatches; `--help` is a rel read |
 | upstream calls (`pokemon get 25` reaches pokeapi) | one host row per operation, from->to like every `sh` host |
-| yaml -> json | a new extract FAMILY `yaml` reached through the hosted `"$DL_EXTRACT_BIN"` template (in-process, applicative fold), section 4; file-type work is extract territory, and a bare-binary `sh` template would fall to the shell executor (user 2026-08-17: that is a regression) |
+| yaml -> json | one plain `sh` host, `node -e` + the `yaml` package already in the TS runtime's dependencies (user 2026-08-17: keep `sh`, stop reaching for extract or new crates) |
 
 rx lowering of the server: `arrivals$.pipe(concatMap(batch => driver.tick(batch)))`; reads are a `latest` projection.
 
@@ -48,7 +48,7 @@ Every row below was produced by the command in it, in this worktree, on this tre
 | parameters in spec | `grep -c '\bin: '` | 196 (146 query, 50 path) |
 | `$ref` occurrences | `grep -c '\$ref:'` | 355 |
 | component schemas | json1 `json_each($.components.schemas)` | 212 |
-| yaml -> json | new extract family `yaml` (`.yml`/`.yaml` in `lang/mod.rs sources()`, `serde-saphyr` 1.1.0 -> one `doc` record), reached through the hosted `"$DL_EXTRACT_BIN" --family yaml {path}` template, in-process on the Rust door | Rust-only toolchain; user decision 2026-08-17: no OS-runtime interpreters (ruby, python) in host bodies |
+| yaml -> json | one plain `sh` host, `node -e` with the `yaml` package the TS runtime already depends on (`v6/tsv2/package.json:31`) | user 2026-08-17: keep `sh`, no extract detour, no new crate |
 | fixture compile coverage | `python3` over `v6/prolog/compile/out/manifest.json` | `compiled 342`, `unsupported 110`, total 452 |
 | proposed rel schema compiles | `bash v6/prolog/compile/scripts/compile_dl6.sh /tmp/oa-research/openapi_spec.dl6 out.ts` | rc=0, `total=108/724001` (108ms) |
 | risky-construct probe compiles | same, `/tmp/oa-research/probe2.dl6` | rc=0, `total=78/900993` (78ms) |
@@ -100,13 +100,14 @@ feature on.
 
 ## 4. Q1b candidates: YAML to JSON
 
-The dl6 route needs only this. The `sh` host body calls one in-tree Rust verb;
-user decision 2026-08-17: no OS-runtime interpreter (ruby, python) in a host
-body, the toolchain is Rust.
+The dl6 route needs only this. One plain `sh` host; the served TS runtime
+already depends on the `yaml` package. User decision 2026-08-17: keep `sh`,
+no detour through extract or a new Rust crate.
 
 | candidate | latest (date) | what it gives | what it lacks | verdict |
 |---|---|---|---|---|
-| `serde-saphyr` 1.1.0 (2026-08-15) | serde (de)serializer over `saphyr`, YAML 1.2, panic-free, aliases resolved | new crate in `sprefa-extract`, one new FAMILY `yaml` in `lang/mod.rs sources()` emitting a `doc` record | **WINNER.** Same shape as every other extract family; the host template is `"$DL_EXTRACT_BIN" --family yaml {path}` so both doors route it to the hosted extract executor |
+| `node -e` + `yaml` 2.9 (already in `v6/tsv2/node_modules`) | the TS runtime's own yaml dependency, one `sh` line, both doors spawn it | nothing; it is a runtime dep the server already carries | **WINNER** (user decision 2026-08-17: plain `sh`, no extract family, no new crate) |
+| `serde-saphyr` 1.1.0 (2026-08-15) | serde YAML 1.2 crate | a new crate + a new extract family for a job one `sh` line does | rejected (user 2026-08-17) |
 | system `ruby -ryaml -rjson` | ships with macOS today | one line, zero crate | an OS interpreter as a runtime dep of a Rust engine; Apple has deprecated scripting runtimes and CI images differ | rejected (user decision 2026-08-17) |
 | `serde_yaml` | 0.9.34**+deprecated** (2024-03-25) | 86.8M recent downloads, dtolnay | the version string is literally `+deprecated`; upstream retired it | rejected. Adding a self-declared deprecated crate is a defect |
 | `serde_norway` | 0.9.42 (2024-12-21) | maintained fork of `serde_yaml`, 2.58M recent, API-compatible | fork governance; a Rust dep for a job a one-line host does | second choice if `serde-saphyr` misbehaves on the corpus; API-compatible with the retired crate. Only if the pipeline moves inside a Rust binary |
@@ -236,12 +237,11 @@ Two receipts:
 # ── the source ──────────────────────────────────────────────────────────────
 rel spec_file(spec_id: int, path: text, digest: text) key(1).
 
-sh yaml_doc(path: text, digest: text) -> (record: text, doc: json) =
-  `"$DL_EXTRACT_BIN" --family yaml {path}`.
-# template shape `"$DL_EXTRACT_BIN" ... {path}` routes to the in-process
-# sprefa_extract executor (registry.pl:381, hosts.rs SprefaExtractExecutor),
-# never a subprocess on the Rust door. yaml is an extract FAMILY (a file type
-# in lang/mod.rs sources()), not a verb.
+sh yaml_doc(path: text, digest: text) -> (doc: json) =
+  `: {digest}; node -e 'const y=require("yaml");process.stdout.write(JSON.stringify(y.parse(require("fs").readFileSync(process.argv[1],"utf8"))))' {path}`.
+# plain sh host (user 2026-08-17: keep sh, no extract detour). The served TS
+# runtime already depends on `yaml` (v6/tsv2/package.json:31); the Rust door
+# runs the same line through ShellExecutor.
 
 rel spec_doc(spec_id: int, doc: json).
 
@@ -315,7 +315,7 @@ together, rc=0.
 ```mermaid
 flowchart LR
   YML["pokeapi.openapi.yml<br/>9839 lines, 3.1.0"]
-  HOST["hosted extract, family yaml<br/>in-process on the Rust door"]
+  HOST["sh yaml_doc<br/>node -e + yaml package"]
   DOC["rel spec_doc, one json column<br/>191354 bytes, 1 row"]
 
   YML --> HOST --> DOC
@@ -380,7 +380,7 @@ Target: `pokemon get 25` prints the same bytes as
 cd v6
 
 # 1. the spec becomes json (the sh host body, run by hand first)
-"$DL_EXTRACT_BIN" --family yaml dl/fixtures/pokeapi.openapi.yml > /tmp/pokeapi.jsonl
+node -e 'const y=require("yaml");process.stdout.write(JSON.stringify(y.parse(require("fs").readFileSync(process.argv[1],"utf8"))))' dl/fixtures/pokeapi.openapi.yml > /tmp/pokeapi.json
 
 # 2. the spec program compiles
 bash prolog/compile/scripts/compile_dl6.sh \

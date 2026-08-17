@@ -13,7 +13,7 @@ dl6 is the thing. The engine serves the spec's rows on a socket file. One tiny g
 
 ```mermaid
 flowchart LR
-  Y[openapi yaml] --> J[json rows, extract family yaml]
+  Y[openapi yaml] --> J[json, one sh host]
   J --> R[dl6 rows: operations, params, schemas]
   R --> S[engine-rs serve on a socket file]
   S --> C[generic CLI reads the rows, runs a verb]
@@ -45,7 +45,7 @@ Better news than expected. Almost none of this is new.
 
 ```mermaid
 flowchart TD
-  A["yaml to json<br/>one new extract family, in-process"]
+  A["yaml to json<br/>one sh host, yaml lib already installed"]
   B["json to rows<br/>dl6 already has the exact rule"]
   C["rows to code text<br/>dl6 already renders rust structs"]
   D["server on a socket<br/>shipped in the v5 daemon"]
