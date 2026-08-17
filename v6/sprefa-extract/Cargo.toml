@@ -85,6 +85,17 @@ tree-sitter-html = "0.23"
 # seam + the parity-golden normalize + the stdout JSONL all read this one shape.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# basic-toml reads Cargo.toml for the package_edge arm. Candidates measured into
+# THIS lock: basic-toml +1 crate (serde only, already here), toml 1.1 +4
+# (toml_datetime/toml_parser/toml_writer/serde_spanned), cargo-manifest +14.
+# A manifest read that fails degrades to no edges, so the TOML subset is enough:
+# every Cargo.toml in this repository parses with it.
+basic-toml = "0.1"
+# gomod-parser reads go.mod for the same arm; its Replacement::FilePath vs
+# ::Module split is exactly the workspace-local test. +2 crates (it and winnow);
+# gomod-rs is +4 (nom, nom_locate, minimal-lexical, bytecount) for spans nothing
+# here needs, and tree-sitter-gomod is a whole grammar for a line format.
+gomod-parser = "0.5"
 regex = "1"
 # Repository/revision/path enumeration and Git batch reads live in the
 # standalone hafley-rs crate. Extract consumes its source coordinates and bytes.

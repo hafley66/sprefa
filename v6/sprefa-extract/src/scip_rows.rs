@@ -350,6 +350,11 @@ fn symbol_rows(info: &ScipSymbolInfo, path: Option<&str>, records: &ScipRecords)
 ///    SCIP is right and strictly sees more, the same shape as the flagship
 ///    callgraph result.
 ///
+/// `kind` IS `unknown` ON EVERY ROW THIS FOLD PRODUCES, and that is a property
+/// of an index rather than a gap here: the edge is a symbol crossing, and the
+/// occurrence that carries it says nothing about the import form that bound the
+/// name. `--deps` fills the column from the specifier it read.
+///
 /// LOCAL SYMBOLS ARE EXCLUDED. scip reuses `local N` per document, so a `local`
 /// symbol in two files is two different things and joining on it would mint
 /// edges between unrelated files.
@@ -396,6 +401,9 @@ pub fn scip_file_edges(index: &ScipIndex) -> Vec<FlatFact> {
         .map(|((src, dst), symbols)| FlatFact::FileEdgeRow {
             src_path: src.to_string(),
             dst_path: dst.to_string(),
+            // An index records resolved occurrences, never the import statement
+            // that bound the name, so the specifier kind is not in it to read.
+            kind: "unknown".to_string(),
             symbols: symbols.len() as u32,
         })
         .collect()

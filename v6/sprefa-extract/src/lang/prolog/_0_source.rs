@@ -402,6 +402,7 @@ fn import_directive(
             name: strings.intern(&module_text),
             kind: SpecifierKind::SideEffect,
             module: None,
+            imported: None,
         });
         return;
     };
@@ -412,6 +413,7 @@ fn import_directive(
             name: strings.intern(&indicator.key),
             kind: SpecifierKind::Named,
             module: Some(module),
+            imported: None,
         });
     }
 }
@@ -439,6 +441,7 @@ fn module_declaration(
             name: strings.intern(&indicator.key),
             kind: SpecifierKind::Reexport,
             module: Some(module),
+            imported: None,
         });
     }
 }

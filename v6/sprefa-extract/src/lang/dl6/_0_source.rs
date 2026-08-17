@@ -260,6 +260,7 @@ fn project_calls(
                             name: strings.intern(alias_name),
                             kind: SpecifierKind::Named,
                             module: Some(path_id),
+                            imported: None,
                         });
                     } else {
                         sink.aux.specifiers.push(Specifier {
@@ -267,6 +268,7 @@ fn project_calls(
                             name: path_id,
                             kind: SpecifierKind::SideEffect,
                             module: None,
+                            imported: None,
                         });
                     }
                 }

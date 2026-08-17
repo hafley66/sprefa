@@ -78,13 +78,17 @@ node -e '
 ' "$WORK/madge.json" | LC_ALL=C sort -u > "$WORK/madge.tsv"
 
 # Every edge stream is normalized the same way, so the two resolvers are graded
-# by identical arithmetic and the tables are comparable line for line.
+# by identical arithmetic and the tables are comparable line for line. The
+# file_edge filter is what keeps --deps's file_unresolved rows out of the grade,
+# and `sort -u` collapses the per-kind rows of one pair back to the pair madge
+# reports.
 edges_tsv() {
   node -e '
     const fs = require("fs");
     const rows = fs.readFileSync(process.argv[1], "utf8").trim().split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line))
+      .filter((row) => row.record === "file_edge")
       .map((row) => `${row.src_path}\t${row.dst_path}`);
     process.stdout.write(rows.sort().join("\n") + "\n");
   ' "$1" | LC_ALL=C sort -u

@@ -1,0 +1,13 @@
+[package]
+name = "alpha"
+version = "0.1.0"
+
+[dependencies]
+beta = { path = "../beta" }
+serde = "1"
+
+[dev-dependencies]
+gamma-alias = { package = "gamma", path = "../gamma" }
+
+[build-dependencies]
+gamma = { path = "../gamma" }

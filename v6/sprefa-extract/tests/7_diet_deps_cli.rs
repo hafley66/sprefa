@@ -7,9 +7,21 @@
 //! either side is a breaking change and has to show up as a diff.
 //!
 //! Every resolution policy in `src/deps.rs` has a line in `fixtures/deps/app.ts`
-//! and an assertion below. The two policies that produce NO edge are asserted as
-//! absences, because a resolver that silently invents an edge for a package
-//! import or a broken path is worse than one that resolves nothing.
+//! and an assertion below. The three policies that produce NO edge are asserted
+//! as absences AND as `file_unresolved` rows: a resolver that silently invents
+//! an edge for a package import is worse than one that resolves nothing, and one
+//! that drops the stop entirely cannot be asked which imports left the corpus.
+//!
+//! SABOTAGE RECEIPTS (each run red, then reverted):
+//!  - freezing `fold_edges`'s key kind to `named` merges the two `lib/bare.ts`
+//!    rows into one at symbols=2 and the three `lib/util.ts` rows into one:
+//!    `diet_deps_resolves_every_policy_to_file_edges` fails at 6 rows to 9.
+//!  - narrowing `fold_unresolved` to `Policy::RelativeUnresolved` loses the
+//!    rxjs and `/lib/util.ts` rows: `diet_deps_records_every_stop` fails at 1
+//!    row to 3.
+//!  - making `renamed` return `Some(imported)` unconditionally puts
+//!    `"imported":"exact"` on a plain named import:
+//!    `specifier_rows_carry_the_source_module` fails on the `null` line.
 
 use std::collections::BTreeSet;
 use std::process::Command;
@@ -59,38 +71,74 @@ fn deps_edges() -> String {
     run(&args)
 }
 
-/// THE GOLDEN. Six edges, one per resolving policy plus the second name on the
-/// util edge, and `symbols` counts distinct bound names exactly as the SCIP fold
-/// counts distinct symbols.
-#[test]
-fn diet_deps_resolves_every_policy_to_file_edges() {
-    assert_eq!(
-        deps_edges(),
-        concat!(
-            r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/bare.ts","symbols":1}"#,
-            "\n",
-            r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/helper.ts","symbols":1}"#,
-            "\n",
-            r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/mapped.ts","symbols":1}"#,
-            "\n",
-            r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/util.ts","symbols":2}"#,
-            "\n",
-            r#"{"record":"file_edge","src_path":"app.ts","dst_path":"side.ts","symbols":1}"#,
-            "\n",
-            r#"{"record":"file_edge","src_path":"app.ts","dst_path":"widget/index.ts","symbols":1}"#,
-            "\n",
-        )
-    );
+/// The `--deps` lines carrying one record tag, in the order the binary printed
+/// them (`sorted_lines`, so lexicographic on the serialized row).
+fn deps_records(tag: &str) -> Vec<String> {
+    let needle = format!(r#""record":"{tag}""#);
+    deps_edges()
+        .lines()
+        .filter(|line| line.contains(&needle))
+        .map(str::to_string)
+        .collect()
 }
 
-/// The two NON-edges. `rxjs` is a package and stops at the node_modules
-/// boundary; `./gone.ts` names nothing in the universe. Neither may produce a
-/// row, and neither may produce a row pointing somewhere plausible-looking.
+/// Hand-written expectations, sorted by the same rule the binary prints under.
+fn sorted(lines: &[&str]) -> Vec<String> {
+    let mut out: Vec<String> = lines.iter().map(|line| line.to_string()).collect();
+    out.sort();
+    out
+}
+
+/// THE GOLDEN. Nine edges: the edge key is (src, dst, kind), so `./lib/bare`
+/// carries a named row and a namespace row and `./lib/util.ts` carries three,
+/// and `symbols` counts the distinct bound names OF THAT KIND exactly as the
+/// SCIP fold counts distinct symbols.
+///
+/// Hand-derived from the fixture, never copied from the binary: the rows are
+/// written in the sorted order `project::sorted_lines` produces.
+#[test]
+fn diet_deps_resolves_every_policy_to_file_edges() {
+    let expected = [
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/bare.ts","kind":"named","symbols":1}"#,
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/bare.ts","kind":"namespace","symbols":1}"#,
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/helper.ts","kind":"named","symbols":2}"#,
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/mapped.ts","kind":"named","symbols":1}"#,
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/util.ts","kind":"default","symbols":1}"#,
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/util.ts","kind":"named","symbols":1}"#,
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"lib/util.ts","kind":"reexport","symbols":1}"#,
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"side.ts","kind":"side_effect","symbols":1}"#,
+        r#"{"record":"file_edge","src_path":"app.ts","dst_path":"widget/index.ts","kind":"named","symbols":1}"#,
+    ];
+    assert_eq!(deps_records("file_edge"), sorted(&expected));
+}
+
+/// The three NON-edges. `rxjs` is a package and stops at the node_modules
+/// boundary, `/lib/util.ts` is filesystem-absolute, and `./gone.ts` names
+/// nothing in the universe. None may produce an edge, and none may produce one
+/// pointing somewhere plausible-looking.
 #[test]
 fn diet_deps_mints_no_edge_for_packages_or_broken_paths() {
-    let edges = deps_edges();
-    assert!(!edges.contains("rxjs"), "{edges}");
-    assert!(!edges.contains("gone"), "{edges}");
+    for line in deps_edges().lines() {
+        if !line.contains(r#""record":"file_edge""#) {
+            continue;
+        }
+        for stopped in ["rxjs", "gone", "/lib/util.ts"] {
+            assert!(!line.contains(stopped), "{stopped} minted an edge: {line}");
+        }
+    }
+}
+
+/// EVERY STOP IS A ROW. A dropped stop is indistinguishable from an import that
+/// was never written, which is the difference between "this file imports nothing
+/// outside the corpus" and "this resolver could not tell you".
+#[test]
+fn diet_deps_records_every_stop() {
+    let expected = [
+        r#"{"record":"file_unresolved","src_path":"app.ts","module":"./gone.ts","reason":"relative_unresolved"}"#,
+        r#"{"record":"file_unresolved","src_path":"app.ts","module":"/lib/util.ts","reason":"absolute_path"}"#,
+        r#"{"record":"file_unresolved","src_path":"app.ts","module":"rxjs","reason":"node_modules_boundary"}"#,
+    ];
+    assert_eq!(deps_records("file_unresolved"), sorted(&expected));
 }
 
 /// The specifier row now carries its source module. THIS IS THE STEP THAT WAS
@@ -101,11 +149,27 @@ fn diet_deps_mints_no_edge_for_packages_or_broken_paths() {
 fn specifier_rows_carry_the_source_module() {
     let facts = run(&["--family", "call", &format!("{DEPS_ROOT}/app.ts")]);
     for expected in [
-        r#""name":"exact","kind":"named","module":"./lib/util.ts""#,
-        r#""name":"boxed","kind":"named","module":"./widget""#,
-        r#""name":"of","kind":"named","module":"rxjs""#,
-        r#""name":"reexported","kind":"reexport","module":"./lib/util.ts""#,
-        r#""name":"./side.ts","kind":"side_effect","module":"./side.ts""#,
+        r#""name":"exact","kind":"named","module":"./lib/util.ts","imported":null"#,
+        r#""name":"boxed","kind":"named","module":"./widget","imported":null"#,
+        r#""name":"of","kind":"named","module":"rxjs","imported":null"#,
+        r#""name":"reexported","kind":"reexport","module":"./lib/util.ts","imported":null"#,
+        r#""name":"./side.ts","kind":"side_effect","module":"./side.ts","imported":null"#,
+    ] {
+        assert!(facts.contains(expected), "missing {expected}");
+    }
+}
+
+/// THE IMPORTED NAME, which is the one column v5's `module_binding` carried and
+/// this row did not. `import {inner as outer}` binds `outer` locally and asks
+/// the source module for `inner`; without the second name the row cannot say
+/// which export it reached, and a default import cannot say `default` at all.
+#[test]
+fn renamed_specifiers_carry_the_source_name() {
+    let facts = run(&["--family", "call", &format!("{DEPS_ROOT}/app.ts")]);
+    for expected in [
+        r#""name":"outer","kind":"named","module":"./lib/helper.js","imported":"inner""#,
+        r#""name":"defaults","kind":"default","module":"./lib/util.ts","imported":"default""#,
+        r#""name":"everything","kind":"namespace","module":"./lib/bare","imported":null"#,
     ] {
         assert!(facts.contains(expected), "missing {expected}");
     }

@@ -680,6 +680,7 @@ fn go_walk_import_specs(
             name: strings.intern(&name),
             kind,
             module: module.map(|text| strings.intern(&text)),
+            imported: None,
         });
     }
     let mut cursor = node.walk();

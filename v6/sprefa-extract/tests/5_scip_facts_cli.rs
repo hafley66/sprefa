@@ -345,6 +345,11 @@ fn file_fact_counts_lines_the_way_an_editor_does() {
 /// v6 has NO TypeScript module resolver. The spelunk named that as the blocker
 /// for a native dep(src,dst); this is the bypass, and the edge below is produced
 /// with no resolver anywhere in the crate.
+///
+/// `kind` IS `unknown` HERE AND THAT IS THE INDEX'S PROPERTY, not a gap: the row
+/// is a symbol crossing, and an occurrence says nothing about the import form
+/// that bound the name. `--deps` reads the specifier and fills it.
+// @comment-ok: the unknown column is a contract claim the assertion alone cannot show
 #[test]
 fn scip_deps_folds_the_index_into_file_edges() {
     let edges = run(&[
@@ -357,7 +362,7 @@ fn scip_deps_folds_the_index_into_file_edges() {
     assert_eq!(
         edges,
         "{\"record\":\"file_edge\",\"src_path\":\"scip/gamma.ts\",\
-         \"dst_path\":\"scip/alpha.ts\",\"symbols\":2}\n"
+         \"dst_path\":\"scip/alpha.ts\",\"kind\":\"unknown\",\"symbols\":2}\n"
     );
     // beta.ts exports a symbol with the same name as alpha's and nothing imports
     // it. An edge into beta would mean the fold joined on names rather than on

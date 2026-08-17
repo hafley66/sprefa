@@ -4,15 +4,18 @@
 //! (shape, family, rows, seams, source) are `pub use crate::types::*` re-export
 //! shims so historical import paths (`crate::shape::Span`, `crate::family::TypeF`,
 //! ...) keep resolving. This is the "tasks.rs technique" from the seed, promoted:
-//! one compiled file is the source of truth, and pending work is COMMENTED OUT
-//! (ModuleF, Flow edges).
+//! one compiled file is the source of truth, and a shape kept only as a revival
+//! sketch is COMMENTED OUT (ModuleF).
 //!
 //! Leaf scope: a corpus at a version -> normalized graph facts. Pure CPU, no SQL,
 //! no datalog, no async (the engine, another worktree).
 //!
-//! Planes:  RESOLUTION (SCIP-wire): CallF, TypeF, ModuleF*
+//! Planes:  RESOLUTION (SCIP-wire): CallF, TypeF
 //!          VALUE-FLOW (native):   DfF, FlowF
-//!          STRUCTURE (lossless):  CstF        (* = pending, commented out)
+//!          STRUCTURE (lossless):  CstF
+//! ModuleF is DECIDED COLLAPSED (fork C, 2026-08-17): the module plane's output
+//! is the `file_edge` / `file_unresolved` / `package_edge` record trio, not a
+//! family. The sketch below stays as the shape a revival would take.
 // @comment-ok: the module header is a crate-level doc block predating the rail
 
 use std::fmt;
@@ -505,6 +508,12 @@ pub struct Specifier {
     pub name: NameId,
     pub kind: SpecifierKind,
     pub module: Option<NameId>,
+    /// The name the SOURCE module spells, when the local binding renames it
+    /// (`import {inner as local}`, a default import's `default`). `None` when
+    /// local and imported agree, or when `module`'s trailing segment already
+    /// spells it (the path-shaped languages: rust, go, kotlin, dl6, prolog).
+    // @comment-ok: v5's module_binding carried (local, imported, kind); this is the imported seat
+    pub imported: Option<NameId>,
 }
 
 /// An edge whose target is computed at runtime. `span` is the computed
@@ -559,7 +568,7 @@ impl SpecifierKind {
 }
 
 /// The CallF side-channel: call sites + module specifiers (both phase-1
-/// unresolved). ADDENDUM 4a RULING (flagged for human review): specifier rows
+/// unresolved). Specifier rows
 /// live HERE, on the existing CallF aux — NOT on a revived ModuleF (D-module:
 /// the binding half is aux side metadata, not a standalone resolution family)
 /// and NOT on ExtractOutput (a new field there would break the four lang
@@ -1015,15 +1024,13 @@ impl Family for CfgF {
     const TAG: FamilyTag = FamilyTag::Cfg;
 }
 
-// ── RESOLUTION plane: ModuleF  (PENDING - collapsed; not yet a family) ──────
-// The resolution half folds into SCIP namespace edges (a file IS a namespace);
-// the binding half into aux metadata. Whether it becomes a standalone Family is
-// undecided. Per spec `_2_traits.rs`:80-84 module RESOLVES once it lands; the
-// 4a Resolve surface (S5 below) deliberately declares NO ModuleF arm - see the
-// `Resolve` trait doc. ADDENDUM 4a RULING: phase-1 specifier rows live in
-// `CallFAux.specifiers` (the binding half as aux side metadata, exactly as
-// D-module says); ModuleF stays collapsed. Flagged for human review; revival
-// stays possible. Sketch:
+// ── RESOLUTION plane: ModuleF  (COLLAPSED BY DECISION - not a family) ───────
+// Fork C, chosen by Chris 2026-08-17 (issue extract-modulef-collapse): no new
+// family. Phase-1 specifier rows stay in `CallFAux.specifiers`, and v5's
+// module-level distinctions come back on the WIRE instead: `file_edge` carries
+// the specifier kind, `file_unresolved` carries the stopped specifiers, and
+// `package_edge` carries the manifest graph. The Resolve surface (S5 below)
+// therefore declares no ModuleF arm. Sketch, kept as the revival shape:
 //
 // #[derive(Default, Copy, Clone, Debug)]
 // pub struct ModuleF;
@@ -1465,9 +1472,9 @@ pub fn containing_def_site(
 ///
 /// WHICH FAMILIES RESOLVE (spec `_2_traits.rs`:80-84): `TypeF` (field / impl /
 /// variant / generic / uses + the resolved param/returns binding) and `CallF`
-/// (resolved caller -> callee). MODULE resolves only WHEN it lands: ModuleF is
-/// still commented out (S2 above, "PENDING - collapsed"), so 4a declares NO
-/// ModuleF resolve surface — this note is the module placeholder. `DfF` and
+/// (resolved caller -> callee). MODULE never resolves through an arm: ModuleF is
+/// collapsed by decision (S2 above, fork C), and the module plane's answers
+/// arrive as the `file_edge` / `file_unresolved` / `package_edge` rows. `DfF` and
 /// `CstF` NEVER resolve (no cross-file resolution; `_2_traits.rs`:82-84).
 ///
 /// SHAPE NOTES (4a judgment calls, flagged for human review):
@@ -1927,6 +1934,9 @@ pub enum FlatFact {
         /// The source module as written, null when the language puts the
         /// module in `name` (path-only forms).
         module: Option<String>,
+        /// The source module's own name for the binding when it differs from
+        /// `name`; null when they agree. v5's `module_binding` imported seat.
+        imported: Option<String>,
     },
     /// A Prolog term-occurrence reference: a compound in argument position,
     /// tagged goal | head_arg | term_arg. Deliberately exceeds the LSP/SCIP
@@ -2253,11 +2263,41 @@ pub enum FlatFact {
     ///
     /// It is v5's `module_edge` by another name, and it exists because v6 has no
     /// TypeScript module resolver; SCIP bypasses the resolver entirely.
+    ///
+    /// `kind` is the `SpecifierKind` slug that bound the crossing, so one
+    /// (src, dst) pair carries one row per import form and `symbols` counts the
+    /// distinct names of THAT form. `--scip-deps` fills it `unknown`: an index
+    /// records resolved occurrences, never the statement that bound the name.
     #[serde(rename = "file_edge")]
     FileEdgeRow {
         src_path: String,
         dst_path: String,
+        kind: String,
         symbols: u32,
+    },
+    /// One specifier `--deps` could not turn into an edge, with the resolution
+    /// policy that stopped it. v5 called it `module_unresolved`.
+    ///
+    /// A stop is a FACT, not an absence: `rxjs` stopping at the node_modules
+    /// boundary and `./gone.ts` naming nothing are different answers, and
+    /// without this row both read as silence.
+    #[serde(rename = "file_unresolved")]
+    FileUnresolvedRow {
+        src_path: String,
+        module: String,
+        reason: String,
+    },
+    /// One workspace-internal manifest-to-manifest dependency edge, keyed on
+    /// the two manifest paths rather than package names.
+    ///
+    /// v5's `crate_edge` (`src/graph/modgraph/rust.rs:468`) was Cargo-only and
+    /// keyed on crate names. The path key is the same key `file_edge` uses, so
+    /// the two grains join without a name dictionary.
+    #[serde(rename = "package_edge")]
+    PackageEdgeRow {
+        src_manifest: String,
+        dst_manifest: String,
+        kind: String,
     },
     /// One file, once: its byte length and line count. v5's `file_lines` and
     /// the size half of `content`. `digest` is the same ContentId the phase-2

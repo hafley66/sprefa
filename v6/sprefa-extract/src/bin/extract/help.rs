@@ -235,8 +235,29 @@ rewrite (./x.js -> ./x.ts); extension inference; directory index files; then
 tsconfig paths and baseUrl. A bare specifier no tsconfig rule claims stops at
 the node_modules boundary, which is a stated stop and not a failure.
 
+Every specifier that resolves to nothing also emits a file_unresolved row naming
+the policy that stopped it, so a package import, an absolute path and a broken
+relative path stay three different answers instead of one silence.
+
 BEST EFFORT, and allowed to lose to --scip-deps. tools/1_madge_oracle.sh diet
 is where the loss is measured.";
+
+pub const PACKAGE_DEPS_LONG: &str =
+    "Workspace-internal PACKAGE edges: read the supplied manifests and emit one
+package_edge row per manifest-to-manifest dependency, keyed on project-relative
+manifest paths rather than package names, so the rows join file_edge directly.
+
+One arm per manifest kind. Cargo.toml: dependencies / dev-dependencies /
+build-dependencies as kind normal / dev / build, honouring the `package = \"..\"`
+rename. package.json: dependencies / devDependencies / peerDependencies as
+normal / dev / peer. go.mod: require as kind require, and replace as kind
+replace, whether it names a module path or a directory (a directory is joined
+lexically against the manifest's own and must hold a supplied go.mod).
+
+A dependency is an edge ONLY when another supplied manifest declares that name:
+everything else is a registry package with no manifest in the corpus. The
+supplied path list is the whole universe, and a path that is not a manifest is
+skipped rather than an error.";
 
 pub const FILE_FACT_LONG: &str = "\
 Prepend one `file` record carrying the path, the content digest every resolved
