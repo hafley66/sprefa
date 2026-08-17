@@ -633,7 +633,7 @@ fn kt_walk_import_headers(
 ) {
     if node.kind() == "import_header" {
         let identifier = kt_child_kind(node, "identifier");
-        let path = identifier.map(|child| kt_text(child, src).to_string());
+        let path = identifier.map(|child| kt_text(child, src)).unwrap_or("");
         let span = match identifier {
             Some(identifier) => Span {
                 start: identifier.start_byte() as u32,
@@ -641,33 +641,21 @@ fn kt_walk_import_headers(
             },
             None => node_span(node),
         };
-        let (kind, name, module) = if let Some(alias) = kt_child_kind(node, "import_alias") {
+        let (kind, name) = if let Some(alias) = kt_child_kind(node, "import_alias") {
             let alias_text = kt_child_kind(alias, "type_identifier")
                 .map(|child| kt_text(child, src))
                 .unwrap_or("");
-            (
-                SpecifierKind::Named,
-                alias_text.to_string(),
-                path.clone().unwrap_or_default(),
-            )
+            (SpecifierKind::Named, alias_text)
         } else if kt_child_kind(node, "wildcard_import").is_some() {
-            (
-                SpecifierKind::Namespace,
-                last_segment(path.as_deref().unwrap_or("")).to_string(),
-                path.clone().unwrap_or_default(),
-            )
+            (SpecifierKind::Namespace, last_segment(path))
         } else {
-            (
-                SpecifierKind::Named,
-                last_segment(path.as_deref().unwrap_or("")).to_string(),
-                path.clone().unwrap_or_default(),
-            )
+            (SpecifierKind::Named, last_segment(path))
         };
         rows.push(Specifier {
             span,
-            name: strings.intern(&name),
+            name: strings.intern(name),
             kind,
-            module: Some(strings.intern(&module)),
+            module: Some(strings.intern(path)),
         });
     }
     let mut cursor = node.walk();
@@ -678,9 +666,8 @@ fn kt_walk_import_headers(
 
 /// The first named child of `node` with `kind`.
 fn kt_child_kind<'a>(node: tree_sitter::Node<'a>, kind: &str) -> Option<tree_sitter::Node<'a>> {
-    let mut cursor = node.walk();
-    let kids: Vec<tree_sitter::Node<'a>> = node.named_children(&mut cursor).collect();
-    kids.into_iter().find(|child| child.kind() == kind)
+    node.named_children(&mut node.walk())
+        .find(|child| child.kind() == kind)
 }
 
 /// The segment after the last `.` of a dotted path, or the whole text when the
