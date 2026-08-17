@@ -1,17 +1,26 @@
-//! FAIL-PRE-FIX: written against `hosts::{GitRefExecutor, GitRevisionExecutor}`
-//! before either existed -- `error[E0432]: unresolved import`, rc=101.
+//! CONTROL: 17 passed, 0 failed.
+//!
+//! FAIL-PRE-FIX: `the_ref_memo_sees_a_moved_ref` against the pre-witness memo,
+//! 16 passed, 1 failed. The rest of the file was written against
+//! `hosts::{GitRefExecutor, GitRevisionExecutor}` before either existed --
+//! `error[E0432]: unresolved import`, rc=101.
 //!
 //! SABOTAGE 1, drop the `peeled` fallback in `ref_target` and read `direct`:
-//! the three ref/tag row assertions go RED (12 passed, 3 failed); every
+//! the three ref/tag row assertions go RED (14 passed, 3 failed); every
 //! revision-graph test stays green, because only annotated tags move.
 //!
 //! SABOTAGE 2, ask ancestry in one direction only: `the_ancestor_host_answers_
 //! both_directions` alone goes RED, zero rows where one is expected
-//! (14 passed, 1 failed).
+//! (16 passed, 1 failed).
 //!
 //! SABOTAGE 3, key the revision memo on `repo` alone: the second pair in
 //! `the_revision_memo_keys_on_the_whole_triple` reads the first pair's counts
-//! (14 passed, 1 failed). Three guards, three discriminating tests.
+//! (16 passed, 1 failed).
+//!
+//! SABOTAGE 4, always serve the ref memo (`if true` in place of the witness
+//! comparison in `GitRefExecutor::snapshot`): 16 passed, 1 failed. Only
+//! `the_ref_memo_sees_a_moved_ref` can see it, which is the same single test
+//! that fails on the pre-fix tree. Four guards, four discriminating tests.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -247,22 +256,50 @@ fn the_tag_host_separates_annotated_from_lightweight() {
     );
 }
 
-/// The memo is snapshot-scoped: a ref added after the first demand does not
-/// appear, which is what makes the four host names one `for-each-ref` pass.
+/// A quiet ref store answers from the memo: the four host names still settle
+/// ONE `for-each-ref` pass between them.
 #[test]
-fn the_ref_memo_settles_one_snapshot_per_repository() {
+fn the_ref_memo_settles_one_snapshot_per_quiet_repository() {
+    let fixture = Fixture::build();
+    let executor = GitRefExecutor::default();
+    let inputs = repo_inputs(&fixture.path());
+    let first = answer(&executor, "git_ref", &inputs, REF_OUTPUTS);
+    let second = answer(&executor, "git_ref", &inputs, REF_OUTPUTS);
+    assert_eq!(first, second);
+    let tags = answer(&executor, "git_tag", &inputs, TAG_OUTPUTS);
+    assert_eq!(tags.len(), 2, "both tags come off the same snapshot");
+}
+
+/// SEMANTICS CHANGE. This test replaces the assertion that a ref added after
+/// the first demand does NOT appear. Refs move and the memo has to follow.
+#[test]
+fn the_ref_memo_sees_a_moved_ref() {
     let fixture = Fixture::build();
     let executor = GitRefExecutor::default();
     let inputs = repo_inputs(&fixture.path());
     let before = answer(&executor, "git_ref", &inputs, REF_OUTPUTS);
-    fixture.git(&["branch", "added-after-the-snapshot"]);
+    fixture.git(&["branch", "later"]);
     let after = answer(&executor, "git_ref", &inputs, REF_OUTPUTS);
-    assert_eq!(before, after);
-    assert_eq!(
-        answer(&GitRefExecutor::default(), "git_ref", &inputs, REF_OUTPUTS).len(),
-        before.len() + 1,
-        "a fresh executor sees the added branch"
+    assert_eq!(after.len(), before.len() + 1);
+    assert!(
+        after
+            .iter()
+            .any(|row| row.first() == Some(&text("refs/heads/later"))),
+        "the memo never saw the new branch: {after:?}"
     );
+}
+
+/// `pack-refs` rewrites `packed-refs` and DELETES the loose ref files, so a
+/// witness that watched only loose refs would read the store as emptied.
+#[test]
+fn the_ref_memo_survives_a_pack_refs() {
+    let fixture = Fixture::build();
+    let executor = GitRefExecutor::default();
+    let inputs = repo_inputs(&fixture.path());
+    let before = answer(&executor, "git_ref", &inputs, REF_OUTPUTS);
+    fixture.git(&["pack-refs", "--all"]);
+    let after = answer(&executor, "git_ref", &inputs, REF_OUTPUTS);
+    assert_eq!(before, after, "packing refs moved the rows");
 }
 
 // ═══ the revision graph ═════════════════════════════════════════════════════
