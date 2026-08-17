@@ -2,7 +2,7 @@
 // HostRunner contract (serve/1_hosts.ts), sharing its emitted HostPlanData.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::change_facts::{
@@ -417,6 +417,9 @@ type RefStoreWitness = BTreeMap<String, (u128, u64)>;
 #[derive(Default)]
 pub struct GitRefExecutor {
     snapshots: Mutex<BTreeMap<String, (RefStoreWitness, Arc<soopy::RefSnapshot>)>>,
+    // Resolving this pair spawns four `git rev-parse` calls, so it is read once
+    // per repository and a memo hit stays stat-only.
+    ref_stores: Mutex<BTreeMap<String, (PathBuf, PathBuf)>>,
 }
 
 // `kind` names the ref's namespace, never the Git object type: every branch tip
@@ -443,9 +446,8 @@ fn ref_target(observation: &soopy::RefObservation) -> String {
         .to_string()
 }
 
-/// Stat every file git rewrites when a ref moves. Stat-only by design: the
-/// snapshot this guards costs three `git` subprocesses, so a witness that spawns
-/// anything would cost more than the work it saves.
+/// Stat every file git rewrites when a ref moves. Stat-only: the snapshot this
+/// guards costs three `git` subprocesses, so the witness must cost less.
 fn ref_store_witness(git_dir: &std::path::Path, common_dir: &std::path::Path) -> RefStoreWitness {
     let mut witness = RefStoreWitness::new();
     let mut record = |path: &std::path::Path| {
@@ -487,18 +489,34 @@ impl GitRefExecutor {
             host: host.to_string(),
             message,
         };
+        // Both maps take an entry together: a known ref store is a repository
+        // already enumerated.
+        let known = self
+            .ref_stores
+            .lock()
+            .expect("git ref store memo")
+            .get(repo)
+            .cloned();
+        if let Some((git_dir, common_dir)) = &known {
+            let witness = ref_store_witness(git_dir, common_dir);
+            if let Some((stored, memo)) = self.snapshots.lock().expect("git ref memo").get(repo) {
+                if *stored == witness {
+                    return Ok(memo.clone());
+                }
+            }
+        }
         let repository = soopy::discover(std::path::PathBuf::from(repo))
             .map_err(|error| named(format!("open repository {repo}: {error}")))?;
         // A witness that cannot be built is empty, which never matches a stored
         // one, which re-enumerates. That is the safe direction.
-        let witness = soopy::git_dirs(&repository.root)
-            .map(|(git_dir, common_dir)| ref_store_witness(&git_dir, &common_dir))
+        let dirs = match known {
+            Some(dirs) => Some(dirs),
+            None => soopy::git_dirs(&repository.root).ok(),
+        };
+        let witness = dirs
+            .as_ref()
+            .map(|(git_dir, common_dir)| ref_store_witness(git_dir, common_dir))
             .unwrap_or_default();
-        if let Some((stored, memo)) = self.snapshots.lock().expect("git ref memo").get(repo) {
-            if *stored == witness {
-                return Ok(memo.clone());
-            }
-        }
         let query = soopy::RefQuery {
             repository: repository.identity.clone(),
             namespace: Arc::from(""),
@@ -510,6 +528,12 @@ impl GitRefExecutor {
                 .snapshot(&query)
                 .map_err(|error| named(format!("enumerate refs in {repo}: {error}")))?,
         );
+        if let Some(dirs) = dirs {
+            self.ref_stores
+                .lock()
+                .expect("git ref store memo")
+                .insert(repo.to_string(), dirs);
+        }
         self.snapshots
             .lock()
             .expect("git ref memo")
