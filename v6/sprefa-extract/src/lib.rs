@@ -24,6 +24,7 @@ pub mod deps;
 pub mod dispatch;
 pub mod family;
 pub mod lang;
+pub mod manifests;
 pub mod project;
 pub mod rows;
 pub mod schema;
@@ -58,6 +59,9 @@ pub use family::{
 pub use lang::{
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DlSource,
     GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource, RustSource, TsSource,
+};
+pub use manifests::{
+    fold_package_edges, package_edges, package_edges_jsonl, Manifest, ManifestKind,
 };
 pub use project::{
     diet_scip, diet_scip_jsonl, resolve_project, resolve_project_jsonl, scip_facts,

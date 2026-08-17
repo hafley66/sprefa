@@ -41,6 +41,8 @@
 //!  - deleting the prolog row from `ROSTER_FIXTURES`
 //!    -> "these Sources are in the roster with no capability-parity fixture:
 //!    [\"prolog\"]".
+//!  - deleting the `--package-deps` dispatch from the binary's main
+//!    -> "PackageEdges: the binary reached no package_edge record".
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -150,6 +152,12 @@ enum LibraryCapability {
     FileFact,
     /// `wire::scip_file_edges`: the module graph folded out of a SCIP index.
     ScipFileEdges,
+    /// `deps::fold_edges`: the same module graph resolved syntactically.
+    DietFileEdges,
+    /// `deps::fold_unresolved`: the specifiers that resolved to nothing.
+    DietFileUnresolved,
+    /// `manifests::fold_package_edges`: workspace-internal manifest edges.
+    PackageEdges,
 }
 
 /// Kept in step with the enum by the length assertion in the test below.
@@ -166,8 +174,11 @@ const ALL: &[LibraryCapability] = &[
     LibraryCapability::ScipFacts,
     LibraryCapability::FileFact,
     LibraryCapability::ScipFileEdges,
+    LibraryCapability::DietFileEdges,
+    LibraryCapability::DietFileUnresolved,
+    LibraryCapability::PackageEdges,
 ];
-const DECLARED_CAPABILITIES: usize = 12;
+const DECLARED_CAPABILITIES: usize = 15;
 
 /// How the binary reaches one library capability.
 enum CliReach {
@@ -338,6 +349,43 @@ fn reach_of(capability: LibraryCapability, scip_index: &Path) -> CliReach {
             ]),
             record: "file_edge",
             absent_without: Some(strings(&["tests/fixtures/ts/scip/gamma.ts"])),
+        },
+        DietFileEdges => CliReach::Emits {
+            args: strings(&[
+                "--deps",
+                "--project-root",
+                "tests/fixtures/deps",
+                "tests/fixtures/deps/app.ts",
+                "tests/fixtures/deps/lib/util.ts",
+            ]),
+            record: "file_edge",
+            absent_without: Some(strings(&["tests/fixtures/deps/app.ts"])),
+        },
+        DietFileUnresolved => CliReach::Emits {
+            args: strings(&[
+                "--deps",
+                "--project-root",
+                "tests/fixtures/deps",
+                "tests/fixtures/deps/app.ts",
+            ]),
+            record: "file_unresolved",
+            absent_without: Some(strings(&["tests/fixtures/deps/app.ts"])),
+        },
+        PackageEdges => CliReach::Emits {
+            args: strings(&[
+                "--package-deps",
+                "--project-root",
+                "tests/fixtures/packages",
+                "tests/fixtures/packages/crates/alpha/Cargo.toml",
+                "tests/fixtures/packages/crates/beta/Cargo.toml",
+            ]),
+            record: "package_edge",
+            absent_without: Some(strings(&[
+                "--deps",
+                "--project-root",
+                "tests/fixtures/deps",
+                "tests/fixtures/deps/app.ts",
+            ])),
         },
         FlattenProjectType => CliReach::LibraryOnly {
             reason: "the span-and-blob project-edge shape predates the flat-fields \

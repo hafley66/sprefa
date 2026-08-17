@@ -1,0 +1,4 @@
+# A virtual workspace root: no [package], so it declares no name and is no edge
+# target. Every real member manifest sits under crates/.
+[workspace]
+members = ["crates/alpha", "crates/beta", "crates/gamma"]

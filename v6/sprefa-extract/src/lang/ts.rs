@@ -1165,12 +1165,14 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                     &import.source.value,
                     SpecifierKind::SideEffect,
                     &import.source.value,
+                    None,
                 ),
                 Some(specs) => {
                     let module = import.source.value.as_str();
                     for spec in specs {
                         match spec {
                             ts::ImportDeclarationSpecifier::ImportSpecifier(named) => {
+                                let imported = module_export_name(&named.imported);
                                 push_specifier(
                                     sink,
                                     strings,
@@ -1178,6 +1180,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                                     &named.local.name,
                                     SpecifierKind::Named,
                                     module,
+                                    renamed(&imported, &named.local.name),
                                 )
                             }
                             ts::ImportDeclarationSpecifier::ImportDefaultSpecifier(default) => {
@@ -1188,6 +1191,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                                     &default.local.name,
                                     SpecifierKind::Default,
                                     module,
+                                    Some("default"),
                                 )
                             }
                             ts::ImportDeclarationSpecifier::ImportNamespaceSpecifier(ns) => {
@@ -1198,6 +1202,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                                     &ns.local.name,
                                     SpecifierKind::Namespace,
                                     module,
+                                    None,
                                 )
                             }
                         }
@@ -1210,6 +1215,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                 if let Some(source) = &export.source {
                     for spec in &export.specifiers {
                         let name = module_export_name(&spec.exported);
+                        let inner = module_export_name(&spec.local);
                         push_specifier(
                             sink,
                             strings,
@@ -1217,6 +1223,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                             &name,
                             SpecifierKind::Reexport,
                             &source.value,
+                            renamed(&inner, &name),
                         );
                     }
                 }
@@ -1232,6 +1239,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                         &name,
                         SpecifierKind::Reexport,
                         &export.source.value,
+                        None,
                     );
                 }
                 // `export * from './m'`: path-only form — name = the module path.
@@ -1242,6 +1250,7 @@ fn module_specifiers(program: &Program<'_>, strings: &mut Strings, sink: &mut Fa
                     &export.source.value,
                     SpecifierKind::Reexport,
                     &export.source.value,
+                    None,
                 ),
             },
             _ => {}
@@ -1256,13 +1265,21 @@ fn push_specifier(
     name: &str,
     kind: SpecifierKind,
     module: &str,
+    imported: Option<&str>,
 ) {
     sink.aux.specifiers.push(Specifier {
         span: to_span(span),
         name: strings.intern(name),
         kind,
         module: Some(strings.intern(module)),
+        imported: imported.map(|text| strings.intern(text)),
     });
+}
+
+/// The source module's name for a binding, kept only when it differs from the
+/// local one: `import {a}` states nothing a second column can add.
+fn renamed<'a>(imported: &'a str, local: &str) -> Option<&'a str> {
+    (imported != local).then_some(imported)
 }
 
 /// A `ModuleExportName`'s text as written (identifier or string-literal name).

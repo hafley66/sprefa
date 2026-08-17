@@ -198,6 +198,7 @@ fn flatten_call(bundle: &FamilyBundle<CallF>, strings: &Strings) -> Vec<FlatFact
             name: strings.lookup(spec.name).to_string(),
             kind: spec.kind.as_str().to_string(),
             module: spec.module.map(|id| strings.lookup(id).to_string()),
+            imported: spec.imported.map(|id| strings.lookup(id).to_string()),
         });
     }
     for reference in &bundle.aux.refs {

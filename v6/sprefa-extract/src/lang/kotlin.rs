@@ -656,6 +656,7 @@ fn kt_walk_import_headers(
             name: strings.intern(name),
             kind,
             module: Some(strings.intern(path)),
+            imported: None,
         });
     }
     let mut cursor = node.walk();

@@ -19,9 +19,10 @@ use clap::Parser;
 
 use sprefa_extract::{
     cfg_bundle, deps::diet_file_edges_jsonl, diet_scip_jsonl, dispatch, file_fact, flatten,
-    flatten_cfg, query_patterns, resolve_project_jsonl, scip_facts_jsonl, scip_family_jsonl,
-    scip_file_edges_jsonl, scip_index_location, source_for, AstPatternQuery, FamilyMask,
-    IndexBudget, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords, SCHEMA,
+    flatten_cfg, package_edges_jsonl, query_patterns, resolve_project_jsonl, scip_facts_jsonl,
+    scip_family_jsonl, scip_file_edges_jsonl, scip_index_location, source_for, AstPatternQuery,
+    FamilyMask, IndexBudget, ResolveArms, ResolveRequest, ScipFamilyRequest, ScipMode, ScipRecords,
+    SCHEMA,
 };
 
 #[path = "extract/help.rs"]
@@ -29,8 +30,8 @@ mod help;
 
 use help::{
     BENCH_LONG, DEPS_LONG, FAMILY_LONG, FILE_FACT_LONG, LONG_ABOUT, OCCURRENCE_TEXT_LONG,
-    PATH_LONG, PROJECT_ROOT_LONG, SCIP_BUILD_LONG, SCIP_CACHE_LONG, SCIP_DEPS_LONG,
-    SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG,
+    PACKAGE_DEPS_LONG, PATH_LONG, PROJECT_ROOT_LONG, SCIP_BUILD_LONG, SCIP_CACHE_LONG,
+    SCIP_DEPS_LONG, SCIP_FACTS_LONG, SCIP_INDEX_LONG, SCIP_RECORD_LONG, SCIP_TIMEOUT_LONG,
 };
 
 #[path = "../0_query.rs"]
@@ -126,6 +127,15 @@ struct Cli {
         long_help = DEPS_LONG,
     )]
     deps: bool,
+
+    /// Stream package_edge rows: workspace-internal manifest-to-manifest edges.
+    #[arg(
+        long = "package-deps",
+        requires = "project_root",
+        conflicts_with_all = ["bench", "ast_pattern", "resolve", "scip_facts", "scip_deps", "deps", "file_fact"],
+        long_help = PACKAGE_DEPS_LONG,
+    )]
+    package_deps: bool,
 
     /// Prepend one `file` record: path, content digest, byte count, line count.
     #[arg(long, conflicts_with_all = ["resolve", "scip_facts", "ast_pattern"], long_help = FILE_FACT_LONG)]
@@ -294,6 +304,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if cli.deps {
         for line in diet_file_edges_jsonl(&scip_request(&cli)?)? {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+
+    if cli.package_deps {
+        for line in package_edges_jsonl(&scip_request(&cli)?)? {
             println!("{line}");
         }
         return Ok(());

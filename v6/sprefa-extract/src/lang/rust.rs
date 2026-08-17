@@ -1117,6 +1117,7 @@ fn module_specifiers(
             name: strings.intern(&leaf.name),
             kind: leaf.kind,
             module: Some(strings.intern(&leaf.module)),
+            imported: None,
         }));
 }
 

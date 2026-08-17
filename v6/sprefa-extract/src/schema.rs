@@ -36,13 +36,15 @@ RECORD SHAPES
   record=doc    family=type                owner={start,end}  parent=<string|null>  text=<string>
   record=doc_tag  family=type              owner={start,end}  tag=<string>  arg=<string|null>  text=<string>
   record=doc_node  family=type             span={start,end}   kind=<heading|code_block>  name=<string>  parent=<string|null>
-  record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>
+  record=specifier  family=call            span={start,end}   name=<string>  kind=<slug>  module=<string|null>  imported=<string|null>
   record=unresolved  family=call           span={start,end}   reason=<slug>  detail=<string>
   record=capture  query=<id>  capture=<name>  text=<string>  start=<u32>  end=<u32>  match_start=<u32>  match_end=<u32>
   record=resolved_edge  caller_path=<string>  caller_name=<string|null>  callee_path=<string>  callee_name=<string|null>  caller_site_start=<u32>  caller_site_end=<u32>  kind=<slug>
   record=resolved_type_edge  owner_path=<string>  owner_name=<string|null>  owner_start=<u32>  owner_end=<u32>  target_path=<string>  target_name=<string|null>  kind=<slug>
   record=flow_edge  family=flow  kind=<slug>  from_blob=<hex>  from={start,end}  to_blob=<hex>  to={start,end}
-  record=file_edge  src_path=<string>  dst_path=<string>  symbols=<u32>
+  record=file_edge  src_path=<string>  dst_path=<string>  kind=<slug>  symbols=<u32>
+  record=file_unresolved  src_path=<string>  module=<string>  reason=<slug>
+  record=package_edge  src_manifest=<string>  dst_manifest=<string>  kind=<slug>
   record=file  path=<string>  digest=<hex>  bytes=<u32>  lines=<u32>
   record=scip_metadata  version=<i32>  tool_name=<string>  tool_version=<string>  tool_arguments=[<string>]  project_root=<string>  text_document_encoding=<i32>
   record=scip_document  path=<string>  language=<string>  position_encoding=<i32>  text=<string|null>
@@ -103,6 +105,11 @@ FIELDS
                line still counts, an empty file is 0.
   module       a specifier's source module as written, null when the language
                puts the module in `name` (path-only forms).
+  imported     the name the SOURCE module spells for a binding, when the local
+               name renames it (`import {inner as local}`, a default import's
+               `default`); null when the two agree or when the module path's
+               trailing segment already spells it (rust, go, kotlin, dl6,
+               prolog). v5's module_binding imported column.
   reason       why a runtime-computed edge marker fired (see its vocabulary).
   detail       the computed expression's source text, exactly the text at `span`.
   symbol       a SCIP symbol string; `local `-prefixed symbols are document-scoped.
@@ -122,7 +129,10 @@ FIELDS
                that record are offsets into the SIGNATURE TEXT, not a document.
   severity/tags  raw scip.proto Severity and DiagnosticTag ordinals.
   src_path/dst_path  the two ends of a file dependency edge.
-  symbols      how many distinct symbols cross one file edge.
+  symbols      how many distinct symbols cross one file edge of that kind.
+  src_manifest/dst_manifest  the two ends of a package edge: project-relative
+               manifest paths, never package names, so a package edge joins a
+               file edge on the same key shape.
 
 KIND VOCABULARIES (the `kind` field)
   type node   struct enum trait class interface alias function method const
@@ -140,6 +150,15 @@ KIND VOCABULARIES (the `kind` field)
   const kind  lit (cooked literal) | template (raw source slice, holes intact)
   sig slot    param | ret
   unresolved reason  dynamic-import | computed-member-call | spread-call-args
+  specifier kind    named | default | namespace | side_effect | reexport
+  file_edge kind    the specifier kind that bound the crossing, or `unknown`
+                    under --scip-deps: an index records resolved occurrences,
+                    never the import statement that bound the name, so the form
+                    is not in it to read.
+  file_unresolved reason  the deps.rs Policy slug that stopped the specifier:
+                    node_modules_boundary | absolute_path | relative_unresolved
+  package_edge kind  Cargo.toml: normal | dev | build. package.json:
+                    normal | dev | peer. go.mod: require | replace.
   resolved_edge kind       name_resolve | scip_override
   resolved_type_edge kind  field | impl | variant | generic | uses | doc_ref
   doc_node kind            heading | code_block
@@ -179,16 +198,30 @@ SCIP FACTS MODE (--scip-facts)
 
 DEPENDENCY EDGES (--scip-deps and --deps)
   Both fold to the SAME file_edge record, so the module graph is one relation
-  regardless of which resolver filled it.
+  regardless of which resolver filled it. The edge key is (src, dst, kind): one
+  pair carries one row per import form, and `symbols` counts the distinct names
+  of that form.
   --scip-deps folds a SCIP index: the indexer already resolved every reference,
   so the graph falls out of the index with no module resolver in the crate.
   Graded against madge over v6/tsv2: recall 0.992, precision 0.988.
+  --deps also emits file_unresolved for every specifier that resolved to
+  nothing, carrying the policy that stopped it, so a package boundary, an
+  absolute path and a broken relative path stay three answers.
   --deps resolves import and export-from specifiers syntactically instead, with
   no indexer subprocess. Best effort; graded against the same oracle on the same
   corpus at recall 1.000 and precision 1.000, which measures agreement with
   another syntactic scanner and NOT correctness: the 9 edges --scip-deps has and
   madge lacks are inferred type references with no import statement, and no
   syntactic resolver can see them.
+
+PACKAGE EDGES (--package-deps)
+  Reads the supplied manifests and emits package_edge rows for the dependency
+  pairs that stay inside the corpus: a dependency is an edge only when another
+  SUPPLIED manifest declares that name. One arm per manifest kind (Cargo.toml,
+  package.json, go.mod); a path that is not a manifest is skipped, and an
+  unparseable manifest contributes no name and no edges rather than an error.
+  It is v5's crate_edge generalized: that relation was Cargo-only and keyed on
+  crate names.
 
 FILE FACT (--file-fact)
   Prepends one `file` row to the normal stream, carrying the content digest,

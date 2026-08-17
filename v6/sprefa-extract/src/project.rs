@@ -108,6 +108,8 @@ pub enum ProjectError {
     /// A supplied path does not sit under `project_root`, so it has no
     /// project-relative name and cannot join a module graph.
     DepsPathOutsideRoot(PathBuf),
+    /// Manifest edges were requested without `project_root`.
+    ManifestsNeedRoot,
 }
 
 impl std::fmt::Display for ProjectError {
@@ -127,6 +129,10 @@ impl std::fmt::Display for ProjectError {
                 f,
                 "{} is outside --project-root, so it has no project-relative name",
                 path.display()
+            ),
+            Self::ManifestsNeedRoot => write!(
+                f,
+                "package edges need --project-root: a package graph's node names are project-relative manifest paths"
             ),
         }
     }

@@ -50,7 +50,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::project::{read_inputs, ProjectError, ResolveRequest};
-use crate::types::FlatFact;
+use crate::types::{FlatFact, SpecifierKind};
 
 /// The extensions a bare or extensionless specifier may name, in the order
 /// TypeScript's own resolver tries them: TS sources before their JS twins, and
@@ -380,6 +380,8 @@ pub struct SpecifierRow<'a> {
     pub module: &'a str,
     /// The bound local name, which is what `symbols` counts.
     pub name: &'a str,
+    /// How the name entered scope; the edge's `kind` column.
+    pub kind: SpecifierKind,
 }
 
 /// Fold module specifiers into file-to-file dependency edges: `src_path` writes
@@ -391,13 +393,19 @@ pub struct SpecifierRow<'a> {
 /// which is the same quantity the SCIP fold counts (distinct symbols) reached
 /// syntactically: `import {a, b} from './m'` is two.
 ///
+/// THE EDGE KEY IS (src, dst, kind). One pair carries one row per import form,
+/// because `import x from './m'` and `export {y} from './m'` are different
+/// facts about the same pair and a single row would have to drop one of them.
+/// The per-pair total is the sum over its kinds, which a consumer can still ask
+/// for; the reverse (recovering the forms from one summed row) is impossible.
+///
 /// A self-edge is dropped, matching the SCIP fold.
 pub fn fold_edges(
     rows: &[SpecifierRow],
     universe: &BTreeSet<String>,
     tsconfig: &TsconfigPaths,
 ) -> Vec<FlatFact> {
-    let mut crossings: BTreeMap<(&str, String), BTreeSet<&str>> = BTreeMap::new();
+    let mut crossings: BTreeMap<(&str, String, &'static str), BTreeSet<&str>> = BTreeMap::new();
     for row in rows {
         let (Some(target), _) = resolve_specifier(row.from_path, row.module, universe, tsconfig)
         else {
@@ -407,16 +415,47 @@ pub fn fold_edges(
             continue;
         }
         crossings
-            .entry((row.from_path, target))
+            .entry((row.from_path, target, row.kind.as_str()))
             .or_default()
             .insert(row.name);
     }
     crossings
         .into_iter()
-        .map(|((src, dst), names)| FlatFact::FileEdgeRow {
+        .map(|((src, dst, kind), names)| FlatFact::FileEdgeRow {
             src_path: src.to_string(),
             dst_path: dst,
+            kind: kind.to_string(),
             symbols: names.len() as u32,
+        })
+        .collect()
+}
+
+/// Fold the specifiers that produced NO edge into `file_unresolved` rows, keyed
+/// on (file, module, policy).
+///
+/// v5's `module_unresolved`. Every named stop is here, including the two that
+/// are deliberate (`node_modules_boundary`, `absolute_path`): a consumer asking
+/// which imports left the corpus has to be able to tell those from a broken
+/// relative path, and a dropped row answers neither question.
+pub fn fold_unresolved(
+    rows: &[SpecifierRow],
+    universe: &BTreeSet<String>,
+    tsconfig: &TsconfigPaths,
+) -> Vec<FlatFact> {
+    let mut stops: BTreeSet<(&str, &str, &'static str)> = BTreeSet::new();
+    for row in rows {
+        let (target, policy) = resolve_specifier(row.from_path, row.module, universe, tsconfig);
+        if target.is_some() {
+            continue;
+        }
+        stops.insert((row.from_path, row.module, policy.as_str()));
+    }
+    stops
+        .into_iter()
+        .map(|(src, module, reason)| FlatFact::FileUnresolvedRow {
+            src_path: src.to_string(),
+            module: module.to_string(),
+            reason: reason.to_string(),
         })
         .collect()
 }
@@ -456,11 +495,14 @@ pub fn diet_file_edges(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
                     from_path,
                     module: input.output.strings.lookup(specifier.module?),
                     name: input.output.strings.lookup(specifier.name),
+                    kind: specifier.kind,
                 })
             })
         })
         .collect();
-    Ok(fold_edges(&rows, &universe, &tsconfig))
+    let mut facts = fold_edges(&rows, &universe, &tsconfig);
+    facts.extend(fold_unresolved(&rows, &universe, &tsconfig));
+    Ok(facts)
 }
 
 /// Serialize diet file edges to sorted JSONL lines.
@@ -470,7 +512,7 @@ pub fn diet_file_edges_jsonl(request: &ResolveRequest) -> Result<Vec<String>, Pr
 
 /// One supplied path as a project-relative slash path. Canonicalized on both
 /// sides so a relative argument and an absolute root still meet.
-fn project_relative(path: &str, root_absolute: &Path) -> Result<String, ProjectError> {
+pub(crate) fn project_relative(path: &str, root_absolute: &Path) -> Result<String, ProjectError> {
     let absolute =
         std::fs::canonicalize(path).map_err(|err| ProjectError::Read(PathBuf::from(path), err))?;
     absolute

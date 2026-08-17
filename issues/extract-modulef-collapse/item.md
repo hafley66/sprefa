@@ -1,16 +1,17 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-17
 type: task
-status: open
+status: done
 priority: normal
 epic: extract-port-closeout
 labels:
 - pkg:extract
-- needs-chris
+closed: 2026-08-17
+closed_by: modulef-driver
 ---
 
-# ModuleF is collapsed and flagged for human review
+# ModuleF is collapsed: fork C, decided and shipped
 
 ## Description
 
@@ -55,3 +56,30 @@ v5 distinguishes import / edge / unresolved / binding / crate_edge.
 ### 2026-08-16T19:52:24Z · @chris
 
 Deferred 2026-08-16: no call yet. User wants the port census absorbed first; the fold stands meanwhile. extract-module-plane-non-ts holds with it.
+
+### 2026-08-17T12:55:29Z · @modulef-driver
+
+FORK C LANDED 2026-08-17 by modulef-driver, on Chris's word: no new family, and the module-level distinctions come back on the WIRE, language-neutral.
+
+WHAT SHIPPED (v6/sprefa-extract):
+
+| record | columns | filler |
+|---|---|---|
+| file_edge | src_path, dst_path, kind, symbols | --deps fills kind from the SpecifierKind that bound the crossing; --scip-deps fills `unknown` |
+| file_unresolved | src_path, module, reason | --deps only; reason = the deps.rs Policy slug (node_modules_boundary, absolute_path, relative_unresolved). v5 name: module_unresolved |
+| package_edge | src_manifest, dst_manifest, kind | new --package-deps flag over Cargo.toml / package.json / go.mod. v5 name: crate_edge, which was Cargo-only and keyed on crate NAMES |
+| specifier | +imported | the one v5 module_binding column the row lacked: `import {inner as outer}` and a default import's `default` |
+
+THE EDGE KEY IS NOW (src, dst, kind). One pair carries one row per import form; the per-pair total is the sum over kinds, and the reverse (recovering forms from a summed row) was impossible. Measured on the fixture: `./lib/bare` named + namespace, `./lib/util.ts` named + default + reexport.
+
+ROTTED RECEIPTS in this card, corrected: the collapse block is types.rs:1027-1041 (this card cited :629-645), the plane roster is types.rs:13-18 (cited :17-19), the CallFAux specifier home is types.rs:570-585 (cited :497-503). All three now say collapsed by decision (fork C) and the "flagged for human review" wording is deleted.
+
+package_edge DIVERGES FROM v5 ON PURPOSE: v5's crate_edge was crate-name to crate-name, which needs a second dictionary to reach a file. The path key is the key file_edge already uses, so the two grains join directly.
+
+--scip-deps CANNOT fill kind and the schema says so: an index records resolved occurrences, never the import statement that bound the name. `unknown` is the index's property, not a gap in the fold.
+
+## Resolution
+
+### 2026-08-17T12:55:36Z · @modulef-driver
+
+Fork C, chosen by Chris 2026-08-17 and implemented in the same day: file_edge gains kind, file_unresolved and package_edge are new records, specifier gains imported. ModuleF stays collapsed and the sketch stays as the revival shape. Receipts in the note above.
