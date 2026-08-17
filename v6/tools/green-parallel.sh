@@ -41,6 +41,7 @@ PHASE_B=(
   "compile-speed"
   "plunit"
   "arm-census"
+  "rust-grade"
   "typecheck"
   "rtkq-golden:TSV2_PARITY_PORT=17813"
   "watch-scale"

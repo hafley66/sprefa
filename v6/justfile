@@ -497,9 +497,9 @@ green: conformance roundtrip text-door plunit prolog-lint typecheck tsv2-test im
 
 # everything, phased: scale-floor alone (its verdict is a wall reading), then
 # the memory leak test alone (its flatness check reddens under a load ramp),
-# then the gen-writers serially, then the rest 6-up. Same 30 legs, same
+# then the gen-writers serially, then the rest 6-up. Same 31 legs, same
 # verdicts, one ordered PASS/FAIL table.
-# (expect: GREEN ALL HOLDS: 30 legs, exit 0; ~177s vs ~254s one at a time)
+# (expect: GREEN ALL HOLDS: 31 legs, exit 0; ~177s vs ~254s one at a time)
 green-all:
     bash {{ v6 }}/tools/green-parallel.sh
 
