@@ -1909,9 +1909,9 @@ pub enum FlatFact {
     // with different fields. Two shapes under one tag is the silent-drift
     // hazard every golden here exists to stop. Both v5 rows are one consumer
     // join off `--scip-facts --scip-record scip_occurrence`, which carries the
-    // spans and every role bit; `scip_binding` additionally needs the source
-    // slice at those spans, which the consumer holds and this crate would have
-    // to re-read.
+    // spans and every role bit; `scip_binding`'s source-slice need is answered
+    // by that row's optional `text` field under --occurrence-text (issue
+    // extract-scip-vocab-occurrence-binding).
     /// v5 `scip_def(symbol, file, repo)`: a symbol's defining document.
     #[serde(rename = "scip_def")]
     ScipDefRow {
@@ -2025,6 +2025,12 @@ pub enum FlatFact {
         /// emitted no enclosing range or the range did not convert.
         enclosing_start: Option<u32>,
         enclosing_end: Option<u32>,
+        /// The source slice at the occurrence's byte span, lossy-utf8. Absent
+        /// (not null, not empty) unless `--occurrence-text` asked for it and
+        /// the span fits the corpus bytes; the answer to v5 scip_binding's
+        /// `local_name` (issue extract-scip-vocab-occurrence-binding).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
     },
     /// One range-specific documentation string on an occurrence
     /// (scip.proto `Occurrence.override_documentation`). `pos` is its index in

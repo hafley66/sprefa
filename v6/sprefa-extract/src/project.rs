@@ -80,6 +80,9 @@ pub struct ResolveRequest<'a> {
     /// Which SCIP record kinds `scip_facts` produces. Full passthrough by
     /// default; narrowing is the demand-side lever for its measured cost.
     pub scip_records: ScipRecords,
+    /// Whether `scip_occurrence` rows also carry the source slice at their
+    /// span. Off by default so a plain `--scip-facts` run stays byte-identical.
+    pub occurrence_text: bool,
 }
 
 /// Why a project resolve could not run. Distinct from a resolve that ran and
@@ -228,6 +231,7 @@ pub fn scip_facts(request: &ResolveRequest) -> Result<Vec<FlatFact>, ProjectErro
         &index,
         &reader,
         &request.scip_records,
+        request.occurrence_text,
     ))
 }
 
@@ -386,6 +390,7 @@ pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
         scip: ScipMode::Off,
         project_root: None,
         scip_records: ScipRecords::all(),
+        occurrence_text: false,
     })
 }
 
