@@ -781,6 +781,7 @@ fn project_df(
     sink: &mut FamilyBundle<DfF>,
 ) {
     kt_walk_fns(root, src, file, strings, sink);
+    sink.aux.nests = crate::types::compute_nests(&sink.nodes, &sink.aux.loops);
 }
 
 /// Walk every function_declaration, lifting each body. Port of v5
@@ -1213,13 +1214,50 @@ fn flow_kt(
             DfNodeKind::Lit,
             None,
         )),
-        // Everything else (when-arms, if/for/while statements, elvis, index/
-        // range expressions, ...): recurse conservatively, surfacing the last
-        // value-bearing child. NOTE: v5 kotlin's for/while/do-while arms mint
-        // no df node - the loop fact is dropped aux and the loop variable is
-        // never scope-bound - so they belong to this same fallback.
+        // `for (x in coll) body`: the loop row only. v5's own var lookup takes the
+        // first named `simple_identifier` child, which IS the collection here.
+        "for_statement" => {
+            let mut cursor = node.walk();
+            let mut var = None;
+            let mut collection = None;
+            let mut after_in = false;
+            for child in node.children(&mut cursor) {
+                match child.kind() {
+                    "variable_declaration" => var = Some(kt_text(child, src).to_string()),
+                    "in" => after_in = true,
+                    "control_structure_body" | ")" | "(" => {}
+                    _ if after_in && collection.is_none() => {
+                        collection = Some(kt_text(child, src).to_string());
+                    }
+                    _ => {}
+                }
+            }
+            kt_loop_row(sink, node, var, collection);
+            kt_recurse_children(node, src, fn_sym, strings, scope, sink)
+        }
+        "while_statement" | "do_while_statement" => {
+            kt_loop_row(sink, node, None, None);
+            kt_recurse_children(node, src, fn_sym, strings, scope, sink)
+        }
+        // Everything else (when-arms, if statements, elvis, index/range
+        // expressions, ...): recurse conservatively, last value-bearing child.
         _ => kt_recurse_children(node, src, fn_sym, strings, scope, sink),
     }
+}
+
+/// One loop row. v5 kotlin mints NO df node for a loop and never scope-binds the
+/// loop variable (kotlin.rs:561,573); only the aux row lands.
+fn kt_loop_row(
+    sink: &mut FamilyBundle<DfF>,
+    node: tree_sitter::Node,
+    var: Option<String>,
+    collection: Option<String>,
+) {
+    sink.aux.loops.push(crate::types::DfLoop {
+        span: node_span(node),
+        var,
+        collection,
+    });
 }
 
 /// Walk all children of a node conservatively, surfacing the last
