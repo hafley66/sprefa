@@ -409,9 +409,14 @@ const TAG_PREFIX: &str = "refs/tags/";
 static GIT_REFS: LazyLock<GitRefExecutor> = LazyLock::new(GitRefExecutor::default);
 static GIT_REVISIONS: LazyLock<GitRevisionExecutor> = LazyLock::new(GitRevisionExecutor::default);
 
+/// The ref store as stat data: one entry per loose ref file, plus `packed-refs`
+/// and `HEAD`. A missing file contributes no entry, so its arrival or departure
+/// moves the witness.
+type RefStoreWitness = BTreeMap<String, (u128, u64)>;
+
 #[derive(Default)]
 pub struct GitRefExecutor {
-    snapshots: Mutex<BTreeMap<String, Arc<soopy::RefSnapshot>>>,
+    snapshots: Mutex<BTreeMap<String, (RefStoreWitness, Arc<soopy::RefSnapshot>)>>,
 }
 
 // `kind` names the ref's namespace, never the Git object type: every branch tip
@@ -438,17 +443,62 @@ fn ref_target(observation: &soopy::RefObservation) -> String {
         .to_string()
 }
 
+/// Stat every file git rewrites when a ref moves. Stat-only by design: the
+/// snapshot this guards costs three `git` subprocesses, so a witness that spawns
+/// anything would cost more than the work it saves.
+fn ref_store_witness(git_dir: &std::path::Path, common_dir: &std::path::Path) -> RefStoreWitness {
+    let mut witness = RefStoreWitness::new();
+    let mut record = |path: &std::path::Path| {
+        let Ok(metadata) = path.metadata() else {
+            return;
+        };
+        if !metadata.is_file() {
+            return;
+        }
+        let stamp = metadata
+            .modified()
+            .ok()
+            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |since| since.as_nanos());
+        witness.insert(path.to_string_lossy().into_owned(), (stamp, metadata.len()));
+    };
+    record(&git_dir.join("HEAD"));
+    record(&common_dir.join("packed-refs"));
+    let mut pending = vec![common_dir.join("refs")];
+    while let Some(directory) = pending.pop() {
+        let Ok(listing) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in listing.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                record(&path);
+            }
+        }
+    }
+    witness
+}
+
 impl GitRefExecutor {
     fn snapshot(&self, host: &str, repo: &str) -> Result<Arc<soopy::RefSnapshot>, HostError> {
         let named = |message: String| HostError {
             host: host.to_string(),
             message,
         };
-        if let Some(memo) = self.snapshots.lock().expect("git ref memo").get(repo) {
-            return Ok(memo.clone());
-        }
         let repository = soopy::discover(std::path::PathBuf::from(repo))
             .map_err(|error| named(format!("open repository {repo}: {error}")))?;
+        // A witness that cannot be built is empty, which never matches a stored
+        // one, which re-enumerates. That is the safe direction.
+        let witness = soopy::git_dirs(&repository.root)
+            .map(|(git_dir, common_dir)| ref_store_witness(&git_dir, &common_dir))
+            .unwrap_or_default();
+        if let Some((stored, memo)) = self.snapshots.lock().expect("git ref memo").get(repo) {
+            if *stored == witness {
+                return Ok(memo.clone());
+            }
+        }
         let query = soopy::RefQuery {
             repository: repository.identity.clone(),
             namespace: Arc::from(""),
@@ -463,7 +513,7 @@ impl GitRefExecutor {
         self.snapshots
             .lock()
             .expect("git ref memo")
-            .insert(repo.to_string(), snapshot.clone());
+            .insert(repo.to_string(), (witness, snapshot.clone()));
         Ok(snapshot)
     }
 }
