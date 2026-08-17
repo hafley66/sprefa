@@ -29,8 +29,8 @@ use std::collections::BTreeSet;
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, CstF, DfArg, DfEdgeKind, DfF, DfField, DfNodeKind,
-    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEdgeCandidate, TypeEdgeKind,
-    TypeEntityKind, TypeF, TypeSig,
+    DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate,
+    TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -614,6 +614,105 @@ fn project_call(
 ) {
     go_walk_call_defs(root, src, strings, sink, false);
     go_walk_call_sites(root, src, strings, sink);
+    go_module_specifiers(root, src, strings, sink);
+}
+
+// ── module specifiers (CallFAux.specifiers) ─────────────────────────────────
+// @comment-ok: the kind/name/module contract, pinned row-for-row by
+// tests/25_go_specifiers.rs. `Default` and `Reexport` are unreachable from go.
+//
+// | go source                 | kind       | name  | module          |
+// |---------------------------|------------|-------|-----------------|
+// | `import "fmt"`            | Named      | fmt   | None            |
+// | `"os"` inside a block     | Named      | os    | None            |
+// | `alias "path/filepath"`   | Named      | alias | path/filepath   |
+// | `_ "embed"`               | SideEffect | embed | None            |
+// | `. "strings"`             | Namespace  | strings | None        |
+//
+// The path-only form carries the path in `name` with `module` None
+// (`src/types.rs:485-492` names go explicitly). Only the aliased form sets
+// `module` to Some, because it is the only form where the path would
+// otherwise be lost. v5 parses `_` and `.` in the same slot as an alias
+// (`src/graph/modgraph/go.rs:37-59`).
+
+/// Go module specifiers: one row per `import_spec`. Rides the one tree-sitter
+/// parse `project_call` already holds. v5 reads the same facts with regexes
+/// over stripped text (`src/graph/modgraph/go.rs:37-59`).
+fn go_module_specifiers(
+    root: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut rows = Vec::new();
+    go_walk_import_specs(root, src, strings, &mut rows);
+    sink.aux.specifiers.extend(rows);
+}
+
+/// Recurse the tree for every `import_spec` node, appending one row each.
+fn go_walk_import_specs(
+    node: tree_sitter::Node,
+    src: &[u8],
+    strings: &mut Strings,
+    rows: &mut Vec<Specifier>,
+) {
+    if node.kind() == "import_spec" {
+        let span = Span {
+            start: node.start_byte() as u32,
+            len: (node.end_byte() - node.start_byte()) as u32,
+        };
+        let path = path_of_import_spec(node, src);
+        let (kind, name, module) = match leading_name(node) {
+            Some(name_node) if name_node.kind() == "package_identifier" => (
+                SpecifierKind::Named,
+                go_text(name_node, src).to_string(),
+                Some(path),
+            ),
+            Some(name_node) if name_node.kind() == "blank_identifier" => {
+                (SpecifierKind::SideEffect, path, None)
+            }
+            Some(name_node) if name_node.kind() == "dot" => (SpecifierKind::Namespace, path, None),
+            _ => (SpecifierKind::Named, path, None),
+        };
+        rows.push(Specifier {
+            span,
+            name: strings.intern(&name),
+            kind,
+            module: module.map(|text| strings.intern(&text)),
+        });
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        go_walk_import_specs(child, src, strings, rows);
+    }
+}
+
+/// Optional leading name node of an `import_spec` (alias / blank / dot), if
+/// present.
+fn leading_name(node: tree_sitter::Node) -> Option<tree_sitter::Node> {
+    node.named_children(&mut node.walk()).find(|child| {
+        matches!(
+            child.kind(),
+            "package_identifier" | "blank_identifier" | "dot"
+        )
+    })
+}
+
+/// Path text of an `import_spec` from its `interpreted_string_literal_content`
+/// descendant (quotes excluded).
+fn path_of_import_spec(node: tree_sitter::Node, src: &[u8]) -> String {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind() == "interpreted_string_literal" {
+            let mut inner = child.walk();
+            for grandchild in child.named_children(&mut inner) {
+                if grandchild.kind() == "interpreted_string_literal_content" {
+                    return go_text(grandchild, src).to_string();
+                }
+            }
+        }
+    }
+    String::new()
 }
 
 /// The def span covers the whole callable body `[child.start, body.end)` for
