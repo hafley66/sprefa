@@ -1,0 +1,8 @@
+# PAIR option_col x aggregate. The coverage matrix reads dl_view/*.dl6, which
+# DROPS `: type` annotations and whole `rel` lines, so the type plane is a
+# blind spot there. Probed directly instead: can a numeric aggregate read a
+# column that is option(int)?
+rel tree(tree_id: int, grams: option(int)).
+rel total(grams: int).
+
+total(sum(Grams)) <- tree(_TreeId, Grams).

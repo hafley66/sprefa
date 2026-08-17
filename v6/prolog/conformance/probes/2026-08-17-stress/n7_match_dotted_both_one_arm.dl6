@@ -1,0 +1,8 @@
+# NARROW for p08: DOTTED source AND DOTTED arm head, single arm.
+# n5 (flat source, dotted arm) and n6 (dotted source, flat arm) both compile.
+rel orchard.resp(tree_id: int, status: int) log keep(all).
+rel orchard.ok(tree_id: int).
+
+match orchard.resp(TreeId, Status) (
+  ; Status == 200 |-> orchard.ok(TreeId)
+).

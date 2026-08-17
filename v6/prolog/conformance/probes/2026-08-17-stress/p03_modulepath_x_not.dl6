@@ -1,0 +1,9 @@
+# PAIR module_path x not. Negation over a dotted rel. Corpus negates flat rels
+# only; the module-path fixtures are all positive reads.
+rel orchard.tree(tree_id: int).
+rel orchard.picked(tree_id: int).
+rel standing(tree_id: int).
+
+standing(TreeId) <-
+  orchard.tree(TreeId),
+  not(orchard.picked(TreeId)).

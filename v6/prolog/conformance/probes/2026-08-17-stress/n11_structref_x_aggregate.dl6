@@ -1,0 +1,7 @@
+# NARROW for p21: same question for a STRUCT reference column, whose stored
+# value is a dictionary id. Summing it would sum dictionary ids.
+rel span(start: int, end: int).
+rel finding(finding_id: int, at: span).
+rel total(n: int).
+
+total(sum(At)) <- finding(_FindingId, At).

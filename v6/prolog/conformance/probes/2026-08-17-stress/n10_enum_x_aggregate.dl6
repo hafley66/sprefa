@@ -1,0 +1,8 @@
+# NARROW for p21: is the aggregate hole specific to option(int), or does any
+# enum-typed column sum? option(int) desugars to the enum __opt_int, so a hand
+# enum should behave the same way.
+rel grade_v(low(n: int) ; high(n: int)).
+rel tree(tree_id: int, grade: grade_v).
+rel total(n: int).
+
+total(sum(Grade)) <- tree(_TreeId, Grade).

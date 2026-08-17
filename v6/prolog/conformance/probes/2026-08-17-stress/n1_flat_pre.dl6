@@ -1,0 +1,9 @@
+# NARROW control for p02: identical program with the dot removed.
+rel counter(tree_id: int, total: int) key(1).
+rel tick_in(tree_id: int, amount: int) log keep(all).
+
+counter(TreeId, Next) <+
+  tick_in(TreeId, Amount),
+  pre(counter(TreeId, SoFar)),
+  Next := SoFar + Amount.
+counter(TreeId, 0) <+ tick_in(TreeId, _).

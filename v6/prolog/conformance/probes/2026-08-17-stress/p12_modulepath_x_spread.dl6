@@ -1,0 +1,8 @@
+# PAIR module_path x spread. The corpus's two loneliest live constructs
+# crossed: array fan-out out of a column on a dotted rel into a dotted head.
+rel orchard.spec(patch: text, body: json).
+rel orchard.item(patch: text, n: int).
+
+orchard.item(Patch, N) <-
+  orchard.spec(Patch, Body),
+  decode(Body, {items: [... {n: N}]}).

@@ -1,0 +1,10 @@
+# PAIR spread x not. Negation anti-joined against a rel the spread fans into,
+# in the same rule as the fan-out.
+rel doc(id: int, body: json).
+rel muted(n: int).
+rel live_item(id: int, n: int).
+
+live_item(Id, N) <-
+  doc(Id, Body),
+  decode(Body, {items: [... {n: N: int}]}),
+  not(muted(N)).

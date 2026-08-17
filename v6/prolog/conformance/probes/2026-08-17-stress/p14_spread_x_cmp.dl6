@@ -1,0 +1,10 @@
+# PAIR spread x cmp. A comparison guard filtering a typed capture that the
+# spread fanned out. Tests that the fan-out's per-element type survives to the
+# guard's type check.
+rel doc(id: int, body: json).
+rel big_item(id: int, n: int).
+
+big_item(Id, N) <-
+  doc(Id, Body),
+  decode(Body, {items: [... {n: N: int}]}),
+  N > 100.

@@ -1,0 +1,9 @@
+# PAIR spread x edge_rule. Array fan-out inside an EDGE body. Expected to be a
+# named stop (edge_body_needs_json_destructure); recorded so the pair has a
+# receipt rather than an assumption.
+rel doc(id: int, body: json) log keep(all).
+rel item(id: int, n: int) log keep(all).
+
+item(Id, N) <+
+  doc(Id, Body),
+  decode(Body, {items: [... {n: N}]}).

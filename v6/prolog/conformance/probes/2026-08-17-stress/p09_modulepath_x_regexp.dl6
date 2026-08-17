@@ -1,0 +1,7 @@
+# PAIR module_path x regexp. A regexp guard over a column of a dotted rel.
+rel orchard.tree(tree_id: int, label: text).
+rel tagged(tree_id: int).
+
+tagged(TreeId) <-
+  orchard.tree(TreeId, Label),
+  regexp(Label, "^north-").

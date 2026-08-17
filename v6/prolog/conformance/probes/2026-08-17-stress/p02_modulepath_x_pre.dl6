@@ -1,0 +1,10 @@
+# PAIR module_path x pre. An occurrence-ordered keyed fold whose register is a
+# dotted rel. No corpus fixture puts pre/1 around a module-path atom.
+rel orchard.counter(tree_id: int, total: int) key(1).
+rel tick_in(tree_id: int, amount: int) log keep(all).
+
+orchard.counter(TreeId, Next) <+
+  tick_in(TreeId, Amount),
+  pre(orchard.counter(TreeId, SoFar)),
+  Next := SoFar + Amount.
+orchard.counter(TreeId, 0) <+ tick_in(TreeId, _).

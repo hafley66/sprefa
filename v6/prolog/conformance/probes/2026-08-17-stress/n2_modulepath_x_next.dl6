@@ -1,0 +1,5 @@
+# NARROW: does the rel_atom wrapper gap reach next/1 too?
+rel orchard.tree(tree_id: int) log keep(all).
+rel seen(tree_id: int) log keep(all).
+
+seen(TreeId) <+ next(orchard.tree(TreeId)).

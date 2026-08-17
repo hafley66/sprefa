@@ -1,0 +1,3 @@
+# PAIR: aggregate x typed columns. Baseline smoke; the corpus covers this.
+rel spend(team: text, item: text, cost: int).
+budget(Team, sum(Cost)) <- spend(Team, _Item, Cost).

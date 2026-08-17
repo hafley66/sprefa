@@ -1,0 +1,10 @@
+# PAIR module_path x sh_decl. A shell host read from a dotted rel and written
+# into a dotted head. No corpus fixture mixes hosts with module paths.
+rel orchard.tree(tree_id: int, grams: int).
+rel orchard.weighed(tree_id: int, label: text).
+
+sh weigh(tree_id: int, grams: int) -> (label: text) = `echo {tree_id} {grams}`.
+
+orchard.weighed(TreeId, Label) <-
+  orchard.tree(TreeId, Grams),
+  weigh(TreeId, Grams, Label).

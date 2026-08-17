@@ -1,0 +1,7 @@
+# PAIR edge_rule x literal-in-trigger, minimal. The door split
+# door_split_trigger_literal.pl pins: the oracle runs this, the compiler stops
+# at trigger_arg_not_var. Reduced so the split reads in four lines.
+rel resp(endpoint: text, status: int, tag: text) log keep(all).
+rel cache_view(endpoint: text, tag: text) key(1).
+
+cache_view(Endpoint, Tag) <+ resp(Endpoint, 200, Tag).

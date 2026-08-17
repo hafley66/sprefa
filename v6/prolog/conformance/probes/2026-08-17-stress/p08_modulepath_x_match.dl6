@@ -1,0 +1,8 @@
+# PAIR module_path x match. The match block's source is a dotted rel and one
+# arm head is dotted too.
+rel orchard.resp(tree_id: int, status: int) log keep(all).
+
+match orchard.resp(TreeId, Status) (
+  ; Status == 200 |-> orchard.ok(TreeId)
+  ; Status >= 400 |-> orchard.bad(TreeId, Status)
+).

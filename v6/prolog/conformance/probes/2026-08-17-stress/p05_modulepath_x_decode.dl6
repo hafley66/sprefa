@@ -1,0 +1,8 @@
+# PAIR module_path x decode+json_obj. json destructuring of a column that lives
+# on a dotted rel. Corpus decodes flat rels only.
+rel orchard.spec(tree_id: int, body: json).
+rel graded(tree_id: int, grade: text).
+
+graded(TreeId, Grade) <-
+  orchard.spec(TreeId, Body),
+  decode(Body, {grade: Grade}).

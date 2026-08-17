@@ -1,0 +1,8 @@
+# PAIR enum_decl x edge_rule+keyed. CLAUDE.md's open row says a top-level enum
+# rel already IS a reusable named type. Probed here as the state-machine idiom:
+# a keyed register whose state column is that named enum, written from an edge.
+rel phase_v(idle(since: int) ; fetching(started: int)).
+rel phase(endpoint: text, state: phase_v) key(1).
+rel poll_due(endpoint: text, at: int) log keep(all).
+
+phase(Endpoint, fetching(At)) <+ poll_due(Endpoint, At).

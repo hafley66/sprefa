@@ -1,0 +1,6 @@
+# NARROW for p08: a DOTTED head with no `rel` declaration of its own.
+# A FLAT derived head needs no declaration (the compiler synthesises one).
+# p08 differs from n7 only in that its arm heads carry no declaration.
+rel orchard.tree(tree_id: int).
+
+orchard.derived(TreeId) <- orchard.tree(TreeId).

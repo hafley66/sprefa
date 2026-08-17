@@ -1,0 +1,10 @@
+# PAIR module_path x coalesce. The total read over a dotted source. coalesce
+# expands to two clauses, one of them negated, so this also crosses the
+# expander's own not(...) rewrite with path resolution.
+rel orchard.tree(tree_id: int).
+rel orchard.label(tree_id: int, label: text).
+rel tree_label(tree_id: int, label: text).
+
+tree_label(TreeId, Label) <-
+  orchard.tree(TreeId),
+  coalesce(orchard.label(TreeId, Label), 'unlabelled').

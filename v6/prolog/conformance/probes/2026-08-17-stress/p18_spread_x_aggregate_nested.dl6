@@ -1,0 +1,9 @@
+# PAIR spread x aggregate, at DEPTH 2. pr_size_decodes_files_and_rolls_up
+# already crosses a top-level spread with an aggregate; nothing rolls up a
+# spread nested one object deep. Two spreads in one pattern is the stress.
+rel doc(id: int, body: json).
+rel roll(id: int, total: int).
+
+roll(Id, sum(N)) <-
+  doc(Id, Body),
+  decode(Body, {groups: [... {items: [... {n: N: int}]}]}).
