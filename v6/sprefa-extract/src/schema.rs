@@ -27,6 +27,9 @@ RECORD SHAPES
   record=arg    family=df                  call={start,end}   pos=<i64>  arg={start,end}
   record=df_field  family=df               owner={start,end}  name=<string>  value={start,end}
   record=df_lit    family=df               node={start,end}   kind=<lit|template|concat>  text=<string>
+  record=df_loop   family=df               span={start,end}   var=<string|null>  collection=<string|null>
+  record=df_nest   family=df               call={start,end}   loop={start,end}   depth=<u32>  collection=<string|null>
+  record=df_allocates  family=df           owner={start,end}
   record=site   family=call                span={start,end}   callee=<name>  callee_path=<string|null>
   record=reference  family=call            span={start,end}   functor=<name/arity>  position=<goal|head_arg|term_arg>
   record=const  family=type                owner={start,end}  field=<string|null>  text=<string>  kind=<lit|template>

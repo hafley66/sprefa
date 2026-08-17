@@ -325,7 +325,10 @@ fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
             + bundle.aux.params.len()
             + bundle.aux.args.len()
             + bundle.aux.fields.len()
-            + bundle.aux.lits.len(),
+            + bundle.aux.lits.len()
+            + bundle.aux.loops.len()
+            + bundle.aux.nests.len()
+            + bundle.aux.allocates.len(),
     );
     for node in &bundle.nodes {
         out.push(FlatFact::Node {
@@ -382,6 +385,30 @@ fn flatten_df(bundle: &FamilyBundle<DfF>, strings: &Strings) -> Vec<FlatFact> {
             node: SpanOut::new(node.span.start, node.span.end()),
             kind: lit.kind.to_string(),
             text: lit.text.clone(),
+        });
+    }
+    for loop_row in &bundle.aux.loops {
+        out.push(FlatFact::DfLoop {
+            family: DfF::TAG,
+            span: SpanOut::new(loop_row.span.start, loop_row.span.end()),
+            var: loop_row.var.clone(),
+            collection: loop_row.collection.clone(),
+        });
+    }
+    for nest in &bundle.aux.nests {
+        let call = bundle.node(nest.call);
+        out.push(FlatFact::DfNest {
+            family: DfF::TAG,
+            call: SpanOut::new(call.span.start, call.span.end()),
+            loop_span: SpanOut::new(nest.loop_span.start, nest.loop_span.end()),
+            depth: nest.depth,
+            collection: nest.collection.clone(),
+        });
+    }
+    for allocates in &bundle.aux.allocates {
+        out.push(FlatFact::DfAllocates {
+            family: DfF::TAG,
+            owner: SpanOut::new(allocates.owner.start, allocates.owner.end()),
         });
     }
     out

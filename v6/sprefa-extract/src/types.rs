@@ -620,6 +620,37 @@ pub struct DfLit {
     pub text: String,
 }
 
+/// Port of v5 `LoopFact` (src/graph/typegraph/mod.rs:390-397); lines become the
+/// byte span, `fn_sym` drops out (span containment carries it). None == v5 `""`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfLoop {
+    pub span: Span,
+    pub var: Option<String>,
+    /// The iterated expression's raw source slice. v5 leaves this empty at every
+    /// push site; its own `NestFact` comment calls that "until extractors fill it".
+    pub collection: Option<String>,
+}
+
+/// Port of v5 `NestFact` (src/graph/typegraph/mod.rs:405-410). `loop_span`
+/// replaces v5's `"{file}:{start}"` loop_id; the file is the row's own file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfNest {
+    pub call: NodeRef,
+    pub loop_span: Span,
+    /// 1 = the outermost enclosing loop.
+    pub depth: u32,
+    pub collection: Option<String>,
+}
+
+/// One callable whose body builds a collection, RUST ONLY (v5 fills
+/// `allocators` at rust/mod.rs:1149 and :1176 and nowhere else).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DfAllocates {
+    /// The fn/method item's span, or the closure's when the allocating call sits
+    /// in one: v5 keys on `fn_sym`, which a closure rebinds to its `lam_sym`.
+    pub owner: Span,
+}
+
 /// DfF side-channel rows that cannot be represented as uniform node/edge rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DfFAux {
@@ -627,11 +658,48 @@ pub struct DfFAux {
     pub args: Vec<DfArg>,
     pub fields: Vec<DfField>,
     pub lits: Vec<DfLit>,
+    pub loops: Vec<DfLoop>,
+    pub nests: Vec<DfNest>,
+    pub allocates: Vec<DfAllocates>,
     /// Pending (node, start, end, kind) spans for `template`/`concat` rows,
     /// whose text is a source SLICE the per-node lift doesn't hold. The ts
     /// DfF projector drains this into `lits` once, at the end of the walk, where
     /// the file content is in hand (the same shape as v5's `lit_spans`).
     pub lit_spans: Vec<(NodeRef, u32, u32, &'static str)>,
+    /// Pending `(index into loops, start, end)`, drained into
+    /// `loops[index].collection` by the ts and rust projectors (`lit_spans` shape).
+    pub loop_collection_spans: Vec<(usize, u32, u32)>,
+    /// Scratch allocator-call spans, claimed by the INNERMOST enclosing callable:
+    /// the rust closure arm and `project_df` roll their range up and truncate.
+    pub allocator_hits: Vec<Span>,
+}
+
+/// Port of v5 `compute_nests` (src/graph/typegraph/mod.rs:872-905). Byte-span
+/// containment replaces v5's `fn_sym` + `::closure::` ancestry test (:876-884).
+pub fn compute_nests(nodes: &[Node<DfF>], loops: &[DfLoop]) -> Vec<DfNest> {
+    let mut out = Vec::new();
+    let mut enclosing: Vec<&DfLoop> = Vec::new();
+    for (index, node) in nodes.iter().enumerate() {
+        // `new` nodes count too: a constructor in a loop allocates per iteration.
+        if !matches!(node.kind, DfNodeKind::CallRes | DfNodeKind::New) {
+            continue;
+        }
+        enclosing.clear();
+        enclosing.extend(loops.iter().filter(|enclosing_loop| {
+            enclosing_loop.span.start <= node.span.start
+                && node.span.end() <= enclosing_loop.span.end()
+        }));
+        enclosing.sort_by_key(|enclosing_loop| enclosing_loop.span.start);
+        for (rank, enclosing_loop) in enclosing.iter().enumerate() {
+            out.push(DfNest {
+                call: NodeRef(index as u32),
+                loop_span: enclosing_loop.span,
+                depth: rank as u32 + 1,
+                collection: enclosing_loop.collection.clone(),
+            });
+        }
+    }
+    out
 }
 
 /// df_node kind. 23 variants.
@@ -1758,6 +1826,30 @@ pub enum FlatFact {
         kind: String,
         text: String,
     },
+    /// DfF loop: the loop's own span, its variable, and the iterated collection
+    /// as written. `var`/`collection` are null where the form names neither.
+    #[serde(rename = "df_loop")]
+    DfLoop {
+        family: FamilyTag,
+        span: SpanOut,
+        var: Option<String>,
+        collection: Option<String>,
+    },
+    /// DfF loop nest: one call/new node, an enclosing loop, and that loop's rank
+    /// in the nest (1 = outermost).
+    #[serde(rename = "df_nest")]
+    DfNest {
+        family: FamilyTag,
+        call: SpanOut,
+        #[serde(rename = "loop")]
+        loop_span: SpanOut,
+        depth: u32,
+        collection: Option<String>,
+    },
+    /// DfF allocating callable: the fn/method/closure whose body builds a
+    /// collection. Rust only.
+    #[serde(rename = "df_allocates")]
+    DfAllocates { family: FamilyTag, owner: SpanOut },
     /// TypeF arrow-type sig: owner = callable span, slot = param/ret, pos, ty.
     Sig {
         family: FamilyTag,
@@ -2204,8 +2296,9 @@ pub enum FlatFact {
 //   resolved caller -> callee                     -> TS RATCHETED vs scip (4c-ii); GO RATCHETED vs scip-go (4d-ii-go); rust RATCHETED vs rust-analyzer-scip (4d-ii-rust); kotlin DEFERRED to the traits/codegen arc
 //   df aux (args/param_pos)                       [x]         [x]            [x]                 [x]
 //   df aux (fields)                               [x]         [x]            [x]                 [x]
-//   df aux (lits)                                 [x]         -              [x]                 -
-//   df aux (loops/nests)                          -> labels, follow-up
+//   df aux (lits)                                 [x]         [x]            [-] n/a (v5 go emits none)   [-] n/a (v5 kotlin emits none)
+//   df aux (loops/nests)                          [x]         [x]            [x]                 [x]
+//   df aux (allocates)                            [-] n/a (v5 ts emits none)   [x]   [-] n/a (v5 go emits none)   [-] n/a (v5 kotlin emits none)  // @comment-ok: the status table is one pre-existing prose run
 //   inter-procedural flow (FlowF)                 -> landed; the resolve_project dispatch is the follow-up  // @comment-ok: the status table is one pre-existing prose run
 //
 // LEAF INFRA (pure CPU; still this leaf): parallel dispatch (rayon, arena-per-

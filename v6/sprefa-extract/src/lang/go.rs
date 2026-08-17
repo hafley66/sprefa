@@ -742,8 +742,8 @@ fn go_walk_call_sites(
 //    (`{file}::function::{fn}::closure::{row}_{col}`, tree-sitter's 0-based
 //    row/col; methods root at `{file}::method::{Recv}.{m}`). No sym store:
 //    the name derives from the walk's containment path + the literal's start.
-//  - the enrichment aux: `args`, `fields`, `lits`, `param_pos`, `loops`,
-//    `nests`. The EDGES already carry every value flow.
+//  - the enrichment aux: `args`, `fields`, `lits`, `param_pos`. The EDGES
+//    already carry every value flow.
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Transient scope: a variable name -> its binding node (param or `let`).
@@ -751,8 +751,8 @@ type Scope = std::collections::HashMap<String, NodeRef>;
 
 /// Project the DfF family: each callable's body lifted to its value-flow graph.
 /// Port of v5 `go_dataflow_from` (the driver half). Unlike v5, no post-pass bumps
-/// (v6 stores bytes directly, not 0-based rows), and `loops`/`nests` aux is dropped.
-/// `file` roots each fn_sym (the closure value node's name derives from it).
+/// (v6 stores bytes directly, not 0-based rows). `file` roots each fn_sym (the
+/// closure value node's name derives from it).
 fn project_df(
     root: tree_sitter::Node,
     src: &[u8],
@@ -761,6 +761,7 @@ fn project_df(
     sink: &mut FamilyBundle<DfF>,
 ) {
     go_walk_fns(root, src, file, strings, sink);
+    sink.aux.nests = crate::types::compute_nests(&sink.nodes, &sink.aux.loops);
 }
 
 /// Walk every function/method declaration, lifting each body. Port of v5
@@ -1182,16 +1183,17 @@ fn flow_go(
             ))
         }
         // `for range/clause/cond { body }`: walk the header (binding the range
-        // variable when present), then walk the body. The loop FACT (span/var) is
-        // dropped aux. A for_statement's non-`body` child is at most ONE of {bare
-        // condition, `for_clause`, `range_clause`} per the grammar.
+        // variable when present), then walk the body. A for_statement's non-`body`
+        // child is at most ONE of {bare condition, `for_clause`, `range_clause`}.
         "for_statement" => {
             let mut loop_var = String::new();
+            let mut collection = None;
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 match child.kind() {
                     "range_clause" => {
                         if let Some(right) = child.child_by_field_name("right") {
+                            collection = Some(go_text(right, src).to_string());
                             flow_go(right, src, fn_sym, strings, scope, sink);
                         }
                         if let Some(left) = child.child_by_field_name("left") {
@@ -1237,6 +1239,14 @@ fn flow_go(
                     }
                 }
             }
+            sink.aux.loops.push(crate::types::DfLoop {
+                span: Span {
+                    start: start_byte,
+                    len: node.end_byte() as u32 - start_byte,
+                },
+                var: Some(loop_var.clone()).filter(|name| !name.is_empty()),
+                collection,
+            });
             if let Some(body) = node.child_by_field_name("body") {
                 flow_go(body, src, fn_sym, strings, scope, sink);
             }
