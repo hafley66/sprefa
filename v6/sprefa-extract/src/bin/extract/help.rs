@@ -134,13 +134,14 @@ instead and no facts are printed.";
 
 pub const FAMILY_LONG: &str = "\
 Which kinds of facts to extract, comma-separated: cst, type, call, df, cfg.
-Defaults to the first four. Unknown names are silently ignored; `type` and
-`types` are equivalent. `cfg` (intra-procedural control flow) is derived from
-the cst parse, so naming it turns cst on; rust, go, ts and kotlin have the
-kind_role rows it needs and every other language emits no cfg rows.
+Defaults to the first four. An unknown name is a named error, never a skip;
+`type` and `types` are equivalent. `cfg` (intra-procedural control flow) is
+derived from the cst parse, so naming it turns cst on; rust, go, ts and kotlin
+have the kind_role rows it needs and every other language emits no cfg rows.
 
 Under --resolve this instead picks which resolved edges to emit: `call` (the
-default) and/or `type`.
+default), `type` and/or `flow`, the inter-procedural value-flow join over the
+resolved call edges.
 
 Two special names are whole-project MODES, exclusive with the kinds above:
   scip       exact facts from the language's own compiler index over one ROOT

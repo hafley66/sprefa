@@ -342,7 +342,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_deref()
         .is_some_and(|families| families.iter().any(|family| family.trim() == "cfg"));
     if cli.bench {
-        bench(&path_str, &content, mask)?;
+        bench(&path_str, &content, mask, cfg)?;
     } else {
         stream(&path_str, &content, mask, cfg)?;
     }
@@ -454,6 +454,7 @@ fn stream_resolve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
         None => ResolveArms {
             call: true,
             types: false,
+            flow: false,
         },
         Some(families) => parse_arms(families)?,
     };
@@ -475,16 +476,17 @@ fn parse_arms(families: &[String]) -> Result<ResolveArms, String> {
         match family.trim() {
             "call" => arms.call = true,
             "type" | "types" => arms.types = true,
+            "flow" => arms.flow = true,
             other => {
                 return Err(format!(
                     "--family '{other}' is not a resolve arm; under --resolve only \
-                     'call' and 'type' are meaningful"
+                     'call', 'type' and 'flow' are meaningful"
                 ))
             }
         }
     }
-    if !arms.call && !arms.types {
-        return Err("--family selected no resolve arm".to_string());
+    if !arms.call && !arms.types && !arms.flow {
+        return Err("--family selected no resolve arm; name call, type or flow".to_string());
     }
     Ok(arms)
 }
@@ -532,7 +534,12 @@ fn stream(
     Ok(())
 }
 
-fn bench(path: &str, content: &[u8], mask: FamilyMask) -> Result<(), Box<dyn std::error::Error>> {
+fn bench(
+    path: &str,
+    content: &[u8],
+    mask: FamilyMask,
+    cfg: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let Some(src) = source_for(path) else {
         eprintln!("no source for {path}"); // @eprintln-ok: CLI-UX summary, not a diagnostic.
         return Ok(());
@@ -543,15 +550,26 @@ fn bench(path: &str, content: &[u8], mask: FamilyMask) -> Result<(), Box<dyn std
     let t = Instant::now();
     let facts = flatten(&out);
     let serial = t.elapsed();
+    // The cfg plane rides the SAME parse, so its timing is charged separately
+    // from extract rather than folded into it.
+    let (cfg_nodes, cfg_elapsed) = if cfg {
+        let t = Instant::now();
+        let nodes = cfg_bundle(path, &out, content).map_or(0, |bundle| bundle.nodes.len());
+        (nodes, Some(t.elapsed()))
+    } else {
+        (0, None)
+    };
     eprintln!(
-        "{}: extract {:?} serial {:?} (cst={} type={} call={} df={} facts={})",
+        "{}: extract {:?} serial {:?}{} (cst={} type={} call={} df={} cfg={} facts={})",
         src.name(),
         extract,
         serial,
+        cfg_elapsed.map_or(String::new(), |elapsed| format!(" cfg {elapsed:?}")),
         out.cst.as_ref().map_or(0, |b| b.nodes.len()),
         out.types.as_ref().map_or(0, |b| b.nodes.len()),
         out.call.as_ref().map_or(0, |b| b.nodes.len()),
         out.df.as_ref().map_or(0, |b| b.nodes.len()),
+        cfg_nodes,
         facts.len(),
     );
     Ok(())

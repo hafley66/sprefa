@@ -36,10 +36,10 @@ use crate::seams::{
 };
 use crate::shape::{content_id_of, ContentId, Span};
 use crate::source::{ExtractOutput, FamilyMask, Resolve, Source};
-use crate::types::{CallF, ProjectEdge, ScipError, ScipIndex, ScipSource, TypeF};
-use crate::wire::FlatFact;
+use crate::types::{flow_edges, CallF, ProjectEdge, ScipError, ScipIndex, ScipSource, TypeF};
+use crate::wire::{flatten_flow, FlatFact};
 
-/// Which phase-2 arms to run. Both default off at the type level so a caller
+/// Which phase-2 arms to run. All default off at the type level so a caller
 /// states its intent; the CLI defaults `call` on for backward compatibility.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ResolveArms {
@@ -49,6 +49,10 @@ pub struct ResolveArms {
     /// `Resolve<TypeF>`: resolved type reference edges. Implemented for TS, Go,
     /// Rust, dl6 and Kotlin; Prolog has no arm and is skipped, never dispatched.
     pub types: bool,
+    /// `FlowF`: the inter-procedural value-flow join over resolved call edges.
+    /// A pure join, so it needs the `call` resolve to have run and emits
+    /// whole-project edges rather than per-file rows.
+    pub flow: bool,
 }
 
 /// Where the Tier-1 SCIP index comes from, if anywhere.
@@ -187,14 +191,36 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
             .expect("fresh project scip index");
     }
 
+    // One resolve per input, shared by the `call` arm and the `flow` join: the
+    // N+1 law applied to work rather than to rows.
+    let resolved_calls: Vec<(ContentId, Vec<ProjectEdge<CallF>>)> =
+        if request.arms.call || request.arms.flow {
+            inputs
+                .iter()
+                .map(|input| {
+                    (
+                        input.blob.clone(),
+                        resolve_call_edges(&input.path, &input.output, &cx),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
     let mut facts = Vec::new();
-    for input in &inputs {
-        if request.arms.call {
-            facts.extend(call_facts(input, &inputs, &cx));
+    if request.arms.call {
+        for (input, (_, edges)) in inputs.iter().zip(resolved_calls.iter()) {
+            facts.extend(call_facts(input, &inputs, edges));
         }
+    }
+    for input in &inputs {
         if request.arms.types {
             facts.extend(type_facts(input, &inputs, &cx));
         }
+    }
+    if request.arms.flow {
+        facts.extend(flatten_flow(&flow_edges(&pairs, &resolved_calls)));
     }
     Ok(facts)
 }
@@ -377,15 +403,17 @@ pub fn scip_family_jsonl(request: &ScipFamilyRequest) -> Result<Vec<String>, Pro
 /// call to `helper` unresolvable here, and a real index resolves it through the
 /// import. That difference is the whole reason these are two names.
 ///
-/// Both arms run. `--resolve` remains the pre-existing spelling of the same
-/// pass and is byte-unchanged, including its narrower `call`-only default; this
-/// family is the labelled entry, not a replacement.
+/// The call and types arms run. `--resolve` remains the pre-existing spelling
+/// of the same pass and is byte-unchanged, including its narrower `call`-only
+/// default; this family is the labelled entry, not a replacement.
+// @comment-ok: one pre-existing diet_scip design note, edited by one line.
 pub fn diet_scip(paths: &[PathBuf]) -> Result<Vec<FlatFact>, ProjectError> {
     resolve_project(&ResolveRequest {
         paths,
         arms: ResolveArms {
             call: true,
             types: true,
+            flow: false,
         },
         scip: ScipMode::Off,
         project_root: None,
@@ -626,11 +654,15 @@ fn resolve_type_edges(
     }
 }
 
-fn call_facts(input: &ProjectInput, inputs: &[ProjectInput], cx: &ProjectCx) -> Vec<FlatFact> {
+fn call_facts(
+    input: &ProjectInput,
+    inputs: &[ProjectInput],
+    edges: &[ProjectEdge<CallF>],
+) -> Vec<FlatFact> {
     let Some(call) = input.output.call.as_ref() else {
         return Vec::new();
     };
-    resolve_call_edges(&input.path, &input.output, cx)
+    edges
         .iter()
         .filter_map(|edge| {
             let target = inputs.iter().find(|other| other.blob == edge.dst_blob)?;
