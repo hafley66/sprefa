@@ -34,8 +34,8 @@ use syn::{
 use super::astgrep::{AstGrepParser, CstProjector};
 use crate::family::{
     CallEdgeKind, CallF, CallKind, CallSite, ConstKind, ConstValue, CstF, DfArg, DfEdgeKind, DfF,
-    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, TypeEdgeCandidate,
-    TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
+    DfField, DfLit, DfNodeKind, DfParam, DocFact, DocTag, ProjectEdge, SigSlot, Specifier,
+    SpecifierKind, TypeEdgeCandidate, TypeEdgeKind, TypeEntityKind, TypeF, TypeSig,
 };
 use crate::rows::{Edge, FamilyBundle, Node};
 use crate::scip::{byte_range, definition_of, join_documents, site_occurrence};
@@ -1068,6 +1068,184 @@ fn project_call(
             callee_path: site.callee_path.map(|path| strings.intern(&path)),
         });
     }
+
+    module_specifiers(&parsed.items, line_starts, strings, sink);
+}
+
+// ── module specifiers (CallFAux.specifiers) ─────────────────────────────────
+// @comment-ok: the kind/name/module contract, pinned row-for-row by
+// tests/24_rust_specifiers.rs. `Default` and `SideEffect` are unreachable here.
+//
+// | rust source                 | kind      | name  | module     |
+// |-----------------------------|-----------|-------|------------|
+// | `use a::b;`                 | Named     | b     | a::b       |
+// | `use a::b as c;`            | Named     | c     | a::b       |
+// | `use a::{b, c};`            | Named x2  | b, c  | a::b, a::c |
+// | `use a::b::{self};`         | Named     | b     | a::b       |
+// | `use a::b::self;`           | Named     | b     | a::b       |
+// | `use a::*;`                 | Namespace | a     | a          |
+// | `pub use a::b;`             | Reexport  | b     | a::b       |
+// | `pub use a::*;`             | Reexport  | a     | a          |
+// | `mod foo;`                  | Named     | foo   | foo        |
+// | `#[path = "x.rs"] mod foo;` | Named     | foo   | x.rs       |
+// | `mod foo { ... }`           | NO ROW, items inside it still walked      |
+// | `extern crate a;`           | NO ROW                                    |
+
+/// `span` is the leaf's own tokens for a `use`, the whole item for a `mod`,
+/// where a `#[path]` attribute is part of that item.
+struct ModuleLeaf {
+    span: Span,
+    name: String,
+    kind: SpecifierKind,
+    module: String,
+}
+
+/// Rides the one syn parse `project_call` already holds. v5 read the same facts
+/// with regexes over comment-stripped text (`src/graph/modgraph/rust.rs:5-37`).
+fn module_specifiers(
+    items: &[syn::Item],
+    line_starts: &[u32],
+    strings: &mut Strings,
+    sink: &mut FamilyBundle<CallF>,
+) {
+    let mut leaves = Vec::new();
+    collect_module_leaves(items, line_starts, &mut leaves);
+    sink.aux
+        .specifiers
+        .extend(leaves.into_iter().map(|leaf| Specifier {
+            span: leaf.span,
+            name: strings.intern(&leaf.name),
+            kind: leaf.kind,
+            module: Some(strings.intern(&leaf.module)),
+        }));
+}
+
+/// Descends into inline `mod name { .. }` bodies: a `use` inside one is a use.
+/// A `mod` decl is Named at any visibility (`src/graph/modgraph/rust.rs:65,92`).
+fn collect_module_leaves(items: &[syn::Item], line_starts: &[u32], out: &mut Vec<ModuleLeaf>) {
+    for item in items {
+        match item {
+            syn::Item::Use(use_item) => {
+                // v5's `rust_use_is_reexport` line check (`modgraph/rust.rs:20-30`),
+                // read off the parsed visibility so `pub(in ..)` needs no regex.
+                let reexport = !matches!(use_item.vis, syn::Visibility::Inherited);
+                let mut prefix = Vec::new();
+                use_tree_leaves(&use_item.tree, reexport, line_starts, &mut prefix, out);
+            }
+            syn::Item::Mod(mod_item) => match &mod_item.content {
+                Some((_, inner)) => collect_module_leaves(inner, line_starts, out),
+                None => {
+                    let name = mod_item.ident.to_string();
+                    let module = mod_path_attr(&mod_item.attrs).unwrap_or_else(|| name.clone());
+                    out.push(ModuleLeaf {
+                        span: syn_span(line_starts, mod_item.span()),
+                        name,
+                        kind: SpecifierKind::Named,
+                        module,
+                    });
+                }
+            },
+            _ => {}
+        }
+    }
+}
+
+/// One leaf per bound name, `prefix` carrying the module segments above this
+/// node. A glob binds no single local name (`src/graph/modgraph/rust.rs:120-126`).
+fn use_tree_leaves(
+    tree: &syn::UseTree,
+    reexport: bool,
+    line_starts: &[u32],
+    prefix: &mut Vec<String>,
+    out: &mut Vec<ModuleLeaf>,
+) {
+    match tree {
+        syn::UseTree::Path(segment) => {
+            prefix.push(segment.ident.to_string());
+            use_tree_leaves(&segment.tree, reexport, line_starts, prefix, out);
+            prefix.pop();
+        }
+        syn::UseTree::Group(group) => {
+            for member in &group.items {
+                use_tree_leaves(member, reexport, line_starts, prefix, out);
+            }
+        }
+        syn::UseTree::Name(leaf) => {
+            let span = syn_span(line_starts, leaf.ident.span());
+            push_use_leaf(&leaf.ident.to_string(), None, span, reexport, prefix, out);
+        }
+        syn::UseTree::Rename(leaf) => {
+            let span = syn_span(line_starts, leaf.span());
+            let alias = Some(leaf.rename.to_string());
+            push_use_leaf(&leaf.ident.to_string(), alias, span, reexport, prefix, out);
+        }
+        syn::UseTree::Glob(glob) => {
+            let Some(last) = prefix.last() else { return };
+            out.push(ModuleLeaf {
+                span: syn_span(line_starts, glob.star_token.span()),
+                name: last.clone(),
+                kind: if reexport {
+                    SpecifierKind::Reexport
+                } else {
+                    SpecifierKind::Namespace
+                },
+                module: prefix.join("::"),
+            });
+        }
+    }
+}
+
+/// A `self` leaf names the module the prefix already spells, so its local name
+/// is the last segment (`src/graph/modgraph/rust.rs:121-123`).
+fn push_use_leaf(
+    segment: &str,
+    alias: Option<String>,
+    span: Span,
+    reexport: bool,
+    prefix: &[String],
+    out: &mut Vec<ModuleLeaf>,
+) {
+    let (name, module) = if segment == "self" {
+        let Some(last) = prefix.last() else { return };
+        (alias.unwrap_or_else(|| last.clone()), prefix.join("::"))
+    } else {
+        let mut segments = prefix.to_vec();
+        segments.push(segment.to_string());
+        (
+            alias.unwrap_or_else(|| segment.to_string()),
+            segments.join("::"),
+        )
+    };
+    out.push(ModuleLeaf {
+        span,
+        name,
+        kind: if reexport {
+            SpecifierKind::Reexport
+        } else {
+            SpecifierKind::Named
+        },
+        module,
+    });
+}
+
+/// `#[path = "x.rs"]`: the literal a resolver must resolve, so it becomes the
+/// module text as written (`src/graph/modgraph/rust.rs:50-64`).
+fn mod_path_attr(attrs: &[syn::Attribute]) -> Option<String> {
+    attrs.iter().find_map(|attr| {
+        if !attr.path().is_ident("path") {
+            return None;
+        }
+        match &attr.meta {
+            syn::Meta::NameValue(pair) => match &pair.value {
+                syn::Expr::Lit(literal) => match &literal.lit {
+                    syn::Lit::Str(text) => Some(text.value()),
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    })
 }
 
 /// One collected def before it is interned into the bundle.
