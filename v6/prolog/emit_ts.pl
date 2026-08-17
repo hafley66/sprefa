@@ -19,7 +19,8 @@
                 program_uses_tick/2, listened_departure_refs/2,
                 level_body_pre_ref/2, rel_rule_observers_map/2 ]).
 :- use_module(strat, [recursive_stratum_groups/2, cyclic_head_groups/2]).
-:- use_module('1_host_expand', [compile_host_decl/2, compile_query/2]).
+:- use_module('1_host_expand', [compile_host_decl/2, compile_query/2,
+                                host_plan_contract/2]).
 :- use_module('compile/registry', [bind_executor/2, host_execution/3]).
 
 :- op(1150, xfx, <-).
@@ -370,20 +371,43 @@ incremental_reference_normalize_lines(true, HasTextIntern,
 
 % ═══ local supporting types ══════════════════════════════════════════════════
 
-local_types_lines(
-    [ 'interface IHostColumnPlan { readonly name: string; readonly type: string }',
-      'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }',
-      'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }',
-      'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }',
-      '',
-      'interface IBootStatement {',
-      '  rel: string;',
-      '  sql: string;',
-      '  params: readonly IRowScalar[];',
-      '}',
-      '',
-      'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };'
-    ]).
+local_types_lines(Plan,
+    Lines) :-
+    ( plan_has_structured_host(Plan)
+    -> HostTypes =
+       [ 'interface IHostTypeField { readonly name: string; readonly type: string }',
+         'interface IHostTypeDescriptor { readonly ref: string; readonly fields: readonly IHostTypeField[] }',
+         'interface IHostColumnPlan { readonly name: string; readonly type: string }',
+         'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string; readonly request_type?: IHostTypeDescriptor; readonly response_type?: IHostTypeDescriptor }'
+       ]
+    ;  HostTypes =
+       [ 'interface IHostColumnPlan { readonly name: string; readonly type: string }',
+         'interface IHostPlanData { readonly name: string; readonly inputs: readonly IHostColumnPlan[]; readonly outputs: readonly IHostColumnPlan[]; readonly template: string; readonly demand_rel: string; readonly response_rel: string; readonly execution: string }'
+       ]
+    ),
+    append(HostTypes,
+      [ 'interface IBindPlanData { readonly name: string; readonly columns: readonly IHostColumnPlan[]; readonly literals: readonly IRowScalar[]; readonly execution: string }',
+        'interface IQueryPlanData { readonly rel: string; readonly arity: number; readonly columns: readonly (IRowScalar | null)[]; readonly bound: readonly number[]; readonly snapshot: "current" }',
+        '',
+        'interface IBootStatement {',
+        '  rel: string;',
+        '  sql: string;',
+        '  params: readonly IRowScalar[];',
+        '}',
+        '',
+        'type IGenProgramWithBoot = IGenProgram & { readonly boot: readonly IBootStatement[]; readonly final_select: Record<string, string>; readonly host_plans: readonly IHostPlanData[]; readonly bind_plans: readonly IBindPlanData[]; readonly query_plans: readonly IQueryPlanData[]; readonly subscribed_rels: readonly string[]; readonly rel_catalog: readonly IRelCatalogRow[]; readonly unsupported_execution: readonly string[] };'
+      ], Lines).
+
+plan_has_structured_host(plan(_, prog(Decls, _), _, _, _, _, _, _, _)) :-
+    member(Decl, Decls),
+    Decl = sh_decl(_, Inputs, Outputs, _),
+    ( member(col(_, Type), Inputs), structured_host_type(Type)
+    ; member(col(_, Type), Outputs), structured_host_type(Type)
+    ),
+    !.
+
+structured_host_type(Type) :-
+    \+ memberchk(Type, [text, int, float, bool]).
 
 world_plan_lines(plan(_, prog(Decls, Rules), _, _, _, _, _, SubscribedRels, _), Lines) :-
     findall(HostPlan,
@@ -437,21 +461,57 @@ array_const_line(Prefix, Rows, Line) :-
     atomic_list_concat(Rows, ', ', Body),
     format(atom(Line), '~w = [~w];', [Prefix, Body]).
 
-host_plan_json(
-    host_plan(Name, Inputs, Outputs, template(Template),
-              demand_ref(DemandName), response_ref(ResponseName), _),
-    Json) :-
+host_plan_json(HostPlan, Json) :-
+    HostPlan = host_plan(Name, Inputs, Outputs, template(Template),
+                         demand_ref(DemandName), response_ref(ResponseName), _),
     js_string(Name, NameJson),
     host_columns_json(Inputs, InputsJson),
     host_columns_json(Outputs, OutputsJson),
     js_string(Template, TemplateJson),
     js_string(DemandName, DemandJson),
-    js_string(ResponseName, ResponseJson),
+    js_string(ResponseName, ResponseRelJson),
     host_execution(Name, Template, Executor),
-    format(atom(Json),
-           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demand_rel: ~w, response_rel: ~w, execution: "~w" }',
+    format(atom(BaseJson),
+           '{ name: ~w, inputs: ~w, outputs: ~w, template: ~w, demand_rel: ~w, response_rel: ~w, execution: "~w"',
            [NameJson, InputsJson, OutputsJson, TemplateJson,
-            DemandJson, ResponseJson, Executor]).
+            DemandJson, ResponseRelJson, Executor]),
+    host_plan_contract(HostPlan,
+                       host_contract(RequestType, ResponseType)),
+    (   host_contract_is_structured(RequestType, ResponseType)
+    ->  host_type_descriptor_json(RequestType, RequestJson),
+        host_type_descriptor_json(ResponseType, ResponseJson),
+        format(atom(Json), '~w, request_type: ~w, response_type: ~w }',
+               [BaseJson, RequestJson, ResponseJson])
+    ;   atom_concat(BaseJson, ' }', Json)
+    ).
+
+host_contract_is_structured(type_descriptor(_, RequestFields),
+                            type_descriptor(_, ResponseFields)) :-
+    ( member(field(_, Type), RequestFields), structured_host_type(Type)
+    ; member(field(_, Type), ResponseFields), structured_host_type(Type)
+    ),
+    !.
+
+host_type_descriptor_json(type_descriptor(TypeRef, Fields), Json) :-
+    host_type_ref_json(TypeRef, RefJson),
+    maplist(host_field_json, Fields, FieldRows),
+    atomic_list_concat(FieldRows, ', ', FieldsJson),
+    format(atom(Json), '{ ref: ~w, fields: [~w] }', [RefJson, FieldsJson]).
+
+host_type_ref_json(Name/Arity, Json) :-
+    format(atom(Ref), '~w/~w', [Name, Arity]),
+    js_string(Ref, Json).
+
+host_field_json(field(Name, Type), Json) :-
+    js_string(Name, NameJson),
+    host_type_json_text(Type, TypeText),
+    js_string(TypeText, TypeJson),
+    format(atom(Json), '{ name: ~w, type: ~w }', [NameJson, TypeJson]).
+
+host_type_json_text(Type, Text) :-
+    ( atom(Type) -> Text = Type
+    ; term_to_atom(Type, Text)
+    ).
 
 bind_plan_json(bind_plan(Name, Columns, Literals), Json) :-
     js_string(Name, NameJson),
@@ -558,7 +618,8 @@ host_columns_json(Columns, Json) :-
 
 host_column_json(col(Name, Type), Json) :-
     js_string(Name, NameJson),
-    js_string(Type, TypeJson),
+    host_type_json_text(Type, TypeText),
+    js_string(TypeText, TypeJson),
     format(atom(Json), '{ name: ~w, type: ~w }', [NameJson, TypeJson]).
 
 % ═══ integer bind helper (phase C sweep finding) ═══════════════════════════
@@ -2403,7 +2464,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     imports_lines(HasEdgeRules, HasRetention, HasStructTypes, HasTextIntern,
                   HasOrderedProgram, SelfReferentialLevelRefs, HasInternWrite,
                   ImportLines),
-    local_types_lines(LocalTypeLines),
+    local_types_lines(Plan, LocalTypeLines),
     world_plan_lines(Plan, WorldPlanLines),
     bind_args_helper_lines(BindArgsHelperLines),
     arrival_value_guard_lines(ArrivalValueGuardLines),

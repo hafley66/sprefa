@@ -149,6 +149,8 @@ fn mutation_plan(
         demand_rel: demand_rel.to_string(),
         response_rel: response_rel.to_string(),
         execution: "soopy_mutation".to_string(),
+        request_type: None,
+        response_type: None,
     }
 }
 

@@ -547,8 +547,23 @@ pub struct HostColumnPlan {
     pub column_type: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostTypeField {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub field_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostTypeDescriptor {
+    #[serde(rename = "ref")]
+    pub type_ref: String,
+    pub fields: Vec<HostTypeField>,
+}
+
 // Mirrors emit_ts.pl's IHostPlanData row; the two runtimes read one
-// executor contract.
+// executor contract. Structured plans carry optional request/response
+// descriptors; omission is the legacy scalar shell-host shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostPlanData {
     pub name: String,
@@ -558,6 +573,10 @@ pub struct HostPlanData {
     pub demand_rel: String,
     pub response_rel: String,
     pub execution: String,
+    #[serde(default)]
+    pub request_type: Option<HostTypeDescriptor>,
+    #[serde(default)]
+    pub response_type: Option<HostTypeDescriptor>,
 }
 
 // The serde mirror of the emitted program: one JSON object per fixture.

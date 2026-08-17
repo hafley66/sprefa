@@ -141,6 +141,8 @@ fn byte_host_transport_refuses_before_executor_process() {
         demand_rel: "__host_demand_bytes".to_string(),
         response_rel: "__host_response_bytes".to_string(),
         execution: "shell".to_string(),
+        request_type: None,
+        response_type: None,
     };
     let rel_columns = HashMap::from([(
         "__host_demand_bytes".to_string(),

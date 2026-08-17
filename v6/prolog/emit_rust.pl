@@ -21,7 +21,8 @@
 :- use_module('0_rel_record').
 :- use_module(analyze, [ body_ref_uses/2, level_body_pre_ref/2, rule_head_ref/2,
                          listened_departure_refs/2, program_uses_tick/2 ]).
-:- use_module('1_host_expand', [compile_host_decl/2]).
+:- use_module('1_host_expand', [compile_host_decl/2,
+                                host_plan_contract/2]).
 :- use_module('compile/registry', [host_execution/3]).
 
 :- op(1150, xfx, <-).
@@ -383,9 +384,37 @@ host_plan_dict(host_plan(Name, Inputs, Outputs, template(Template),
     maplist(host_column_dict, Inputs, InputDicts),
     maplist(host_column_dict, Outputs, OutputDicts),
     host_execution(Name, Template, Executor),
-    Dict = _{ name: Name, inputs: InputDicts, outputs: OutputDicts,
+    Base = _{ name: Name, inputs: InputDicts, outputs: OutputDicts,
               template: Template, demand_rel: DemandName,
-              response_rel: ResponseName, execution: Executor }.
+              response_rel: ResponseName, execution: Executor },
+    HostPlan = host_plan(Name, Inputs, Outputs, template(Template),
+                         demand_ref(DemandName), response_ref(ResponseName), _),
+    host_plan_contract(HostPlan,
+                       host_contract(RequestType, ResponseType)),
+    (   host_contract_is_structured(RequestType, ResponseType)
+    ->  host_type_descriptor_dict(RequestType, RequestDict),
+        host_type_descriptor_dict(ResponseType, ResponseDict),
+        Dict = Base.put(_{request_type: RequestDict,
+                          response_type: ResponseDict})
+    ;   Dict = Base
+    ).
+
+host_contract_is_structured(type_descriptor(_, RequestFields),
+                            type_descriptor(_, ResponseFields)) :-
+    ( member(field(_, Type), RequestFields), structured_host_type(Type)
+    ; member(field(_, Type), ResponseFields), structured_host_type(Type)
+    ),
+    !.
+
+structured_host_type(Type) :-
+    \+ memberchk(Type, [text, int, float, bool]).
+
+host_type_descriptor_dict(type_descriptor(TypeName/Arity, Fields), Dict) :-
+    format(atom(Ref), '~w/~w', [TypeName, Arity]),
+    maplist(host_field_dict, Fields, FieldDicts),
+    Dict = _{ ref: Ref, fields: FieldDicts }.
+
+host_field_dict(field(Name, Type), _{ name: Name, type: Type }).
 
 host_column_dict(col(Name, Type), _{ name: Name, type: Type }).
 

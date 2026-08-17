@@ -630,6 +630,18 @@ export interface IHostColumnPlan {
   readonly type: string;
 }
 
+/** Authored field layout carried by a structured host boundary. */
+export interface IHostTypeField {
+  readonly name: string;
+  readonly type: string;
+}
+
+/** A generated catalog port relation used as a typed request or response. */
+export interface IHostTypeDescriptor {
+  readonly ref: string;
+  readonly fields: readonly IHostTypeField[];
+}
+
 /**
  * One `sh_decl` as emitted data. `execution` is a target-neutral executor key.
  * `shell` preserves template execution; `sprefa_extract` selects the existing
@@ -643,6 +655,9 @@ export interface IHostPlan {
   readonly demand_rel: string;
   readonly response_rel: string;
   readonly execution: string;
+  /** Present for structured request/response hosts; absent on legacy scalar plans. */
+  readonly request_type?: IHostTypeDescriptor;
+  readonly response_type?: IHostTypeDescriptor;
 }
 
 /**

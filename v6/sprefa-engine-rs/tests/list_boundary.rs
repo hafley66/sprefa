@@ -144,6 +144,8 @@ fn a_list_wired_into_a_host_input_is_a_named_host_error() {
         demand_rel: "__host_demand_look".to_string(),
         response_rel: "__host_response_look".to_string(),
         execution: "shell".to_string(),
+        request_type: None,
+        response_type: None,
     }];
     let mut rel_columns = HashMap::new();
     rel_columns.insert(

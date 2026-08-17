@@ -412,6 +412,8 @@ fn git_plan(name: &str, inputs: &[(&str, &str)], outputs: &[(&str, &str)]) -> Ho
         demand_rel: format!("__host_demand_{name}"),
         response_rel: format!("__host_response_{name}"),
         execution: "shell".to_string(),
+        request_type: None,
+        response_type: None,
     }
 }
 

@@ -760,6 +760,12 @@ surface_row_is_live_aggregate(Name) :-
 declared_column_type_use(Decls, Name) :- member(col_type(_, _, Name), Decls).
 declared_column_type_use(Decls, Name) :-
     member(type_decl(_, Specs), Decls), member(col(_, Name), Specs).
+declared_column_type_use(Decls, Name) :-
+    member(sh_decl(_, Inputs, Outputs, _), Decls),
+    ( member(col(_, Name), Inputs) ; member(col(_, Name), Outputs) ).
+declared_column_type_use(Decls, Name) :-
+    member(bind_decl(_, Columns), Decls),
+    member(col(_, Name), Columns).
 
 % ── helpers for the relation-pattern class ───────────────────────────────────
 

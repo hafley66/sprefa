@@ -416,6 +416,8 @@ fn live_runner_selects_soopy_for_the_unchanged_shell_host_plan() {
         demand_rel: "__host_demand_files".to_string(),
         response_rel: "__host_response_files".to_string(),
         execution: "shell".to_string(),
+        request_type: None,
+        response_type: None,
     };
     let rel_columns = std::collections::HashMap::from([
         (
