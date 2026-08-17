@@ -1258,7 +1258,6 @@ version = "0.1.0"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
- "blake3",
  "clap",
  "oxc_allocator",
  "oxc_ast",
