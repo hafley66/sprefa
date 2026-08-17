@@ -7,6 +7,20 @@
 4. The two real gaps
 5. The calls that are yours
 
+## 0. The decision (2026-08-17)
+
+dl6 is the thing. The engine serves the spec's rows on a socket file. One tiny generic CLI talks to that socket. Nothing gets generated except what dl6 already emits.
+
+```mermaid
+flowchart LR
+  Y[openapi yaml] --> J[json, one extract verb]
+  J --> R[dl6 rows: operations, params, schemas]
+  R --> S[engine-rs serve on a socket file]
+  S --> C[generic CLI reads the rows, runs a verb]
+```
+
+First three steps: make every emitted `.types.rs` compile, add the serve seam to engine-rs, prove it with pokeapi over `curl --unix-socket`.
+
 ## 1. What we want
 
 One YAML file describes an API. From that one file:
@@ -31,7 +45,7 @@ Better news than expected. Almost none of this is new.
 
 ```mermaid
 flowchart TD
-  A["yaml to json<br/>one line of ruby, 0.128 seconds"]
+  A["yaml to json<br/>one new extract verb, a Rust yaml crate"]
   B["json to rows<br/>dl6 already has the exact rule"]
   C["rows to code text<br/>dl6 already renders rust structs"]
   D["server on a socket<br/>shipped in the v5 daemon"]

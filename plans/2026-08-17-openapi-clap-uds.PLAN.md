@@ -19,6 +19,24 @@ Tree `7d22a3cbf5ca95bce62680e0c52593c13b033486`, measured 2026-08-17.
 12. [Minimal lab plan](#12-minimal-lab-plan)
 13. [Open forks for Chris](#13-open-forks-for-chris)
 
+## 0. Decision 2026-08-17: dl6 is the thing (F0, chosen)
+
+User decision, supersedes F1 and F5 below and the lab binary in section 12.
+No clap generation, no OpenAPI crate, no new emitter, no `sprefa-openapi-lab`
+crate. The dl6 program IS the API and the CLI is a generic client of it.
+
+| layer | how |
+|---|---|
+| spec -> rels | the dl6 rules of sections 9-10 (compile today, receipts in section 1) |
+| API | `sprefa-engine-rs` grows a `serve` seam: axum 0.8 router on `tokio::net::UnixListener`, copied from v5 `src/daemon/shell/http.rs:117-142`; `GET /rel/<name>` reads rows typed by the emitted `.types.rs`, `POST /arrive` folds a tick through `driver.rs` |
+| CLI | one generic binary that reads `cli_verb`/`cli_arg` rows from the running socket and dispatches; `--help` is a rel read |
+| upstream calls (`pokemon get 25` reaches pokeapi) | one host row per operation, from->to like every `sh` host |
+| yaml -> json | one in-tree extract verb (`serde-saphyr`), section 4; file-type work is extract territory |
+
+rx lowering of the server: `arrivals$.pipe(concatMap(batch => driver.tick(batch)))`; reads are a `latest` projection.
+
+Order: (1) all 342 `.types.rs` compile (audit finding 2, S); (2) `serve` seam (M); (3) Rust golden: pokeapi program on a socket, `curl --unix-socket` one rel, byte-diff (M). Card: `issues/engine-rs-serve-uds`.
+
 ## 1. Receipts
 
 Every row below was produced by the command in it, in this worktree, on this tree.
@@ -30,7 +48,7 @@ Every row below was produced by the command in it, in this worktree, on this tre
 | parameters in spec | `grep -c '\bin: '` | 196 (146 query, 50 path) |
 | `$ref` occurrences | `grep -c '\$ref:'` | 355 |
 | component schemas | json1 `json_each($.components.schemas)` | 212 |
-| yaml -> json | `ruby -ryaml -rjson -e 'print JSON.generate(YAML.safe_load(File.read(ARGV[0]), aliases: true))'` | rc=0, 191354 bytes, 0.128s wall, system ruby, zero install |
+| yaml -> json | `sprefa-extract yaml-json <path>` (new bin verb, `serde-saphyr` 1.1.0 + `serde_json`), called from the `sh` host body | Rust-only toolchain; user decision 2026-08-17: no OS-runtime interpreters (ruby, python) in host bodies |
 | fixture compile coverage | `python3` over `v6/prolog/compile/out/manifest.json` | `compiled 342`, `unsupported 110`, total 452 |
 | proposed rel schema compiles | `bash v6/prolog/compile/scripts/compile_dl6.sh /tmp/oa-research/openapi_spec.dl6 out.ts` | rc=0, `total=108/724001` (108ms) |
 | risky-construct probe compiles | same, `/tmp/oa-research/probe2.dl6` | rc=0, `total=78/900993` (78ms) |
@@ -82,13 +100,16 @@ feature on.
 
 ## 4. Q1b candidates: YAML to JSON
 
-The dl6 route needs only this. The `sh` host body is the whole adapter.
+The dl6 route needs only this. The `sh` host body calls one in-tree Rust verb;
+user decision 2026-08-17: no OS-runtime interpreter (ruby, python) in a host
+body, the toolchain is Rust.
 
 | candidate | latest (date) | what it gives | what it lacks | verdict |
 |---|---|---|---|---|
-| system `ruby -ryaml -rjson` | ships with macOS at `/usr/bin/ruby`; ruby is on every dev box and CI image this repo touches | one line, zero install, zero crate, aliases handled by `YAML.safe_load(..., aliases: true)`. Measured on the corpus: rc=0, 0.128s, 191354 bytes | ruby is a runtime dependency of the host body, same class as the `python3 -c 'import tomllib'` already in `v6/tsv2/goldens/ghcacher_env_golden/0_ghcacher_env_golden.dl6:40` | **WINNER.** Same shape as the config golden's `toml_json` host, whose own comment says "yaml deferred until a program needs it". A program now needs it |
+| `serde-saphyr` 1.1.0 (2026-08-15) | serde (de)serializer over `saphyr`, YAML 1.2, panic-free, aliases resolved | new crate in `sprefa-extract`, one bin verb `yaml-json <path>` printing `serde_json::Value` | **WINNER.** Same shape as every other extract verb; the `sh` host body is `sprefa-extract yaml-json '{path}'` |
+| system `ruby -ryaml -rjson` | ships with macOS today | one line, zero crate | an OS interpreter as a runtime dep of a Rust engine; Apple has deprecated scripting runtimes and CI images differ | rejected (user decision 2026-08-17) |
 | `serde_yaml` | 0.9.34**+deprecated** (2024-03-25) | 86.8M recent downloads, dtolnay | the version string is literally `+deprecated`; upstream retired it | rejected. Adding a self-declared deprecated crate is a defect |
-| `serde_norway` | 0.9.42 (2024-12-21) | maintained fork of `serde_yaml`, 2.58M recent, API-compatible | fork governance; a Rust dep for a job a one-line host does | second choice, only if the pipeline moves inside a Rust binary |
+| `serde_norway` | 0.9.42 (2024-12-21) | maintained fork of `serde_yaml`, 2.58M recent, API-compatible | fork governance; a Rust dep for a job a one-line host does | second choice if `serde-saphyr` misbehaves on the corpus; API-compatible with the retired crate. Only if the pipeline moves inside a Rust binary |
 | `serde_yaml_ng` | 0.10.0 (2024-05-26) | second maintained fork, 4.84M recent | two competing forks of the same dead crate is an ecosystem fork risk | third choice |
 | `yq` (CLI) | n/a | `yq -o=json` | not installed on this machine (`which yq` empty); two incompatible `yq` projects (python and go) share the name | rejected on availability |
 | `python3 -c 'import yaml'` | n/a | matches the existing `toml_json` host body style | `python3 -c "import yaml"` fails on this machine: PyYAML is not stdlib. The toml case works only because `tomllib` IS stdlib | rejected, measured |
@@ -216,7 +237,7 @@ Two receipts:
 rel spec_file(spec_id: int, path: text, digest: text) key(1).
 
 sh yaml_json(path: text, digest: text) -> (doc: json) =
-  `: {digest}; ruby -ryaml -rjson -e 'print JSON.generate(YAML.safe_load(File.read(ARGV[0]), aliases: true))' '{path}'`.
+  `: {digest}; sprefa-extract yaml-json '{path}'`.
 
 rel spec_doc(spec_id: int, doc: json).
 
@@ -290,7 +311,7 @@ together, rc=0.
 ```mermaid
 flowchart LR
   YML["pokeapi.openapi.yml<br/>9839 lines, 3.1.0"]
-  HOST["sh yaml_json<br/>ruby YAML to JSON"]
+  HOST["sh yaml_json<br/>sprefa-extract yaml-json"]
   DOC["rel spec_doc, one json column<br/>191354 bytes, 1 row"]
 
   YML --> HOST --> DOC
@@ -346,8 +367,8 @@ Target: `pokemon get 25` prints the same bytes as
 |---|---|
 | `v6/dl/labs/openapi-clap/spec.dl6` | the rel schema of section 9 plus the six rules of section 10 |
 | `v6/dl/labs/openapi-clap/render_clap.dl6` | the `render_rust.dl6` three-stratum shape, emitting `types.rs` |
-| `v6/sprefa-openapi-lab/src/main.rs` | reads `cli_verb`/`cli_arg`/`route` rows, folds a `clap::Command` and an `axum::Router`, serves on a UDS socket |
-| `v6/sprefa-openapi-lab/run.sh` | the receipt driver |
+| `v6/sprefa-engine-rs/src/serve.rs` | the UDS serve seam of section 0 (replaces the lab binary; decision 2026-08-17) |
+| `v6/tsv2/goldens/openapi_uds/run.sh` | the receipt driver |
 
 ### The commands a reader runs
 
@@ -355,9 +376,7 @@ Target: `pokemon get 25` prints the same bytes as
 cd v6
 
 # 1. the spec becomes json (the sh host body, run by hand first)
-ruby -ryaml -rjson \
-  -e 'print JSON.generate(YAML.safe_load(File.read(ARGV[0]), aliases: true))' \
-  dl/fixtures/pokeapi.openapi.yml > /tmp/pokeapi.json
+sprefa-extract yaml-json dl/fixtures/pokeapi.openapi.yml > /tmp/pokeapi.json
 
 # 2. the spec program compiles
 bash prolog/compile/scripts/compile_dl6.sh \
@@ -405,6 +424,8 @@ The upstream PokeAPI is the fixture's source, so leg 5 can also run against a
 canned response body checked in beside the spec, keeping the gate offline.
 
 ## 13. Open forks for Chris
+
+F1 and F5 are closed by section 0 (F0 chosen). F3, F4, F6 stay open.
 
 | fork | options | what each costs |
 |---|---|---|
