@@ -86,9 +86,6 @@ tree-sitter-html = "0.23"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
-# blake3 builds `ContentId::Blake3` from raw bytes: soopy exposes no public
-# constructor for it (its own `blake3_content` is private).
-blake3 = "1"
 # Repository/revision/path enumeration and Git batch reads live in the
 # standalone hafley-rs crate. Extract consumes its source coordinates and bytes.
 soopy = { path = "../../../hafley-rs/crates/soopy" }

@@ -46,10 +46,10 @@ impl Span {
     }
 }
 
-/// Hash file bytes to `ContentId::Blake3`: soopy exposes no public constructor
-/// for the blake3 arm, so this replicates its expression on the crate's dep.
+/// Hash file bytes to `ContentId::Blake3` through soopy's own constructor, so
+/// the corpus and soopy's enumeration cannot disagree on one file's identity.
 pub fn content_id_of(content: &[u8]) -> ContentId {
-    ContentId::Blake3(*blake3::hash(content).as_bytes())
+    ContentId::blake3(content)
 }
 
 /// The no-blob sentinel: the dst leg of an edge with no corpus target.
