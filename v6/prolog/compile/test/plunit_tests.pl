@@ -3133,6 +3133,15 @@ test(host_unreferenced_input_unsupported,
               template("{ep}")),
       _).
 
+test(native_boop_host_keeps_inputs_out_of_the_template) :-
+    compile_host_decl(
+      sh_decl(boop_oneshot,
+              [col(request_id, text), col(model, text), col(prompt, text)],
+              [col(outcome, text), col(output, text), col(detail, text)],
+              template("boop host oneshot")),
+      host_plan(boop_oneshot, _, _, _, _, _,
+                input_roles([identity, identity, identity]))).
+
 test(host_freshness_input_may_be_absent_from_template) :-
     compile_host_decl(
       sh_decl(fetch,

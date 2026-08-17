@@ -2,6 +2,7 @@
 // HostRunner contract (serve/1_hosts.ts), sharing its emitted HostPlanData.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -45,9 +46,102 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
         "shell" => Some(&ShellExecutor),
         "soopy_mutation" => Some(&SoopyMutationExecutor),
+        "boop" => Some(&BoopExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" | "sprefa_extract_repo" => Some(&*EXTRACT),
         _ => None,
+    }
+}
+
+/// Typed process boundary for Boop model calls. Prompt bytes travel as JSON on
+/// stdin and never enter argv or a shell template.
+pub struct BoopExecutor;
+
+impl IHostExecutor for BoopExecutor {
+    fn run(
+        &self,
+        host: &str,
+        _command_line: &str,
+        env: &BTreeMap<String, String>,
+    ) -> Result<String, HostError> {
+        if host != "boop_oneshot" {
+            return Err(HostError {
+                host: host.to_string(),
+                message: "not a Boop host".to_string(),
+            });
+        }
+        let required = |name: &str| {
+            env.get(name).cloned().ok_or_else(|| HostError {
+                host: host.to_string(),
+                message: format!("missing required host input `{name}`"),
+            })
+        };
+        let request_id = required("request_id")?;
+        let request = serde_json::to_vec(&serde_json::json!({
+            "request_id": request_id,
+            "model": required("model")?,
+            "prompt": required("prompt")?,
+        }))
+        .map_err(|error| HostError {
+            host: host.to_string(),
+            message: format!("serialize Boop host request: {error}"),
+        })?;
+        let executable = std::env::var("SPREFA_BOOP_HOST").unwrap_or_else(|_| "boop".to_string());
+        let mut child = std::process::Command::new(&executable)
+            .args(["host", "oneshot"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("spawn `{executable} host oneshot`: {error}"),
+            })?;
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| HostError {
+                host: host.to_string(),
+                message: "Boop host stdin unavailable".to_string(),
+            })?
+            .write_all(&request)
+            .map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("write Boop host request: {error}"),
+            })?;
+        let output = child.wait_with_output().map_err(|error| HostError {
+            host: host.to_string(),
+            message: format!("wait for Boop host: {error}"),
+        })?;
+        if !output.status.success() {
+            return Err(HostError {
+                host: host.to_string(),
+                message: format!(
+                    "Boop host exited {}: {}",
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            });
+        }
+        let response: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|error| HostError {
+                host: host.to_string(),
+                message: format!("decode Boop host response: {error}"),
+            })?;
+        if response
+            .get("request_id")
+            .and_then(serde_json::Value::as_str)
+            != Some(request_id.as_str())
+        {
+            return Err(HostError {
+                host: host.to_string(),
+                message: "Boop host response request_id mismatch".to_string(),
+            });
+        }
+        serde_json::to_string(&response).map_err(|error| HostError {
+            host: host.to_string(),
+            message: format!("encode Boop host response: {error}"),
+        })
     }
 }
 

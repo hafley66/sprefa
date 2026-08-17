@@ -1,0 +1,92 @@
+# boop-concatmap.dl6 -- one-shot pair refinement as ordinary rules.
+#
+# Transcript acquisition is an arrival boundary in this first golden. Boop's
+# typed host owns only the model effect. Every request and response remains a
+# keyed row, so later ticks can continue refinement or produce a receipt.
+
+rel turn(session: text, turn: int, ts: int, role: text, said: text).
+rel map_config(job: text, model: text, prompt_prefix: text, max_attempts: int).
+
+# The latest assistant turn strictly before each user turn.
+rel assistant_before(session: text, user_turn: int, assistant_turn: int, ai_text: text).
+assistant_before(Session, UserTurn, AssistantTurn, AiText) <-
+  turn(Session, AssistantTurn, _, 'assistant', AiText),
+  turn(Session, UserTurn, _, 'user', _),
+  AssistantTurn < UserTurn.
+
+rel assistant_between(session: text, user_turn: int, assistant_turn: int).
+assistant_between(Session, UserTurn, AssistantTurn) <-
+  assistant_before(Session, UserTurn, AssistantTurn, _),
+  assistant_before(Session, UserTurn, LaterAssistant, _),
+  AssistantTurn < LaterAssistant.
+
+rel contact_pair(session: text, user_turn: int, ai_text: text, user_text: text).
+contact_pair(Session, UserTurn, AiText, UserText) <-
+  assistant_before(Session, UserTurn, AssistantTurn, AiText),
+  turn(Session, UserTurn, _, 'user', UserText),
+  not(assistant_between(Session, UserTurn, AssistantTurn)).
+
+rel rewrite_step(job: text, session: text, user_turn: int, attempt: int,
+                 model: text, input: text, max_attempts: int).
+rewrite_step(Job, Session, UserTurn, 0, Model, Input, MaxAttempts) <-
+  map_config(Job, Model, Prefix, MaxAttempts),
+  contact_pair(Session, UserTurn, AiText, UserText),
+  Input := concat([Prefix, AiText, '\n\n', UserText]).
+
+# The engine rejects a host-response cycle back into its own demand relation as
+# an unconstructive clock cycle. A driver persists this continuation row and
+# re-enters it as an ordinary arrival on the following tick.
+rel rewrite_retry(job: text, session: text, user_turn: int, attempt: int,
+                  model: text, input: text, max_attempts: int).
+rewrite_step(Job, Session, UserTurn, Attempt, Model, Input, MaxAttempts) <-
+  rewrite_retry(Job, Session, UserTurn, Attempt, Model, Input, MaxAttempts).
+
+rel rewrite_request(job: text, session: text, user_turn: int, attempt: int,
+                    request_id: text, model: text, input: text, max_attempts: int).
+rewrite_request(Job, Session, UserTurn, Attempt, RequestId, Model, Input, MaxAttempts) <-
+  rewrite_step(Job, Session, UserTurn, Attempt, Model, Input, MaxAttempts),
+  RequestId := concat([Job, ':', Session, ':', UserTurn, ':', Attempt]).
+
+sh boop_oneshot(request_id: text, model: text, prompt: text) ->
+  (outcome: text, output: text, detail: text) =
+  `boop host oneshot`.
+
+rel rewrite_result(job: text, session: text, user_turn: int, attempt: int,
+                   request_id: text, model: text, input: text, max_attempts: int,
+                   outcome: text, output: text, detail: text).
+rewrite_result(Job, Session, UserTurn, Attempt, RequestId, Model, Input, MaxAttempts,
+               Outcome, Output, Detail) <-
+  rewrite_request(Job, Session, UserTurn, Attempt, RequestId, Model, Input, MaxAttempts),
+  boop_oneshot(RequestId, Model, Input, Outcome, Output, Detail).
+
+rel rewrite_unchanged(request_id: text).
+rewrite_unchanged(RequestId) <-
+  rewrite_result(_, _, _, _, RequestId, _, Input, _, 'ok', Output, _),
+  Input == Output.
+
+rel rewrite_changed(request_id: text).
+rewrite_changed(RequestId) <-
+  rewrite_result(_, _, _, _, RequestId, _, _, _, 'ok', _, _),
+  not(rewrite_unchanged(RequestId)).
+
+rel rewrite_continuation(job: text, session: text, user_turn: int, attempt: int,
+                         model: text, input: text, max_attempts: int).
+rewrite_continuation(Job, Session, UserTurn, NextAttempt, Model, Output, MaxAttempts) <-
+  rewrite_result(Job, Session, UserTurn, Attempt, RequestId, Model, _, MaxAttempts,
+                 'ok', Output, _),
+  rewrite_changed(RequestId),
+  Attempt < MaxAttempts,
+  NextAttempt := Attempt + 1.
+
+rel rewrite_receipt(job: text, session: text, user_turn: int, request_id: text,
+                    outcome: text, output: text, detail: text).
+rewrite_receipt(Job, Session, UserTurn, RequestId, 'stable', Output, '') <-
+  rewrite_result(Job, Session, UserTurn, _, RequestId, _, _, _, 'ok', Output, _),
+  rewrite_unchanged(RequestId).
+rewrite_receipt(Job, Session, UserTurn, RequestId, 'failed', '', Detail) <-
+  rewrite_result(Job, Session, UserTurn, _, RequestId, _, _, _, 'failed', _, Detail).
+rewrite_receipt(Job, Session, UserTurn, RequestId, 'exhausted', Output, '') <-
+  rewrite_result(Job, Session, UserTurn, Attempt, RequestId, _, _, MaxAttempts,
+                 'ok', Output, _),
+  rewrite_changed(RequestId),
+  Attempt == MaxAttempts.

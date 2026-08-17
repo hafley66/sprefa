@@ -196,7 +196,7 @@ compile_host_decl(
     no_reserved_columns(Name, output, OutputNames),
     validate_host_executor(Name, Template, Inputs),
     host_input_roles(Name, Inputs, Roles),
-    validate_template(Template, InputNames, OutputNames, Roles),
+    validate_template(Name, Template, InputNames, OutputNames, Roles),
     host_relation_refs(Name, DemandRef, ResponseRef),
     !.
 compile_host_decl(Decl, _) :-
@@ -315,9 +315,11 @@ no_reserved_columns(Host, Role, Names) :-
     ;   true
     ).
 
-validate_template(Template, Inputs, Outputs, Roles) :-
+validate_template(Host, Template, Inputs, Outputs, Roles) :-
     role_names(identity, Inputs, Roles, IdentityInputs),
-    ( member(Name, IdentityInputs), \+ template_mentions(Template, Name)
+    host_execution(Host, Template, Executor),
+    ( Executor \== boop,
+      member(Name, IdentityInputs), \+ template_mentions(Template, Name)
     -> throw(template_mismatch(unreferenced_input(Name)))
     ; member(Name, Outputs), template_mentions(Template, Name)
     -> throw(template_mismatch(output_used_as_input(Name)))
