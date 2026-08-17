@@ -1946,7 +1946,7 @@ module_edge_h_id(ConsumerHash, ProducerHash, Kind, LocalName, EdgeHId) :-
     short_hash(Key, EdgeHId).
 
 catalog_primitive_rows(StartId, PrimitiveRows) :-
-    catalog_primitive_rows(StartId, [text, int, float, bool, json], [], PrimitiveRows).
+catalog_primitive_rows(StartId, [text, int, float, bool, json, bytes], [], PrimitiveRows).
 
 catalog_primitive_rows(_, [], Acc, Rows) :- reverse(Acc, Rows).
 catalog_primitive_rows(Id, [Name | Rest], Acc, Rows) :-
@@ -2189,6 +2189,7 @@ catalog_type_id(int, 2) :- !.
 catalog_type_id(float, 3) :- !.
 catalog_type_id(bool, 4) :- !.
 catalog_type_id(json, 5) :- !.
+catalog_type_id(bytes, 6) :- !.
 catalog_type_id(_, 0).
 
 catalog_row_part(Mode, row(RelId, ParentId, Ordinal, Name, Kind, TypeId, Arity,
@@ -2705,6 +2706,9 @@ column_def(_, QuotedColumn, float, Def) :- !,
     format(atom(Def),
            '~w REAL NOT NULL CHECK (typeof(~w) = \'real\' AND ~w BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308)',
            [QuotedColumn, QuotedColumn, QuotedColumn]).
+column_def(_, QuotedColumn, bytes, Def) :- !,
+    format(atom(Def), '~w BLOB NOT NULL CHECK (typeof(~w) = \'blob\')',
+           [QuotedColumn, QuotedColumn]).
 % A ref column stores the dense target-row id and nothing else. No FOREIGN
 % KEY clause and no ON DELETE clause: the retraction
 % lab measured SQL cascade deleting a shared child out from under a live
@@ -4970,6 +4974,7 @@ ir_column_storage(_, int, int, integer, direct) :- !.
 ir_column_storage(_, float, float, real, direct) :- !.
 ir_column_storage(_, json, json, text, direct) :- !.
 ir_column_storage(_, json_list(_), list, text, direct) :- !.
+ir_column_storage(_, bytes, bytes, blob, direct) :- !.
 % The comparator over an entity id is the integer one, so the IR type name is
 % the storage's, never the spelling's.
 ir_column_storage(_, list(_), int, integer, direct) :- !.
@@ -4987,7 +4992,7 @@ fixpoint_ir_columns(RelPlans, HeadRef, Columns, ColumnTypes) :-
     relplan_columns(RelPlans, HeadRef, Columns),
     relplan_column_types(RelPlans, HeadRef, ColumnTypes),
     forall(member(ColumnType, ColumnTypes),
-           memberchk(ColumnType, [int, text, float, bool])).
+           memberchk(ColumnType, [int, text, float, bool, bytes])).
 
 ir_parts_read_head(HeadRef, armparts(PosUses, _, _, _)) :-
     memberchk(use(HeadRef, _, pos, _), PosUses).
@@ -6246,6 +6251,9 @@ canonical_column_expr(Column, bool, Expr) :-
     !,
     outer_column_expr(Column, Expr).
 canonical_column_expr(Column, float, Expr) :-
+    !,
+    outer_column_expr(Column, Expr).
+canonical_column_expr(Column, bytes, Expr) :-
     !,
     outer_column_expr(Column, Expr).
 % STRUCT-AS-ROWS, arc header Edge 1: a ref column reads its VALUE, never its

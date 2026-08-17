@@ -777,7 +777,7 @@ declared_column_type_name(Decls, Name) :-
     ),
     \+ scalar_column_type(Name).
 
-scalar_column_type(T) :- member(T, [int, text, json, bool, float]).
+scalar_column_type(T) :- member(T, [int, text, json, bool, float, bytes]).
 
 
 bind_decl_stmt(bind_decl(Name, Cols)) -->

@@ -343,7 +343,7 @@ program_violation(type_cycle, prog(Decls, _), Names) :-
 program_violation(column_type_unknown, prog(Decls, _), Name) :-
     type_definitions(Decls, Types),
     declared_column_type_use(Decls, Name),
-    \+ memberchk(Name, [int, text, json, bool, float]),
+    \+ memberchk(Name, [int, text, json, bool, float, bytes]),
     \+ Name = json_list(_),
     \+ Name = list(_),
     \+ declared_type_name(Types, Name).

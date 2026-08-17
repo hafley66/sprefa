@@ -1181,21 +1181,22 @@ test(catalog_ids_are_positional) :-
         "(3,0,0,'float','primitive',0,0,0,'','','')",
         "(4,0,0,'bool','primitive',0,0,0,'','','')",
         "(5,0,0,'json','primitive',0,0,0,'','','')",
-        "(6,0,0,'catalog_reader','module',0,0,6,'52371c9ee530d976','','')",
-        "(7,6,0,'__rel','rel',0,11,6,'c8bc0fb4f25c0d4d','f2182fe30f5b2637','')",
-        "(8,7,1,'rel_id','column',2,0,6,'386b6b00bce37976','','')",
-        "(9,7,2,'parent_id','column',2,0,6,'d426b510b7af6bc3','','')",
-        "(10,7,3,'ordinal','column',2,0,6,'f364570dc03dcb51','','')",
-        "(11,7,4,'local_name','column',1,0,6,'3d2a7e77d1c0bf5b','','')",
-        "(12,7,5,'kind','column',1,0,6,'6a61f74e56f4331f','','')",
-        "(13,7,6,'type_id','column',2,0,6,'d831bab463b00b7a','','')",
-        "(14,7,7,'arity','column',2,0,6,'9371b6a42561aab3','','')",
-        "(15,7,8,'module_id','column',2,0,6,'c02aa3c15163f01c','','')",
-        "(16,7,9,'h_id','column',1,0,6,'e1dced9b3224ccea','','')",
-        "(17,7,10,'h_schema','column',1,0,6,'0967c02f99ba48cf','','')",
-        "(18,7,11,'h_rule','column',1,0,6,'df4d6ca44aae0adf','','')",
-        "(19,6,0,'rel_named','rel',0,1,6,'839df246b6d13056','32b13250133857cf','f7b925c3a6691b60')",
-        "(20,19,1,'col1','column',1,0,6,'b9055ded7691bfca','','')"]),
+        "(6,0,0,'bytes','primitive',0,0,0,'','','')",
+        "(7,0,0,'catalog_reader','module',0,0,7,'52371c9ee530d976','','')",
+        "(8,7,0,'__rel','rel',0,11,7,'c8bc0fb4f25c0d4d','f2182fe30f5b2637','')",
+        "(9,8,1,'rel_id','column',2,0,7,'386b6b00bce37976','','')",
+        "(10,8,2,'parent_id','column',2,0,7,'d426b510b7af6bc3','','')",
+        "(11,8,3,'ordinal','column',2,0,7,'f364570dc03dcb51','','')",
+        "(12,8,4,'local_name','column',1,0,7,'3d2a7e77d1c0bf5b','','')",
+        "(13,8,5,'kind','column',1,0,7,'6a61f74e56f4331f','','')",
+        "(14,8,6,'type_id','column',2,0,7,'d831bab463b00b7a','','')",
+        "(15,8,7,'arity','column',2,0,7,'9371b6a42561aab3','','')",
+        "(16,8,8,'module_id','column',2,0,7,'c02aa3c15163f01c','','')",
+        "(17,8,9,'h_id','column',1,0,7,'e1dced9b3224ccea','','')",
+        "(18,8,10,'h_schema','column',1,0,7,'0967c02f99ba48cf','','')",
+        "(19,8,11,'h_rule','column',1,0,7,'df4d6ca44aae0adf','','')",
+        "(20,7,0,'rel_named','rel',0,1,7,'839df246b6d13056','32b13250133857cf','f7b925c3a6691b60')",
+        "(21,20,1,'col1','column',1,0,7,'b9055ded7691bfca','','')"]),
         sub_atom(CatalogSeed, _, _, _, Expected)).
 
 % Two rel names that differ only by module must produce DIFFERENT h_id
@@ -1218,7 +1219,7 @@ module_rel_h_id(ModuleName, HId) :-
            lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
            member(Seed, Ddl),
            sub_atom(Seed, 0, _, _, 'INSERT OR IGNORE INTO "__rel"'),
-           sub_atom(Seed, MarkerStart, MarkerLen, _, "'rel_named','rel',0,1,6,'"),
+           sub_atom(Seed, MarkerStart, MarkerLen, _, "'rel_named','rel',0,1,7,'"),
            HashStart is MarkerStart + MarkerLen,
            sub_atom(Seed, HashStart, 16, _, HId) )).
 
@@ -1256,7 +1257,7 @@ test(catalog_h_rule_stable_and_distinguishes_derivation) :-
 % each a 16-hex literal separated by ',' (a quote-comma-quote gap of 3 chars).
 hash_probe_rel_shape(Prog, RelName, Arity, Schema, HId) :-
     hash_probe_rel_seed(Prog, Seed),
-    format(atom(Marker), ",'~w','rel',0,~d,6,'", [RelName, Arity]),
+    format(atom(Marker), ",'~w','rel',0,~d,7,'", [RelName, Arity]),
     sub_atom(Seed, MarkerStart, MarkerLen, _, Marker),
     HIdStart is MarkerStart + MarkerLen,
     sub_atom(Seed, HIdStart, 16, _, HId),
@@ -1265,7 +1266,7 @@ hash_probe_rel_shape(Prog, RelName, Arity, Schema, HId) :-
 
 hash_probe_rel_rule(Prog, RelName, Arity, Rule) :-
     hash_probe_rel_seed(Prog, Seed),
-    format(atom(Marker), ",'~w','rel',0,~d,6,'", [RelName, Arity]),
+    format(atom(Marker), ",'~w','rel',0,~d,7,'", [RelName, Arity]),
     sub_atom(Seed, MarkerStart, MarkerLen, _, Marker),
     HIdStart is MarkerStart + MarkerLen,
     SchemaStart is HIdStart + 19,
@@ -1396,8 +1397,8 @@ corpus_plan_lowered(Name, Plan, Lowered) :-
 % 41/309/309), so every move is a new fixture and never a lowering that grew.
 test(level_plane_family_corpus_counts) :-
     corpus_plane_kind_counts(Counts),
-    Counts = [scope-46, refcount-328, refcount_staging-328,
-              expand-8, dred-12, avg_accumulator-2].
+    Counts = [scope-47, refcount-394, refcount_staging-394,
+              expand-14, dred-21, avg_accumulator-2].
 
 corpus_plane_kind_counts(Counts) :-
     findall(Kind,
@@ -1628,46 +1629,46 @@ test(storage_row_raw_under_direct) :-
 :- begin_tests(catalog_type_ids).
 
 % A ref column carries its target rel's rel_id; no lists present, so node/1
-% lands on 7 and holder's `item` column (id 10) points at it.
+% lands on 8 and holder's `item` column (id 11) points at it.
 test(catalog_ref_column_carries_target_rel_id) :-
     inferred_relplans([ rel_spec(node/1, set, [id], none, [int]),
                         rel_spec(holder/1, set, [item], none, [ref(node)]) ],
                       RelPlans),
     lower:catalog_rows(catalog_ref, [], RelPlans, Rows),
-    memberchk(row(7, 6, 0, node, rel, 0, 1, 6, _, _, _), Rows),
-    memberchk(row(10, 9, 1, item, column, 7, 0, 6, _, '', ''), Rows).
+    memberchk(row(8, 7, 0, node, rel, 0, 1, 7, _, _, _), Rows),
+    memberchk(row(11, 10, 1, item, column, 8, 0, 7, _, '', ''), Rows).
 
-% A json_list(text) column carries the synthetic list row's id (6); that row's own
+% A json_list(text) column carries the synthetic list row's id (7); that row's own
 % type_id is the element id 1 (text). The new row shifts every id after it.
 test(catalog_list_column_carries_element_typed_row) :-
     inferred_relplans([ rel_spec(items/1, set, [list_col], none, [json_list(text)]) ],
                       RelPlans),
     lower:catalog_rows(catalog_list, [], RelPlans, Rows),
-    memberchk(row(6, 0, 0, 'json_list(text)', json_list, 1, 0, 0, '', '', ''), Rows),
-    memberchk(row(9, 8, 1, list_col, column, 6, 0, 7, _, '', ''), Rows).
+    memberchk(row(7, 0, 0, 'json_list(text)', json_list, 1, 0, 0, '', '', ''), Rows),
+    memberchk(row(10, 9, 1, list_col, column, 7, 0, 8, _, '', ''), Rows).
 
 % Nested json_list(json_list(text)) mints two synthetic rows, the inner json_list(text)
-% row before the outer one, and the column points at the outer row's id (7).
+% row before the outer one, and the column points at the outer row's id (8).
 test(catalog_nested_list_emits_inner_before_outer) :-
     inferred_relplans([ rel_spec(items/1, set, [list_col], none, [json_list(json_list(text))]) ],
                       RelPlans),
     lower:catalog_rows(catalog_nested, [], RelPlans, Rows),
-    nth0(5, Rows, row(6, 0, 0, 'json_list(text)', json_list, 1, 0, 0, _, _, _)),
-    nth0(6, Rows, row(7, 0, 0, 'json_list(json_list(text))', json_list, 6, 0, 0, _, _, _)),
-    memberchk(row(10, 9, 1, list_col, column, 7, 0, 8, _, '', ''), Rows).
+    nth0(6, Rows, row(7, 0, 0, 'json_list(text)', json_list, 1, 0, 0, _, _, _)),
+    nth0(7, Rows, row(8, 0, 0, 'json_list(json_list(text))', json_list, 7, 0, 0, _, _, _)),
+    memberchk(row(11, 10, 1, list_col, column, 8, 0, 9, _, '', ''), Rows).
 
 % Byte-stability receipt: a no-ref no-list two-rel program emits today's ids,
-% so pass A did not reorder. Module 6, first rel 7, second rel 9.
+% so pass A did not reorder. Module 7, first rel 8, second rel 10.
 test(catalog_no_ref_no_list_ids_unchanged) :-
     inferred_relplans([ rel_spec(a_rel/1, set, [c1], none, [text]),
                         rel_spec(b_rel/1, set, [c2], none, [int]) ],
                       RelPlans),
     lower:catalog_rows(catalog_plain, [], RelPlans, Rows),
-    memberchk(row(6, 0, 0, catalog_plain, module, 0, 0, 6, _, _, _), Rows),
-    memberchk(row(7, 6, 0, a_rel, rel, 0, 1, 6, _, _, _), Rows),
-    memberchk(row(8, 7, 1, c1, column, 1, 0, 6, _, '', ''), Rows),
-    memberchk(row(9, 6, 0, b_rel, rel, 0, 1, 6, _, _, _), Rows),
-    memberchk(row(10, 9, 1, c2, column, 2, 0, 6, _, '', ''), Rows).
+    memberchk(row(7, 0, 0, catalog_plain, module, 0, 0, 7, _, _, _), Rows),
+    memberchk(row(8, 7, 0, a_rel, rel, 0, 1, 7, _, _, _), Rows),
+    memberchk(row(9, 8, 1, c1, column, 1, 0, 7, _, '', ''), Rows),
+    memberchk(row(10, 7, 0, b_rel, rel, 0, 1, 7, _, _, _), Rows),
+    memberchk(row(11, 10, 1, c2, column, 2, 0, 7, _, '', ''), Rows).
 
 % An inferred rel has no declaration, so the catalog once typed its list column
 % as unknown while the emitted DDL enforced array-ness on the same column.
@@ -1779,8 +1780,8 @@ test(catalog_nested_rel_parents_at_the_parent_rel) :-
     lower:catalog_decl_rows(catalog_nest, [], RelPlans,
                             [rel_path_decl(orchard__tree/2, [orchard, tree])],
                             Rows, _),
-    memberchk(row(7, 6, 0, orchard, rel, 0, 1, 6, _, _, _), Rows),
-    memberchk(row(9, 7, 0, tree, rel, 0, 2, 6, _, _, _), Rows).
+    memberchk(row(8, 7, 0, orchard, rel, 0, 1, 7, _, _, _), Rows),
+    memberchk(row(10, 8, 0, tree, rel, 0, 2, 7, _, _, _), Rows).
 
 % `north` names no decl of its own, so without a minted room row the chain
 % from `tree` upward would point at a rel_id no row carries.
@@ -1792,9 +1793,9 @@ test(catalog_interior_segment_gets_an_arity_less_room_row) :-
                             [rel_path_decl(orchard__north__tree/1,
                                            [orchard, north, tree])],
                             Rows, _),
-    memberchk(row(9, 6, 0, orchard, rel, 0, 0, 6, _, '', ''), Rows),
-    memberchk(row(10, 9, 0, north, rel, 0, 0, 6, _, '', ''), Rows),
-    memberchk(row(7, 10, 0, tree, rel, 0, 1, 6, _, _, _), Rows).
+    memberchk(row(10, 7, 0, orchard, rel, 0, 0, 7, _, '', ''), Rows),
+    memberchk(row(11, 10, 0, north, rel, 0, 0, 7, _, '', ''), Rows),
+    memberchk(row(8, 11, 0, tree, rel, 0, 1, 7, _, _, _), Rows).
 
 % Room rows take ids PAST the rel block, so no rel or column row moves and the
 % plane half still starts one past the last decl row.
@@ -1805,8 +1806,8 @@ test(catalog_room_rows_do_not_move_the_rel_block) :-
     lower:catalog_decl_rows(catalog_room_ids, [], RelPlans,
                             [rel_path_decl(orchard__north__tree/1,
                                            [orchard, north, tree])],
-                            _, ctx(modules(_, 6, _), _, _, FinalId)),
-    FinalId =:= 11.
+                            _, ctx(modules(_, 7, _), _, _, FinalId)),
+    FinalId =:= 12.
 
 % Depth 3, every level declared: each rel row parents at the one above it.
 test(catalog_three_declared_levels_chain_the_parent_ids) :-
@@ -1822,9 +1823,9 @@ test(catalog_three_declared_levels_chain_the_parent_ids) :-
                               rel_path_decl(orchard__tree__branch/2,
                                             [orchard, tree, branch]) ],
                             Rows, _),
-    memberchk(row(7, 6, 0, orchard, rel, 0, 1, 6, _, _, _), Rows),
-    memberchk(row(9, 7, 0, tree, rel, 0, 2, 6, _, _, _), Rows),
-    memberchk(row(12, 9, 0, branch, rel, 0, 2, 6, _, _, _), Rows).
+    memberchk(row(8, 7, 0, orchard, rel, 0, 1, 7, _, _, _), Rows),
+    memberchk(row(10, 8, 0, tree, rel, 0, 2, 7, _, _, _), Rows),
+    memberchk(row(13, 10, 0, branch, rel, 0, 2, 7, _, _, _), Rows).
 
 % A program with no dotted decl emits the ids it always did: the whole nesting
 % path sits behind an empty rel_path_decl set.
@@ -1834,9 +1835,9 @@ test(catalog_flat_program_ids_unchanged_by_the_nesting_pass) :-
                       RelPlans),
     lower:catalog_decl_rows(catalog_flat, [], RelPlans, [], Rows,
                             ctx(_, _, _, FinalId)),
-    memberchk(row(7, 6, 0, a_rel, rel, 0, 1, 6, _, _, _), Rows),
-    memberchk(row(9, 6, 0, b_rel, rel, 0, 1, 6, _, _, _), Rows),
-    FinalId =:= 11.
+    memberchk(row(8, 7, 0, a_rel, rel, 0, 1, 7, _, _, _), Rows),
+    memberchk(row(10, 7, 0, b_rel, rel, 0, 1, 7, _, _, _), Rows),
+    FinalId =:= 12.
 
 :- end_tests(catalog_nested_rows).
 
@@ -9512,3 +9513,43 @@ test(snake_name_allcaps_pinning) :-
            snake_name(Input, Output)).
 
 :- end_tests(snake_name_allcaps).
+
+:- begin_tests(bytes_type_system).
+
+test(bytes_parses_prints_and_reparses_as_a_scalar_type) :-
+    string_codes(
+        "rel byte_source(value: bytes).\nrel byte_copy(value: bytes).\nbyte_copy(Value) <- byte_source(Value).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    Program = prog(Decls, _),
+    memberchk(col_type(byte_source/1, value, bytes), Decls),
+    memberchk(col_type(byte_copy/1, value, bytes), Decls),
+    print_dl_program(Program, Bindings, Printed),
+    sub_atom(Printed, _, _, _, 'value: bytes'),
+    atom_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, RoundTripped, _, []),
+    Program =@= RoundTripped.
+
+test(bytes_has_blob_storage_and_direct_blob_comparison) :-
+    type_plane:column_storage([], bytes, bytes),
+    column_def(direct, '"value"', bytes, Def),
+    Def == '"value" BLOB NOT NULL CHECK (typeof("value") = \'blob\')',
+    ir_column_class(direct, value, bytes,
+                    colclass(value, bytes, blob, none, direct)).
+
+test(bytes_catalog_primitive_and_column_type_are_stable) :-
+    inferred_relplans([rel_spec(byte_source/1, set, [value], none, [bytes])],
+                      RelPlans),
+    lower:catalog_rows(bytes_type_system, [], RelPlans, Rows),
+    memberchk(row(6, 0, 0, bytes, primitive, 0, 0, 0, '', '', ''), Rows),
+    memberchk(row(_, _, 1, value, column, 6, 0, _, _, '', ''), Rows).
+
+test(bytes_world_arrival_stops_until_tagged_transport_exists,
+     [throws(unsupported_construct(type_arrival_shape_mismatch(
+                 byte_source/1, value, bytes,
+                 bytes_arrival_unavailable(raw))))]) :-
+    Program = prog([col_type(byte_source/1, value, bytes)], []),
+    program_plan(fixture(bytes_world_arrival_stops_until_tagged_transport_exists,
+                         Program, [byte_source(raw)], [], [])-[], _).
+
+:- end_tests(bytes_type_system).

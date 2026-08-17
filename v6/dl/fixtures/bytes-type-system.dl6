@@ -1,0 +1,11 @@
+# bytes-type-system.dl6 -- declaration, propagation, equality, and catalog rail.
+# Concrete arrival encoding belongs to the target-lowering phase.
+
+rel byte_source(value: bytes).
+rel byte_copy(value: bytes).
+rel byte_equal(left: bytes, right: bytes).
+
+byte_copy(Value) <- byte_source(Value).
+byte_equal(Value, Value) <- byte_source(Value).
+
+? byte_copy(Value).
