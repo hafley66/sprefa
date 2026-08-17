@@ -45,7 +45,9 @@
             relplan_columns/3,
             relplan_column_types/3,
             relplan_key/3,
-            relplan_declared_types/3
+            relplan_declared_types/3,
+            relplan_reference_target/2,
+            relplan_reference_targets/2
           ]).
 
 :- use_module(library(lists)).
@@ -102,3 +104,18 @@ relplan_key(RelPlans, Ref, KeyOrNone) :-
 relplan_declared_types(RelPlans, Ref, DeclaredTypes) :-
     relplan_of(RelPlans, Ref, Rel),
     relplan_declared(Rel, DeclaredTypes).
+
+% ═══ relation identity targets ═════════════════════════════════════════════
+
+% The set of type names a plan's rels point at through a ref(TypeName) column
+% storage. One TargetName per distinct occurrence (a column may repeat it).
+relplan_reference_target(RelPlans, TargetName) :-
+    member(Rel, RelPlans),
+    relplan_parts(Rel, _, _, _, _, ColumnTypes),
+    member(ref(TargetName), ColumnTypes).
+
+relplan_reference_targets(RelPlans, TargetNames) :-
+    findall(TargetName,
+            relplan_reference_target(RelPlans, TargetName),
+            AllTargetNames),
+    sort(AllTargetNames, TargetNames).

@@ -3764,9 +3764,7 @@ reference_trigger_samples(RelPlans, ordered_arrival, TriggerAtom,
 reference_trigger_samples(_, _, _, OtherAtoms, OtherAtoms).
 
 reference_target_ref(RelPlans, Name/_Arity) :-
-    member(RelPlan, RelPlans),
-    relplan_parts(RelPlan, _, _, _, _, ColumnTypes),
-    memberchk(ref(Name), ColumnTypes).
+    relplan_reference_target(RelPlans, Name).
 
 member_same_term(Term, [Candidate | _]) :- Term == Candidate, !.
 member_same_term(Term, [_ | Rest]) :- member_same_term(Term, Rest).

@@ -43,7 +43,8 @@
               [ inferred_cols/3, relplan_parts/6, relplan_shape/6,
                 relplan_columns/3, relplan_column_types/3, relplan_of/3,
                 relplan_declared/2, relplan_declared_types/3,
-                relplan_origins/2 ]).
+                relplan_origins/2,
+                relplan_reference_targets/2 ]).
 :- use_module('../../0_dot_expand', [ expand_dot_in_context/3 ]).
 :- use_module('../../0_enum_expand', [ expand_enum_program/2 ]).
 :- use_module('../../0_option_expand', [ expand_option_program/2 ]).
@@ -369,6 +370,80 @@ test(a_struct_column_declares_its_type_name_and_stores_a_ref) :-
     relplan_column_types(RelPlans, finding/2, [text, ref(span)]).
 
 :- end_tests(rel_record).
+
+% ═══════════════════════════════════════════════════════════════════════════
+% RELATION IDENTITY TARGETS (relplan_reference_target(s)/2)
+%
+% ref(TypeName) storage in ANY column names that type as a relation identity
+% target. Kind and key never do: scalar, list-container, keyed, log and
+% level-shaped rels stay out unless a ref column names them.
+
+:- begin_tests(relplan_reference_targets).
+
+% Duplicate ref(span) columns collapse to one target; ref(person) joins it.
+test(duplicate_ref_columns_collapse_to_one_target) :-
+    RelPlans =
+      [ rel(finding/2, set,
+            [ col(path, declared(text), text),
+              col(at, declared(span), ref(span)) ],
+            none),
+        rel(highlight/1, set,
+            [ col(zone, declared(span), ref(span)) ],
+            none) ],
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [span].
+
+% A second ref type is returned beside the first; the set is sorted.
+test(a_second_reference_type_is_returned_beside_the_first) :-
+    RelPlans =
+      [ rel(finding/3, set,
+            [ col(path, declared(text), text),
+              col(at, declared(span), ref(span)),
+              col(person, declared(person), ref(person)) ],
+            none) ],
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [person, span].
+
+% Kind and key never mint a target: scalar, list-container, keyed, log and
+% level-shaped plans contribute nothing unless a ref column names one.
+test(no_kind_or_key_shapes_become_targets) :-
+    RelPlans =
+      [ rel(scalar_only/1, set,
+            [ col(value, declared(int), int) ],
+            none),
+        rel(list_carrier/1, set,
+            [ col(bags, declared(list(item)), list(item)) ],
+            none),
+        rel(keyed_by_key/1, set,
+            [ col(k, declared(text), text) ],
+            key([1])),
+        rel(log_kind/1, log,
+            [ col(v, declared(int), int) ],
+            none),
+        rel(level_shaped/1, set,
+            [ col(slot, declared(int), int) ],
+            key([1])) ],
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [].
+
+% Ordering is deterministic: declaration order within a rel and rel order in
+% the plan both wash out; the sorted set answers the same either way.
+test(result_ordering_is_deterministic) :-
+    RelPlans =
+      [ rel(author/2, set,
+            [ col(person, declared(person), ref(person)),
+              col(span, declared(span), ref(span)) ],
+            none),
+        rel(finding/2, set,
+            [ col(at, declared(span), ref(span)),
+              col(person, declared(person), ref(person)) ],
+            none) ],
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [person, span],
+    relplan_reference_targets(RelPlans, Again),
+    Again == TargetNames.
+
+:- end_tests(relplan_reference_targets).
 
 :- begin_tests(sql_text_snapshots).
 
