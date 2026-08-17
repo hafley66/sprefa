@@ -1,11 +1,16 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-17
 type: feature
 reporter: chris
-status: open
+status: done
 priority: normal
 epic: soopy-full-wiring
+closed: 2026-08-17
+closed_by: soopy-driver
+commits:
+- hash: f253e8f0181281cf71c7b86af490c1e72a5e5c02
+  summary: 'PR #331, WORK revisions diff the dirty worktree; engine 90/0 twice, merged-main 92/0'
 ---
 
 # change facts accept WORK: worktree-vs-rev diffs

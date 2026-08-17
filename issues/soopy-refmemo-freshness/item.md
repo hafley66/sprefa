@@ -1,11 +1,16 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-17
 type: bug
 reporter: chris
-status: open
+status: fixed
 priority: normal
 epic: soopy-full-wiring
+closed: 2026-08-17
+closed_by: soopy-driver
+commits:
+- hash: 26344cf494394c77db13be77c88f0b84f90bedd4
+  summary: 'PR #335, ref memo keyed on a stat-only ref-store witness; driver added b02bb4833 so a memo hit spawns nothing'
 ---
 
 # GitRefExecutor memo never invalidates: keyed on repo alone

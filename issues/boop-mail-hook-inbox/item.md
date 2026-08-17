@@ -2,10 +2,11 @@
 created: 2026-08-16
 updated: 2026-08-17
 type: feature
-status: open
+status: done
 priority: high
 labels:
 - area:boop
+closed: 2026-08-17
 ---
 
 # boop: coordinator mail via hook inbox, not keystrokes
@@ -48,3 +49,18 @@ Two legs for boop:
 ### 2026-08-17T04:00:56Z · @coordinator
 
 Interim built 2026-08-17 in sprefa: .claude/hooks/boop-inbox.sh (Stop hook returns unread mail as block reason; UserPromptSubmit prints it as context; drained ids in ~/.agent/mail/inbox-drained.<me>) and .claude/hooks/boop-inbox-wait.sh (blocking wait, 540s default, exit 124 + re-run line). Wired in .claude/settings.json. Coordinator route re-registered pane-less so boop hail queues instead of typing. Verified live: hails arrive whole as context, zero keystrokes. Native boop version is card boop-wait-mail-id.
+
+### 2026-08-17T13:33:37Z · @sprefa-coordinator
+
+LANDED hafley-rs PR #15 (88dd100): boop inbox drain --as <name> --hook stop|prompt|plain; boop adopt --harness claude installs both hooks into <cwd>/.claude/settings.json (idempotent, --uninstall-hooks); deliver_hail queues instead of typing when the recipient's settings hold the drain hook. Bus ack + drained-id ledger. 20 tests (8 e2e over a real tmux pane), 341/0 x3. SWAP PENDING in sprefa: after , run  in the sprefa tree and delete .claude/hooks/boop-inbox.sh + its settings.json wiring.
+
+### 2026-08-17T13:33:51Z · @sprefa-coordinator
+
+Swap commands (previous note lost them to shell quoting): (1) cd ~/projects/hafley-rs && git pull --ff-only && just install-boop; (2) in the sprefa tree: boop adopt --harness claude --name sprefa-coordinator --tmux <pane> (installs the two hooks); (3) delete .claude/hooks/boop-inbox.sh and its Stop/UserPromptSubmit entries in .claude/settings.json.
+
+### 2026-08-17T14:10:35Z · @sprefa-coordinator
+
+SWAPPED 2026-08-17 14:10Z: boop 0.0.2 (88dd100) installed via just install-boop from an origin/main worktree (local hafley-rs main is 4 commits ahead of origin, so the guard refused it there). boop inbox hooks --name sprefa-coordinator installed the two drain hooks in sprefa .claude/settings.json; the interim shell hooks were removed from settings and moved out of .claude/hooks (gitignored path). Round trip verified: hail queued (no pane), drain printed it once, second drain empty.
+
+
+

@@ -1,11 +1,13 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-17
 type: chore
-status: open
+status: done
 priority: normal
 labels:
 - pkg:extract
+closed: 2026-08-17
+closed_by: extract-driver
 ---
 
 # sprefa-extract: origin/main not rustfmt-clean
@@ -31,3 +33,9 @@ src/wire.rs ~:270, src/lang/go.rs ~:126.
       rebase noise), `cargo fmt --check` clean on origin/main.
 - [ ] Until then every extract brief carries: never bare `cargo fmt`, only
       `rustfmt <owned files>`.
+
+## Resolution
+
+### 2026-08-17T04:55:46Z · @extract-driver
+
+PR #342 merged, origin/main d1a5556b0. cargo fmt --check clean on v6/sprefa-extract, 19 files formatting only, gate 151/151 unchanged. Both pre-commit rails (comment-budget) needed the release extract binary and pnpm install in v6/tsv2 AND v6/sprefa-store/js inside a fresh worktree; boop lane create does that provisioning, a hand git worktree add does not.

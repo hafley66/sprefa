@@ -1,11 +1,16 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-17
 type: chore
 reporter: chris
-status: open
+status: done
 priority: normal
 epic: soopy-full-wiring
+closed: 2026-08-17
+closed_by: soopy-driver
+commits:
+- hash: 59f391fefcbbc2148816c58eaa7bf3822bdcdcdd
+  summary: 'PR #332, one 127-crate soopy closure across both lockfiles plus the lockstep rail (recipe fixed by the driver: it invoked a .sh that did not exist)'
 ---
 
 # One resolution of soopy transitives across the two lockfiles

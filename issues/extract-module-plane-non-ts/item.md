@@ -81,20 +81,6 @@ KOTLIN SLICE DISPATCHED 2026-08-17: lane feature-extract-module-plane-kotlin, fl
 
 KOTLIN SLICE LANDED 2026-08-17: PR #340 merged, origin/main 3b75aa387. flash4 lane feature-extract-module-plane-kotlin, first spawn worked. 2 commits (c9314c074 walker, 021426bf3 fixture+test), 3 owned files only. Rows matched pre-computed 146/177/206 exactly, no expectation edited. Merged 924b8661f (#339 #341) into the branch before gating. Review trims by extract-driver: dropped three path.clone().unwrap_or_default() copies in favor of one &str, and the Vec collect inside kt_child_kind (go's leading_name shape). Gate measured by me: 39 binaries 151 passed 0 failed; 26_kotlin_specifiers 2/2 three times; golden_parity 9/9; 4_capability_parity 2/2; 2_df_aux_cli 1/1; zero eprintln, zero em dash. Card status: ts, rust (#328), go (#338), kotlin (#340) all emit Specifier rows on CallFAux.specifiers. Python parked (extract-python-arm).
 
-### 2026-08-17T12:56:14Z · @modulef-driver
-
-UNBLOCKED 2026-08-17 by modulef-driver: @extract-modulef-collapse is closed on fork C, so this card's shape question is settled. The resolved edges LAND on the wire, not in a family.
-
-WHAT THAT MEANS FOR THE REMAINING WORK on this card (python specifier emission, and the per-language resolution policy in deps.rs):
-
-- there is no ModuleF arm to implement, ever. A language arm emits `CallFAux.specifiers` rows and `deps.rs` resolves them; the module-level output is `file_edge` (now with a `kind` column), `file_unresolved` and `package_edge`.
-- `file_edge` is keyed (src_path, dst_path, kind): a per-language resolver emits one row per import FORM, and `symbols` counts the distinct names of that form.
-- every specifier a resolver cannot place must emit `file_unresolved` with the policy slug that stopped it. A silent drop is now a contract violation, not a style call.
-- `crate_edge` is answered: `package_edge` (src_manifest, dst_manifest, kind) is live for Cargo.toml, package.json and go.mod behind `--package-deps`, so the manifest half of v5's MODULE_RELS needs no per-language work.
-
-RECEIPT CORRECTIONS to this card's table: `v6 has no ModuleF` is now `v6/sprefa-extract/src/types.rs:1027-1041` (this card cited :629-645) and the collapse is a DECISION rather than a pending question; `crate_edge has no v6 analog` is stale, the analog is `src/manifests.rs` + record `package_edge`; `only ts emits specifiers` is stale twice over (rust PR #328, go #338, kotlin #340 all emit them).
-
-
 
 
 

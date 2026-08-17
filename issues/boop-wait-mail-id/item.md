@@ -1,11 +1,12 @@
 ---
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-17
 type: feature
-status: open
+status: done
 priority: high
 labels:
 - area:boop
+closed: 2026-08-17
 ---
 
 # boop wait: block until a reply or the next mail, and tell the sender how
@@ -50,3 +51,8 @@ zero route knowledge, receive with zero keystrokes, wait with one command.
 ### 2026-08-17T03:47:29Z · @coordinator
 
 USER ADDENDUM 2026-08-16: wait has a DEFAULT timeout (pick one under the Bash 10-min cap, e.g. 540s) and a shortcut arg --wait-timeout <secs> usable on wait AND on hail (hail --wait-timeout = send then block). On timeout: exit nonzero (124), and BOTH stdout and stderr print the exact re-run line, e.g. 'timed out after 540s waiting for reply to m-691bc40e; re-run: boop wait m-691bc40e --wait-timeout 540'. Same on any other exit: the last line is always the next command to run, so an agent (or a tired human) reads what to do next without thinking. Add to AC: default timeout documented in --help; timeout exit prints re-run line on both streams; hail --wait-timeout accepted.
+
+### 2026-08-17T04:02:57Z · @boopfix
+
+Landed: hafley-rs PR #11 (merged, main 8339d0e). boop wait <id> | boop wait --me [--as name] | boop beep hail --wait-timeout N (send then block). Default 540s, timeout exits 124 printing 'timed out after Ns waiting for <what>; re-run: <cmd>' on stdout AND stderr; success ends with 're-arm: boop wait --me &'; every hail ends with 'to await the reply: boop wait <id>   (or: boop wait --me &)'. Arrivals are stamped to_timestamp so a second wait blocks instead of replaying (first probe DID replay; that is why reply_to filters on to_timestamp). Watch = 1s mailbox re-read, not notify: notify is in the workspace lock only via soopy and boop does not depend on it. Tests: 8 unit in crates/boop/src/mailwait.rs, 7 e2e over the real binary and a real bus file in crates/boop/tests/wait_mail.rs (hint line, reply exits 0 with body + stamp, no replay, 124 with re-run on both streams, --me all-unread, --me via BOOP_LANE env, hail --wait-timeout). cargo test -p boop green in 4 of 5 whole-suite runs; the one red was the pre-existing load-sensitive channel::claude::streamed_activity test (5/5 alone here, 3/3 alone on main). WAIT section added to boop --help doctrine. Binary reinstalled ~/.cargo/bin/boop mtime Aug 17 00:02.
+
