@@ -122,6 +122,19 @@ impl Strings {
     }
 }
 
+impl Strings {
+    /// Approximate heap footprint of the interned strings, for the cache weigher.
+    /// Moves with the real size; not exact.
+    pub fn heap_bytes(&self) -> usize {
+        self.map.len() * size_of::<(String, NameId)>()
+            + self
+                .names
+                .iter()
+                .map(|name| name.capacity() + size_of::<String>())
+                .sum::<usize>()
+    }
+}
+
 impl fmt::Display for NameId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "NameId({})", self.0)

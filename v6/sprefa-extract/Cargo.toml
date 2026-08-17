@@ -103,6 +103,9 @@ prost = "0.13"
 # rayon drives the per-file extraction pool. A dedicated pool (never the global
 # one) so nothing else in the process inherits the cap.
 rayon = "1"
+# The content-keyed extraction cache. Weight-bounded and concurrent (sharded,
+# &self methods), so the rayon workers all hit it. Weight is an output estimate.
+quick_cache = "0.7"
 
 # clap is BIN-only: gated behind `cli` so `cargo tree --lib` stays free of it.
 # The bin adds only clap; the lib never touches it.

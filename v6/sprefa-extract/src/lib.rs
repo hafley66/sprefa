@@ -16,6 +16,7 @@
 //! `--bench`. Proves bin -> seams -> flat wire -> stdout end to end.
 #![allow(dead_code)]
 
+pub mod cache;
 pub mod cfg;
 pub mod cpg_decode;
 pub mod cpg_types;

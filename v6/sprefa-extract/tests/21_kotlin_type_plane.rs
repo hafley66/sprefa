@@ -8,6 +8,7 @@
 //! folding it into the shared parity test is a named follow-up.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use sprefa_extract::{
     build_def_index, content_id_of, dispatch, ContentId, ExtractOutput, FamilyMask, FileSet,
@@ -38,9 +39,9 @@ fn facet_of(line: &str) -> &str {
 /// the DefIndex folded over all of them (the resolution universe), and a
 /// borrowed ProjectCx. Mirror of golden_parity's shared helper.
 fn with_resolve_cx<R>(
-    f: impl FnOnce(&ProjectCx, &[(ContentId, ExtractOutput, &'static Case)]) -> R,
+    f: impl FnOnce(&ProjectCx, &[(ContentId, Arc<ExtractOutput>, &'static Case)]) -> R,
 ) -> R {
-    let corpus: Vec<(ContentId, ExtractOutput, &'static Case)> = CASES
+    let corpus: Vec<(ContentId, Arc<ExtractOutput>, &'static Case)> = CASES
         .iter()
         .map(|case| {
             let out = dispatch(case.path, case.fixture, FamilyMask::ALL).expect("source");
@@ -49,7 +50,7 @@ fn with_resolve_cx<R>(
         .collect();
     let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
         .iter()
-        .map(|(hash, out, _)| (hash.clone(), out))
+        .map(|(hash, out, _)| (hash.clone(), out.as_ref()))
         .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
