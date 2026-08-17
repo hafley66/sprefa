@@ -153,7 +153,7 @@ desugar_reference_option(Decls0, ParentName/Arity, Column, Element, Position,
     maplist(shrink_parent_ref(ParentName/Arity, ParentName/NewArity,
                               Position),
             Kept, RewrittenDecls),
-    companion_rel_decls(ParentName, Column, Element, CompanionDecls),
+    companion_rel_decls(Decls0, ParentName, Column, Element, CompanionDecls),
     append(RewrittenDecls, CompanionDecls, Decls).
 
 option_column_entry(Ref, Column, col_type(Ref, Column, option(_))).
@@ -204,14 +204,23 @@ acyclic_companion(Decls, CompanionName/2, declared_at(ParentName, Column),
     atom_concat(ParentName, '_id', OwnerColumn),
     companion_element_column(ParentName, Column, ParentName, TargetColumn).
 
-companion_rel_decls(ParentName, Column, Element,
+% The companion's element column stores the element rel's id, so it is typed
+% as the element (resolving to ref(Element) storage) when the element is a
+% declared type. A col_type-only element rel has no type_decl and stays an
+% ordinary integer id, matching the list member's value column behavior.
+companion_rel_decls(Decls, ParentName, Column, Element,
                     [ col_type(CompanionRef, ParentIdColumn, int),
-                      col_type(CompanionRef, ElementIdColumn, int),
+                      col_type(CompanionRef, ElementIdColumn, ElementType),
                       keyed(CompanionRef, [1]) ]) :-
     companion_rel_name(ParentName, Column, CompanionName),
     CompanionRef = CompanionName/2,
     atom_concat(ParentName, '_id', ParentIdColumn),
-    companion_element_column(ParentName, Column, Element, ElementIdColumn).
+    companion_element_column(ParentName, Column, Element, ElementIdColumn),
+    companion_element_type(Decls, Element, ElementType).
+
+companion_element_type(Decls, Element, Element) :-
+    memberchk(type_decl(Element, _), Decls), !.
+companion_element_type(_, _, int).
 
 % A self-typed column names both endpoints after the same rel and one CREATE
 % TABLE cannot carry the atom twice, so the column name qualifies the target.

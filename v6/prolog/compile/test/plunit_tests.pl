@@ -445,6 +445,83 @@ test(result_ordering_is_deterministic) :-
 
 :- end_tests(relplan_reference_targets).
 
+% ═══════════════════════════════════════════════════════════════════════════
+% WRAPPED RELATION IDENTITY TARGETS
+%
+% The same ref(TargetName) question, asked of a real expanded program rather
+% than a hand-built RelPlans: program_plan/2 expands the wrapper types, then
+% relplan_reference_targets/2 names what the plan points at. A direct struct
+% column, a list member rel's value column and an option companion's element
+% column each mint one target; a rel with no relation-valued consumer mints
+% none.
+
+:- begin_tests(wrapped_relplan_reference_targets).
+
+% A struct column is the one direct spelling: finding.at: span resolves to a
+% ref(span) storage and names the target directly.
+test(direct_struct_column_names_its_element) :-
+    Program = prog(
+      [ type_decl(span, [col(start, int), col(end, int)]),
+        kind(finding/2, set),
+        col_type(finding/2, path, text),
+        col_type(finding/2, at, span) ],
+      []),
+    program_plan(fixture(wrapped_direct, Program, [], [], [])-[],
+                 [intern(direct)], plan(_, _, _, RelPlans, _, _, _, _, _)),
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [span].
+
+% team.members: list(person) mints a member rel whose value column is typed
+% person, so the element is a target. The list container itself stores its own
+% entity id and never appears as a relation target.
+test(list_element_names_the_element_not_the_container) :-
+    Program = prog(
+      [ type_decl(person, [col(person_id, int), col(name, text)]),
+        col_type(person/2, person_id, int),
+        col_type(person/2, name, text),
+        col_type(team/2, team_id, int),
+        col_type(team/2, members, list(person)),
+        keyed(team/2, [1]) ],
+      []),
+    once(program_plan(fixture(wrapped_list, Program, [], [], [])-[],
+                      [intern(direct)],
+                      plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [person].
+
+% commit.reviewed_by: option(person) splits into a companion rel whose element
+% column is typed person, so the element is a target through the companion.
+test(option_companion_names_its_element) :-
+    Program = prog(
+      [ type_decl(person, [col(person_id, int), col(name, text)]),
+        col_type(person/2, person_id, int),
+        col_type(person/2, name, text),
+        keyed(person/2, [1]),
+        col_type(commit/2, commit_id, int),
+        col_type(commit/2, reviewed_by, option(person)),
+        keyed(commit/2, [1]) ],
+      []),
+    program_plan(fixture(wrapped_option, Program, [], [], [])-[],
+                 [intern(direct)], plan(_, _, _, RelPlans, _, _, _, _, _)),
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [person].
+
+% A keyed rel that nothing points at stays out of the target set: kind and key
+% never mint a ref edge, and no wrapper column carries it.
+test(a_keyed_rel_with_no_consumer_names_no_target) :-
+    Program = prog(
+      [ type_decl(person, [col(person_id, int), col(name, text)]),
+        col_type(person/2, person_id, int),
+        col_type(person/2, name, text),
+        keyed(person/2, [1]) ],
+      []),
+    program_plan(fixture(wrapped_none, Program, [], [], [])-[],
+                 [intern(direct)], plan(_, _, _, RelPlans, _, _, _, _, _)),
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [].
+
+:- end_tests(wrapped_relplan_reference_targets).
+
 :- begin_tests(sql_text_snapshots).
 
 % Per-rule SQL text, pinned exactly. A change here is either a deliberate
