@@ -50,7 +50,7 @@ flowchart TD
   C["rows to code text<br/>dl6 already renders rust structs"]
   D["server on a socket<br/>shipped in the v5 daemon"]
   E["client on a socket<br/>shipped in the v5 daemon"]
-  F["the CLI library<br/>clap builds verbs from a list"]
+  F["the CLI<br/>a generic client of the socket"]
   A --> B --> C
   B --> F
   D --> E
@@ -75,22 +75,23 @@ I ran the whole thing on the real Pokemon spec:
 
 ## 3. What we would build
 
-Small. Four files.
+Three steps, in order. No code generator, no new crate.
 
 ```mermaid
 flowchart LR
-  Y["pokeapi.yml"]
-  R1["spec.dl6<br/>the rules"]
-  R2["render.dl6<br/>the type text"]
-  R3["one small rust binary"]
-  Y --> R1 --> R2 --> R3
-  R1 --> R3
+  T["1. every emitted<br/>types.rs compiles"]
+  V["2. engine-rs serve:<br/>the program on a socket file"]
+  G["3. pokeapi golden:<br/>curl --unix-socket one rel"]
+  T --> V --> G
 ```
 
-The rust binary does two things and neither is clever: it reads the rows and
-folds them into a command tree, and it reads the rows and folds them into a
-router. Both libraries take a plain list. There is no code generator to write
-for the CLI at all.
+| step | what it is | size |
+|---|---|---|
+| 1 | 5 of 342 emitted Rust type files fail to compile today; fix the emitter | small |
+| 2 | one new file in the Rust engine: a router on a socket file, one route per rel, one route to post rows | medium |
+| 3 | run the Pokemon spec program on a socket and prove `curl` gets the rows | medium |
+
+The CLI comes after: one generic program that asks the socket "what verbs exist" and runs one. Its help text is a table read.
 
 ## 4. The two real gaps
 
@@ -121,11 +122,10 @@ Neither blocks the demo. Both block the pretty version.
 
 ## 5. The calls that are yours
 
-Nine forks. The four that matter:
+Decided 2026-08-17: verbs are data, read live from the socket. Three still open:
 
 | # | question | the trade |
 |---|---|---|
-| 1 | Should the CLI's verbs be data read at startup, or baked into the binary? | data = edit the spec, restart, done. baked = one self-contained binary, but every spec edit needs a rebuild |
 | 2 | Should the verb read `pokemon get 25` or `pokemon-retrieve --id 25`? | the pretty one needs a tie-break rule, because 100 operations share 50 paths |
 | 3 | Should the program WRITE its generated file itself, or hand the text to a script? | writing it itself makes the write reviewable and undoable like every other row, and needs a "yes" row from you to fire |
 | 4 | Chase nested types one hop, or all the way? | one hop works today. all the way is gap 1 above |
