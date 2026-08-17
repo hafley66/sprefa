@@ -31,7 +31,7 @@ crate. The dl6 program IS the API and the CLI is a generic client of it.
 | API | `sprefa-engine-rs` grows a `serve` seam: axum 0.8 router on `tokio::net::UnixListener`, copied from v5 `src/daemon/shell/http.rs:117-142`; `GET /rel/<name>` reads rows typed by the emitted `.types.rs`, `POST /arrive` folds a tick through `driver.rs` |
 | CLI | one generic binary that reads `cli_verb`/`cli_arg` rows from the running socket and dispatches; `--help` is a rel read |
 | upstream calls (`pokemon get 25` reaches pokeapi) | one host row per operation, from->to like every `sh` host |
-| yaml -> json | one plain `sh` host, `node -e` + the `yaml` package already in the TS runtime's dependencies (user 2026-08-17: keep `sh`, stop reaching for extract or new crates) |
+| yaml -> json | new extract family `yaml`, hosted through the existing extract executor on both doors (user 2026-08-17) |
 
 rx lowering of the server: `arrivals$.pipe(concatMap(batch => driver.tick(batch)))`; reads are a `latest` projection.
 
@@ -48,7 +48,7 @@ Every row below was produced by the command in it, in this worktree, on this tre
 | parameters in spec | `grep -c '\bin: '` | 196 (146 query, 50 path) |
 | `$ref` occurrences | `grep -c '\$ref:'` | 355 |
 | component schemas | json1 `json_each($.components.schemas)` | 212 |
-| yaml -> json | one plain `sh` host, `node -e` with the `yaml` package the TS runtime already depends on (`v6/tsv2/package.json:31`) | user 2026-08-17: keep `sh`, no extract detour, no new crate |
+| yaml -> json | new extract family `yaml` (`lang/mod.rs sources()`), hosted on both doors through the existing extract path (TS: spawn per digest, Rust: in-process) | user 2026-08-17 |
 | fixture compile coverage | `python3` over `v6/prolog/compile/out/manifest.json` | `compiled 342`, `unsupported 110`, total 452 |
 | proposed rel schema compiles | `bash v6/prolog/compile/scripts/compile_dl6.sh /tmp/oa-research/openapi_spec.dl6 out.ts` | rc=0, `total=108/724001` (108ms) |
 | risky-construct probe compiles | same, `/tmp/oa-research/probe2.dl6` | rc=0, `total=78/900993` (78ms) |
@@ -100,14 +100,12 @@ feature on.
 
 ## 4. Q1b candidates: YAML to JSON
 
-The dl6 route needs only this. One plain `sh` host; the served TS runtime
-already depends on the `yaml` package. User decision 2026-08-17: keep `sh`,
-no detour through extract or a new Rust crate.
+The dl6 route needs only this. yaml is a sprefa-extract family, hosted on
+both doors through the existing extract executor (user 2026-08-17).
 
 | candidate | latest (date) | what it gives | what it lacks | verdict |
 |---|---|---|---|---|
-| `node -e` + `yaml` 2.9 (already in `v6/tsv2/node_modules`) | the TS runtime's own yaml dependency, one `sh` line, both doors spawn it | nothing; it is a runtime dep the server already carries | **WINNER** (user decision 2026-08-17: plain `sh`, no extract family, no new crate) |
-| `serde-saphyr` 1.1.0 (2026-08-15) | serde YAML 1.2 crate | a new crate + a new extract family for a job one `sh` line does | rejected (user 2026-08-17) |
+| `serde-saphyr` 1.1.0 (2026-08-15) inside sprefa-extract as family `yaml` | YAML 1.2, serde, aliases; one `doc` record per file; hosted on both doors through the existing extract executor (TS spawn per digest, Rust in-process) | a new family in `lang/mod.rs` | **WINNER** (user 2026-08-17: sprefa-extract hosts file-type work in every env) |
 | system `ruby -ryaml -rjson` | ships with macOS today | one line, zero crate | an OS interpreter as a runtime dep of a Rust engine; Apple has deprecated scripting runtimes and CI images differ | rejected (user decision 2026-08-17) |
 | `serde_yaml` | 0.9.34**+deprecated** (2024-03-25) | 86.8M recent downloads, dtolnay | the version string is literally `+deprecated`; upstream retired it | rejected. Adding a self-declared deprecated crate is a defect |
 | `serde_norway` | 0.9.42 (2024-12-21) | maintained fork of `serde_yaml`, 2.58M recent, API-compatible | fork governance; a Rust dep for a job a one-line host does | second choice if `serde-saphyr` misbehaves on the corpus; API-compatible with the retired crate. Only if the pipeline moves inside a Rust binary |
@@ -237,208 +235,9 @@ Two receipts:
 # ── the source ──────────────────────────────────────────────────────────────
 rel spec_file(spec_id: int, path: text, digest: text) key(1).
 
-sh yaml_doc(path: text, digest: text) -> (doc: json) =
-  `: {digest}; node -e 'const y=require("yaml");process.stdout.write(JSON.stringify(y.parse(require("fs").readFileSync(process.argv[1],"utf8"))))' {path}`.
-# plain sh host (user 2026-08-17: keep sh, no extract detour). The served TS
-# runtime already depends on `yaml` (v6/tsv2/package.json:31); the Rust door
-# runs the same line through ShellExecutor.
-
-rel spec_doc(spec_id: int, doc: json).
-
-# ── the spec planes ─────────────────────────────────────────────────────────
-rel operation(operation_name: text, path_template: text, method: text,
-              summary: option(text), description: option(text)).
-
-rel operation_tag(operation_name: text, tag_name: text).
-
-rel parameter(operation_name: text, parameter_name: text, location: text,
-              required: option(bool), scalar_type: text,
-              description: option(text)).
-
-rel response(operation_name: text, status_code: text, media_type: text,
-             schema_name: text).
-
-rel component_schema(schema_name: text, kind: text).
-
-rel schema_property(schema_name: text, property_name: text,
-                    property_type: text, nullable: option(bool),
-                    ref_schema_name: option(text)).
-
-# ── derived: the clap tree ──────────────────────────────────────────────────
-rel cli_group(group_name: text, about: text).
-rel cli_verb(operation_name: text, group_name: text, verb_name: text,
-             about: text).
-rel cli_arg(operation_name: text, arg_name: text, long_flag: option(text),
-            positional: bool, required: bool, value_kind: text, help: text).
-
-# ── derived: the router table ───────────────────────────────────────────────
-rel route(operation_name: text, method: text, axum_path: text,
-          handler_name: text).
-
-# ── derived: the rendered text ──────────────────────────────────────────────
-rel verb_line(operation_name: text, ordinal: int, line_text: text).
-rel verb_block(operation_name: text, block_text: text).
-rel rendered_file(file_name: text, file_text: text).
-```
-
-`operation_name` is the OpenAPI `operationId`, unique per document by the
-specification, so it is the natural key and the compiler interns it once into
-`__str`. `path_template` carries the OpenAPI template verbatim; section 6 shows
-axum 0.8 takes it unchanged.
-
-## 10. Construct census per rule
-
-Every rule the pipeline needs, with its construct and the receipt that it
-compiles. All six probes are in `/tmp/oa-research/probe2.dl6`, compiled
-together, rc=0.
-
-| rule | construct | receipt | gap |
-|---|---|---|---|
-| `spec_doc <- spec_file, yaml_json(...)` | `sh` host decl + host call | `openapi_spec.dl6` rc=0; same shape as `ghcacher_env_golden` `toml_json` | none |
-| `operation <- decode(Doc, {paths: {$Template: {$Method: {operationId: Name: text}}}})` | `decode/2` + two `$` key captures + typed capture | manifest `json_key_capture_nests_and_fans_out` = `compiled`; probe rc=0 | none |
-| `parameter <- decode(Doc, {paths: {$T: {$M: {parameters: spread({name: N: text, in: L: text, schema: {type: S: text}})}}}})` | `spread/1` under two key captures | probe C rc=0; emitted SQL is a 3-level `json_each`; run on the real spec it answers **196 rows** | none |
-| `response <- decode(Doc, {... {responses: {'200': {content: {'application/json': {schema: {'$ref': R: text}}}}}}})` | quoted string keys `'200'`, `'application/json'`, `'$ref'` in a brace pattern | probe A rc=0. `ruling(json5_subset, unquoted_keys_only)` at `rulings.pl:431` reads "exactly json plus bare identifier keys", so quoted keys are the json half. Run on the real spec: **98 rows** | none |
-| `schema_name := replace(RefText, '#/components/schemas/', '')` | `replace/3` | `registry.pl:275`, probe B rc=0. `#/components/schemas/PokemonDetail` -> `PokemonDetail` | none |
-| `route(Name, Method, Template, Handler)` | none. axum 0.8 takes the OpenAPI template verbatim | `axum-0.8.9/src/extract/path/mod.rs:610` | none |
-| `cli_verb` naming: `replace`, `instr`, `initcap`, `split` | `expression/5` rows at `registry.pl:265-294` | `split_initcap_and_fold_render_pascal_case` = `compiled` | none |
-| `verb_block(Op, group_concat(LineText, '\n', Ordinal))` | ordered `group_concat/2` | `ordered_group_concat_ordinal` = `compiled`; `render_rust.dl6` uses it; probe F rc=0 | none |
-| write the file: one `sh write_file(path, body) -> (bytes: int)` fed one folded column | `group_concat` fold + host | probe F rc=0; emitted SQL folds to one `__str` row then one host demand. **Disproves `2-apply.dl6:20-26`** | none |
-| `required: option(bool)` for a parameter with no `required` key | `option/1` on a scalar | probe D rc=0; `__opt_bool_tag` table in the emitted DDL | none. Note the recorded limit: `option(T)` says value-or-none, and cannot distinguish key-absent from key-present-null (`CLAUDE.md`, Open needing the user) |
-| `$ref` chasing to a NESTED component schema, transitively | recursive level rule over `schema_property` | `mutual_recursion_matches_oracle` = `compiled`; `recursive_closure_passes_both_build_guard_arms` = `compiled`; BUT `built_text_in_recursive_head(chain/1)` = `unsupported` | **GAP.** A recursive rule may not build TEXT in its own head. `$ref` chasing that concatenates a qualified type name per hop is not built yet. Chasing that only carries already-interned names is fine. **STOP HERE, this is a language shape** |
-| a rel whose column type is another rel (`generation: generation_summary`, as `pokeapi_shape.dl6` writes) built from spec rows | reference column | `pokeapi_shape.dl6` compiles today by hand. Deriving one BY RULE makes the target both source and arrival: `CLAUDE.md` records that the oracle silently returns a duplicated row with nothing in `analyze.pl` naming it | **GAP.** Split-and-union is the right shape; the silence is the defect. **STOP HERE** |
-| writing the rendered file from inside dl6 | there is no file-write sink construct | `render_rust.dl6` ends at a `rendered_type` rel; `typegen_golden.sh` reads the rel and writes the file. `2-apply.dl6` uses an `sh` write host instead | not a gap, a fork. Two shapes exist and both work. Fork F4 below |
-
-## 11. Pipeline
-
-18 shapes.
-
-```mermaid
-flowchart LR
-  YML["pokeapi.openapi.yml<br/>9839 lines, 3.1.0"]
-  HOST["sh yaml_doc<br/>node -e + yaml package"]
-  DOC["rel spec_doc, one json column<br/>191354 bytes, 1 row"]
-
-  YML --> HOST --> DOC
-
-  DEC["decode/2<br/>$Path $Method + spread"]
-  DOC --> DEC
-
-  OP["rel operation<br/>100 rows"]
-  PA["rel parameter<br/>196 rows"]
-  RS["rel response<br/>98 rows"]
-  CS["rel component_schema<br/>212 rows"]
-  DEC --> OP & PA & RS & CS
-
-  VERB["rel cli_verb"]
-  ARG["rel cli_arg"]
-  ROUTE["rel route"]
-  OP --> VERB & ROUTE
-  PA --> ARG
-  RS --> ROUTE
-  CS --> TYPES["rel schema_property"]
-
-  LINE["verb_line then group_concat<br/>then rendered_file"]
-  VERB & ARG & TYPES --> LINE
-
-  CLAP["clap 4 builder<br/>Command::subcommands"]
-  AXUM["axum 0.8 Router<br/>serve on UnixListener"]
-  CLIENT["hyper 1 client<br/>UnixStream::connect"]
-  VERB & ARG --> CLAP
-  ROUTE --> AXUM
-  ROUTE --> CLIENT
-  LINE --> RSFILE["types.rs<br/>serde structs"]
-
-  DIFF{"byte diff<br/>CLI stdout vs curl body"}
-  CLAP --> DIFF
-  CLIENT --> DIFF
-  AXUM --> DIFF
-```
-
-Two arms leave the rows. The **runtime arm** (`cli_verb`/`cli_arg` -> clap
-builder, `route` -> axum router) needs no code generation at all: the rows are
-read at boot and folded into a `Command` and a `Router`. The **emitter arm**
-(`verb_line` -> `group_concat` -> `rendered_file`) generates the serde structs
-for the response bodies, which must be types at compile time.
-
-## 12. Minimal lab plan
-
-Target: `pokemon get 25` prints the same bytes as
-`curl --unix-socket /tmp/pokeapi.sock http://localhost/api/v2/pokemon/25/`.
-
-### Files the lab owns
-
-| path | what |
-|---|---|
-| `v6/dl/labs/openapi-clap/spec.dl6` | the rel schema of section 9 plus the six rules of section 10 |
-| `v6/dl/labs/openapi-clap/render_clap.dl6` | the `render_rust.dl6` three-stratum shape, emitting `types.rs` |
-| `v6/sprefa-engine-rs/src/serve.rs` | the UDS serve seam of section 0 (replaces the lab binary; decision 2026-08-17) |
-| `v6/tsv2/goldens/openapi_uds/run.sh` | the receipt driver |
-
-### The commands a reader runs
-
-```bash
-cd v6
-
-# 1. the spec becomes json (the sh host body, run by hand first)
-node -e 'const y=require("yaml");process.stdout.write(JSON.stringify(y.parse(require("fs").readFileSync(process.argv[1],"utf8"))))' dl/fixtures/pokeapi.openapi.yml > /tmp/pokeapi.json
-
-# 2. the spec program compiles
-bash prolog/compile/scripts/compile_dl6.sh \
-  dl/labs/openapi-clap/spec.dl6 /tmp/spec.ts
-# expect: rc=0, "wrote /tmp/spec.ts"
-
-# 3. the rows come out (served tsv2 runtime, one arrival = the spec path)
-cd tsv2 && npm run serve -- --program /tmp/spec.ts &
-curl -s -XPOST localhost:17500/edb/events \
-  -d '{"batch":[{"rel":"spec_file","sign":"add","row":[1,"'"$PWD"'/../dl/fixtures/pokeapi.openapi.yml","d0"]}]}'
-curl -s localhost:17500/idb/operation | jq '.rows | length'   # expect 100
-curl -s localhost:17500/idb/parameter | jq '.rows | length'   # expect 196
-curl -s localhost:17500/idb/cli_verb  | jq '.rows | length'   # expect 100
-
-# 4. the lab binary boots with those rows, serves on the socket
-cargo run -p sprefa-openapi-lab -- \
-  --rows http://localhost:17500 --socket /tmp/pokeapi.sock &
-
-# 5. THE RECEIPT: the CLI and curl must print the same bytes
-cargo run -q -p sprefa-openapi-lab -- \
-  --socket /tmp/pokeapi.sock pokemon get 25 > /tmp/cli.out
-curl -s --unix-socket /tmp/pokeapi.sock \
-  http://localhost/api/v2/pokemon/25/ > /tmp/curl.out
-cmp /tmp/cli.out /tmp/curl.out && echo "IDENTICAL"
-
-# 6. the status-to-exit-code mapping
-cargo run -q -p sprefa-openapi-lab -- \
-  --socket /tmp/pokeapi.sock pokemon get no-such-pokemon
-echo "exit=$?"   # expect 44 for HTTP 404
-```
-
-### The gate
-
-| leg | pass condition |
-|---|---|
-| spec compiles | `compile_dl6.sh` rc=0 |
-| row counts | 100 / 196 / 98 / 212, matching section 1's receipts |
-| CLI verb inventory | `sprefa-openapi-lab --help` lists one group per `tag`, one verb per operation; count equals the `cli_verb` row count |
-| **byte diff** | `cmp /tmp/cli.out /tmp/curl.out` exits 0 |
-| status mapping | HTTP 404 -> exit 44, HTTP 400 -> exit 40, HTTP 200 -> exit 0 |
-| completions | `clap_complete::aot::generate(Shell::Bash, &mut cmd, "pokeapi", &mut stdout())` writes a non-empty script |
-| socket hygiene | socket file mode 0600, stale socket unlinked at boot, never a TCP port |
-
-The upstream PokeAPI is the fixture's source, so leg 5 can also run against a
-canned response body checked in beside the spec, keeping the gate offline.
-
-## 13. Open forks for Chris
-
-F1 and F5 are closed by section 0 (F0 chosen). F3, F4, F6 stay open.
-
-| fork | options | what each costs |
-|---|---|---|
-| **F1. clap tree: rows at runtime, or generated Rust** | (a) `Command::subcommands()` folded from `cli_verb` rows at boot. (b) a `render_clap.dl6` emitter writing `#[derive(Parser)]` structs | (a) zero new emitter, zero codegen, spec edit takes effect on restart, `--help` text is data. Cost: the binary needs the rows, so it reads a snapshot file or the engine at boot. (b) compile-time checked, one self-contained binary, `clap_complete` at build time. Cost: a NEW dl6 emitter plus a golden gate, and a regenerate-and-rebuild cycle per spec edit |
-| **F2. the OpenAPI model crate** | (a) none: the json plane reads the spec directly. (b) `oas3 0.22.0` as a validation gate in front. (c) `oas3` as the parser, feeding rows | (a) fewest moving parts; a malformed spec surfaces as missing rows rather than an error. (b) one dep, one line, a loud error on a bad document, and the pipeline stays json-native. (c) a Rust pre-pass owns the shape, and the dl6 rules read its output instead of the spec, which puts the model crate's opinions between the spec and the rules |
-| **F3. `$ref` chasing depth** | (a) one hop only: `response.schema_name` names a component, and nested `$ref`s stay as `json` columns, exactly what `pokeapi_shape.dl6` does today. (b) transitive closure over `schema_property.ref_schema_name` | (a) compiles today, 212 component schemas flatten to one level, and the nested shapes carry as `json`. (b) needs a recursive level rule, and `built_text_in_recursive_head(chain/1)` is `unsupported` in the manifest, so the closure may not build a qualified name in its own head. It CAN carry already-interned names. Whether that is enough is a language-shape call, and it is yours |
-| **F4. where the rendered file is written** | (a) a `rendered_file` rel plus a shell driver, the `typegen_golden.sh` shape. (b) an `sh write_file(path, body)` host inside the program, the `2-apply.dl6` shape, now that the whole file folds into one column | (a) the write is outside the program, so the tick log never carries it, and the gate is a `diff`. (b) the write is a row, so it is reviewable, retractable, and in the tick log, and an `armed(file)` row is the human yes. Cost: a program that writes to the tree, and the ordering of two writes to one file is delta order |
-| **F5. the socket, and which runtime serves it** | (a) a new `v6/sprefa-openapi-lab` Rust crate copying `src/daemon/shell/http.rs`. (b) `v6/tsv2/serve/4_http.ts:493` grows a UDS path (node `listen(path)`, zero new dependency). (c) both, and the byte diff runs across the two runtimes | (a) matches the v6 Rust direction and reuses a shipped, gated shape. (b) one line, and the served engine that already holds the rows is the server. (c) the strongest receipt this epic can produce, and twice the work |
-| **F6. one verb per operation, or REST-shaped verbs** | (a) `pokeapi pokemon-retrieve --id 25`, the `operationId` verbatim. (b) `pokeapi pokemon get 25`, tag as group and the method as the verb | (a) mechanical, total, and every operation reachable, at the cost of ugly verbs. (b) reads like a CLI, matches the epic's own `pokemon get <name>` wording, and needs a collision rule: this spec has 100 operations over 50 path templates, tag+method is not unique, so `list` vs `retrieve` must come from whether the template ends in a `{param}` segment |
-| **F7. status-to-exit-code mapping** | (a) `2` for every non-2xx, clap's own convention. (b) the HTTP status mod 100 plus a base, so 404 -> 44. (c) a `rel exit_code(status_code, code)` in the spec program | (a) loses information. (b) mechanical and memorable, and it is what the lab plan above assumes. (c) the mapping becomes data like everything else, and a spec can override it, at the cost of one more rel |
-| **F8. `option(T)` and the absent key** | (a) `required: option(bool)` and treat none as false. (b) wait on the recorded `option(T)` question | a parameter with no `required` key and a parameter with `required: null` are the same row under (a). The spec's 196 parameters include both shapes (`required: false` explicit, and `required` absent on the `q` query parameters). Whether that collapse is acceptable is the same call as the recorded one in `CLAUDE.md` |
-| **F9. the stale-doc sweep** | (a) fix the five corrections in section 2 in this lane. (b) file them as cards | `2-apply.dl6:20-26`'s "no string aggregate" line has been false since ordered `group_concat` landed, and an agent reading it will price a real capability as impossible. Same for `CLAUDE.md`'s split/substr row and `docs/effect-inventory.md`'s `uds.rs` |
+sh extract(path: text, digest: text) -> (doc: json) =
+  `"$DL_EXTRACT_BIN" --family yaml {path}`.
+# hosted extract on both doors: TS spawns it (serve/1_hosts.ts:253
+# runSprefaExtract -> runShellLine), Rust links it (hosts.rs
+# SprefaExtractExecutor). yaml is a new extract family (lang/mod.rs
+# sources()); userland never calls a CLI, this is the engine's own host spelling.
