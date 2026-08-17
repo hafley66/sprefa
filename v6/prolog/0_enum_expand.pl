@@ -29,8 +29,8 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module('0_program_check', [level_headed/2]).
-:- use_module('0_option_expand', [companion_rel_name/3, option_enum_decl/2,
-                                  scalar_element/1]).
+:- use_module('0_option_expand', [companion_rel_name/3, option_enum_name/2,
+                                  option_value_element/2, scalar_element/1]).
 :- use_module('0_type_ids', [decl_id/3, member_id/4]).
 
 :- op(1150, xfx, <-).
@@ -123,19 +123,18 @@ option_type_rows(Decls, Rows) :-
 
 option_type_row(Decls, Row) :-
     member(option_column(_/_, _, Element), Decls),
-    scalar_element(Element),
-    option_enum_decl(Element, EnumDecl),
-    enum_type_rows([EnumDecl], EnumRows),
+    option_catalog_value_element(Decls, Element),
+    option_enum_type_rows(Element, EnumRows),
     member(Row, EnumRows).
 option_type_row(Decls,
                 origin(EnumId, option_column(ParentName, Column, Element))) :-
     member(option_column(ParentName/_, Column, Element), Decls),
-    scalar_element(Element),
-    option_enum_decl(Element, enum_decl(EnumName, _)),
+    option_catalog_value_element(Decls, Element),
+    option_enum_name(Element, EnumName),
     decl_id(enum, EnumName, EnumId).
 option_type_row(Decls, Row) :-
     member(option_column(ParentName/_, Column, Element), Decls),
-    \+ scalar_element(Element),
+    \+ option_catalog_value_element(Decls, Element),
     companion_rel_name(ParentName, Column, CompanionName),
     decl_id(relation, ParentName, ParentId),
     decl_id(relation, CompanionName, CompanionId),
@@ -146,6 +145,32 @@ option_type_row(Decls, Row) :-
              derived_from(CompanionId, ParentId),
              origin(CompanionId, option_column(ParentName, Column, Element))
            ]).
+
+% enum expansion has erased enum_decl/2 by the time merge_option_type_rows/2
+% runs. Its semantic declaration row is therefore the post-expansion witness
+% that an atom is an enum value rather than a relation reference.
+option_catalog_value_element(_, Element) :- scalar_element(Element), !.
+option_catalog_value_element(_, option(_)) :- !.
+option_catalog_value_element(Decls, Element) :-
+    atom(Element),
+    member(semantic_type_rows(Rows), Decls),
+    member(declaration(_, root, Element, enum, compile_time), Rows).
+
+% Metadata only needs the enum and generated-relation names. The payload is
+% intentionally `int`: runtime expansion has already normalized a nested
+% option payload to its inner enum name, while enum_type_rows/2 reads only the
+% variant shape and declaration identity.
+option_enum_type_rows(Element, Rows) :-
+    option_enum_type_decls(Element, Decls),
+    enum_type_rows(Decls, Rows).
+
+option_enum_type_decls(Element, Decls) :-
+    option_enum_name(Element, EnumName),
+    ( Element = option(Inner)
+    -> option_enum_type_decls(Inner, InnerDecls)
+    ; InnerDecls = []
+    ),
+    append(InnerDecls, [enum_decl(EnumName, (none ; some(value:int)))], Decls).
 
 % An enum's members are its variants; each variant rel edges back to the enum.
 %! enum_type_rows(+SurfaceDecls, -Rows) is det.

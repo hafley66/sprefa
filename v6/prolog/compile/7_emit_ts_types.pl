@@ -1,16 +1,58 @@
 :- module(emit_ts_types, [ ts_types_text/3, emit_ts_types/3 ]).
 
 :- use_module(library(lists)).
+:- use_module(library(pairs)).
 
 ts_types_text(_Name, Rows, Text) :-
+    option_alias_text(Rows, OptionAlias),
+    option_alias_parts(OptionAlias, OptionParts),
     findall(InterfaceText, ts_interface_text(Rows, InterfaceText), InterfaceParts),
     findall(GenericText, ts_generic_text(Rows, GenericText), GenericParts),
+    findall(EnumText, ts_enum_text(Rows, EnumText), EnumParts),
     findall(RelRow, renderable_rel(Rows, RelRow), RelRows),
     collision_type_names(RelRows, CollisionTypeNames),
     maplist(ts_rel_text(Rows, CollisionTypeNames), RelRows, RelParts),
-    append([InterfaceParts, GenericParts, RelParts], Parts),
+    append([OptionParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
     atomic_list_concat(Parts, '\n', Atom),
     atom_string(Atom, Text).
+
+% TypeScript needs a tagged carrier rather than `T | undefined`: the latter
+% collapses option(option(T)). The two tags preserve outer-none versus
+% outer-some/inner-none at the host boundary.
+option_alias_text(Rows,
+                  'export type Option<T> = { tag: \'none\' } | { tag: \'some\'; value: T };\n') :-
+    member(row(_, _, _, _, option, _, _, _, _, _, _), Rows), !.
+option_alias_text(_, '').
+
+option_alias_parts('', []) :- !.
+option_alias_parts(Text, [Text]).
+
+ts_enum_text(Rows, Text) :-
+    member(row(EnumId, _, _, Name, enum, _, _, _, _, _, _), Rows),
+    \+ compiler_helper_rel(Name),
+    type_name(Name, TypeName),
+    findall(Ordinal-VariantText,
+            ( member(row(_, EnumId, Ordinal, VariantName, enum_variant,
+                         VariantRelId, _, _, _, _, _), Rows),
+              ts_enum_variant_text(Rows, VariantName, VariantRelId, VariantText) ),
+            Unsorted),
+    keysort(Unsorted, Ordered),
+    pairs_values(Ordered, Variants),
+    atomic_list_concat(Variants, '', Body),
+    format(string(Text), 'export type ~w =\n~s;\n', [TypeName, Body]).
+
+ts_enum_variant_text(Rows, VariantName, VariantRelId, Text) :-
+    findall(Name-Type,
+            ( member(row(_, VariantRelId, _, Name, column, TypeId, _, _, _, _, _), Rows),
+              Name \== id, ts_type(Rows, TypeId, Type) ), Fields),
+    ( Fields == []
+    -> format(string(Text), '  | { tag: \'~w\' }\n', [VariantName])
+    ; maplist(ts_enum_field_text, Fields, FieldTexts),
+      atomic_list_concat(FieldTexts, '', Body),
+      format(string(Text), '  | { tag: \'~w\'; ~s}\n', [VariantName, Body])
+    ).
+
+ts_enum_field_text(Name-Type, Text) :- format(string(Text), '~w: ~w; ', [Name, Type]).
 
 emit_ts_types(Name, Rows, Path) :-
     ts_types_text(Name, Rows, Text),
@@ -131,7 +173,9 @@ ts_kind(Rows, CollisionTypeNames, _TypeRow, _Name, list, ElementId, Type) :-
     format(string(Type), 'Array<~w>', [Element]).
 ts_kind(Rows, CollisionTypeNames, _TypeRow, _Name, option, ElementId, Type) :-
     ts_type(Rows, CollisionTypeNames, ElementId, Element),
-    format(string(Type), '~w | null', [Element]).
+    format(string(Type), 'Option<~w>', [Element]).
+ts_kind(_Rows, _CollisionTypeNames, _TypeRow, Name, enum, _ElementId, Type) :-
+    type_name(Name, Type).
 ts_kind(Rows, CollisionTypeNames, TypeRow, _Name, rel, _ElementId, Type) :-
     emitted_type_name(Rows, CollisionTypeNames, TypeRow, Type).
 

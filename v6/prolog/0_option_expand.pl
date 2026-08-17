@@ -1,11 +1,12 @@
 % option(T) decl sugar (plans/2026-08-08-option-type-design.md, ruling
-% option_surface): scalar -> '__opt_<t>' enum id, rel ref -> companion split rel.
+% option_surface): value -> '__opt_<t>' enum id, rel ref -> companion split rel.
 :- module(option_expand,
           [ expand_option_in_context/3,
             expand_option_program/2,
             expand_option_decls/2,
             option_enum_name/2,
             option_enum_decl/2,
+            option_value_element/2,
             companion_rel_name/3,
             acyclic_companion/5,
             scalar_element/1 ]).
@@ -50,6 +51,16 @@ check_acyclic_target(Ref, Column, Inner) :-
     throw(unsupported_construct(acyclic_not_a_self_option(Ref, Column,
                                                           Inner))).
 
+% Wrapper composition contract
+%
+%   option_value_element(+Decls, +SurfaceElement) is semidet.
+%   ensure_option_enum_decls(+Decls0, +SurfaceElement, -EnumName, -Decls) is det.
+%
+% State timeline for option(option(T)):
+%   source option(option(T)) -> __opt_T + __opt_option_T -> INTEGER enum ids.
+%   The outer `some` payload is an inner option id. option_column/3 retains
+%   the full surface tree for the type catalog, so outer-none, outer-some /
+%   inner-none, and outer-some / inner-some remain distinct values.
 desugar_option_column(Decls0, Ref, Column, Element, Decls) :-
     ( option_column_position(Decls0, Ref, Column, Position)
     -> true
@@ -60,13 +71,11 @@ desugar_option_column(Decls0, Ref, Column, Element, Decls) :-
     -> throw(unsupported_construct(option_in_key_column(Ref, Column)))
     ; true
     ),
-    % option_column/3 survives so the schema emitters can fold the desugared
-    % column back to a nullable anyOf.
-    ( scalar_element(Element)
-    -> desugar_scalar_option(Decls0, Ref, Column, Element, Decls1),
+    % option_column/3 survives so catalog-backed schema emitters can recover
+    % the recursive tagged option tree from the desugared enum-id column.
+    ( option_value_element(Decls0, Element)
+    -> desugar_value_option(Decls0, Ref, Column, Element, Decls1),
        append(Decls1, [option_column(Ref, Column, Element)], Decls)
-    ; memberchk(enum_decl(Element, _), Decls0)
-    -> throw(unsupported_construct(option_of_enum_unsupported(Element)))
     ; declared_rel_element(Decls0, Element)
     -> desugar_reference_option(Decls0, Ref, Column, Element, Position,
                                 Decls1),
@@ -79,6 +88,14 @@ scalar_element(text).
 scalar_element(bool).
 scalar_element(float).
 scalar_element(json).
+
+% This recursive branch descends through a strict subterm of a parsed finite
+% type tree. A named relation intentionally does not match this predicate.
+option_value_element(_, Element) :- scalar_element(Element), !.
+option_value_element(Decls, Element) :-
+    atom(Element), memberchk(enum_decl(Element, _), Decls), !.
+option_value_element(Decls, option(Element)) :-
+    option_value_element(Decls, Element).
 
 declared_rel_element(Decls, Element) :-
     atom(Element),
@@ -93,20 +110,35 @@ option_column_position(Decls, Name/Arity, Column, Position) :-
     length(Columns, Arity),
     nth1(Position, Columns, Column).
 
-desugar_scalar_option(Decls0, Ref, Column, Element, Decls) :-
-    option_enum_name(Element, EnumName),
+desugar_value_option(Decls0, Ref, Column, Element, Decls) :-
+    ensure_option_enum_decls(Decls0, Element, EnumName, WithEnums),
     selectchk(col_type(Ref, Column, option(Element)),
-              Decls0,
+              WithEnums,
               col_type(Ref, Column, EnumName),
-              Decls1),
+              Decls).
+
+ensure_option_enum_decls(Decls0, Element, EnumName, Decls) :-
+    option_enum_name(Element, EnumName),
+    option_enum_payload(Decls0, Element, Payload, Decls1),
     ( memberchk(enum_decl(EnumName, _), Decls1)
     -> Decls = Decls1
-    ; option_enum_decl(Element, EnumDecl),
-      Decls = [EnumDecl | Decls1]
+    ; Decls = [enum_decl(EnumName, (none ; some(value:Payload))) | Decls1]
     ).
 
+option_enum_payload(Decls, Element, Element, Decls) :- scalar_element(Element), !.
+option_enum_payload(Decls, Element, Element, Decls) :-
+    atom(Element), memberchk(enum_decl(Element, _), Decls), !.
+option_enum_payload(Decls0, option(Inner), InnerEnumName, Decls) :-
+    ensure_option_enum_decls(Decls0, Inner, InnerEnumName, Decls).
+
 option_enum_name(Element, EnumName) :-
-    atomic_list_concat(['__opt_', Element], EnumName).
+    option_type_stem(Element, Stem),
+    atomic_list_concat(['__opt_', Stem], EnumName).
+
+option_type_stem(Element, Element) :- atom(Element), !.
+option_type_stem(option(Inner), Stem) :-
+    option_type_stem(Inner, InnerStem),
+    atomic_list_concat([option, InnerStem], '_', Stem).
 
 % The one spelling of the minted enum, shared with the row merge so the
 % graph cannot drift from what expansion mints.

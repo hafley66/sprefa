@@ -86,7 +86,7 @@
                 reconcile_every_tick/2,
                 derived_edge_carry_required/3, retraction_guard/2 ]).
 :- use_module('../../lower', [ boot_statements/7 ]).
-:- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3 ]).
+:- use_module('../../compile/4_emit_jsonschema', [ jsonschema_text/3, option_rows/3 ]).
 :- use_module('../../compile/5_emit_openapi', [ openapi_text/3 ]).
 :- use_module('../../compile/7_emit_ts_types', [ ts_types_text/3 ]).
 :- use_module('../../compile/8_emit_rust_types', [ rust_types_text/3 ]).
@@ -8795,6 +8795,74 @@ test(merge_patch_stops_on_a_nested_json_null_stand_in,
     json_scalar_value(json_patch, [obj([cpu-1]), obj([cpu-obj([user-none])])], _).
 
 :- end_tests(json_merge_patch).
+
+:- begin_tests(wrapper_composition).
+
+wrapper_composition_rows(Program, Rows) :-
+    program_plan(fixture(wrapper_composition, Program, [], [], [])-[],
+                 [intern(dict)],
+                 plan(_, prog(Decls, Rules), _, RelPlans, _, _, _, _, _)),
+    catalog_decl_rows(wrapper_composition, Rules, RelPlans, Decls, CatalogRows, _),
+    option_rows(Decls, CatalogRows, Rows).
+
+% Type signatures exercised below:
+%   option(int) -> Option<int>
+%   option(option(int)) -> Option<Option<int>>
+% Timeline: none, some(none), some(some(7)) occupy distinct enum ids and
+% distinct synthetic catalog rows before either target emitter renders them.
+test(nested_scalar_option_mints_inner_and_outer_enums_and_rows) :-
+    Program = prog([col_type(note/2, id, int),
+                    col_type(note/2, rank, option(option(int))),
+                    keyed(note/2, [1])], []),
+    expand_program(Program, prog(Decls, _), _),
+    memberchk(option_column(note/2, rank, option(int)), Decls),
+    memberchk(col_type('__opt_option_int_some'/2, value, int), Decls),
+    wrapper_composition_rows(Program, Rows),
+    memberchk(row(InnerId, 0, 0, "option(int)", option, 2, 0, 0, '', '', ''), Rows),
+    memberchk(row(OuterId, 0, 0, "option(option(int))", option, InnerId,
+                  0, 0, '', '', ''), Rows),
+    memberchk(row(_, _, 2, rank, column, OuterId, _, _, _, _, _), Rows).
+
+test(option_over_discriminated_enum_emits_tagged_ts_and_payload_rust_enum) :-
+    Program = prog([enum_decl(status, (ready ; failed(reason:text))),
+                    col_type(job/2, id, int),
+                    col_type(job/2, state, option(status)),
+                    keyed(job/2, [1])], []),
+    wrapper_composition_rows(Program, Rows),
+    ts_types_text(wrapper_composition, Rows, Ts),
+    rust_types_text(wrapper_composition, Rows, Rust),
+    sub_string(Ts, _, _, _, "export type Option<T> = { tag: 'none' }"),
+    sub_string(Ts, _, _, _, "export type Status ="),
+    sub_string(Ts, _, _, _, "{ tag: 'ready' }"),
+    sub_string(Ts, _, _, _, "{ tag: 'failed'; reason: string; }"),
+    sub_string(Ts, _, _, _, "state: Option<Status>;"),
+    sub_string(Rust, _, _, _, "pub enum DlOption<T>"),
+    sub_string(Rust, _, _, _, "pub enum Status {"),
+    sub_string(Rust, _, _, _, "Ready,"),
+    sub_string(Rust, _, _, _, "Failed { reason: String },"),
+    sub_string(Rust, _, _, _, "state: DlOption<Status>,").
+
+test(nested_option_json_schema_has_distinct_outer_and_inner_tags) :-
+    Program = prog([col_type(note/2, id, int),
+                    col_type(note/2, rank, option(option(int))),
+                    keyed(note/2, [1])], []),
+    wrapper_composition_rows(Program, Rows),
+    jsonschema_text(wrapper_composition, Rows, Schema),
+    findall(_, sub_string(Schema, _, _, _, '"const":"none"'), NoneTags),
+    findall(_, sub_string(Schema, _, _, _, '"const":"some"'), SomeTags),
+    length(NoneTags, 2),
+    length(SomeTags, 2),
+    sub_string(Schema, _, _, _, '"value": {\n                  "anyOf"').
+
+test(target_type_depth_is_named_before_served_renderer_omits_a_layer) :-
+    DepthSix = option(option(option(option(option(option(int)))))),
+    Program = prog([col_type(note/2, id, int), col_type(note/2, rank, DepthSix),
+                    keyed(note/2, [1])], []),
+    catch(wrapper_composition_rows(Program, _), Thrown, true),
+    Thrown == unsupported_construct(type_emitter_option_depth(DepthSix, 5)).
+
+:- end_tests(wrapper_composition).
+
 :- begin_tests(type_wrapper_walk).
 
 % FAIL-FIRST RECEIPT (base 48fadfb3): every assertion in this unit that names
@@ -8967,8 +9035,8 @@ parity_row(jsonschema, '$ref via rel-typed column', emits,
 parity_row(jsonschema, 'additionalProperties', emits,
            'relation objects render `additionalProperties: false`.',
            'additionalProperties').
-parity_row(jsonschema, 'anyOf-null (option)', no_surface,
-           'option(T) schema rows are not produced by the current dl6 compiler.',
+parity_row(jsonschema, 'tagged option (catalog)', no_surface,
+           'option(T) schema rows are emitted from the catalog type path, not this dl6 fixture.',
            '').
 parity_row(jsonschema, 'array items', no_surface,
            'list(T) is not accepted by the current inline compiler door.',
