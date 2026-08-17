@@ -1,5 +1,11 @@
 {
   "$defs": {
+    "__gen__span_int_text_e5126de851365aff": {
+      "additionalProperties":false,
+      "properties": {"label": {"type":"string"},"start": {"type":"integer"}},
+      "required": ["start", "label" ],
+      "type":"object"
+    },
     "carry": {
       "additionalProperties":false,
       "properties": {

@@ -1,6 +1,6 @@
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Diag {
-    pub where: Place,
+    pub r#where: Place,
     pub message: String,
 }
 

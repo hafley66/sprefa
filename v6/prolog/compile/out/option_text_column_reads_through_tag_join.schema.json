@@ -9,7 +9,7 @@
     "user_profile": {
       "additionalProperties":false,
       "properties": {
-        "email": {"anyOf": [ {"type":"string"},  {"type":null} ]},
+        "email": {"anyOf": [ {"type":"string"},  {"type":"null"} ]},
         "user_id": {"type":"integer"}
       },
       "required": ["user_id", "email" ],

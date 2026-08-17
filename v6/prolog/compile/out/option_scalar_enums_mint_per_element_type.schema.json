@@ -3,8 +3,8 @@
     "measurement": {
       "additionalProperties":false,
       "properties": {
-        "label": {"anyOf": [ {"type":"string"},  {"type":null} ]},
-        "reading": {"anyOf": [ {"type":"integer"},  {"type":null} ]},
+        "label": {"anyOf": [ {"type":"string"},  {"type":"null"} ]},
+        "reading": {"anyOf": [ {"type":"integer"},  {"type":"null"} ]},
         "sensor_id": {"type":"integer"}
       },
       "required": ["sensor_id", "label", "reading" ],

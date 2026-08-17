@@ -1,5 +1,11 @@
 {
   "$defs": {
+    "__gen__pair_int_8b7ec0fa0e1f9d69": {
+      "additionalProperties":false,
+      "properties": {"first": {"type":"integer"},"second": {"type":"integer"}},
+      "required": ["first", "second" ],
+      "type":"object"
+    },
     "carry": {
       "additionalProperties":false,
       "properties": {

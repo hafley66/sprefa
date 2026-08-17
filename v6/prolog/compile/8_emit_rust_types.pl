@@ -66,7 +66,35 @@ rust_parameter_text(Rows, _Ord-Name-ParameterId, Text) :-
 
 rust_generic_property_text(Rows, _Ord-Name-TypeId, Text) :-
     rust_type(Rows, TypeId, Type),
-    format(string(Text), '    pub ~w: ~w,\n', [Name, Type]).
+    rust_field_name(Name, Field),
+    format(string(Text), '    pub ~w: ~w,\n', [Field, Type]).
+
+% A column named for a Rust keyword stops rustc at the declaration; the raw
+% identifier escape is the spelling that keeps the wire name.
+rust_field_name(Name, Field) :-
+    (   rust_keyword(Name)
+    ->  atom_concat('r#', Name, Field)
+    ;   Field = Name
+    ).
+
+% `crate`, `self`, `Self` and `super` are absent: Rust bars them from the raw
+% form, so no escape of this shape exists for them.
+rust_keyword(abstract). rust_keyword(as).       rust_keyword(async).
+rust_keyword(await).    rust_keyword(become).   rust_keyword(box).
+rust_keyword(break).    rust_keyword(const).    rust_keyword(continue).
+rust_keyword(do).       rust_keyword(dyn).      rust_keyword(else).
+rust_keyword(enum).     rust_keyword(extern).   rust_keyword(false).
+rust_keyword(final).    rust_keyword(fn).       rust_keyword(for).
+rust_keyword(if).       rust_keyword(impl).     rust_keyword(in).
+rust_keyword(let).      rust_keyword(loop).     rust_keyword(macro).
+rust_keyword(match).    rust_keyword(mod).      rust_keyword(move).
+rust_keyword(mut).      rust_keyword(override). rust_keyword(priv).
+rust_keyword(pub).      rust_keyword(ref).      rust_keyword(return).
+rust_keyword(static).   rust_keyword(struct).   rust_keyword(trait).
+rust_keyword(true).     rust_keyword(try).      rust_keyword(type).
+rust_keyword(typeof).   rust_keyword(unsafe).   rust_keyword(unsized).
+rust_keyword(use).      rust_keyword(virtual).  rust_keyword(where).
+rust_keyword(while).    rust_keyword(yield).
 
 collision_type_names(RelRows, CollisionTypeNames) :-
     findall(TypeName,
@@ -104,7 +132,8 @@ rust_rel_text(Rows, CollisionTypeNames, RelRow, Text) :-
 
 rust_property_text(Rows, CollisionTypeNames, _Ord-Name-TypeId, Text) :-
     rust_type(Rows, CollisionTypeNames, TypeId, Type),
-    format(string(Text), '    pub ~w: ~w,\n', [Name, Type]).
+    rust_field_name(Name, Field),
+    format(string(Text), '    pub ~w: ~w,\n', [Field, Type]).
 
 rust_column_type(Rows, _Ord-_Name-TypeId, Type) :- rust_type(Rows, TypeId, Type).
 
