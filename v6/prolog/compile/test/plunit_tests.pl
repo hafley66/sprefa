@@ -9264,6 +9264,23 @@ test(the_boundary_expression_reads_the_list_view) :-
     lower:canonical_column_expr('parts', list(text), Expr),
     Expr == 'coalesce("__l_parts"."value_text", ''[]'') AS "parts"'.
 
+% The durable member rows own order through (list_id, idx). SQLite 3.43 has
+% no in-aggregate ORDER BY, so the generated read surface must order its
+% aggregate input explicitly; relying on the current UNIQUE-index scan would
+% make a restart's public list value depend on planner details.
+test(the_list_view_orders_members_before_aggregation) :-
+    list_parts_program(Program),
+    program_plan(fixture(list_spelling_view, Program, [], [], [])-[],
+                 [intern(dict)], Plan),
+    lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)),
+    member(ViewDdl, Ddl),
+    sub_atom(ViewDdl, 0, _, _, 'CREATE TEMP VIEW "__list_'),
+    sub_atom(ViewDdl, _, _, _, 'json_group_array(ordered."value")'),
+    sub_atom(ViewDdl, _, _, _, 'WHERE m."list_id" = e."__id"'),
+    sub_atom(ViewDdl, _, _, _, 'ORDER BY m."idx"'),
+    sub_atom(ViewDdl, _, _, _, 'FROM "__gen__list_'),
+    \+ sub_atom(ViewDdl, _, _, _, 'GROUP BY ordered."list_id"').
+
 :- end_tests(list_column_spelling).
 
 % The type plane's own row for a list column, and the four emitters that read

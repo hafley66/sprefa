@@ -5,14 +5,12 @@
  * fixture is tick-log and final-state identical to the oracle in both doors.
  * What byte grading cannot see:
  *
- *   ORDER   whether the elements came out in idx order because the UNIQUE
- *           (list_id, idx) index supplied it, or because a temp b-tree sorted
- *           them. `json_group_array(... ORDER BY ...)` is sqlite 3.44+ and the
- *           system sqlite is 3.43.2, so the index IS the order and a plan that
- *           stopped using it would still pass the byte diff on small inputs.
- *   COST    whether the whole-rel render builds the view ONCE or re-executes
- *           it per row (repo law: formerly-quadratic paths get EXPLAIN or
- *           COUNT tests, never end-state equality alone).
+ *   ORDER   whether the elements come out in idx order from an explicit
+ *           ordered subquery. `json_group_array(... ORDER BY ...)` is sqlite
+ *           3.44+ and the system sqlite is 3.43.2, so the view orders its
+ *           input rows before aggregation.
+ *   COST    whether the whole-rel boundary stays flattened into one entity
+ *           primary-key lookup plus one keyed member lookup per owner row.
  *   PUSHDOWN whether a point lookup on list_id reaches the member index or
  *           materializes every list in the program first.
  *
@@ -22,11 +20,7 @@
  *   a. the element read written as the correlated `(SELECT s."content" FROM
  *      "__str" s WHERE s."__id" = m."value")` the `__txt_` views use:
  *      CORRELATED SCALAR SUBQUERY 5 | SEARCH s USING INTEGER PRIMARY KEY.
- *   b. the ordered-subquery form `SELECT list_id, json_group_array(value)
- *      FROM (SELECT ... ORDER BY list_id, idx) GROUP BY list_id`:
- *      CO-ROUTINE (subquery-3) | SCAN (subquery-3) | USE TEMP B-TREE FOR
- *      GROUP BY -- correct bytes, a sort the member index already had.
- *   c. `json_group_array(value ORDER BY idx)`: SYNTAX ERROR near "ORDER" on
+ *   b. `json_group_array(value ORDER BY idx)`: SYNTAX ERROR near "ORDER" on
  *      3.43.2. In-aggregate ORDER BY landed in 3.44.
  *
  * NAMED BLIND SPOT: assertion A plans the WHOLE boundary read, whose temp
@@ -36,15 +30,19 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { test } from "node:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { concatMap, firstValueFrom, map } from "rxjs";
+import { concatMap, firstValueFrom, map, toArray } from "rxjs";
 
 import { BootRunner } from "../runtime/2_boot.ts";
 import { row_value_from_sql } from "../runtime/rows.ts";
 import { ScratchStore } from "../runtime/scratchStore.ts";
 import { TickLogEmitter } from "../runtime/ticklog.ts";
-import type { IBootStatement, IGenProgram, ISqlSeam } from "../runtime/types.ts";
+import { TickFold } from "../runtime/tickLoop.ts";
+import type { IArrivalBatch, IBootStatement, IGenProgram, ISqlSeam } from "../runtime/types.ts";
 
 import * as scalar_list from "../gen_emitted/split_value_is_the_interned_list_id.ts";
 import * as rel_list from "../gen_emitted/recursive_list_arg_parent_holds_child_node_values.ts";
@@ -53,12 +51,24 @@ type EmittedProgram = IGenProgram & { readonly boot: readonly IBootStatement[] }
 
 const SCALAR_ENTITY = "__gen__list_text_df210f232c1299bd";
 const SCALAR_VIEW = `__list_${SCALAR_ENTITY}`;
+const NODE_ENTITY = "__gen__list_node_4205b0871c875897";
+const NODE_MEMBER = `${NODE_ENTITY}__member`;
+const NODE_VIEW = `__list_${NODE_ENTITY}`;
 
-function booted_seam(program: EmittedProgram): Promise<ISqlSeam> {
-  const seam = ScratchStore.open(":memory:");
+function booted_seam(program: EmittedProgram, path = ":memory:", temporary_only = false): Promise<ISqlSeam> {
+  const seam = ScratchStore.open(path);
+  const ddl = temporary_only ? program.ddl.filter((statement) => statement.startsWith("CREATE TEMP")) : program.ddl;
   return firstValueFrom(
-    ScratchStore.boot(seam, program.ddl).pipe(concatMap(() => BootRunner.run(seam, program.boot))),
+    ScratchStore.boot(seam, ddl).pipe(concatMap(() => BootRunner.run(seam, program.boot))),
   ).then(() => seam);
+}
+
+function run_schedule(
+  program: EmittedProgram,
+  seam: ISqlSeam,
+  schedule: readonly IArrivalBatch[],
+): Promise<readonly string[]> {
+  return firstValueFrom(TickFold.run(program, seam, schedule).pipe(toArray()));
 }
 
 function query_plan(seam: ISqlSeam, sql: string): Promise<string> {
@@ -77,70 +87,123 @@ function boundary_read(plan: typeof scalar_list.incremental_plan, rel: string): 
 
 // ── the surface is a VIEW, never a table ─────────────────────────────────────
 
-test("the list read surface is a non-materialized TEMP VIEW over the member rel", () => {
+test("the list read surface is a non-materialized TEMP VIEW over entities and members", () => {
   const ddl = (scalar_list.program as EmittedProgram).ddl;
   const view = ddl.find((line) => line.includes(`CREATE TEMP VIEW "${SCALAR_VIEW}"`));
   assert.ok(view, `no __list_ view in the emitted DDL: ${ddl.join(" | ")}`);
   assert.match(view, /json_group_array/, "the elements must aggregate in SQL, never in JS");
-  assert.match(view, new RegExp(`GROUP BY m\\."list_id"$`), "the view groups by the member key");
+  assert.match(view, /FROM "__gen__list_text_[0-9a-f]+" e$/, "the view starts from durable list entities");
   assert.ok(
     !ddl.some((line) => line.includes(`CREATE TABLE "${SCALAR_VIEW}"`)),
     "the read surface must add no table",
   );
-  assert.ok(
-    !view.includes("ORDER BY"),
-    "in-aggregate ORDER BY is 3.44+; the UNIQUE (list_id, idx) index is the order",
-  );
+  assert.match(view, /ORDER BY m\."idx"/, "the aggregate input is explicitly ordered");
 });
 
 // ── EXPLAIN, whole-rel render ────────────────────────────────────────────────
 
-test("plan: the view itself rides the member index with no temp b-tree", async () => {
+test("plan: a keyed view read orders members through the member index", async () => {
   const seam = await booted_seam(scalar_list.program as EmittedProgram);
   const plan = await query_plan(seam, `SELECT "list_id", "value_text" FROM "${SCALAR_VIEW}"`);
   assert.match(
     plan,
-    /SCAN m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1/,
-    `the member scan must drive the aggregate, got: ${plan}`,
-  );
-  assert.ok(
-    !/USE TEMP B-TREE FOR GROUP BY/.test(plan),
-    `the grouping must ride the member index with no temp b-tree, got: ${plan}`,
-  );
-  assert.ok(
-    !/CORRELATED SCALAR SUBQUERY/.test(plan),
-    `the element read is a JOIN, never a correlated subquery, got: ${plan}`,
+    /SEARCH m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
+    `the correlated aggregate must use the keyed member index, got: ${plan}`,
   );
 });
 
-test("plan: the whole-rel render builds the view once and probes it by key", async () => {
+test("generated ticks preserve order, duplicates, empty lists, deletion, and restart", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "list-persistence-"));
+  const path = `file:${join(directory, "lists.sqlite")}`;
+  try {
+    const program = scalar_list.program as EmittedProgram;
+    const initial = await booted_seam(program, path);
+    await run_schedule(program, initial, [
+      [{ rel: "row_text", sign: "add", row: ["ordered", "beta/alpha/beta"] }],
+      [{ rel: SCALAR_ENTITY, sign: "add", row: ["[]"] }],
+    ]);
+    const before_restart = await firstValueFrom(
+      initial.runner.execute(initial.db, `SELECT "list_id", "value_text" FROM "${SCALAR_VIEW}" ORDER BY "list_id"`),
+    );
+    assert.ok(
+      before_restart.rows.some((row) => row.value_text === '["beta","alpha","beta"]'),
+      `generated list members must retain order and duplicate values: ${JSON.stringify(before_restart.rows)}`,
+    );
+    assert.ok(
+      before_restart.rows.some((row) => row.value_text === "[]"),
+      `a generated empty entity must remain readable: ${JSON.stringify(before_restart.rows)}`,
+    );
+    initial.db.close();
+
+    // Persistent tables survive; TEMP DDL and the generated boot closure are
+    // recreated before the delete tick, matching a process restart.
+    const reopened = await booted_seam(program, path, true);
+    const after_restart = await firstValueFrom(
+      reopened.runner.execute(reopened.db, `SELECT "list_id", "value_text" FROM "${SCALAR_VIEW}" ORDER BY "list_id"`),
+    );
+    assert.ok(
+      after_restart.rows.some((row) => row.value_text === '["beta","alpha","beta"]'),
+      `restart must read the durable ordered list: ${JSON.stringify(after_restart.rows)}`,
+    );
+    await run_schedule(program, reopened, [
+      [{ rel: "row_text", sign: "del", row: ["ordered", "beta/alpha/beta"] }],
+    ]);
+    const public_after_delete = await firstValueFrom(
+      reopened.runner.execute(reopened.db, program.final_select.row_parts),
+    );
+    assert.ok(
+      !public_after_delete.rows.some((row) => row.name === "ordered"),
+      `the generated owner row must retract on source deletion: ${JSON.stringify(public_after_delete.rows)}`,
+    );
+    reopened.db.close();
+
+    const after_delete_restart = await booted_seam(program, path, true);
+    const public_after_delete_restart = await firstValueFrom(
+      after_delete_restart.runner.execute(after_delete_restart.db, program.final_select.row_parts),
+    );
+    assert.ok(
+      !public_after_delete_restart.rows.some((row) => row.name === "ordered"),
+      `deletion must survive restart: ${JSON.stringify(public_after_delete_restart.rows)}`,
+    );
+    after_delete_restart.db.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("plan: the whole-rel render stays flattened and keyed", async () => {
   const seam = await booted_seam(scalar_list.program as EmittedProgram);
   const sql = boundary_read(scalar_list.incremental_plan, "row_parts");
   assert.ok(sql.includes(`LEFT JOIN "${SCALAR_VIEW}"`), `the boundary read must join the view: ${sql}`);
   const plan = await query_plan(seam, sql.replace(/\?/g, "1"));
-  assert.match(plan, /MATERIALIZE __list___gen__list_text_/, `the view is built once, got: ${plan}`);
-  assert.equal(
-    (plan.match(/__list___gen__list_text_/g) ?? []).length,
-    1,
-    `one build, never one per row, got: ${plan}`,
+  assert.match(
+    plan,
+    /SEARCH e USING INTEGER PRIMARY KEY \(rowid=\?\)/,
+    `the entity side must use its primary key, got: ${plan}`,
   );
   assert.match(
     plan,
-    /SEARCH __l_parts USING AUTOMATIC COVERING INDEX \(list_id=\?\)/,
-    `the join probes the built view by key, got: ${plan}`,
+    /SEARCH m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
+    `the correlated member aggregate must use the list_id index, got: ${plan}`,
+  );
+  assert.doesNotMatch(
+    plan,
+    /MATERIALIZE __list___gen__list_text_|SCAN m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1/,
+    `the boundary must not materialize every list or scan every member, got: ${plan}`,
   );
 });
 
 // ── EXPLAIN, point lookup ────────────────────────────────────────────────────
 
-test("plan: a point lookup on list_id pushes through the GROUP BY into the member index", async () => {
+test("plan: a point lookup keeps the ordered member scan keyed", async () => {
   const seam = await booted_seam(scalar_list.program as EmittedProgram);
   const plan = await query_plan(seam, `SELECT "value_text" FROM "${SCALAR_VIEW}" WHERE "list_id" = 1`);
-  assert.match(plan, /CO-ROUTINE __list___gen__list_text_/, `no materialization for a keyed read, got: ${plan}`);
+  assert.doesNotMatch(plan, /CO-ROUTINE __list___gen__list_text_/, `the keyed view is flattened, got: ${plan}`);
+  assert.match(plan, /SEARCH e USING INTEGER PRIMARY KEY \(rowid=\?\)/, `the entity lookup must be keyed, got: ${plan}`);
   assert.match(
     plan,
     /SEARCH m USING INDEX sqlite_autoindex___gen__list_text_[0-9a-f]+__member_1 \(list_id=\?\)/,
-    `the constraint must reach the member index, got: ${plan}`,
+    `the ordered input must use the member index with list_id pushdown, got: ${plan}`,
   );
 });
 
@@ -170,6 +233,33 @@ test("a rel element aggregates the target view's __rendered, not its id", () => 
   assert.ok(view, `no __list_ view for a rel-element list: ${ddl.join(" | ")}`);
   assert.match(view, /json\(r\."__rendered"\)/, `the element is the target's value, got: ${view}`);
   assert.match(view, /LEFT JOIN "__ref_node" r ON r\."__id" = m\."value"/, `a join, not a probe: ${view}`);
+});
+
+test("generated nested structured elements survive a restart", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nested-list-persistence-"));
+  const path = `file:${join(directory, "lists.sqlite")}`;
+  try {
+    const program = rel_list.program as EmittedProgram;
+    const initial = await booted_seam(program, path);
+    await run_schedule(program, initial, [
+      [{ rel: NODE_ENTITY, sign: "add", row: ['[{"name":"leaf","children":1}]'] }],
+      [{ rel: NODE_MEMBER, sign: "add", row: [1, 0, { name: "leaf", children: 1 }] }],
+    ]);
+    const before_restart = await firstValueFrom(
+      initial.runner.execute(initial.db, `SELECT "value_text" FROM "${NODE_VIEW}" WHERE "list_id" = 1`),
+    );
+    assert.deepEqual(before_restart.rows, [{ value_text: '[{"name":"leaf","children":1}]' }]);
+    initial.db.close();
+
+    const reopened = await booted_seam(program, path, true);
+    const after_restart = await firstValueFrom(
+      reopened.runner.execute(reopened.db, `SELECT "value_text" FROM "${NODE_VIEW}" WHERE "list_id" = 1`),
+    );
+    assert.deepEqual(after_restart.rows, [{ value_text: '[{"name":"leaf","children":1}]' }]);
+    reopened.db.close();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 // F3: the reader hands the consumer Array<T>, never the array text.

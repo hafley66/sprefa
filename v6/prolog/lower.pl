@@ -2809,7 +2809,11 @@ dictionary_render_expr(TypeName, Column, Expr) :-
            [QuotedTable, QuotedColumn, QuotedColumn]).
 
 % The member rel's UNIQUE (list_id, idx) carries BOTH the grouping and the
-% element order; in-aggregate ORDER BY is 3.44+ and system sqlite is 3.43.2.
+% element order. SQLite 3.43 (the system build) has no in-aggregate ORDER BY,
+% so the aggregate consumes an explicitly ordered subquery below. Relying on
+% the UNIQUE index's present scan order would make the public list value
+% dependent on the query planner and would lose order after a restart or an
+% index change.
 list_view_name(EntityName, ViewName) :-
     atomic_list_concat(['__list_', EntityName], ViewName).
 
@@ -2838,14 +2842,15 @@ list_view_ddl(Mode, RelPlans, Element, Ddl) :-
     canonical_type_name(list(Element), EntityName),
     list_view_name(EntityName, ViewName),
     quote_ident(ViewName, QuotedViewName),
+    quote_ident(EntityName, QuotedEntity),
     list_member_ref(EntityName, MemberRef),
     table_name(MemberRef, MemberTable),
     quote_ident(MemberTable, QuotedMemberTable),
     list_member_value_type(RelPlans, MemberRef, ValueType),
-    list_element_render(Mode, ValueType, ValueExpr, JoinSql),
+    list_element_render(Mode, ValueType, ValueExpr, AggregateValueExpr, JoinSql),
     format(atom(Ddl),
-           'CREATE TEMP VIEW ~w AS SELECT m."list_id" AS "list_id", json_group_array(~w) AS "value_text" FROM ~w m~w GROUP BY m."list_id"',
-           [QuotedViewName, ValueExpr, QuotedMemberTable, JoinSql]).
+           'CREATE TEMP VIEW ~w AS SELECT e."__id" AS "list_id", coalesce((SELECT json_group_array(~w) FROM (SELECT ~w AS "value" FROM ~w m~w WHERE m."list_id" = e."__id" ORDER BY m."idx") ordered), ''[]'') AS "value_text" FROM ~w e',
+           [QuotedViewName, AggregateValueExpr, ValueExpr, QuotedMemberTable, JoinSql, QuotedEntity]).
 
 list_member_value_type(RelPlans, MemberRef, ValueType) :-
     member(RelPlan, RelPlans),
@@ -2856,30 +2861,31 @@ list_member_value_type(RelPlans, MemberRef, ValueType) :-
 
 % Every arm is a JOIN, never a correlated subquery: the aggregate reads one
 % row per member and the planner keeps the member index as the driving scan.
-list_element_render(_, ref(TypeName), 'json(r."__rendered")', JoinSql) :- !,
+list_element_render(_, ref(TypeName), 'json(r."__rendered")', 'json(ordered."value")', JoinSql) :- !,
     dictionary_table_name(TypeName, ReferenceView),
     quote_ident(ReferenceView, QuotedReferenceView),
     format(atom(JoinSql), ' LEFT JOIN ~w r ON r."__id" = m."value"',
            [QuotedReferenceView]).
-list_element_render(_, list(Element), ValueExpr, JoinSql) :- !,
+list_element_render(_, list(Element), ValueExpr, 'json(ordered."value")', JoinSql) :- !,
     canonical_type_name(list(Element), NestedEntity),
     list_view_name(NestedEntity, NestedView),
     quote_ident(NestedView, QuotedNestedView),
     ValueExpr = 'json(coalesce(n."value_text", \'[]\'))',
     format(atom(JoinSql), ' LEFT JOIN ~w n ON n."list_id" = m."value"',
            [QuotedNestedView]).
-list_element_render(_, json, 'json(m."value")', '') :- !.
-list_element_render(_, json_list(_), 'json(m."value")', '') :- !.
-list_element_render(Mode, ValueType, 's."content"', JoinSql) :-
+list_element_render(_, json, 'json(m."value")', 'json(ordered."value")', '') :- !.
+list_element_render(_, json_list(_), 'json(m."value")', 'json(ordered."value")', '') :- !.
+list_element_render(Mode, ValueType, 's."content"', 'ordered."value"', JoinSql) :-
     interned_column(Mode, ValueType), !,
     string_dictionary_table(Dictionary),
     quote_ident(Dictionary, QuotedDictionary),
     format(atom(JoinSql), ' LEFT JOIN ~w s ON s."__id" = m."value"',
            [QuotedDictionary]).
-list_element_render(_, _, 'm."value"', '').
+list_element_render(_, _, 'm."value"', 'ordered."value"', '').
 
-% An entity with no member rows is the empty list, and a LEFT JOIN answers no
-% row for it, so the coalesce is the zero-element case and not a null guard.
+% The entity table is the durable list identity plane. Reading it as the outer
+% relation gives empty lists a row, while the correlated member aggregate is
+% keyed by list_id and orders by idx before json_group_array sees its input.
 list_column_join(Column, ColumnType, Join) :-
     ColumnType = list(Element),
     canonical_type_name(list(Element), EntityName),
