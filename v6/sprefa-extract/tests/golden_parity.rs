@@ -28,6 +28,7 @@
 //!           reported, not asserted.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use sprefa_extract::{
     build_def_index, byte_range, containing_def_site, content_id_of, covering_def, definition_of,
@@ -404,9 +405,9 @@ fn ported_facets_match_v5() {
 /// hash, the DefIndex folded over all of them (the resolution universe), and a
 /// borrowed ProjectCx. Shared by the type_edge parity test and the ledger test.
 fn with_resolve_cx<R>(
-    f: impl FnOnce(&ProjectCx, &[(ContentId, ExtractOutput, &'static Case)]) -> R,
+    f: impl FnOnce(&ProjectCx, &[(ContentId, Arc<ExtractOutput>, &'static Case)]) -> R,
 ) -> R {
-    let corpus: Vec<(ContentId, ExtractOutput, &'static Case)> = CASES
+    let corpus: Vec<(ContentId, Arc<ExtractOutput>, &'static Case)> = CASES
         .iter()
         .map(|case| {
             let out = dispatch(case.path, case.fixture, FamilyMask::ALL).expect("source");
@@ -415,7 +416,7 @@ fn with_resolve_cx<R>(
         .collect();
     let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
         .iter()
-        .map(|(hash, out, _)| (hash.clone(), out))
+        .map(|(hash, out, _)| (hash.clone(), out.as_ref()))
         .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
@@ -793,7 +794,7 @@ fn call_resolve_scip_ratchet_ts() {
         "every scip document is reader-readable: the corpus and the index cover the same universe"
     );
     // The corpus: every fixture file dispatched + the DefIndex over all.
-    let corpus: Vec<(String, ContentId, ExtractOutput)> = rels
+    let corpus: Vec<(String, ContentId, Arc<ExtractOutput>)> = rels
         .iter()
         .map(|rel| {
             let bytes = reader(rel).unwrap();
@@ -806,7 +807,7 @@ fn call_resolve_scip_ratchet_ts() {
         .collect();
     let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
         .iter()
-        .map(|(_, hash, out)| (hash.clone(), out))
+        .map(|(_, hash, out)| (hash.clone(), out.as_ref()))
         .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
@@ -1078,7 +1079,7 @@ fn call_resolve_scip_ratchet_go() {
         "every scip document is reader-readable: the corpus and the index cover the same universe"
     );
     // The corpus: every module file dispatched + the DefIndex over all.
-    let corpus: Vec<(String, ContentId, ExtractOutput)> = rels
+    let corpus: Vec<(String, ContentId, Arc<ExtractOutput>)> = rels
         .iter()
         .map(|rel| {
             let bytes = reader(rel).unwrap();
@@ -1091,7 +1092,7 @@ fn call_resolve_scip_ratchet_go() {
         .collect();
     let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
         .iter()
-        .map(|(_, hash, out)| (hash.clone(), out))
+        .map(|(_, hash, out)| (hash.clone(), out.as_ref()))
         .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
@@ -1351,7 +1352,7 @@ fn call_resolve_scip_ratchet_rust() {
         "every scip document is reader-readable: the corpus and the index cover the same universe"
     );
     // The corpus: every fixture file dispatched + the DefIndex over all.
-    let corpus: Vec<(String, ContentId, ExtractOutput)> = rels
+    let corpus: Vec<(String, ContentId, Arc<ExtractOutput>)> = rels
         .iter()
         .map(|rel| {
             let bytes = reader(rel).unwrap();
@@ -1364,7 +1365,7 @@ fn call_resolve_scip_ratchet_rust() {
         .collect();
     let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
         .iter()
-        .map(|(_, hash, out)| (hash.clone(), out))
+        .map(|(_, hash, out)| (hash.clone(), out.as_ref()))
         .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;

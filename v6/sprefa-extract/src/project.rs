@@ -22,7 +22,7 @@
 //! context they read.
 
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use rayon::prelude::*;
 
@@ -138,7 +138,7 @@ impl std::error::Error for ProjectError {}
 pub(crate) struct ProjectInput {
     pub(crate) path: String,
     blob: ContentId,
-    pub(crate) output: ExtractOutput,
+    pub(crate) output: Arc<ExtractOutput>,
 }
 
 /// Run the requested arms over the whole supplied file set and return the flat
@@ -149,7 +149,7 @@ pub fn resolve_project(request: &ResolveRequest) -> Result<Vec<FlatFact>, Projec
 
     let pairs: Vec<(ContentId, &ExtractOutput)> = inputs
         .iter()
-        .map(|input| (input.blob.clone(), &input.output))
+        .map(|input| (input.blob.clone(), input.output.as_ref()))
         .collect();
     let files = FileSet;
     let manifests = ManifestMap;

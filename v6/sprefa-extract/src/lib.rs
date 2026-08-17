@@ -17,6 +17,7 @@
 #![allow(dead_code)]
 
 pub mod cfg;
+pub mod cache;
 pub mod cpg_decode;
 pub mod cpg_types;
 pub mod deps;

@@ -2,6 +2,7 @@
 //! corpus entities: `Engine` (unique) and `Point` (ambiguous, so no edge).
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use sprefa_extract::{
     build_def_index, content_id_of, dispatch, ContentId, ExtractOutput, FamilyMask, FileSet,
@@ -45,9 +46,9 @@ const EXPECTED_DOC_NODES: &[&str] = &[
 /// The corpus: the markdown fixture plus the rust/ts fixtures that declare the
 /// names its headings name. `Point` is declared twice, `Engine` once.
 fn with_resolve_cx<R>(
-    f: impl FnOnce(&ProjectCx, &[(ContentId, ExtractOutput, &'static str)]) -> R,
+    f: impl FnOnce(&ProjectCx, &[(ContentId, Arc<ExtractOutput>, &'static str)]) -> R,
 ) -> R {
-    let corpus: Vec<(ContentId, ExtractOutput, &'static str)> = vec![
+    let corpus: Vec<(ContentId, Arc<ExtractOutput>, &'static str)> = vec![
         (
             content_id_of(MD),
             dispatch(MD_PATH, MD, TYPES_ONLY).expect("md"),
@@ -86,7 +87,7 @@ fn with_resolve_cx<R>(
     ];
     let pairs: Vec<(ContentId, &ExtractOutput)> = corpus
         .iter()
-        .map(|(hash, out, _)| (hash.clone(), out))
+        .map(|(hash, out, _)| (hash.clone(), out.as_ref()))
         .collect();
     let file_set = FileSet;
     let manifest_map = ManifestMap;
