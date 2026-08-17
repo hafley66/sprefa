@@ -10,7 +10,7 @@
 :- use_module(library(lists)).
 :- use_module(library(apply)).
 :- use_module(lower, [ departure_frontier_table_name/2,
-                       departure_read_sql/3, struct_type_plans/3,
+                       departure_read_sql/3, struct_type_plans/3, struct_type_plans/4,
                        program_text_intern_plan/3,
                        statement_rule_ids/3, fixpoint_round_cap/1 ]).
 :- use_module('0_rel_record').
@@ -1146,6 +1146,7 @@ incremental_relation_lines(RelPlans, Rules, ArrivalStatements, DeltaStatements,
 incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, DepartureRefs,
         deltastmt(Ref, _SelectSql, DeltaTable, BoundarySql, _StoredSelectSql), Line) :-
     ref_name(Ref, Name),
+    relplan_storage_name(RelPlans, Ref, StorageName),
     relplan_shape(RelPlans, Ref, Kind, Columns, KeyOrNone, ColumnTypes),
     quoted_string_array_text(Columns, ColumnsText),
     maplist(boundary_column_type, ColumnTypes, BoundaryTypes),
@@ -1165,14 +1166,14 @@ incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, Depart
     ; ArrivalDelTemplate = null
     ),
     js_template(BoundarySql, BoundaryTemplate),
-    format(atom(FrontierTable), '__frontier_~w', [Name]),
-    format(atom(NextFrontierTable), '__next_frontier_~w', [Name]),
+    format(atom(FrontierTable), '__frontier_~w', [StorageName]),
+    format(atom(NextFrontierTable), '__next_frontier_~w', [StorageName]),
     % departure_frontier_table_name is OPTIONAL on IIncrementalRelationPlan and
     % emitted only for a rel some rule binds with finalize/1, so a program
     % with no departure arm renders the entry it always rendered, character
     % for character.
     (   memberchk(Ref, DepartureRefs)
-    ->  departure_frontier_table_name(Ref, DepartureTable),
+    ->  format(atom(DepartureTable), '__departure_frontier_~w', [StorageName]),
         format(atom(DepartureField), ', departure_frontier_table_name: "~w"',
                [DepartureTable])
     ;   DepartureField = ''
@@ -1188,7 +1189,7 @@ incremental_relation_entry_line(RelPlans, ObserverMap, ArrivalStatements, Depart
     quoted_string_array_text(ObserverRefTexts, ObserversText),
     format(atom(Line),
            '  { rel: "~w", kind: "~w", table_name: "~w", delta_table_name: "~w", frontier_table_name: "~w", next_frontier_table_name: "~w", columns: ~w, column_types: ~w, key_indices: [~w], arrival_add_sql: ~w, arrival_del_sql: ~w, boundary_sql: ~w~w, rule_observers: ~w },',
-           [Name, Kind, Name, DeltaTable, FrontierTable, NextFrontierTable,
+           [Name, Kind, StorageName, DeltaTable, FrontierTable, NextFrontierTable,
             ColumnsText, ColumnTypesText, KeyIndicesText, ArrivalAddTemplate, ArrivalDelTemplate,
             BoundaryTemplate, DepartureField, ObserversText]).
 
@@ -1233,8 +1234,9 @@ incremental_edge_statement_entry_line(RelPlans,
                  _WriteSql, DeltaProjectSql, _EdgeTriggerKind,
                  edgeinterns(_, DeltaInternSqls)), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
+    relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
     relplan_kind(RelPlans, HeadRef, HeadKind),
-    format(atom(DeltaTable), '__delta_~w', [HeadName]),
+    format(atom(DeltaTable), '__delta_~w', [HeadStorageName]),
     quoted_string_array_text(HeadColumns, ColumnsText),
     key_indices(HeadColumns, KeyColumns, KeyIndices),
     atomic_list_concat(KeyIndices, ', ', KeyIndicesText),
@@ -1242,7 +1244,7 @@ incremental_edge_statement_entry_line(RelPlans,
     intern_sql_field(DeltaInternSqls, InternField),
     format(atom(Line),
            '  { head_rel: "~w", rule_id: "~w", head_kind: "~w", head_table_name: "~w", head_delta_table_name: "~w", head_columns: ~w, key_indices: [~w], project_sql: ~w~w },',
-           [HeadName, RuleId, HeadKind, HeadName, DeltaTable, ColumnsText,
+           [HeadName, RuleId, HeadKind, HeadStorageName, DeltaTable, ColumnsText,
             KeyIndicesText, DeltaProjectTemplate, InternField]).
 
 incremental_level_statement_lines(Program, LevelStatements, RelPlans,
@@ -1263,14 +1265,15 @@ incremental_level_statement_entry_line(RelPlans, CyclicHeadGroups,
         levelstmt(HeadRef, DeleteSql, InsertSqls, DeltaInsertSql, RefCountSql,
                   AggregateSql, DeltaInternSqls), RuleId, Line) :-
     ref_name(HeadRef, HeadName),
+    relplan_storage_name(RelPlans, HeadRef, HeadStorageName),
     recursion_group_field(CyclicHeadGroups, HeadRef, RecursionGroupField),
-    format(atom(DeltaTable), '__delta_~w', [HeadName]),
+    format(atom(DeltaTable), '__delta_~w', [HeadStorageName]),
     relplan_columns(RelPlans, HeadRef, HeadColumns),
     quoted_string_array_text(HeadColumns, ColumnsText),
     optional_sql_template(DeltaInsertSql, DeltaInsertTemplate),
     maplist(quote_ident_local, HeadColumns, QuotedHeadColumns),
     atomic_list_concat(QuotedHeadColumns, ', ', HeadColumnsSql),
-    format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadColumnsSql, HeadName]),
+    format(atom(SelectSql), 'SELECT ~w FROM "~w"', [HeadColumnsSql, HeadStorageName]),
     js_template(SelectSql, SelectTemplate),
     % A REAL newline, not the two-character sequence `\n`. These three joins
     % used to emit backslash-n and rely on the JS template literal to turn it
@@ -1592,13 +1595,13 @@ plan_pre_refs(plan(_, prog(_, Rules), _, _, _, _, _, _, _), Refs) :-
 
 pre_snapshot_statement(RelPlans, Ref, Statements) :-
     relplan_columns(RelPlans, Ref, Columns),
-    ref_name(Ref, Name),
+    relplan_storage_name(RelPlans, Ref, StorageName),
     maplist(quote_ident_local, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
-    format(atom(Delete), 'DELETE FROM "__pre_~w"', [Name]),
+    format(atom(Delete), 'DELETE FROM "__pre_~w"', [StorageName]),
     format(atom(Insert),
            'INSERT INTO "__pre_~w" (~w) SELECT ~w FROM "~w"',
-           [Name, ColumnsSql, ColumnsSql, Name]),
+           [StorageName, ColumnsSql, ColumnsSql, StorageName]),
     Statements = [Delete, Insert].
 
 ordered_pre_lines(false, _, _, _, []) :- !.
@@ -1681,8 +1684,13 @@ ordered_arrival_accept_line(RelPlans, TriggerRef, Line) :-
 
 ordered_departure_read_entry(RelPlans, TriggerRef, Line) :-
     ref_name(TriggerRef, TriggerName),
+    relplan_storage_name(RelPlans, TriggerRef, TriggerStorageName),
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
-    departure_read_sql(TriggerRef, TriggerColumns, Sql),
+    format(atom(DepartureTable), '__departure_frontier_~w', [TriggerStorageName]),
+    maplist(quote_ident_local, TriggerColumns, QuotedColumns),
+    atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
+    format(atom(Sql), 'SELECT ~w FROM "~w" ORDER BY "_phase", "_sequence"',
+           [ColumnsSql, DepartureTable]),
     js_template(Sql, SqlTemplate),
     quoted_string_array_text(TriggerColumns, ColumnsText),
     format(atom(Line),
@@ -1691,12 +1699,13 @@ ordered_departure_read_entry(RelPlans, TriggerRef, Line) :-
 
 ordered_carry_read_entry(RelPlans, TriggerRef, Line) :-
     ref_name(TriggerRef, TriggerName),
+    relplan_storage_name(RelPlans, TriggerRef, TriggerStorageName),
     relplan_columns(RelPlans, TriggerRef, TriggerColumns),
     maplist(quote_ident_local, TriggerColumns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     format(atom(Sql),
            'SELECT "_sequence" AS "__sequence", ~w FROM "__frontier_~w" ORDER BY "_phase", "_sequence"',
-           [ColumnsSql, TriggerName]),
+           [ColumnsSql, TriggerStorageName]),
     js_template(Sql, SqlTemplate),
     quoted_string_array_text(TriggerColumns, ColumnsText),
     format(atom(Line),
@@ -1917,7 +1926,7 @@ ordered_occurrence_lines(true, EdgeStatements, RelPlans, PreRefs,
 % complete shape the async-becomes-rxjs law calls for (EMPTY would complete
 % without emitting, which starves the caller's `.pipe(map(() => before))` of
 % a value and stalls the whole tick chain).
-recompute_levels_fn_lines(_, [], Lines) :- !,
+recompute_levels_fn_lines(_, _, [], Lines) :- !,
     Lines =
     [ 'function recompute_levels(seam: ISqlSeam): Observable<void> {',
       '  void seam;',
@@ -1938,7 +1947,7 @@ recompute_levels_fn_lines(_, [], Lines) :- !,
 %
 % Every clause is INSERT OR IGNORE, so a round can only add rows and the count
 % is monotone; datalog closure over a finite store is what makes it stop.
-recompute_levels_fn_lines(SelfReferentialLevelRefs, LevelStatements, Lines) :-
+recompute_levels_fn_lines(RelPlans, SelfReferentialLevelRefs, LevelStatements, Lines) :-
     SelfReferentialLevelRefs \== [],
     LevelStatements \== [],
     !,
@@ -1954,7 +1963,7 @@ recompute_levels_fn_lines(SelfReferentialLevelRefs, LevelStatements, Lines) :-
     atomic_list_concat(RoundInsertSqls, ';\n', JoinedInsertSql),
     js_template(JoinedDeleteSql, DeleteTemplate),
     js_template(JoinedInsertSql, InsertTemplate),
-    level_row_count_sql(LevelStatements, CountSql),
+    level_row_count_sql(RelPlans, LevelStatements, CountSql),
     js_template(CountSql, CountTemplate),
     format(atom(DeleteLine), '  const delete_sql = ~w;', [DeleteTemplate]),
     format(atom(InsertLine), '  const insert_sql = ~w;', [InsertTemplate]),
@@ -1975,7 +1984,7 @@ recompute_levels_fn_lines(SelfReferentialLevelRefs, LevelStatements, Lines) :-
       '  );',
       '}'
     ].
-recompute_levels_fn_lines(_, LevelStatements, Lines) :-
+recompute_levels_fn_lines(_, _, LevelStatements, Lines) :-
     LevelStatements \== [],
     % InsertSqls is a LIST (lower.pl:level_statement_group/3 -- one entry per
     % rule clause sharing this head, so a multi-clause head's rows all
@@ -1996,11 +2005,11 @@ recompute_levels_fn_lines(_, LevelStatements, Lines) :-
 
 % ISqlRunner.scalar/2 reads the first column of the first row, so the round
 % count is one SELECT with no row shape to decode.
-level_row_count_sql(LevelStatements, Sql) :-
+level_row_count_sql(RelPlans, LevelStatements, Sql) :-
     findall(CountExpr,
             ( member(levelstmt(HeadRef, _, _, _, _, _, _), LevelStatements),
-              ref_name(HeadRef, HeadName),
-              quote_ident_local(HeadName, QuotedHead),
+              relplan_storage_name(RelPlans, HeadRef, StorageName),
+              quote_ident_local(StorageName, QuotedHead),
               format(atom(CountExpr), '(SELECT count(*) FROM ~w)',
                      [QuotedHead]) ),
             CountExprs),
@@ -2446,7 +2455,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     include(is_retention_statement, LevelStatements, RetentionStatements),
     ( RetentionStatements == [] -> HasRetention = false ; HasRetention = true ),
     Plan = plan(_, prog(PlanDecls, _), LoweringTypes, _, _, _, _, _, _),
-    struct_type_plans(PlanDecls, LoweringTypes, StructPlans),
+    struct_type_plans(PlanDecls, LoweringTypes, RelPlans, StructPlans),
     struct_plane_lines(StructPlans, RelPlans, StructPlaneLines, HasStructTypes),
     plan_intern_mode(Plan, InternMode),
     program_text_intern_plan(InternMode, RelPlans, TextInternPlan),
@@ -2524,7 +2533,7 @@ emit_program(Name, Plan, Lowered, BootStatements, Text) :-
     ordered_carry_lines(HasOrderedProgram, EdgeStatements, LevelHeadedRefs,
                         OrderedCarryLines),
     ( HasOrderedProgram == true
-    -> recompute_levels_fn_lines(SelfReferentialLevelRefs, RuleLevelStatements,
+    -> recompute_levels_fn_lines(RelPlans, SelfReferentialLevelRefs, RuleLevelStatements,
                                  RecomputeLevelsFnLines),
        snapshot_retention_fn_lines(RetentionStatements, SnapshotRetentionFnLines),
        build_deltas_fn_lines(RelPlans, EdgeStatements, RetentionStatements,

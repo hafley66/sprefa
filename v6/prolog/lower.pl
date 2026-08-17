@@ -4,7 +4,7 @@
 %   lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements,
 %           DeltaStatements, RelPlans, ArrivalTargets)
 %     Ddl              : list of CREATE TABLE SQL strings.
-%     RelPlans         : 0_rel_record.pl's rel/4 list, unchanged from the plan;
+%     RelPlans         : 0_rel_record.pl's rel/5 list, unchanged from the plan;
 %                        column_def/4 below is the only reader of its storage.
 %     ArrivalStatements: list of arrivalstmt(Ref, Kind, AddSql, DelSqlOrNone,
 %                        IncrementalAddSql, IncrementalDelSqlOrNone).
@@ -138,7 +138,7 @@
             % emitter can render the intern plan and the plunit units can pin
             % the exact SQL text.
             dictionary_table_name/2, dictionary_render_expr/3,
-            struct_type_plans/3,
+            struct_type_plans/3, struct_type_plans/4,
             % The compiler half of the json capture-type table, exported for
             % the unit that pins it equal to body.pl:json_capture_type/2.
             json_capture_json_type/2,
@@ -181,19 +181,45 @@
 
 % ═══ identifiers ═════════════════════════════════════════════════════════════
 
-table_name(Name/_Arity, Name).
+% The storage map is carried by rel/5 in the compiler IR.  Lowering keeps a
+% short-lived thread-local projection because the existing SQL helpers receive
+% semantic Ref values, often far below the RelPlans argument that owns the
+% map.  It is installed only around lower_program/2 and boot_statements/7;
+% direct helper units retain the old Ref -> Name fallback.
+:- thread_local physical_storage_name/2.
 
-delta_table_name(Name/_Arity, DeltaTable) :-
-    format(atom(DeltaTable), '__delta_~w', [Name]).
+with_storage_context(RelPlans, Goal) :-
+    findall(Ref-StorageName,
+            ( member(RelPlan, RelPlans),
+              relplan_parts(RelPlan, Ref, _, _, _, _),
+              relplan_storage_name(RelPlan, StorageName) ),
+            Names),
+    setup_call_cleanup(
+        maplist(assert_storage_name, Names),
+        Goal,
+        maplist(retract_storage_name, Names)).
 
-frontier_table_name(Name/_Arity, FrontierTable) :-
-    format(atom(FrontierTable), '__frontier_~w', [Name]).
+assert_storage_name(Ref-StorageName) :- assertz(physical_storage_name(Ref, StorageName)).
+retract_storage_name(Ref-StorageName) :- retractall(physical_storage_name(Ref, StorageName)).
 
-next_frontier_table_name(Name/_Arity, NextFrontierTable) :-
-    format(atom(NextFrontierTable), '__next_frontier_~w', [Name]).
+table_name(Ref, Table) :-
+    ( physical_storage_name(Ref, Table) -> true ; Ref = Table/_ ).
 
-pre_table_name(Name/_Arity, PreTable) :-
-    format(atom(PreTable), '__pre_~w', [Name]).
+delta_table_name(Ref, DeltaTable) :-
+    table_name(Ref, Table),
+    format(atom(DeltaTable), '__delta_~w', [Table]).
+
+frontier_table_name(Ref, FrontierTable) :-
+    table_name(Ref, Table),
+    format(atom(FrontierTable), '__frontier_~w', [Table]).
+
+next_frontier_table_name(Ref, NextFrontierTable) :-
+    table_name(Ref, Table),
+    format(atom(NextFrontierTable), '__next_frontier_~w', [Table]).
+
+pre_table_name(Ref, PreTable) :-
+    table_name(Ref, Table),
+    format(atom(PreTable), '__pre_~w', [Table]).
 
 % Last tick's net -delta rows of a rel some rule binds with finalize/1
 % (engine.pl tick/7's DepartureCarry). Emitted ONLY for those rels
@@ -202,8 +228,9 @@ pre_table_name(Name/_Arity, PreTable) :-
 % column shape as the arrival frontier on purpose: the arm's delta SELECT is
 % then the SAME text with one table name swapped, so no new SQL shape enters
 % the emitter and the existing EXPLAIN receipts still describe it.
-departure_frontier_table_name(Name/_Arity, DepartureTable) :-
-    format(atom(DepartureTable), '__departure_frontier_~w', [Name]).
+departure_frontier_table_name(Ref, DepartureTable) :-
+    table_name(Ref, Table),
+    format(atom(DepartureTable), '__departure_frontier_~w', [Table]).
 
 % The runtime fills the departure frontier from the tick's boundary delta,
 % whose rows already crossed the decoded text view: characters under any mode.
@@ -253,8 +280,9 @@ statement_ordinals([Ref | Rest], Seen0, [Ordinal | More]) :-
     ),
     statement_ordinals(Rest, [Ref-Ordinal | Seen1], More).
 
-ref_count_table_name(Name/_Arity, RefCountTable) :-
-    format(atom(RefCountTable), '__support_next_~w', [Name]).
+ref_count_table_name(Ref, RefCountTable) :-
+    table_name(Ref, Table),
+    format(atom(RefCountTable), '__support_next_~w', [Table]).
 
 quote_ident(Name, Quoted) :- format(atom(Quoted), '"~w"', [Name]).
 
@@ -1164,11 +1192,12 @@ catalog_rel_plane_rows(_Mode, [], _DepartureRefs, _PreRefs, _RelIdMap,
 catalog_rel_plane_rows(Mode, [RelPlan | Rest], DepartureRefs, PreRefs,
                        RelIdMap, Modules, Id0, Rows, IdFinal) :-
     relplan_parts(RelPlan, Ref, _Kind, Columns, _KeyOrNone, ColumnTypes),
+    relplan_storage_name(RelPlan, StorageName),
     Ref = Name/RelArity,
     rel_row_id(RelIdMap, Name, RelId),
     rel_module(Modules, Name, RelHash, RelModuleId),
     rel_h_id(RelHash, Name, RelArity, RelHId),
-    catalog_one_rel_planes(Mode, Ref, Columns, ColumnTypes, RelId, RelHId,
+    catalog_one_rel_planes(Mode, Ref, StorageName, Columns, ColumnTypes, RelId, RelHId,
                            RelModuleId, DepartureRefs, PreRefs, Id0,
                            ThisRows, Id1),
     catalog_rel_plane_rows(Mode, Rest, DepartureRefs, PreRefs, RelIdMap,
@@ -1177,14 +1206,13 @@ catalog_rel_plane_rows(Mode, [RelPlan | Rest], DepartureRefs, PreRefs,
 
 % The always-on frontier family, the departure frontier where listened, the
 % pre table where referenced, and the decode views where the rel is interned.
-catalog_one_rel_planes(Mode, Ref, Columns, ColumnTypes, RelId, RelHId,
+catalog_one_rel_planes(Mode, Ref, StorageName, Columns, ColumnTypes, RelId, RelHId,
                        ModuleId, DepartureRefs, PreRefs, Id0, Rows, IdFinal) :-
-    Ref = Name/_,
     length(Columns, ColumnCount),
     TagPlus is ColumnCount + 2,
-    format(atom(DeltaTable), '__delta_~w', [Name]),
-    format(atom(FrontierTable), '__frontier_~w', [Name]),
-    format(atom(NextTable), '__next_frontier_~w', [Name]),
+    delta_table_name(Ref, DeltaTable),
+    frontier_table_name(Ref, FrontierTable),
+    next_frontier_table_name(Ref, NextTable),
     rel_h_id(RelHId, DeltaTable, TagPlus, DeltaHId),
     rel_h_id(RelHId, FrontierTable, TagPlus, FrontierHId),
     rel_h_id(RelHId, NextTable, TagPlus, NextHId),
@@ -1201,13 +1229,13 @@ catalog_one_rel_planes(Mode, Ref, Columns, ColumnTypes, RelId, RelHId,
     Id1 is Id0 + 1,
     Id2 is Id1 + 1,
     IdAfterNext is Id2 + 1,
-    catalog_departure_plane_row(Ref, Name, RelId, RelHId, ModuleId,
+    catalog_departure_plane_row(Ref, RelId, RelHId, ModuleId,
                                 DepartureRefs, IdAfterNext, Departures,
                                 IdAfterDeparture, FrontierSchema, TagPlus),
-    catalog_pre_plane_row(Ref, Name, Columns, ColumnTypes, RelId, RelHId,
+    catalog_pre_plane_row(Ref, Columns, ColumnTypes, RelId, RelHId,
                           ModuleId, PreRefs, IdAfterDeparture, PreRows,
                           IdAfterPre),
-    catalog_view_plane_rows(Mode, Name, Columns, ColumnTypes, RelId, RelHId,
+    catalog_view_plane_rows(Mode, StorageName, Columns, ColumnTypes, RelId, RelHId,
                             Id0, ModuleId, IdAfterPre, ViewRows, IdAfterViews),
     append([DeltaRow, FrontierRow, NextRow | Departures], PreRows, Base0),
     append(Base0, ViewRows, Rows),
@@ -1215,11 +1243,11 @@ catalog_one_rel_planes(Mode, Ref, Columns, ColumnTypes, RelId, RelHId,
 
 % departure: existence mirrors the delta_ddl/3 mint site, which emits the
 % frontier only for rels listened_departure_refs/2 named.
-catalog_departure_plane_row(Ref, Name, RelId, RelHId, ModuleId,
+catalog_departure_plane_row(Ref, RelId, RelHId, ModuleId,
                             DepartureRefs, Id0, Rows, IdFinal, Schema,
                             TagPlus) :-
     (   memberchk(Ref, DepartureRefs)
-    ->  format(atom(DepartureTable), '__departure_frontier_~w', [Name]),
+    ->  departure_frontier_table_name(Ref, DepartureTable),
         rel_h_id(RelHId, DepartureTable, TagPlus, DepartureHId),
         DepartureRow = row(Id0, RelId, 0, DepartureTable, departure, 0, TagPlus,
                            ModuleId, DepartureHId, Schema, ''),
@@ -1229,11 +1257,11 @@ catalog_departure_plane_row(Ref, Name, RelId, RelHId, ModuleId,
     ).
 
 % pre: existence mirrors pre_ddl/3, called once per level_body_pre_ref/2 ref.
-catalog_pre_plane_row(Ref, Name, Columns, ColumnTypes, RelId, RelHId,
+catalog_pre_plane_row(Ref, Columns, ColumnTypes, RelId, RelHId,
                       ModuleId, PreRefs, Id0, Rows, IdFinal) :-
     (   memberchk(Ref, PreRefs)
     ->  length(Columns, ColumnCount),
-        format(atom(PreTable), '__pre_~w', [Name]),
+        pre_table_name(Ref, PreTable),
         rel_h_id(RelHId, PreTable, ColumnCount, PreHId),
         schema_hash(Columns, ColumnTypes, none, PreSchema),
         PreRow = row(Id0, RelId, 0, PreTable, pre, 0, ColumnCount, ModuleId,
@@ -1299,7 +1327,8 @@ catalog_ref_dict_rows(Mode, [RelPlan | Rest],
         rel_module(Modules, Name, RelHash, RelModuleId),
         length(Columns, ColumnCount),
         RefCount is ColumnCount + 2,
-        format(atom(RefTable), '__ref_~w', [Name]),
+        relplan_storage_name(RelPlan, StorageName),
+        format(atom(RefTable), '__ref_~w', [StorageName]),
         rel_h_id(RelHash, RefTable, RefCount, RefHId),
         schema_hash(Columns, ColumnTypes, none, RefSchema),
         RefRow = row(Id0, RelModuleId, 0, RefTable, dictionary, RelId,
@@ -2756,7 +2785,8 @@ column_def(_, QuotedColumn, text, Def) :- format(atom(Def), '~w TEXT NOT NULL', 
 % exposes `__id`, typed columns, and a computed `__rendered` expression.
 
 dictionary_table_name(TypeName, Table) :-
-    atomic_list_concat(['__ref_', TypeName], Table).
+    ( physical_storage_name(TypeName/_, StorageName) -> true ; StorageName = TypeName ),
+    atomic_list_concat(['__ref_', StorageName], Table).
 
 relation_render_expr(Mode, Types, Columns, ColumnTypes, Expr) :-
     pairs_keys_values(Pairs, Columns, ColumnTypes),
@@ -2815,7 +2845,8 @@ dictionary_render_expr(TypeName, Column, Expr) :-
 % dependent on the query planner and would lose order after a restart or an
 % index change.
 list_view_name(EntityName, ViewName) :-
-    atomic_list_concat(['__list_', EntityName], ViewName).
+    table_name(EntityName/1, StorageName),
+    atomic_list_concat(['__list_', StorageName], ViewName).
 
 list_member_ref(EntityName, MemberName/3) :-
     atomic_list_concat([EntityName, member], '__', MemberName).
@@ -2842,7 +2873,8 @@ list_view_ddl(Mode, RelPlans, Element, Ddl) :-
     canonical_type_name(list(Element), EntityName),
     list_view_name(EntityName, ViewName),
     quote_ident(ViewName, QuotedViewName),
-    quote_ident(EntityName, QuotedEntity),
+    table_name(EntityName/1, EntityTable),
+    quote_ident(EntityTable, QuotedEntity),
     list_member_ref(EntityName, MemberRef),
     table_name(MemberRef, MemberTable),
     quote_ident(MemberTable, QuotedMemberTable),
@@ -2914,25 +2946,29 @@ list_column_joins(Columns, ColumnTypes, JoinSql) :-
 % (v6/tsv2/tests/structPlane.test.ts is the count receipt). The N+1 law is
 % structural here, not a lint: there is no per-row shape to fall into.
 struct_type_plans(Decls, Types, Plans) :-
+    struct_type_plans(Decls, Types, [], Plans).
+
+struct_type_plans(Decls, Types, RelPlans, Plans) :-
     (   Types == []
     ->  Plans = []
     ;   type_topological_order(Types, Ordered),
         findall(Plan, ( member(TypeName, Ordered),
-                        struct_type_plan(Decls, Types, TypeName, Plan) ), Plans)
+                        struct_type_plan(Decls, Types, RelPlans, TypeName, Plan) ), Plans)
     ).
 
-struct_type_plan(Decls, Types, TypeName,
+struct_type_plan(Decls, Types, RelPlans, TypeName,
                  structtype(TypeName, Columns, RefTypes, KeyIndices,
                             ConflictSql, InternSql, LookupSql)) :-
     type_definition(Types, TypeName, Columns, ColumnTypes),
     length(Columns, Arity),
+    struct_storage_table(RelPlans, TypeName/Arity, TypeName, Table),
     ( decl_key(Decls, TypeName/Arity, KeyPositions)
     -> true
     ;  numlist(1, Arity, KeyPositions)
     ),
     maplist(one_based_to_zero_based, KeyPositions, KeyIndices),
     maplist(dictionary_ref_type(Types), ColumnTypes, RefTypes),
-    quote_ident(TypeName, QuotedTable),
+    quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     length(Columns, Width),
@@ -2955,6 +2991,10 @@ struct_type_plan(Decls, Types, TypeName,
     format(atom(LookupSql),
            'SELECT i.value AS "__lookup", t."__id", json_array(~w) AS "__stored" FROM json_each(?) i JOIN ~w t ON ~w',
            [JsonArgsSql, QuotedTable, KeyWhereSql]).
+
+struct_storage_table([], _Ref, Fallback, Fallback) :- !.
+struct_storage_table(RelPlans, Ref, _Fallback, Table) :-
+    relplan_storage_name(RelPlans, Ref, Table).
 
 one_based_to_zero_based(Position, Index) :- Index is Position - 1.
 
@@ -3184,12 +3224,20 @@ elide_dictionary_atoms(Goals, [Atom | Rest], Seen, Kept, Elided) :-
 dictionary_atom_is_the_body_atom(Goals, OtherAtoms, DictionaryAtom, Target) :-
     DictionaryAtom =.. [Table, Endpoint | Args],
     var(Endpoint),
-    atom_concat('__ref_', TypeName, Table),
+    dictionary_table_for_type(TypeName, Table),
     Target =.. [TypeName | Args],
     identical_member(Goals, Target),
     \+ holds_variable(Goals, Endpoint),
     \+ holds_variable(OtherAtoms, Endpoint),
     Endpoint = Target.
+
+dictionary_table_for_type(TypeName, Table) :-
+    (   physical_storage_name(_, _)
+    ->  physical_storage_name(Ref, StorageName),
+        Ref = TypeName/_,
+        atomic_list_concat(['__ref_', StorageName], Table)
+    ;   atomic_list_concat(['__ref_', TypeName], Table)
+    ).
 
 % Membership by term IDENTITY. `memberchk/2` would UNIFY, which for a body of
 % variables succeeds against the wrong atom and binds the rule's own variables
@@ -4017,8 +4065,9 @@ level_avg_sql(Mode, RelPlans, HeadRef, Rules,
     append([[ClearAccumulatorSql], BootRefreshSqls,
             [BootDeleteSql, BootInsertSql]], BootSqls).
 
-avg_accumulator_table_name(Name/_Arity, Table) :-
-    format(atom(Table), '__avg_acc_~w', [Name]).
+avg_accumulator_table_name(Ref, Table) :-
+    table_name(Ref, StorageName),
+    format(atom(Table), '__avg_acc_~w', [StorageName]).
 
 avg_refresh_sqls(Mode, RelPlans, HeadRef, Rules, ScopeColumns,
                  QuotedScopeTable, QuotedAccumulatorTable, Sqls) :-
@@ -4261,8 +4310,9 @@ avg_join_equalities([Column | Rest], Position, [Sql | More]) :-
     NextPosition is Position + 1,
     avg_join_equalities(Rest, NextPosition, More).
 
-aggregate_scope_table_name(Name/_Arity, ScopeTable) :-
-    format(atom(ScopeTable), '__agg_scope_~w', [Name]).
+aggregate_scope_table_name(Ref, ScopeTable) :-
+    table_name(Ref, Table),
+    format(atom(ScopeTable), '__agg_scope_~w', [Table]).
 
 % The scope table's columns are the head's OWN plain (grouped) columns, so a
 % group key in the scope table and a group key in the head table compare
@@ -4511,8 +4561,9 @@ level_ref_count_sql(Mode, RelPlans, HeadRef, Rules,
            'INSERT OR IGNORE INTO ~w (~w, "__refcount") SELECT ~w, n."__refcount" FROM ~w n',
            [QuotedHeadTable, HeadColumnsSql, NewColumnsSql, QuotedRefCountTable]).
 
-arrival_scratch_table_name(Name/_Arity, NewTable) :-
-    format(atom(NewTable), '__new_~w', [Name]).
+arrival_scratch_table_name(Ref, NewTable) :-
+    table_name(Ref, Table),
+    format(atom(NewTable), '__new_~w', [Table]).
 
 qualified_column_list(Columns, Alias, Sql) :-
     findall(Part,
@@ -4587,10 +4638,12 @@ level_expand_plan(Mode, RelPlans, HeadRef, Rules,
     expand_absorb_sql(QuotedRefCountTable, QuotedTableA, HeadColumnsSql, AbsorbASql),
     expand_absorb_sql(QuotedRefCountTable, QuotedTableB, HeadColumnsSql, AbsorbBSql).
 
-expand_table_name(Name/_Arity, a, TableName) :-
-    format(atom(TableName), '__expand_a_~w', [Name]).
-expand_table_name(Name/_Arity, b, TableName) :-
-    format(atom(TableName), '__expand_b_~w', [Name]).
+expand_table_name(Ref, a, TableName) :-
+    table_name(Ref, Table),
+    format(atom(TableName), '__expand_a_~w', [Table]).
+expand_table_name(Ref, b, TableName) :-
+    table_name(Ref, Table),
+    format(atom(TableName), '__expand_b_~w', [Table]).
 
 expand_seed_sql(Mode, RelPlans, QuotedWaveTable, HeadColumnsSql, Rule, SeedSql) :-
     level_recursive_arm(Mode, RelPlans, Rule, BaseArm),
@@ -4623,14 +4676,17 @@ expand_absorb_sql(QuotedRefCountTable, QuotedWaveTable, HeadColumnsSql, AbsorbSq
 % ═══ in-place recursive-head maintenance (engine.rs:407, :454) ════════════
 % Rows left in __cone_<rel> once the rederive walk stops are the retractions.
 
-dred_ping_table_name(Name/_Arity, TableName) :-
-    format(atom(TableName), '__ping_~w', [Name]).
+dred_ping_table_name(Ref, TableName) :-
+    table_name(Ref, Table),
+    format(atom(TableName), '__ping_~w', [Table]).
 
-dred_pong_table_name(Name/_Arity, TableName) :-
-    format(atom(TableName), '__pong_~w', [Name]).
+dred_pong_table_name(Ref, TableName) :-
+    table_name(Ref, Table),
+    format(atom(TableName), '__pong_~w', [Table]).
 
-dred_cone_table_name(Name/_Arity, TableName) :-
-    format(atom(TableName), '__cone_~w', [Name]).
+dred_cone_table_name(Ref, TableName) :-
+    table_name(Ref, Table),
+    format(atom(TableName), '__cone_~w', [Table]).
 
 % A negated atom retracts on an ARRIVAL, a `pre` atom reads a snapshot with no
 % delta, a `__ref_*` atom has neither: all three hide retractions from a seed.
@@ -6418,14 +6474,15 @@ struct_intern_statements(Mode, Decls, Types, TypeName, Value, LookupSlot, Lookup
     boot_column_slots(Mode, Decls, Types, ColumnTypes, FieldValues, Descs, ChildStatements),
     maplist(slot_desc_slot, Descs, Slots),
     slot_desc_params(Descs, Params),
-    quote_ident(TypeName, QuotedTable),
+    length(Columns, Arity),
+    table_name(TypeName/Arity, Table),
+    quote_ident(Table, QuotedTable),
     maplist(quote_ident, Columns, QuotedColumns),
     atomic_list_concat(QuotedColumns, ', ', ColumnsSql),
     atomic_list_concat(Slots, ', ', SlotsSql),
     format(atom(Sql),
            'INSERT OR IGNORE INTO ~w (~w) VALUES (~w)',
            [QuotedTable, ColumnsSql, SlotsSql]),
-    length(Columns, Arity),
     ( decl_key(Decls, TypeName/Arity, KeyPositions)
     -> true
     ;  numlist(1, Arity, KeyPositions)
@@ -6447,7 +6504,11 @@ struct_intern_statements(Mode, Decls, Types, TypeName, Value, LookupSlot, Lookup
 
 % ═══ top level ═══════════════════════════════════════════════════════════════
 
-lower_program(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans, ArrivalTargets, RuleOrder, EdgeRules, _SubscribedRels, Mode),
+lower_program(Plan, Lowered) :-
+    Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
+    with_storage_context(RelPlans, lower_program_in_context(Plan, Lowered)).
+
+lower_program_in_context(plan(Name, prog(Decls, Rules), LoweringTypes, RelPlans, ArrivalTargets, RuleOrder, EdgeRules, _SubscribedRels, Mode),
               lowered(Name, Ddl, ArrivalStatements, EdgeStatements, LevelStatements, DeltaStatements, RelPlans, ArrivalTargets)) :-
     findall(EdgeHeadedRef, ( member(EdgeRule, EdgeRules), rule_head_ref(EdgeRule, EdgeHeadedRef) ), EdgeHeadedRefs),
     findall(LevelHeadedRef,
@@ -6542,6 +6603,12 @@ arrival_target_relplan(ArrivalTargets, RelPlan) :-
 % unmarked edge triggers were accepted, and its "before" snapshot was empty
 % at tick 1 without this.
 boot_statements(Mode, Decls, Types, RelPlans, Initial, LevelStatements,
+                BootStatements) :-
+    with_storage_context(RelPlans,
+                         boot_statements_in_context(Mode, Decls, Types, RelPlans, Initial,
+                                                    LevelStatements, BootStatements)).
+
+boot_statements_in_context(Mode, Decls, Types, RelPlans, Initial, LevelStatements,
                 BootStatements) :-
     maplist(boot_seed_statement_for(Mode, Decls, Types, Initial), RelPlans, SeedGroups),
     append(SeedGroups, SeedStatements),

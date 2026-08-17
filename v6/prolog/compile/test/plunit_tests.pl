@@ -19,7 +19,7 @@
 :- use_module(library(readutil)).
 :- use_module('../../compile',
               [ read_fixture_term/4, program_plan/2, program_plan/3,
-                compile_dl6/2, default_intern_mode/1,
+                compile_dl6/2, compile_dl6/3, default_intern_mode/1,
                 dl6_seeded_form/3,
                 compiler_owned_contract/1 ]).
 :- use_module('../../0_unsupported_messages',
@@ -2130,7 +2130,8 @@ record_columns_of(Name, Prog, Ref, Cols) :-
     once(program_plan(fixture(Name, Prog, [], [], [])-[], [intern(dict)],
                       Plan)),
     Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
-    memberchk(rel(Ref, _, Cols, _), RelPlans).
+    relplan_of(RelPlans, Ref, RelPlan),
+    ( RelPlan = rel(Ref, _, _, Cols, _) ; RelPlan = rel(Ref, _, Cols, _) ).
 
 test(an_option_column_loses_its_surface_spelling) :-
     record_columns_of(
@@ -6746,7 +6747,7 @@ test(a_root_rel_zero_still_has_no_storage) :-
     once(program_plan(fixture(root_rel_zero, prog(Decls, Rules), [], [], [])-[],
                       [intern(dict)], Plan)),
     Plan = plan(_, _, _, RelPlans, _, _, _, _, _),
-    \+ memberchk(rel(foo/0, _, _, _), RelPlans),
+    \+ relplan_of(RelPlans, foo/0, _),
     \+ analyze:rel_columns(Rules, [], foo/0, _),
     \+ lower_program(Plan, _).
 
@@ -6941,7 +6942,7 @@ test(a_ground_template_application_reaches_the_text_door) :-
     door_emitted_text(generic_pair,
         'rel pair(T)(first: T, second: T).\nrel edge(id: int, endpoints: pair(int)).\n',
         Emitted),
-    format(atom(TableNeedle), 'CREATE TABLE "~w"', [PairName]),
+    format(atom(TableNeedle), 'CREATE TABLE "probe_~w"', [PairName]),
     once(sub_atom(Emitted, _, _, _, TableNeedle)),
     once(sub_atom(Emitted, _, _, _, '"first" INTEGER NOT NULL')),
     once(sub_atom(Emitted, _, _, _, '"second" INTEGER NOT NULL')).
@@ -7044,7 +7045,7 @@ test(a_bounded_template_reaches_the_text_door) :-
     door_emitted_text(bounded_pair,
         'interface json_encodable.\nrel pair(T: json_encodable)(first: T, second: T).\nrel edge(id: int, endpoints: pair(int)).\n',
         Emitted),
-    format(atom(TableNeedle), 'CREATE TABLE "~w"', [PairName]),
+    format(atom(TableNeedle), 'CREATE TABLE "probe_~w"', [PairName]),
     once(sub_atom(Emitted, _, _, _, TableNeedle)).
 
 :- end_tests(rel_template_and_is_clause).
@@ -7088,7 +7089,7 @@ test(dl6_fact_seeds_initial) :-
     (   Result = ok
     ->  read_seeded_text(OutFile, Emitted),
         (   sub_atom(Emitted, _, _, _,
-                     'INSERT OR IGNORE INTO "max_run" ("limit_lines") VALUES (?)')
+                     '_max_run" ("limit_lines") VALUES (?)')
         ->  true
         ;   throw(seed_row_missing(Emitted))
         )
@@ -7106,7 +7107,7 @@ test(dl6_fact_derives) :-
     dl6_compile_text(Text, OutFile, Result),
     (   Result = ok
     ->  read_seeded_text(OutFile, Emitted),
-        (   sub_atom(Emitted, _, _, _, 'CREATE TABLE "doubled_limit"'),
+        (   sub_atom(Emitted, _, _, _, '_doubled_limit"'),
             sub_atom(Emitted, _, _, _, '"limit_doubled"')
         ->  true
         ;   throw(derived_rel_missing(Emitted))
@@ -8278,7 +8279,124 @@ test(stripped_use_lines_keep_the_remainder_on_its_own_file_line) :-
     Error = dl_parse_error(_, position(Line, _)),
     Line == 3.
 
+% Storage names preserve the authored relation identity at the runtime seam,
+% while every SQLite object derives from the module's relative source path.
+test(module_storage_name_reaches_ts_and_rust_executable_plans) :-
+    make_use_fixture(Dir, ["main.dl6" = "rel Person(name:text).\n"]),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/main.ts'], TsOut),
+    atomic_list_concat([Dir, '/main.rs'], RustOut),
+    compile_dl6(Entry, TsOut),
+    compile_dl6(Entry, RustOut, [emitter(emit_rust:emit_program)]),
+    read_file_to_string(TsOut, TsText, []),
+    read_file_to_string(RustOut, RustText, []),
+    sub_string(TsText, _, _, _, 'rel: "Person"'),
+    sub_string(TsText, _, _, _, 'table_name: "main_Person"'),
+    sub_string(TsText, _, _, _, 'delta_table_name: "__delta_main_Person"'),
+    sub_string(RustText, _, _, _, '"rel":"Person"'),
+    sub_string(RustText, _, _, _, '"table_name":"main_Person"').
+
+% The full relative path is kept, rather than only a basename or a hash.
+test(nested_same_basename_modules_keep_distinct_storage_prefixes) :-
+    make_use_dir(Dir),
+    atomic_list_concat([Dir, '/a'], LeftDir),
+    atomic_list_concat([Dir, '/b'], RightDir),
+    make_directory_path(LeftDir),
+    make_directory_path(RightDir),
+    write_use_file(Dir, 'a/model.dl6' = "rel First(value:int).\n"),
+    write_use_file(Dir, 'b/model.dl6' = "rel Second(value:int).\n"),
+    write_use_file(Dir, 'main.dl6' =
+        "use \"a/model.dl6\".\nuse \"b/model.dl6\".\nrel Root(value:int).\n"),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/main.ts'], OutFile),
+    compile_dl6(Entry, OutFile),
+    read_file_to_string(OutFile, Text, []),
+    sub_string(Text, _, _, _, 'table_name: "a_model_First"'),
+    sub_string(Text, _, _, _, 'table_name: "b_model_Second"'),
+    sub_string(Text, _, _, _, 'table_name: "main_Root"').
+
+% SQLite folds ASCII identifiers.  The suffix allocation is stable because
+% candidates sort by module path, exact relation spelling, and arity.
+test(case_only_relation_names_get_deterministic_storage_suffixes) :-
+    make_use_fixture(Dir,
+        ["main.dl6" = "rel Person(value:int).\nrel person(value:int).\nrel person_2(value:int).\n"]),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/main.ts'], OutFile),
+    compile_dl6(Entry, OutFile),
+    read_file_to_string(OutFile, Text, []),
+    sub_string(Text, _, _, _, 'table_name: "main_Person"'),
+    sub_string(Text, _, _, _, 'table_name: "main_person_2"'),
+    sub_string(Text, _, _, _, 'table_name: "main_person_2_2"').
+
+% A same Name/Arity from two declaring modules was already one semantic Ref
+% before storage lowering.  The refusal keeps that collapse visible.
+test(same_semantic_ref_from_two_modules_refuses_before_storage_lowering) :-
+    make_use_fixture(Dir,
+        [ "left.dl6" = "rel Same(value:int).\n",
+          "right.dl6" = "rel Same(value:int).\n",
+          "main.dl6" = "use \"left.dl6\".\nuse \"right.dl6\".\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/main.ts'], OutFile),
+    catch(compile_dl6(Entry, OutFile),
+          unsupported_construct(rel_module_identity_collision(Same, Hashes)),
+          Refused = true),
+    Refused == true,
+    Same == 'Same',
+    length(Hashes, 2).
+
+% The emitted DDL is executable against SQLite as one batch with namespaced
+% permanent, delta, and frontier objects.
+test(module_storage_ddl_executes_in_sqlite) :-
+    make_use_fixture(Dir, ["main.dl6" = "rel Person(name:text).\n"]),
+    use_entry(Dir, 'main.dl6', Entry),
+    text_program_lowered(Entry, lowered(_, Ddl, _, _, _, _, _, _)),
+    tmp_file(module_storage_sqlite, DbFile),
+    setup_call_cleanup(
+        true,
+        sqlite_executes_ddls(DbFile, Ddl),
+        catch(delete_file(DbFile), _, true)).
+
+% Generated refs do not have their own source declaration.  Their storage is
+% attributed to the entry compilation unit, while the generated semantic name
+% remains visible after the prefix.
+test(generated_relations_use_entry_storage_prefix) :-
+    make_use_fixture(Dir,
+        ["main.dl6" =
+            "rel pair(T)(first: T, second: T).\nrel edge(id: int, endpoints: pair(int)).\n"]),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/main.ts'], OutFile),
+    compile_dl6(Entry, OutFile),
+    read_file_to_string(OutFile, Text, []),
+    sub_string(Text, _, _, _, 'table_name: "main_edge"'),
+    sub_string(Text, _, _, _, 'CREATE TABLE "main___gen__pair_').
+
+test(enum_option_and_list_mints_use_entry_storage_prefix) :-
+    make_use_fixture(Dir,
+        ["main.dl6" =
+            "rel status(ready(note: text); failed(reason: text)).\nrel box(id: int, flag: option(int), words: list(text)).\n"]),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/main.ts'], OutFile),
+    compile_dl6(Entry, OutFile),
+    read_file_to_string(OutFile, Text, []),
+    sub_string(Text, _, _, _, 'CREATE TABLE "main_status_ready"'),
+    sub_string(Text, _, _, _, 'CREATE TABLE "main___opt_int_none"'),
+    sub_string(Text, _, _, _, 'CREATE TABLE "main___gen__list_text_').
+
 :- end_tests(use_module_system).
+
+text_program_lowered(Entry, Lowered) :-
+    expand_uses(Entry, [], [], _, Prog, _, Bindings, []),
+    dl6_seeded_form(Prog, Initial, ProgOut),
+    file_base_name(Entry, Base),
+    file_name_extension(Name, _, Base),
+    program_plan(fixture(Name, ProgOut, Initial, [], [])-Bindings, Plan),
+    lower_program(Plan, Lowered).
+
+sqlite_executes_ddls(DbFile, Ddl) :-
+    process_create(path(sqlite3), [DbFile], [stdin(pipe(Input)), process(Pid)]),
+    forall(member(Sql, Ddl), format(Input, '~w;~n', [Sql])),
+    close(Input),
+    process_wait(Pid, exit(0)).
 
 % ═══ the mount door: `use "path" as alias.` ═════════════════════════════════
 % The alias is a COMPILE-TIME lookup path grafted onto the resolver's scope
