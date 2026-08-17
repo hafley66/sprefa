@@ -2,12 +2,14 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: feature
-status: open
+status: done
 priority: low
 epic: extract-port-closeout
 labels:
 - pkg:extract
 - size:small
+closed: 2026-08-16
+closed_by: extract-driver
 ---
 
 # runtime-computed edge markers (the unresolved rel)
@@ -48,3 +50,9 @@ cargo build --all-targets --features cli
 cargo test --features cli
 cargo test --features cli --test 7_diet_deps_cli
 ```
+
+## Comments
+
+### 2026-08-17T02:59:40Z · @extract-driver
+
+VERIFIED GREEN at origin/main a4045153e by extract-driver in a clean worktree: build rc=0, cargo test --features cli all ok. Landed as 07832acf3 (wire types + schema), 9a65fbb92 (the ts unresolved walker, four rules over the same oxc parse), dab50a2df (tests/20_unresolved.rs grades the marker rows and their negatives). Present: Unresolved at src/types.rs:500, UnresolvedReason at :509, SCHEMA line src/schema.rs:37 with the closed vocabulary pinned at :139 (dynamic-import | computed-member-call | spread-call-args). TS/JS-only scope held, matching v5's v1 scope. Closing.

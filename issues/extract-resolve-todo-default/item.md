@@ -2,11 +2,12 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: task
-status: open
+status: obsolete
 priority: high
 epic: extract-port-closeout
 labels:
 - pkg:extract
+closed: 2026-08-16
 ---
 
 # Resolve<F> ships a todo!() default body
@@ -52,3 +53,9 @@ needs a decision either way.
 ### 2026-08-16T19:27:47Z · @chris
 
 Fork B: delete the todo!() default body; Resolve becomes non-defaulted and the compiler demands an arm (or an explicit empty impl) per Source. Rationale: the default was expired scaffolding from the 4b freeze (types.rs:823-826), never a design; silent-empty (A) violates the familymask named-stop precedent. Ruled from Chris's reaction 2026-08-16; implementation dispatchable.
+
+## Comments
+
+### 2026-08-17T03:11:48Z · @coordinator
+
+Premise verified DEAD at origin/main 4531b4297, coordinator re-checked the extract driver's read-only intel: (1) Resolve<F>::resolve is a BARE signature, no default body — types.rs:1406-1411; (2) grep todo!() over v6/sprefa-extract/src returns one hit, a comment at types.rs:2224 about the store seam (different trait); (3) commit 6b483939b landed titled 'extract: correct the two project.rs comments claiming Resolve has a todo!() default', and project.rs now states 'Resolve::resolve is non-defaulted, so a missing arm cannot be dispatched'. The card's cited receipts (types.rs:1105-1109 todo default, project.rs:446-448 guard comment) no longer exist in that form. Closing as obsolete. Reopen condition: if the surviving worry is the hand-maintained dispatch match itself (exhaustiveness when a new family or lang lands), that is a NEW card with fresh receipts.
