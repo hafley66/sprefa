@@ -1902,6 +1902,35 @@ sites but not against new code. **missing** = nothing.
   same direction, run the underlying `git` command by hand and READ ITS
   STDERR. `refname is ambiguous` is a warning, not a failure.
 
+## 51. A message bus whose coordinator leg was never wired, discovered by its silence
+
+- WHAT IT LOOKS LIKE: lanes finish, their result hails are appended to
+  `bus.ndjson`, and the coordinator never hears anything. Everyone works
+  around it (`lane wait` armed per lane) until the workaround IS the system
+  and the doc says "nothing delivers boop mail" as if that were a law.
+- HOW IT BIT US: 2026-08-16/17. `boop adopt` (the SessionStart hook) wrote
+  the coordinator route with `kind: "lane"` hardcoded; `run_hail`
+  short-circuits `kind=="lane"` with "lane supervisor delivers it". True for
+  lanes, false for an adopted interactive session, which has no supervisor
+  polling the mailbox. Every completion ping queued forever with
+  `to_timestamp: null`. Two side defects hid it: `lane list` showed the
+  coordinator dead (pane target compared against session names), and a
+  supervise give-up left the opencode TUI alive after one C-c, burning a
+  provider conversation with no route left to steer it.
+- THE LAW: a queue with no consumer is not a notification system. When a
+  delivery path exists only for one kind of receiver, adopting a new receiver
+  kind must either wire its leg or refuse. And a "delivered" claim needs a
+  live end-to-end receipt: a real sender, a real receiver, the message
+  observed at the far end.
+- THE RAIL: hafley-rs `crates/boop/tests/coordinator_ping.rs` (FAIL-PRE-FIX
+  header) runs adopt → hail → capture-pane over a real tmux session; the
+  claude-harness leg types the line + Enter into the pane. Live proof:
+  q38 lane `chore-ping-e2e` completed and its ping arrived in the coordinator
+  pane unarmed. TUI close now escalates C-c ×2 to `kill_window`.
+- SAY THIS TO AN AGENT: "the mail sits there unread" is a defect with a
+  file:line, not a property of the universe. Trace the delivery branch for
+  YOUR receiver kind before building a polling workaround.
+
 ## Rail gap table
 
 | # | class | rail status | promotion needed |
