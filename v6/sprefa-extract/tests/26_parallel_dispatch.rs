@@ -82,8 +82,7 @@ impl Drop for Fixture {
 fn resolve_output(fixture: &Fixture, threads: Option<&str>) -> String {
     let mut args: Vec<String> = vec!["--resolve".to_string()];
     args.extend(
-        ["a.rs", "b.rs", "c.rs"]
-            .map(|name| fixture.root.join(name).to_str().unwrap().to_string()),
+        ["a.rs", "b.rs", "c.rs"].map(|name| fixture.root.join(name).to_str().unwrap().to_string()),
     );
     let mut command = Command::new(env!("CARGO_BIN_EXE_extract"));
     command.current_dir(std::env::temp_dir()).args(&args);

@@ -892,7 +892,13 @@ fn call_resolve_scip_ratchet_ts() {
             });
             if let Some((caller, dst, kind)) = &twin {
                 let from = call.node(*caller).span;
-                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0.clone()));
+                expected.push((
+                    from.start,
+                    dst.1.start,
+                    dst.1.end(),
+                    kind.as_str(),
+                    dst.0.clone(),
+                ));
             }
             // The scip-side classification (assertions 2-6).
             match (twin, scip_t) {
@@ -1177,7 +1183,13 @@ fn call_resolve_scip_ratchet_go() {
             });
             if let Some((caller, dst, kind)) = &twin {
                 let from = call.node(*caller).span;
-                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0.clone()));
+                expected.push((
+                    from.start,
+                    dst.1.start,
+                    dst.1.end(),
+                    kind.as_str(),
+                    dst.0.clone(),
+                ));
             }
             // The scip-side classification (assertions 2-6).
             match (twin, scip_t) {
@@ -1452,7 +1464,13 @@ fn call_resolve_scip_ratchet_rust() {
             });
             if let Some((caller, dst, kind)) = &twin {
                 let from = call.node(*caller).span;
-                expected.push((from.start, dst.1.start, dst.1.end(), kind.as_str(), dst.0.clone()));
+                expected.push((
+                    from.start,
+                    dst.1.start,
+                    dst.1.end(),
+                    kind.as_str(),
+                    dst.0.clone(),
+                ));
             }
             // The scip-side classification (assertions 2-6).
             match (twin, scip_t) {

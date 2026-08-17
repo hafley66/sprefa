@@ -268,10 +268,7 @@ fn run() -> Result<(), String> {
     let edge_refs: Vec<&TypeEdge> = edges.iter().collect();
     for (index, nodes) in boards(&hops, &kinds).into_iter().enumerate() {
         let text = board(&nodes, &edge_refs);
-        let drawn = text
-            .lines()
-            .filter(|line| line.contains(" -> "))
-            .count();
+        let drawn = text.lines().filter(|line| line.contains(" -> ")).count();
         let path = args.out.join(format!("typegraph.{index}.d2"));
         std::fs::write(&path, text).map_err(|err| err.to_string())?;
         println!("{} shapes={} edges={}", path.display(), nodes.len(), drawn);

@@ -64,7 +64,10 @@ fn ts_docs_match_v5() {
     assert_eq!(v6, v5, "ts docs parity vs v5 oracle");
     // A plain string const has no doc anchor, so the jsdoc above `greeting` is
     // dropped: no doc row names it.
-    assert!(!v6.iter().any(|row| row.contains("greeting")), "dropped const doc");
+    assert!(
+        !v6.iter().any(|row| row.contains("greeting")),
+        "dropped const doc"
+    );
 }
 
 #[test]
@@ -83,8 +86,12 @@ fn go_docs_match_v5() {
 #[test]
 fn kotlin_docs_self_graded() {
     let path = "v6/sprefa-extract/tests/fixtures/kotlin/docs.kt";
-    let out = dispatch(path, include_bytes!("fixtures/kotlin/docs.kt"), FamilyMask::ALL)
-        .expect("a Source matches the fixture");
+    let out = dispatch(
+        path,
+        include_bytes!("fixtures/kotlin/docs.kt"),
+        FamilyMask::ALL,
+    )
+    .expect("a Source matches the fixture");
     let facts = flatten(&out);
     let entity: BTreeMap<(u32, u32), (String, String)> = facts
         .iter()
@@ -101,12 +108,7 @@ fn kotlin_docs_self_graded() {
 
     let mut docs: Vec<(String, String, u32, String)> = Vec::new();
     for fact in &facts {
-        if let FlatFact::Doc {
-            owner,
-            text,
-            ..
-        } = fact
-        {
+        if let FlatFact::Doc { owner, text, .. } = fact {
             let (kind, name) = entity
                 .get(&(owner.start, owner.end))
                 .unwrap_or_else(|| panic!("doc owner not a TypeF node at {owner:?}"));
@@ -142,14 +144,15 @@ fn kotlin_docs_self_graded() {
     let tags: Vec<(String, Option<String>, String)> = facts
         .iter()
         .filter_map(|fact| match fact {
-            FlatFact::DocTagOut {
-                tag, arg, text, ..
-            } => Some((tag.clone(), arg.clone(), text.clone())),
+            FlatFact::DocTagOut { tag, arg, text, .. } => {
+                Some((tag.clone(), arg.clone(), text.clone()))
+            }
             _ => None,
         })
         .collect();
     assert!(
-        tags.iter().any(|(tag, arg, _)| tag == "param" && arg.as_deref() == Some("name")),
+        tags.iter()
+            .any(|(tag, arg, _)| tag == "param" && arg.as_deref() == Some("name")),
         "a @param tag with its name arg survives; tags={tags:?}"
     );
 

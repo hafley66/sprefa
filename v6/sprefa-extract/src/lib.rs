@@ -54,7 +54,6 @@ pub use family::{
     FlowF, ProjectEdge, SigSlot, Specifier, SpecifierKind, TypeEdgeCandidate, TypeEdgeKind,
     TypeEntityKind, TypeF, TypeFAux, TypeSig,
 };
-pub use types::{CfgEdgeKind, CfgF, CfgNodeKind};
 pub use lang::{
     query_patterns, source_for, sources, AstCaptureFact, AstPatternQuery, AstgrepSource, DlSource,
     GoSource, KotlinSource, MarkdownSource, PrologSource, PythonSource, RustSource, TsSource,
@@ -92,6 +91,7 @@ pub use soopy::{
     SourceEntry, SourceRef,
 };
 pub use source::{ExtractOutput, FamilyMask, Source};
+pub use types::{CfgEdgeKind, CfgF, CfgNodeKind};
 pub use wire::{
     file_fact, flatten, flatten_cfg, flatten_flow, flatten_jsonl, flatten_scip, scip_file_edges,
     FlatFact, SpanOut, SCHEMA,

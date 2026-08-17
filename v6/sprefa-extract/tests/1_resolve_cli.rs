@@ -128,13 +128,7 @@ fn resolve_dispatches_dl6_call_edges() {
 #[test]
 fn resolve_dispatches_dl6_type_edges() {
     assert_eq!(
-        run(&[
-            "--resolve",
-            "--family",
-            "type",
-            DL6_TYPECALLER,
-            DL6_TYPEDEF,
-        ]),
+        run(&["--resolve", "--family", "type", DL6_TYPECALLER, DL6_TYPEDEF,]),
         DL6_TYPE_GOLDEN
     );
 }
