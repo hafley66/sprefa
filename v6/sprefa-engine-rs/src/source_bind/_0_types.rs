@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use crate::types::{Arrival, ArrivalSign, RowColumnType, TickDeltas, Value};
 
 pub const REPO_COLUMNS: &[&str] = &["root"];
@@ -117,6 +115,7 @@ pub struct SourceBindTickFrame {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceBindError {
     SourceRead { message: String },
+    Receipt { message: String },
 }
 
 impl std::fmt::Display for SourceBindError {
@@ -125,14 +124,12 @@ impl std::fmt::Display for SourceBindError {
             Self::SourceRead { message } => {
                 write!(formatter, "source extraction read failed: {message}")
             }
+            Self::Receipt { message } => write!(formatter, "source receipt failed: {message}"),
         }
     }
 }
 
 impl std::error::Error for SourceBindError {}
-
-pub(crate) type DenseSourceCache = BTreeMap<i64, soopy::SourceRef>;
-pub(crate) type DenseSpanCache = BTreeMap<i64, soopy::SourceSpan>;
 
 pub(crate) fn source_row(relation: String, sign: ArrivalSign, row: Vec<Value>) -> Arrival {
     Arrival {

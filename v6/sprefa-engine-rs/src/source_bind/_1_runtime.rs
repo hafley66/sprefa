@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use rusqlite::{params, Connection};
 use serde_json::json;
 use sprefa_rust_runtime_host::{
     ClockedSourceHostRequest, ReadRequestWire, SourceHost, SourceHostDemand, SourceHostEnvelope,
@@ -14,46 +15,50 @@ use crate::{
 };
 
 use super::{
-    source_row, DenseSourceCache, DenseSpanCache, GitSourceRegistration, SourceBindError,
-    SourceBindFrame, SourceBindRelations, SourceBindTickFrame, SourceInputs,
+    source_row, GitSourceRegistration, SourceBindError, SourceBindFrame, SourceBindRelations,
+    SourceBindTickFrame, SourceInputs,
 };
 
 /// Long-lived filesystem, Git, identity-store, and extraction state for one
-/// engine runtime. The identity store's dense keys only index the two caches
-/// needed to turn later deletion receipts back into authored source values.
+/// engine runtime. Receipt rows live beside the source host's identity store:
+/// a fresh process can reconstruct each authored deletion without carrying
+/// source structs or extracted facts in process memory.
 pub struct SourceBind {
     host: SourceHost,
     relations: SourceBindRelations,
     inputs: SourceInputs,
     roots: BTreeMap<soopy::RepositoryId, String>,
-    sources: DenseSourceCache,
-    contents: BTreeMap<i64, soopy::ContentId>,
-    spans: DenseSpanCache,
-    extracted: BTreeMap<i64, Vec<Arrival>>,
+    receipts: ReceiptStore,
 }
 
 impl SourceBind {
     pub fn in_memory(relations: SourceBindRelations) -> anyhow::Result<Self> {
-        Ok(Self::with_host(SourceHost::in_memory()?, relations))
+        Ok(Self::with_host(
+            SourceHost::in_memory()?,
+            relations,
+            ReceiptStore::in_memory()?,
+        ))
     }
 
     pub fn open(
         database: impl AsRef<Path>,
         relations: SourceBindRelations,
     ) -> anyhow::Result<Self> {
-        Ok(Self::with_host(SourceHost::open(database)?, relations))
+        let database = database.as_ref();
+        Ok(Self::with_host(
+            SourceHost::open(database)?,
+            relations,
+            ReceiptStore::open(database)?,
+        ))
     }
 
-    fn with_host(host: SourceHost, relations: SourceBindRelations) -> Self {
+    fn with_host(host: SourceHost, relations: SourceBindRelations, receipts: ReceiptStore) -> Self {
         Self {
             host,
             relations,
             inputs: SourceInputs::default(),
             roots: BTreeMap::new(),
-            sources: BTreeMap::new(),
-            contents: BTreeMap::new(),
-            spans: BTreeMap::new(),
-            extracted: BTreeMap::new(),
+            receipts,
         }
     }
 
@@ -253,69 +258,170 @@ impl SourceBind {
             .map(|change| &change.retired)
             .chain(result.retired.iter())
         {
-            let content = self.contents.remove(&retired.rev_file_id.0);
-            if let Some(source) = self.sources.remove(&retired.rev_file_id.0) {
-                if let Some(content) = content.as_ref() {
-                    arrivals.push(source_row(
-                        self.relations.file.clone(),
-                        ArrivalSign::Del,
-                        file_values(&source, content, &self.roots),
-                    ));
-                }
-            }
-            if let Some(extracted) = self.extracted.remove(&retired.rev_file_id.0) {
-                arrivals.extend(
-                    extracted
-                        .into_iter()
-                        .map(|arrival| source_row(arrival.rel, ArrivalSign::Del, arrival.row)),
-                );
-            }
-            for id in &retired.file_span_ids {
-                if let Some(span) = self.spans.remove(&id.0) {
-                    if let Some(content) = content.as_ref() {
-                        arrivals.push(source_row(
-                            self.relations.span.clone(),
-                            ArrivalSign::Del,
-                            span_values(&span, content, &self.roots),
-                        ));
-                    }
-                }
-            }
+            arrivals.extend(
+                self.receipts
+                    .take(retired.rev_file_id.0)?
+                    .into_iter()
+                    .map(|arrival| source_row(arrival.rel, ArrivalSign::Del, arrival.row)),
+            );
         }
         for mapped in &result.added_sources {
-            self.sources
-                .insert(mapped.rev_file_id.0, mapped.source.clone());
-            self.contents
-                .insert(mapped.rev_file_id.0, mapped.content.clone());
-            arrivals.push(source_row(
+            let mut authored = vec![source_row(
                 self.relations.file.clone(),
                 ArrivalSign::Add,
                 file_values(&mapped.source, &mapped.content, &self.roots),
-            ));
+            )];
             if let Some(extracted) = extracted.get(&mapped.source) {
-                let extracted = extracted.clone();
-                self.extracted
-                    .insert(mapped.rev_file_id.0, extracted.clone());
-                arrivals.extend(extracted);
+                authored.extend(extracted.iter().cloned());
             }
+            self.receipts.append(mapped.rev_file_id.0, &authored)?;
+            arrivals.extend(authored);
         }
+        // Spans collect per source identity first: one replacement writes one
+        // receipt batch however many spans it carries.
+        let mut span_batches: BTreeMap<i64, Vec<Arrival>> = BTreeMap::new();
         for mapped in &result.added_spans {
-            self.spans
-                .insert(mapped.file_span_id.0, mapped.span.clone());
-            if let Some(content) = result
+            if let Some(source) = result
                 .sources
                 .iter()
                 .find(|source| source.source == mapped.span.source)
-                .map(|source| source.content.clone())
             {
-                arrivals.push(source_row(
-                    self.relations.span.clone(),
-                    ArrivalSign::Add,
-                    span_values(&mapped.span, &content, &self.roots),
-                ));
+                span_batches
+                    .entry(source.rev_file_id.0)
+                    .or_default()
+                    .push(source_row(
+                        self.relations.span.clone(),
+                        ArrivalSign::Add,
+                        span_values(&mapped.span, &source.content, &self.roots),
+                    ));
             }
         }
+        for (rev_file_id, spans) in span_batches {
+            self.receipts.append(rev_file_id, &spans)?;
+            arrivals.extend(spans);
+        }
         Ok(arrivals)
+    }
+}
+
+/// Durable authored-arrival receipt keyed by the source host's dense
+/// `rev_file_id`. `ordinal` preserves the original addition order; `take`
+/// reads it before clearing it, so every replacement projects deletion rows
+/// before its new additions. `(rev_file_id, ordinal)` is the only uniqueness
+/// key: one source identity owns one ordered set of authored input rows.
+struct ReceiptStore {
+    conn: Connection,
+}
+
+impl ReceiptStore {
+    fn in_memory() -> anyhow::Result<Self> {
+        Self::from_connection(Connection::open_in_memory()?)
+    }
+
+    fn open(path: &Path) -> anyhow::Result<Self> {
+        let conn = Connection::open(path)?;
+        // The identity store owns its own connection to this same file, so a
+        // receipt write can meet an identity write mid-statement.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Self::from_connection(conn)
+    }
+
+    fn from_connection(conn: Connection) -> anyhow::Result<Self> {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS _source_bind_receipt_v1 (
+                rev_file_id INTEGER NOT NULL,
+                ordinal INTEGER NOT NULL,
+                rel TEXT NOT NULL,
+                row_json TEXT NOT NULL,
+                PRIMARY KEY (rev_file_id, ordinal)
+            ) WITHOUT ROWID",
+        )?;
+        Ok(Self { conn })
+    }
+
+    // One transaction, one ordinal read, one prepared insert for the whole
+    // batch. An INSERT whose own ordinal came from a subquery over this table
+    // read its insert target, which costs a transient ephemeral write per row
+    // (.claude/skills/sqlite-costs), and a per-row implicit commit fsyncs the
+    // identity store once per authored fact.
+    fn append(&mut self, rev_file_id: i64, arrivals: &[Arrival]) -> Result<(), SourceBindError> {
+        if arrivals.is_empty() {
+            return Ok(());
+        }
+        let transaction = self.conn.transaction().map_err(receipt_error)?;
+        {
+            let first_ordinal: i64 = transaction
+                .query_row(
+                    "SELECT COALESCE(max(ordinal) + 1, 0) FROM _source_bind_receipt_v1
+                     WHERE rev_file_id = ?",
+                    [rev_file_id],
+                    |row| row.get(0),
+                )
+                .map_err(receipt_error)?;
+            let mut insert = transaction
+                .prepare_cached(
+                    "INSERT INTO _source_bind_receipt_v1 (rev_file_id, ordinal, rel, row_json)
+                     VALUES (?, ?, ?, ?)",
+                )
+                .map_err(receipt_error)?;
+            for (ordinal, arrival) in (first_ordinal..).zip(arrivals) {
+                let row_json = serde_json::to_string(&arrival.row).map_err(|error| {
+                    SourceBindError::Receipt {
+                        message: error.to_string(),
+                    }
+                })?;
+                insert
+                    .execute(params![rev_file_id, ordinal, arrival.rel, row_json])
+                    .map_err(receipt_error)?;
+            }
+        }
+        transaction.commit().map_err(receipt_error)
+    }
+
+    fn take(&mut self, rev_file_id: i64) -> Result<Vec<Arrival>, SourceBindError> {
+        let transaction = self.conn.transaction().map_err(receipt_error)?;
+        let rows = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT rel, row_json FROM _source_bind_receipt_v1
+                     WHERE rev_file_id = ? ORDER BY ordinal",
+                )
+                .map_err(receipt_error)?;
+            let rows = statement
+                .query_map([rev_file_id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(receipt_error)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(receipt_error)?;
+            rows
+        };
+        transaction
+            .execute(
+                "DELETE FROM _source_bind_receipt_v1 WHERE rev_file_id = ?",
+                [rev_file_id],
+            )
+            .map_err(receipt_error)?;
+        transaction.commit().map_err(receipt_error)?;
+        rows.into_iter()
+            .map(|(rel, row_json)| {
+                serde_json::from_str(&row_json)
+                    .map(|row| Arrival {
+                        rel,
+                        sign: ArrivalSign::Add,
+                        row,
+                    })
+                    .map_err(|error| SourceBindError::Receipt {
+                        message: error.to_string(),
+                    })
+            })
+            .collect()
+    }
+}
+
+fn receipt_error(error: rusqlite::Error) -> SourceBindError {
+    SourceBindError::Receipt {
+        message: error.to_string(),
     }
 }
 
