@@ -126,8 +126,7 @@ fn walk_go_entities(
                     push_entity(sink, strings, span, &name, kind);
                     // A grouped `type ( ... )` decl carries its doc above the
                     // spec; a lone `type X struct{}` has it above the decl.
-                    if let Some(text) =
-                        go_leading_doc(spec, src).or_else(|| go_leading_doc(child, src))
+                    if let Some(text) = go_leading_doc(spec, src).or_else(|| go_leading_doc(child, src))
                     {
                         push_go_doc(sink, strings, span, None, &text);
                     }
@@ -628,7 +627,7 @@ fn project_call(
 // | `"os"` inside a block     | Named      | os    | None            |
 // | `alias "path/filepath"`   | Named      | alias | path/filepath   |
 // | `_ "embed"`               | SideEffect | embed | None            |
-// | `. "strings"`             | Namespace  | strings | None          |
+// | `. "strings"`             | Namespace  | strings | None        |
 //
 // The path-only form carries the path in `name` with `module` None
 // (`src/types.rs:485-492` names go explicitly). Only the aliased form sets
@@ -645,12 +644,6 @@ fn go_module_specifiers(
     strings: &mut Strings,
     sink: &mut FamilyBundle<CallF>,
 ) {
-    // walk the tree for nodes of kind "import_spec"
-    //   (they sit under import_declaration directly, or under import_spec_list)
-    // for each: read the optional leading name node kind, read the path from the
-    //   interpreted_string_literal_content descendant, apply the section-4 rule,
-    //   collect one row
-    // push the whole collected Vec into sink.aux.specifiers in ONE extend call
     let mut rows = Vec::new();
     go_walk_import_specs(root, src, strings, &mut rows);
     sink.aux.specifiers.extend(rows);
