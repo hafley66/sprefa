@@ -522,6 +522,89 @@ test(a_keyed_rel_with_no_consumer_names_no_target) :-
 
 :- end_tests(wrapped_relplan_reference_targets).
 
+% ═══════════════════════════════════════════════════════════════════════════
+% ENUM + IMPORT IDENTITY TARGETS (stage 3 of relation-identity-ir)
+%
+% The two expansion seams that can drop a nominal relation target: an enum
+% variant payload typed as a relation, and a module-qualified imported
+% relation used as a column type. Both must survive into RelPlans as
+% ref(Name) storage so relplan_reference_targets/2 names the relation.
+%
+% NAMED REFUSAL IS UNREACHABLE BY CONSTRUCTION, so none is authored. The enum
+% seam (0_enum_expand.pl:variant_col_type/3) passes a payload's declared type
+% name through verbatim and retarget_enum_column_types/2 rewrites ONLY names
+% that are enums (to int), so a relation-typed payload always leaves a named
+% col_type/3 the type plane can resolve. The import seam (0_dot_expand.pl:
+% resolve_qualified_type_paths/2) keeps type_path(Segments) until mount scope
+% resolves it to the flat rel name and ensure_type_decl/3 synthesizes that
+% rel's type_decl from its spliced col_type/3 decls, so the resolved name is
+% always recoverable. A refusal would need either seam to erase the type name
+% outright, and neither does.
+
+:- begin_tests(enum_import_identity_targets).
+
+% A variant payload typed as a declared relation keeps the nominal target
+% through enum expansion: variant_col_type/3 passes the type name through
+% verbatim, the tag rel carries only id/tag, and the type plane resolves the
+% variant's payload column to ref(tree).
+test(relation_valued_enum_payload_names_its_target) :-
+    Program = prog(
+      [ type_decl(tree, [col(tree_id, int), col(name, text)]),
+        col_type(tree/2, tree_id, int),
+        col_type(tree/2, name, text),
+        enum_decl(grade, (ripe(subject: tree) ; bruised(reason: text))) ],
+      []),
+    once(program_plan(fixture(enum_payload_identity, Program, [], [], [])-[],
+                      [intern(direct)], plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [tree].
+
+% A module-qualified imported relation used as a column type lands in
+% RelPlans under its RESOLVED flat name, not the alias path: use_resolve
+% splices the mounted rel, 0_dot_expand rewrites type_path([orchard, tree])
+% to tree and ensures its type_decl, and the type plane stores ref(tree).
+test(module_qualified_imported_relation_names_its_target) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\" as orchard.\n\c
+                        rel dependency(owner: orchard.tree).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, Prog, _),
+    once(program_plan(fixture(main, Prog, [], [], [])-[],
+                      [intern(direct)], plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [tree].
+
+% A keyed enum (its variant and tag rels are all keyed) with only scalar
+% payloads mints no ref column, so the keyed enum itself is no target.
+test(a_keyed_enum_with_no_relation_payload_names_no_target) :-
+    Program = prog(
+      [ enum_decl(grade, (ripe(level: int) ; bruised(reason: text))) ],
+      []),
+    once(program_plan(fixture(enum_keyed_no_consumer, Program, [], [], [])-[],
+                      [intern(direct)], plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [].
+
+% An imported relation that nothing types a column with stays out of the
+% target set: the mount edge and the spliced rel decl mint no ref edge.
+test(an_imported_relation_never_used_as_a_column_type_names_no_target) :-
+    make_use_fixture(Dir,
+        [ "lib.dl6" = "rel tree(tree_id:int).\n",
+          "main.dl6" = "use \"lib.dl6\" as orchard.\nrel top(z:int).\n" ]),
+    use_entry(Dir, 'main.dl6', Entry),
+    expand_uses(Entry, [], [], _, Prog, _),
+    once(program_plan(fixture(main, Prog, [], [], [])-[],
+                      [intern(direct)], plan(_, _, _, RelPlans, _, _, _, _, _))),
+    relplan_reference_targets(RelPlans, TargetNames),
+    TargetNames == [].
+
+% An ordinary keyed rel with no relation-valued column is already covered by
+% wrapped_relplan_reference_targets.a_keyed_rel_with_no_consumer_names_no_
+% target; the enum and import negatives above are this stage's additions.
+
+:- end_tests(enum_import_identity_targets).
+
 :- begin_tests(sql_text_snapshots).
 
 % Per-rule SQL text, pinned exactly. A change here is either a deliberate
