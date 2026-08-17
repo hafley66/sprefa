@@ -11,8 +11,8 @@ use sprefa_engine_rs::hosts::{
 };
 use sprefa_engine_rs::sql::{SqlRunner, SqliteSeam};
 use sprefa_engine_rs::types::{
-    Arrival, ArrivalSign, HostColumnPlan, HostPlanData, ProgramJson, RelDelta, SqlStatement,
-    TickDeltas, Value,
+    Arrival, ArrivalSign, HostColumnPlan, HostPlanData, HostTypeDescriptor, HostTypeField,
+    ProgramJson, RelDelta, SqlStatement, TickDeltas, Value,
 };
 use sprefa_engine_rs::GenProgram;
 
@@ -39,6 +39,195 @@ fn add(rel: &str, row: Vec<Value>) -> Arrival {
 
 fn text(value: &str) -> Value {
     Value::Text(value.to_string())
+}
+
+#[tokio::test]
+async fn scalar_shell_adapter_preserves_legacy_command_arguments() {
+    let plan = HostPlanData {
+        name: "scalar_args".to_string(),
+        inputs: vec![
+            HostColumnPlan {
+                name: "path".to_string(),
+                column_type: "text".to_string(),
+            },
+            HostColumnPlan {
+                name: "count".to_string(),
+                column_type: "int".to_string(),
+            },
+        ],
+        outputs: vec![HostColumnPlan {
+            name: "arg".to_string(),
+            column_type: "text".to_string(),
+        }],
+        template: "printf '%s\\n' {path} {count}".to_string(),
+        demand_rel: "__host_demand_scalar_args".to_string(),
+        response_rel: "__host_response_scalar_args".to_string(),
+        execution: "shell".to_string(),
+        request_type: None,
+        response_type: None,
+    };
+    let filled = sprefa_engine_rs::hosts::fill_template(
+        &plan.template,
+        &BTreeMap::from([
+            (
+                "path".to_string(),
+                sprefa_engine_rs::types::ScalarValue::Text("path with spaces".to_string()),
+            ),
+            (
+                "count".to_string(),
+                sprefa_engine_rs::types::ScalarValue::Integer(7),
+            ),
+        ]),
+    );
+    assert_eq!(filled, "printf '%s\\n' 'path with spaces' '7'");
+    assert_eq!(
+        ShellExecutor
+            .run("scalar_args", &filled, &BTreeMap::new())
+            .expect("run scalar command"),
+        "path with spaces\n7\n"
+    );
+    let rel_columns = std::collections::HashMap::from([
+        (
+            "__host_demand_scalar_args".to_string(),
+            vec![
+                "path".to_string(),
+                "count".to_string(),
+                "witness_digest".to_string(),
+            ],
+        ),
+        (
+            "__host_response_scalar_args".to_string(),
+            vec![
+                "witness_digest".to_string(),
+                "ordinal".to_string(),
+                "arg".to_string(),
+            ],
+        ),
+    ]);
+    let mut runner = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
+        .expect("scalar shell plan is accepted");
+    let arrivals = runner
+        .collect(&TickDeltas {
+            rels: vec![RelDelta {
+                rel: "__host_demand_scalar_args".to_string(),
+                add: vec![vec![
+                    text("path with spaces"),
+                    Value::Integer(7),
+                    text("witness-scalar"),
+                ]],
+                del: vec![],
+            }],
+            carry_pending: false,
+        })
+        .expect("scalar shell invocation");
+    assert_eq!(
+        arrivals
+            .iter()
+            .map(|arrival| arrival.row.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            vec![text("witness-scalar"), Value::Integer(0), text("path"),],
+            vec![text("witness-scalar"), Value::Integer(1), text("7")],
+        ]
+    );
+}
+
+#[test]
+fn structured_shell_input_refuses_before_process_invocation() {
+    let marker =
+        std::env::temp_dir().join(format!("sprefa-typed-shell-refusal-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let plan = HostPlanData {
+        name: "structured_shell".to_string(),
+        inputs: vec![HostColumnPlan {
+            name: "request".to_string(),
+            column_type: "stage_request".to_string(),
+        }],
+        outputs: vec![],
+        template: format!("touch {} # {{request}}", marker.display()),
+        demand_rel: "__host_demand_structured_shell".to_string(),
+        response_rel: "__host_response_structured_shell".to_string(),
+        execution: "shell".to_string(),
+        request_type: Some(HostTypeDescriptor {
+            type_ref: "__host_demand_structured_shell/1".to_string(),
+            fields: vec![HostTypeField {
+                name: "request".to_string(),
+                field_type: "stage_request".to_string(),
+            }],
+        }),
+        response_type: None,
+    };
+    let rel_columns = std::collections::HashMap::from([(
+        "__host_demand_structured_shell".to_string(),
+        vec!["request".to_string(), "witness_digest".to_string()],
+    )]);
+    let mut runner = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
+        .expect("structured shell plan is known");
+    let failure = runner
+        .collect(&TickDeltas {
+            rels: vec![RelDelta {
+                rel: "__host_demand_structured_shell".to_string(),
+                // Struct references are integers after the struct plane. The
+                // declared type, rather than the storage representation,
+                // controls shell eligibility.
+                add: vec![vec![Value::Integer(41), text("witness-structured")]],
+                del: vec![],
+            }],
+            carry_pending: false,
+        })
+        .expect_err("structured shell input must be refused");
+    assert_eq!(failure.host, "structured_shell");
+    assert_eq!(
+        failure.message,
+        "typed_host_transport_unsupported for input column 'request' of type 'stage_request'"
+    );
+    assert!(!marker.exists(), "the shell command must not be spawned");
+}
+
+#[test]
+fn native_structured_input_does_not_enter_the_shell_adapter() {
+    let plan = HostPlanData {
+        name: "native_structured".to_string(),
+        inputs: vec![HostColumnPlan {
+            name: "request".to_string(),
+            column_type: "stage_request".to_string(),
+        }],
+        outputs: vec![],
+        template: "$DL_EXTRACT_BIN /definitely/missing/native-typed-input".to_string(),
+        demand_rel: "__host_demand_native_structured".to_string(),
+        response_rel: "__host_response_native_structured".to_string(),
+        execution: "sprefa_extract".to_string(),
+        request_type: Some(HostTypeDescriptor {
+            type_ref: "__host_demand_native_structured/1".to_string(),
+            fields: vec![HostTypeField {
+                name: "request".to_string(),
+                field_type: "stage_request".to_string(),
+            }],
+        }),
+        response_type: None,
+    };
+    let rel_columns = std::collections::HashMap::from([(
+        "__host_demand_native_structured".to_string(),
+        vec!["request".to_string(), "witness_digest".to_string()],
+    )]);
+    let mut runner = HostLiveRunner::new(std::slice::from_ref(&plan), &rel_columns)
+        .expect("native host plan is known");
+    let failure = runner
+        .collect(&TickDeltas {
+            rels: vec![RelDelta {
+                rel: "__host_demand_native_structured".to_string(),
+                // The struct plane may carry a reference id at this seam.
+                add: vec![vec![Value::Integer(41), text("witness-native")]],
+                del: vec![],
+            }],
+            carry_pending: false,
+        })
+        .expect_err("the in-process native executor should report its missing file");
+    assert_eq!(failure.host, "native_structured");
+    assert!(failure
+        .message
+        .contains("read /definitely/missing/native-typed-input"));
+    assert!(!failure.message.contains("typed_host_transport_unsupported"));
 }
 
 // final_select is the program's own decoded read (dict ids back to text),

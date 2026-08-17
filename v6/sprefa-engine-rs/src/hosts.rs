@@ -117,6 +117,44 @@ impl IHostExecutor for ShellExecutor {
     }
 }
 
+/// The shell target is a compatibility adapter for the typed host boundary.
+///
+/// A legacy `sh` declaration can interpolate only scalar columns.  The
+/// compiler still emits its original `HostPlanData` shape, including the
+/// original `execution: "shell"` and template bytes.  This adapter is the
+/// runtime seam that checks the declared type before converting the row value
+/// to the shell's string transport.  Keeping the check beside the conversion
+/// prevents a structured value represented by an integer relation reference
+/// from being mistaken for an ordinary integer argument.
+pub struct ShellHostAdapter;
+
+impl ShellHostAdapter {
+    fn input(host: &str, column: &HostColumnPlan, value: &Value) -> Result<ScalarValue, HostError> {
+        if column.column_type == "bytes" {
+            return Err(HostError {
+                host: host.to_string(),
+                message: "bytes_host_transport_unsupported".to_string(),
+            });
+        }
+        if !matches!(
+            column.column_type.as_str(),
+            "text" | "int" | "float" | "bool"
+        ) {
+            return Err(HostError {
+                host: host.to_string(),
+                message: format!(
+                    "typed_host_transport_unsupported for input column '{}' of type '{}'",
+                    column.name, column.column_type
+                ),
+            });
+        }
+        ScalarValue::at_seam(value, ScalarSeam::HostTemplateArgument).map_err(|error| HostError {
+            host: host.to_string(),
+            message: error.to_string(),
+        })
+    }
+}
+
 /// Linked executor for the two authored source-mutation hosts.
 ///
 /// `source_stage` receives one complete canonical `StageRequest` document and
@@ -1626,15 +1664,20 @@ impl<'p> HostLiveRunner<'p> {
                 .position(|column| *column == input.name)
                 .and_then(|index| row.get(index).cloned())
                 .unwrap_or(Value::Text(String::new()));
-            let scalar = match ScalarValue::at_seam(&value, ScalarSeam::HostTemplateArgument) {
-                Ok(scalar) => scalar,
-                Err(BoundaryError::BytesAtScalarSeam(_)) => {
-                    return Err(HostError {
+            let scalar = if plan.execution == "shell" {
+                ShellHostAdapter::input(&plan.name, input, &value)?
+            } else {
+                // Native executors own their typed decode seam.  The current
+                // demand ABI still carries scalar values for those executors,
+                // but must not route them through the shell adapter or its
+                // HostTemplateArgument boundary.  SqlParameter retains the
+                // pre-adapter bytes behavior until the native decoder lands.
+                ScalarValue::at_seam(&value, ScalarSeam::SqlParameter).map_err(|error| {
+                    HostError {
                         host: plan.name.clone(),
-                        message: "bytes_host_transport_unsupported".to_string(),
-                    })
-                }
-                Err(error) => return Err(named(error)),
+                        message: error.to_string(),
+                    }
+                })?
             };
             inputs.insert(input.name.clone(), scalar);
         }
