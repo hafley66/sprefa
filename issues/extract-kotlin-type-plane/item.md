@@ -2,12 +2,14 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: feature
-status: open
+status: done
 priority: normal
 epic: extract-port-closeout
 labels:
 - pkg:extract
 - size:med
+closed: 2026-08-16
+closed_by: extract-driver
 ---
 
 # kotlin type plane: edge candidates plus Resolve<TypeF>
@@ -51,3 +53,9 @@ cargo build --all-targets --features cli
 cargo test --features cli
 cargo test --features cli --test golden_parity
 ```
+
+## Comments
+
+### 2026-08-17T02:59:48Z · @extract-driver
+
+VERIFIED GREEN at origin/main a4045153e by extract-driver in a clean worktree: build rc=0, cargo test --features cli all ok. Landed as 98a30fd52 (kotlin type_edge candidates + Resolve<TypeF>, 10 oracle rows), f9510802e (kotlin types arm in RESOLVE_ARMS + status row flips), 329db47d4 (tests/21_kotlin_type_plane.rs parity test), 10d178367 (comment cleanup). Confirmed present: TypeEdgeCandidate push at src/lang/kotlin.rs:309, type_edge_candidates at :1439, impl Resolve<TypeF> for KotlinSource at :1478, and the RESOLVE_ARMS row at src/project.rs now carries types: Some(...) for kotlin (was the only roster lang with a call arm and no types arm). Closing.

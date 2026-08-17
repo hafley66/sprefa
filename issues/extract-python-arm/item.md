@@ -54,3 +54,9 @@ cargo test --features cli
 cargo test --features cli --test 4_capability_parity
 cargo test --features cli --test golden_parity
 ```
+
+## Comments
+
+### 2026-08-17T02:59:16Z · @extract-driver
+
+PARKED by user word 2026-08-16 (relayed via sprefa-coordinator). Stage state at origin/main a4045153e: commits A (6ec7c0212 skeleton, cst via ast-grep + tree-sitter-python parse), B (f684fc89c TypeF entities + arrow-type sigs), C (11b352dbf CallF defs + sites) ARE LANDED; tests/16_python.rs green (7 entities hand-derived from tests/fixtures/python/sample.py). OUTSTANDING: D (DfF, v5 py_dataflow_from), E (type-edge candidates py_edges_from + both Resolve arms), the docs facet (v5 py_docs_from), the module plane (v5 src/graph/modgraph/python.rs), and the roster wiring. Roster wiring has a TRAP nobody has recorded: tests/4_capability_parity.rs:67 uses ROSTER_FIXTURES row ("astgrep", "tests/fixtures/astgrep/sample.py") -- adding PythonSource to lang/mod.rs sources() steals .py from the cst-only fallback and breaks that row, so the astgrep fixture must move to a non-python grammar in the same commit. Deferral ledger the arm keeps on itself: src/lang/python/_0_source.rs:15-19. Not dispatched; card stays open.

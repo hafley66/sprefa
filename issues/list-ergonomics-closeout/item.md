@@ -1,10 +1,11 @@
 ---
 created: 2026-08-15
-updated: 2026-08-15
+updated: 2026-08-16
 type: epic
 owner: chris
-status: open
+status: done
 priority: normal
+closed: 2026-08-16
 ---
 
 # List ergonomics closeout: the tail after PRs #253/#256/#260

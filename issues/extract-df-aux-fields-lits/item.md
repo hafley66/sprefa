@@ -2,12 +2,14 @@
 created: 2026-08-16
 updated: 2026-08-16
 type: feature
-status: open
+status: done
 priority: normal
 epic: extract-port-closeout
 labels:
 - pkg:extract
 - size:med
+closed: 2026-08-16
+closed_by: extract-driver
 ---
 
 # df aux: df_field and df_lit across four langs
@@ -60,6 +62,11 @@ Oracle rows already committed and byte-gradable: 8 df_lits and 8 df_fields acros
 ### 2026-08-16T21:32:36Z · @coordinator
 
 FLAG FOR CHRIS (scope expansion, merged): the lane flipped df_field/df_lit into the global PORTED list with a normalize arm mapping v6 push order to v5 dense node index — an asserted v5/v6 index-order coupling nobody decided. Green across 9 fixtures / 16 oracle rows today. Loosening is a one-line PORTED revert if you want the coupling gone.
+
+### 2026-08-17T02:59:29Z · @extract-driver
+
+VERIFIED GREEN at origin/main a4045153e by extract-driver, in a clean worktree at that sha: cargo build --all-targets --features cli rc=0; cargo test --features cli = 32 binaries, all ok, 0 failed. Deliverables confirmed present: DfField/DfLit at src/types.rs:606,617 on DfFAux (:628-629), FlatFact arms at :1745,:1754, SCHEMA lines at src/schema.rs:28-29, wire arms at src/wire.rs:371,380, tests/18_df_aux_fields_lits.rs. The coordinator's FLAG FOR CHRIS about a v6-push-order-to-v5-dense-index coupling is ANSWERED and no longer live: ac86acb32 regrades df_field/df_lit by CONTENT only, not v5 node order. Emission census: lits at ts (lang/ts.rs:1706,2158) + rust (lang/rust.rs:1453); fields at all four (ts:2221,2252 rust:1589,1597 go:1440 kotlin:1003). v5 emits df_lit for ts and rust only (grep df_lit over src/graph/typegraph/ = ts/flow.rs + rust/tests.rs; zero hits in go.rs, kotlin.rs, dataflow/), so the two-lang lits port is v5 parity, not a gap. Closing.
+
 
 ## Decisions
 
