@@ -761,6 +761,7 @@ fn project_df(
     sink: &mut FamilyBundle<DfF>,
 ) {
     go_walk_fns(root, src, file, strings, sink);
+    sink.aux.nests = crate::types::compute_nests(&sink.nodes, &sink.aux.loops);
 }
 
 /// Walk every function/method declaration, lifting each body. Port of v5
@@ -1182,16 +1183,17 @@ fn flow_go(
             ))
         }
         // `for range/clause/cond { body }`: walk the header (binding the range
-        // variable when present), then walk the body. The loop FACT (span/var) is
-        // dropped aux. A for_statement's non-`body` child is at most ONE of {bare
-        // condition, `for_clause`, `range_clause`} per the grammar.
+        // variable when present), then walk the body. A for_statement's non-`body`
+        // child is at most ONE of {bare condition, `for_clause`, `range_clause`}.
         "for_statement" => {
             let mut loop_var = String::new();
+            let mut collection = None;
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 match child.kind() {
                     "range_clause" => {
                         if let Some(right) = child.child_by_field_name("right") {
+                            collection = Some(go_text(right, src).to_string());
                             flow_go(right, src, fn_sym, strings, scope, sink);
                         }
                         if let Some(left) = child.child_by_field_name("left") {
@@ -1237,6 +1239,14 @@ fn flow_go(
                     }
                 }
             }
+            sink.aux.loops.push(crate::types::DfLoop {
+                span: Span {
+                    start: start_byte,
+                    len: node.end_byte() as u32 - start_byte,
+                },
+                var: Some(loop_var.clone()).filter(|name| !name.is_empty()),
+                collection,
+            });
             if let Some(body) = node.child_by_field_name("body") {
                 flow_go(body, src, fn_sym, strings, scope, sink);
             }

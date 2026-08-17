@@ -1705,6 +1705,13 @@ impl Project<DfF> for DfProjector<'_> {
                 .to_string();
             sink.aux.lits.push(DfLit { node, kind, text });
         }
+        for (index, start, end) in std::mem::take(&mut sink.aux.loop_collection_spans) {
+            sink.aux.loops[index].collection = self
+                .content
+                .get(start as usize..end as usize)
+                .map(str::to_string);
+        }
+        sink.aux.nests = crate::types::compute_nests(&sink.nodes, &sink.aux.loops);
     }
 }
 
@@ -1985,12 +1992,15 @@ fn df_flow_body_stmt(
             if let Some(update) = &for_stmt.update {
                 let _ = df_flow_expr(update, file, fn_sym, strings, scope, sink);
             }
+            // v5 records no var for a classic `for` (ts/flow.rs:346).
+            df_loop_row(sink, for_stmt.span, None, None);
             df_flow_body_stmt(&for_stmt.body, file, fn_sym, strings, scope, sink);
         }
         S::ForOfStatement(for_stmt) => df_for_in_of(
             &for_stmt.left,
             &for_stmt.right,
             &for_stmt.body,
+            for_stmt.span,
             file,
             fn_sym,
             strings,
@@ -2001,6 +2011,7 @@ fn df_flow_body_stmt(
             &for_stmt.left,
             &for_stmt.right,
             &for_stmt.body,
+            for_stmt.span,
             file,
             fn_sym,
             strings,
@@ -2009,10 +2020,12 @@ fn df_flow_body_stmt(
         ),
         S::WhileStatement(while_stmt) => {
             let _ = df_flow_expr(&while_stmt.test, file, fn_sym, strings, scope, sink);
+            df_loop_row(sink, while_stmt.span, None, None);
             df_flow_body_stmt(&while_stmt.body, file, fn_sym, strings, scope, sink);
         }
         S::DoWhileStatement(do_stmt) => {
             let _ = df_flow_expr(&do_stmt.test, file, fn_sym, strings, scope, sink);
+            df_loop_row(sink, do_stmt.span, None, None);
             df_flow_body_stmt(&do_stmt.body, file, fn_sym, strings, scope, sink);
         }
         _ => {}
@@ -2020,11 +2033,13 @@ fn df_flow_body_stmt(
 }
 
 /// Shared handling for `for (x of/in coll) body`: bind the loop variable, flow
-/// the collection into it, then walk the body. (The loop FACT is deferred aux.)
+/// the collection into it, record the loop row, then walk the body.
+#[allow(clippy::too_many_arguments)]
 fn df_for_in_of(
     left: &ts::ForStatementLeft,
     right: &ts::Expression,
     body: &ts::Statement,
+    loop_span: oxc_span::Span,
     file: &str,
     fn_sym: &str,
     strings: &mut Strings,
@@ -2032,6 +2047,7 @@ fn df_for_in_of(
     sink: &mut FamilyBundle<DfF>,
 ) {
     let collection = df_flow_expr(right, file, fn_sym, strings, scope, sink);
+    let mut loop_var = None;
     if let ts::ForStatementLeft::VariableDeclaration(var) = left {
         if let Some(declarator) = var.declarations.first() {
             if let Some(name) = binding_name(&declarator.id) {
@@ -2043,10 +2059,12 @@ fn df_for_in_of(
                     Some(&name),
                 );
                 df_edge(sink, collection, bind);
-                scope.insert(name, bind);
+                scope.insert(name.clone(), bind);
+                loop_var = Some(name);
             }
         }
     }
+    df_loop_row(sink, loop_span, loop_var, Some(right.span()));
     df_flow_body_stmt(body, file, fn_sym, strings, scope, sink);
 }
 
@@ -2543,6 +2561,27 @@ fn df_push(
 /// One Direct value edge: `dst` receives the value of `src`.
 fn df_edge(sink: &mut FamilyBundle<DfF>, src: NodeRef, dst: NodeRef) {
     sink.edges.push(Edge::new(src, dst, DfEdgeKind::Direct));
+}
+
+/// One loop row. Port of v5 `ts_loop_fact`. The collection text is a source
+/// SLICE, so it rides `loop_collection_spans` for the projector to resolve.
+fn df_loop_row(
+    sink: &mut FamilyBundle<DfF>,
+    loop_span: oxc_span::Span,
+    var: Option<String>,
+    collection: Option<oxc_span::Span>,
+) {
+    let index = sink.aux.loops.len();
+    sink.aux.loops.push(crate::types::DfLoop {
+        span: to_span(loop_span),
+        var,
+        collection: None,
+    });
+    if let Some(collection) = collection {
+        sink.aux
+            .loop_collection_spans
+            .push((index, collection.start, collection.end));
+    }
 }
 
 fn push_entity(
