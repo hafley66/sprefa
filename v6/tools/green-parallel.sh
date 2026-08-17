@@ -40,6 +40,7 @@ PHASE_B=(
   "lsp-diags:TSV2_LSP_DIAG_PORT=17810"
   "compile-speed"
   "plunit"
+  "arm-census"
   "typecheck"
   "rtkq-golden:TSV2_PARITY_PORT=17813"
   "watch-scale"
