@@ -65,4 +65,15 @@ path(X, Y) <- edge(X, Y).
             result.err()
         );
     }
+
+    #[test]
+    fn parses_anonymous_type_fixture() {
+        let src = include_str!("../fixtures/anonymous-types.dl6");
+        let result = parse_check(src);
+        assert!(
+            result.is_ok(),
+            "anonymous-types fixture error: {:?}",
+            result.err()
+        );
+    }
 }

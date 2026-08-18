@@ -17,6 +17,9 @@ module.exports = grammar({
     [$.fact, $.expression],
     [$.named_argument, $.object_pair],
     [$.path, $.atom],
+    [$.field, $.column],
+    [$.field, $.named_argument],
+    [$.sum_variant, $.atom],
   ],
 
   rules: {
@@ -33,7 +36,16 @@ module.exports = grammar({
     declaration_parameter: $ => seq(field("name", $.identifier), optional(seq(":", field("type", $.type)))),
     column: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
 
-    type: $ => seq(field("name", $.identifier), optional(seq("(", field("element", $.type), ")")), field("optional", optional("?"))),
+    type: $ => choice(
+      $.product_type,
+      $.sum_type,
+      seq(field("name", $.identifier), optional(seq("(", field("element", $.type), ")")), field("optional", optional("?"))),
+    ),
+
+    product_type: $ => seq("(", field("fields", commaSep1($.field)), ")"),
+    sum_type: $ => seq("(", $.sum_variant, repeat(seq(";", $.sum_variant)), ")"),
+    field: $ => seq(field("name", $.identifier), ":", field("type", $.type)),
+    sum_variant: $ => seq(field("name", $.identifier), "(", optional(commaSep1($.field)), ")"),
 
     enum_variants: $ => seq($.enum_variant, repeat(seq(";", $.enum_variant))),
     enum_variant: $ => seq($.identifier, "(", optional(commaSep1($.column)), ")"),

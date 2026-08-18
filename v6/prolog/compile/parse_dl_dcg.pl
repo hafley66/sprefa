@@ -619,6 +619,52 @@ type_base(Type) -->
        { Type =.. [Name | Arguments] }
     ;  { type_path_name(Segs, Type) }
     ).
+% Anonymous product and sum literals: `(a: int, b: text)` and
+% `(Ok(value: T); Error(message: text))`. Both are a parenthesized group whose
+% first item names the shape: `ident :` opens a product, `ident (` opens a sum.
+% An empty group `()` receives a named refusal in the first slice.
+type_base(Type) -->
+    @`(`, ws, anonymous_type(Type), #`)`.
+
+anonymous_type(Type) -->
+    ( peek(0'))
+    -> { throw(unsupported_construct(anonymous_type_empty)) }
+    ; ident(First), ws,
+      ( @`:`
+      -> ws, type_expr(FirstType),
+         { FirstField = field(First, FirstType) },
+         product_type_rest(Rest),
+         { Type = product_type([FirstField | Rest]) }
+      ; @`(`
+      -> args(anonymous_field, FirstFields), #`)`,
+         { FirstVariant = variant(First, FirstFields) },
+         sum_type_rest(Rest),
+         { Type = sum_type([FirstVariant | Rest]) }
+      ; { parse_failure(anonymous_type) }
+      )
+    ).
+
+product_type_rest(Fields) -->
+    ws,
+    ( @`,`
+    -> ws, anonymous_field(First), product_type_rest(Rest),
+       { Fields = [First | Rest] }
+    ; { Fields = [] }
+    ).
+
+anonymous_field(field(Name, Type)) -->
+    ident(Name), #`:`, ws, type_expr(Type).
+
+sum_type_rest(Variants) -->
+    ws,
+    ( @`;`
+    -> ws, sum_variant(First), sum_type_rest(Rest),
+       { Variants = [First | Rest] }
+    ; { Variants = [] }
+    ).
+
+sum_variant(variant(Name, Fields)) -->
+    ident(Name), #`(`, args(anonymous_field, Fields), #`)`.
 
 % Keep a mounted relation type's path until 0_dot_expand has mount scope and
 % can use the same declared_path/3 lookup as a relation call.
@@ -633,7 +679,7 @@ enum_variant(Variant) -->
     ws, ident(Name), #`(`, args(enum_field, Fields), #`)`,
     { Variant =.. [Name | Fields] }.
 
-enum_field(Col:Type) --> ident(Col), #`:`, ws, ident(Type).
+enum_field(Col:Type) --> ident(Col), #`:`, ws, type_expr(Type).
 
 record_enum_column_orders(Rel, Variants) :-
     tag_rel_name(Rel, Tag),

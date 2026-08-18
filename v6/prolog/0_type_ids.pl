@@ -103,6 +103,54 @@ semantic_type_id_encoding(argument(Application, Ordinal), Encoding) :-
     format(string(OrdinalEncoding), "~d:", [Ordinal]),
     string_concat("G", ApplicationEncoding, A),
     string_concat(A, OrdinalEncoding, Encoding).
+semantic_type_id_encoding(anonymous(Owner, Path, Shape), Encoding) :-
+    semantic_type_id_encoding(Owner, OwnerEncoding),
+    path_encoding(Path, PathEncoding),
+    type_term_encoding(Shape, ShapeEncoding),
+    string_concat("O", OwnerEncoding, A),
+    string_concat(A, PathEncoding, B),
+    string_concat(B, ShapeEncoding, Encoding).
+semantic_type_id_encoding(anonymous_placeholder(Type), Encoding) :-
+    type_term_encoding(Type, TypeEncoding),
+    string_concat("U", TypeEncoding, Encoding).
+
+% A site path is a list of member-name atoms and wrapper/application ordinals.
+path_encoding(Path, Encoding) :-
+    maplist(path_element_encoding, Path, Encodings),
+    length(Encodings, Arity),
+    format(string(ArityEncoding), "~d:", [Arity]),
+    string_concat("[", ArityEncoding, A),
+    foldl(append_encoding, Encodings, A, B),
+    string_concat(B, "]", Encoding).
+
+path_element_encoding(Element, Encoding) :-
+    integer(Element),
+    !,
+    format(string(Encoding), "~d:", [Element]).
+path_element_encoding(Element, Encoding) :-
+    atom_encoding(Element, Encoding).
+
+% A structural type term encoding shared with the anonymous shape: length-prefix
+% atoms and constructor/arity-delimited compounds, so nesting and argument order
+% are unambiguous.
+type_term_encoding(Term, Encoding) :-
+    atom(Term),
+    !,
+    atom_encoding(Term, Encoding).
+type_term_encoding([], Encoding) :-
+    !,
+    Encoding = "0:".
+type_term_encoding(Term, Encoding) :-
+    compound(Term),
+    Term =.. [Constructor | Args],
+    atom_encoding(Constructor, ConstructorEncoding),
+    maplist(type_term_encoding, Args, ArgEncodings),
+    length(Args, Arity),
+    format(string(ArityEncoding), "~d:", [Arity]),
+    string_concat("(", ConstructorEncoding, A),
+    string_concat(A, ArityEncoding, B),
+    foldl(append_encoding, ArgEncodings, B, C),
+    string_concat(C, ")", Encoding).
 
 atom_encoding(Atom, Encoding) :-
     atom_string(Atom, Text),
