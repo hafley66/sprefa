@@ -1,12 +1,13 @@
 ---
 created: 2026-08-17
-updated: 2026-08-17
+updated: 2026-08-18
 type: task
-status: open
+status: done
 priority: normal
 epic: openapi-clap-uds-lab
 related: ['@boop-hosted-in-dl6']
 labels: [lab]
+closed: 2026-08-18
 ---
 
 # engine-rs: typed HTTP-over-UDS serve seam, dl6 program lowers to a socket-file server
