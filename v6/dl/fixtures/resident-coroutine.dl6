@@ -1,0 +1,79 @@
+# The resident coroutine: a source session's turns fold into same-role runs,
+# consecutive runs pair into bundles, and each bundle asks the resident once.
+#
+# rx lowering:
+#   turn$.pipe(
+#     bufferWhile(same role),                      // run
+#     pairwise(),                                  // bundle (ai_run, user_run)
+#     concatMap(bundle => resident.send(bundle)))  // resident_ask -> resident
+#
+# `resident` is a base rel with no rules: the runner posts its rows as ordinary
+# arrivals, the same shape a host executor's rows arrive in.
+
+rel turn(session: text, turn_number: int, ts: int, role: text, said: text).
+
+rel prev_same_role(session: text, turn_number: int).
+prev_same_role(session, turn_number) <-
+  turn(session, turn_number, _, role, _),
+  turn(session, prev_number, _, role, _),
+  prev_number == turn_number - 1.
+
+rel run_start(session: text, turn_number: int, role: text).
+run_start(session, turn_number, role) <-
+  turn(session, turn_number, _, role, _),
+  not(prev_same_role(session, turn_number)).
+
+rel later_start_between(session: text, run_turn: int, turn_number: int).
+later_start_between(session, run_turn, turn_number) <-
+  run_start(session, run_turn, _),
+  run_start(session, later_turn, _),
+  turn(session, turn_number, _, _, _),
+  run_turn < later_turn,
+  later_turn =< turn_number.
+
+rel run_member(session: text, run_turn: int, turn_number: int).
+run_member(session, run_turn, turn_number) <-
+  run_start(session, run_turn, _),
+  turn(session, turn_number, _, _, _),
+  run_turn =< turn_number,
+  not(later_start_between(session, run_turn, turn_number)).
+
+# A head aggregate groups over ONE body atom, so the three-way join that names
+# a run's member turns is materialized before the concat groups it
+# (ARCH.pl:32-35, lower.pl:4441 aggregate_group_not_delta_local).
+rel run_said(session: text, run_turn: int, role: text, turn_number: int, said: text).
+run_said(session, run_turn, role, turn_number, said) <-
+  run_start(session, run_turn, role),
+  run_member(session, run_turn, turn_number),
+  turn(session, turn_number, _, _, said).
+
+rel run(session: text, run_turn: int, role: text, said: text).
+run(session, run_turn, role, group_concat(said, '\n', turn_number)) <-
+  run_said(session, run_turn, role, turn_number, said).
+
+rel run_between(session: text, ai_run: int, user_run: int).
+run_between(session, ai_run, user_run) <-
+  run_start(session, ai_run, _),
+  run_start(session, user_run, _),
+  run_start(session, mid_run, _),
+  ai_run < mid_run,
+  mid_run < user_run.
+
+rel bundle(session: text, ai_run: int, user_run: int, ai_text: text, user_text: text).
+bundle(session, ai_run, user_run, ai_text, user_text) <-
+  run(session, ai_run, 'assistant', ai_text),
+  run(session, user_run, 'user', user_text),
+  ai_run < user_run,
+  not(run_between(session, ai_run, user_run)).
+
+rel resident_ask(session: text, user_run: int, prompt: text).
+resident_ask(session, user_run, prompt) <-
+  bundle(session, _, user_run, ai_text, user_text),
+  prompt := concat(['<ai>\n', ai_text, '\n</ai>\n<user>\n', user_text, '\n</user>']).
+
+# `->` in a rel declaration takes one type expression and appends one `return`
+# column (parse_dl_dcg.pl:509-521), so the two reply columns are spelled out.
+rel resident(session: text, user_run: int, reply_turn: int, reply: text).
+
+rel handled(session: text, user_run: int).
+handled(session, user_run) <- resident(session, user_run, _, _).

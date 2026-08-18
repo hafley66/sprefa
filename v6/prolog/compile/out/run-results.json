@@ -241,8 +241,8 @@
     "name": "reverse_reverses_characters",
     "bucket": "identical",
     "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "final_bucket": "final_wrong",
+    "final_detail": "actual={\"final\":{\"mirrored\":[[\"\",\"\"],[\"abc\",\"cba\"],[\"中é\",\"é中\"]],\"text\":[[\"\"],[\"abc\"],[\"中é\"]]}} oracle={\"final\":{\"mirrored\":[[\"\",\"\"],[\"abc\",\"cba\"],[\"中é\",\"�í��\"]],\"text\":[[\"\"],[\"abc\"],[\"中é\"]]}}"
   },
   {
     "name": "variant_field_float_stays_float",
@@ -318,8 +318,8 @@
     "name": "length_counts_characters",
     "bucket": "identical",
     "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "final_bucket": "final_wrong",
+    "final_detail": "actual={\"final\":{\"measured\":[[\"\",0],[\"hello\",5],[\"é\",1]],\"text\":[[\"\"],[\"hello\"],[\"é\"]]}} oracle={\"final\":{\"measured\":[[\"\",0],[\"hello\",5],[\"é\",2]],\"text\":[[\"\"],[\"hello\"],[\"é\"]]}}"
   },
   {
     "name": "length_result_joins_a_comparison",
@@ -659,6 +659,13 @@
   },
   {
     "name": "typegen_list_element_ladder",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "parameterized_enum_two_instantiations",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",
@@ -1207,8 +1214,8 @@
     "name": "json_nfc_and_nfd_keys_stay_distinct",
     "bucket": "identical",
     "detail": "",
-    "final_bucket": "final_identical",
-    "final_detail": ""
+    "final_bucket": "final_wrong",
+    "final_detail": "actual={\"final\":{\"key_seen\":[[\"café\"],[\"café\"]],\"raw_doc\":[[{\"café\":2,\"café\":1}]]}} oracle={\"final\":{\"key_seen\":[[\"cafe"
   },
   {
     "name": "json_empty_string_key_round_trips",
@@ -2136,6 +2143,20 @@
   },
   {
     "name": "recursive_closure_passes_both_build_guard_arms",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "resident_coroutine_runs_bundle_into_one_ask",
+    "bucket": "identical",
+    "detail": "",
+    "final_bucket": "final_identical",
+    "final_detail": ""
+  },
+  {
+    "name": "resident_reply_arrives_as_a_plain_arrival",
     "bucket": "identical",
     "detail": "",
     "final_bucket": "final_identical",

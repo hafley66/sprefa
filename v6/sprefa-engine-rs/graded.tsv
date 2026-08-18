@@ -356,6 +356,8 @@ replace_rewrites_all_occurrences	clean	byte-clean
 repo_on_bind_watch_is_refused	unsupported	bind_repo_column(watch)
 reserved_namespace_declared_rel	unsupported	reserved_rel_namespace('__txt_reach')
 reserved_namespace_derived_head	unsupported	reserved_rel_namespace('__str_stats')
+resident_coroutine_runs_bundle_into_one_ask	clean	byte-clean
+resident_reply_arrives_as_a_plain_arrival	clean	byte-clean
 retention_count_prunes_oldest	clean	byte-clean
 retention_head_conflict_risk_rejected	unsupported	retention_head_conflict_risk(journal/1,count(1))
 retention_prune_is_a_visible_minus	clean	byte-clean

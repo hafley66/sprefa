@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "bundle": {
+      "additionalProperties":false,
+      "properties": {
+        "ai_run": {"type":"integer"},
+        "ai_text": {"type":"string"},
+        "session": {"type":"string"},
+        "user_run": {"type":"integer"},
+        "user_text": {"type":"string"}
+      },
+      "required": ["session", "ai_run", "user_run", "ai_text", "user_text" ],
+      "type":"object"
+    },
+    "handled": {
+      "additionalProperties":false,
+      "properties": {"session": {"type":"string"},"user_run": {"type":"integer"}},
+      "required": ["session", "user_run" ],
+      "type":"object"
+    },
+    "later_start_between": {
+      "additionalProperties":false,
+      "properties": {
+        "run_turn": {"type":"integer"},
+        "session": {"type":"string"},
+        "turn_number": {"type":"integer"}
+      },
+      "required": ["session", "run_turn", "turn_number" ],
+      "type":"object"
+    },
+    "prev_same_role": {
+      "additionalProperties":false,
+      "properties": {"session": {"type":"string"},"turn_number": {"type":"integer"}},
+      "required": ["session", "turn_number" ],
+      "type":"object"
+    },
+    "resident": {
+      "additionalProperties":false,
+      "properties": {
+        "col3": {"type":"integer"},
+        "col4": {"type":"string"},
+        "session": {"type":"string"},
+        "user_run": {"type":"integer"}
+      },
+      "required": ["session", "user_run", "col3", "col4" ],
+      "type":"object"
+    },
+    "resident_ask": {
+      "additionalProperties":false,
+      "properties": {
+        "prompt": {"type":"string"},
+        "session": {"type":"string"},
+        "user_run": {"type":"integer"}
+      },
+      "required": ["session", "user_run", "prompt" ],
+      "type":"object"
+    },
+    "run": {
+      "additionalProperties":false,
+      "properties": {
+        "ai_text": {"type":"string"},
+        "role": {"type":"string"},
+        "run_turn": {"type":"integer"},
+        "session": {"type":"string"}
+      },
+      "required": ["session", "run_turn", "role", "ai_text" ],
+      "type":"object"
+    },
+    "run_between": {
+      "additionalProperties":false,
+      "properties": {
+        "ai_run": {"type":"integer"},
+        "session": {"type":"string"},
+        "user_run": {"type":"integer"}
+      },
+      "required": ["session", "ai_run", "user_run" ],
+      "type":"object"
+    },
+    "run_member": {
+      "additionalProperties":false,
+      "properties": {
+        "run_turn": {"type":"integer"},
+        "session": {"type":"string"},
+        "turn_number": {"type":"integer"}
+      },
+      "required": ["session", "run_turn", "turn_number" ],
+      "type":"object"
+    },
+    "run_said": {
+      "additionalProperties":false,
+      "properties": {
+        "role": {"type":"string"},
+        "run_turn": {"type":"integer"},
+        "said": {"type":"string"},
+        "session": {"type":"string"},
+        "turn_number": {"type":"integer"}
+      },
+      "required": ["session", "run_turn", "role", "turn_number", "said" ],
+      "type":"object"
+    },
+    "run_start": {
+      "additionalProperties":false,
+      "properties": {
+        "role": {"type":"string"},
+        "session": {"type":"string"},
+        "turn_number": {"type":"integer"}
+      },
+      "required": ["session", "turn_number", "role" ],
+      "type":"object"
+    },
+    "turn": {
+      "additionalProperties":false,
+      "properties": {
+        "col3": {"type":"integer"},
+        "role": {"type":"string"},
+        "said": {"type":"string"},
+        "session": {"type":"string"},
+        "turn_number": {"type":"integer"}
+      },
+      "required": ["session", "turn_number", "col3", "role", "said" ],
+      "type":"object"
+    }
+  },
+  "$id":"resident_reply_arrives_as_a_plain_arrival#554fbdb32d45f3e5",
+  "$schema":"https://json-schema.org/draft/2020-12/schema"
+}

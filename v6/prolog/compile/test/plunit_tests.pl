@@ -121,6 +121,7 @@
               [ body_atoms/2, comparison_goal/1, json_capture_type/2,
                 json_scalar_value/3 ]).
 :- use_module('../../1_host_expand', [ body_goals/2 ]).
+:- use_module('../../3_clock_check', [clock_boundary/2]).
 :- ensure_loaded('3_clock_check.test.pl').
 :- ensure_loaded('0_graph.test.pl').
 % The diag channel's plunit receipts live with the module in labs/.
@@ -202,6 +203,19 @@ catalog_lowered(Mode, _Name, Ddl) :-
     catalog_program(Term),
     once(( program_plan(Term-[], [intern(Mode)], Plan),
            lower_program(Plan, lowered(_, Ddl, _, _, _, _, _, _)) )).
+
+:- begin_tests(clock_boundary).
+
+% FAIL-FIRST RECEIPT: a base rel read by a rule was absent from the clock
+% boundary rows, leaving an outside arrival into that rel unnamed.
+test(read_only_base_rel_is_externally_fed) :-
+    Program = prog([col_type(resident/4, session, text)],
+                   [(handled(Session, UserRun) <-
+                        resident(Session, UserRun, _, _))]),
+    findall(Boundary, clock_boundary(Program, Boundary), Boundaries),
+    Boundaries == [not_provable(externally_fed(resident/4))].
+
+:- end_tests(clock_boundary).
 
 :- begin_tests(stratum_order).
 
