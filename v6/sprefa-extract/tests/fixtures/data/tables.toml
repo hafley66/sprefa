@@ -1,0 +1,21 @@
+title = "sprefa"
+version = 6
+enabled = true
+
+[package]
+name = "sprefa-extract"
+edition = "2021"
+
+[package.metadata.dist]
+dist = true
+
+[[bin]]
+name = "extract"
+path = "src/bin/extract.rs"
+
+[[bin]]
+name = "probe"
+path = "src/bin/probe.rs"
+
+[features]
+cli = ["dep:clap"]

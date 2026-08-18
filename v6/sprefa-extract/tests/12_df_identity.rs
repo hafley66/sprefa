@@ -21,6 +21,7 @@ const DF_ONLY: FamilyMask = FamilyMask {
     types: false,
     call: false,
     df: true,
+    data: false,
 };
 
 fn df_facts() -> Vec<Value> {

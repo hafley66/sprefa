@@ -1,37 +1,26 @@
 //! WHICH DOCUMENT FORMATS THE EXTRACTOR ACTUALLY HANDLES, pinned.
 //!
-//! CORRECTION TO THE SPELUNK. `plans/2026-07-30-sprefa-extract-spelunk.md`
-//! section 5 records "no Markdown, HTML, XML, TOML, or YAML Source" and prices
-//! all five at "add or buy a grammar". Measured at HEAD, that is half wrong:
-//! HTML and YAML (and JSON and CSS, which the doc does not mention) already
-//! produce CST facts through the ast-grep fallback, because ast-grep-language
-//! ships those grammars and `AstgrepSource` routes anything with a grammar.
-//! TOML and XML genuinely produce nothing. Markdown has its own tree-sitter-md
-//! source because ast-grep-language does not ship that grammar.
-//!
-//! The gap was in the DOCUMENTATION, not the code: the CLI's language coverage
-//! table said "python/c/... (any ast-grep grammar) cst only", which is true and
-//! tells a caller nothing about whether their .yaml file works. The table now
-//! names them and this test is what keeps the claim honest.
+//! Each row names the FAMILY the format's facts must carry. json/yaml/toml ride
+//! the `data` family; html/css ride the ast-grep cst fallback; md rides
+//! tree-sitter-md; xml has no grammar in tree and produces nothing.
 //!
 //! Adding or losing a grammar flips a row here, which is the point: a dependency
 //! bump that silently drops a format should not be silent.
+// @comment-ok: the header is the coverage table's own contract, not narrative
 
 use std::process::Command;
 
-/// (extension, whether the extractor produces any fact for it today).
-///
-/// A `true` row is a format the ast-grep fallback covers as CST-only. A `false`
-/// row is a real absence and costs a new grammar dependency plus a `Source`, so
-/// it is a build-vs-buy decision rather than a cleanup.
-const FORMATS: &[(&str, bool, &str)] = &[
-    ("html", true, "ast-grep-language ships the html grammar"),
-    ("yaml", true, "ast-grep-language ships the yaml grammar"),
-    ("json", true, "ast-grep-language ships the json grammar"),
-    ("css", true, "ast-grep-language ships the css grammar"),
-    ("md", true, "tree-sitter-md block and inline grammars"),
-    ("toml", false, "no toml grammar in ast-grep-language"),
-    ("xml", false, "no xml grammar in ast-grep-language"),
+/// (extension, the family tag its facts must carry, why). An empty family is a
+/// real absence and costs a new grammar dependency plus a `Source`, so it is a
+/// build-vs-buy decision rather than a cleanup.
+const FORMATS: &[(&str, &str, &str)] = &[
+    ("html", "cst", "ast-grep-language ships the html grammar"),
+    ("yaml", "data", "the data family, tree-sitter-yaml"),
+    ("json", "data", "the data family, tree-sitter-json"),
+    ("css", "cst", "ast-grep-language ships the css grammar"),
+    ("md", "cst", "tree-sitter-md block and inline grammars"),
+    ("toml", "data", "the data family, tree-sitter-toml-ng"),
+    ("xml", "", "no xml grammar in ast-grep-language"),
 ];
 
 /// Bodies that exercise each format's own syntax, so a covered row proves the
@@ -54,7 +43,8 @@ fn document_format_coverage_is_what_the_cli_claims() {
     let dir = std::env::temp_dir().join(format!("sprefa-doc-formats-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
 
-    for (extension, covered, why) in FORMATS {
+    for (extension, family, why) in FORMATS {
+        let covered = &!family.is_empty();
         let path = dir.join(format!("sample.{extension}"));
         std::fs::write(&path, body(extension)).unwrap();
 
@@ -82,8 +72,8 @@ fn document_format_coverage_is_what_the_cli_claims() {
         );
         if *covered {
             assert!(
-                facts.contains("\"family\":\"cst\""),
-                ".{extension} is fallback-covered, so its facts must be cst family"
+                facts.contains(&format!("\"family\":\"{family}\"")),
+                ".{extension} is covered by the {family} family, so its facts must carry it"
             );
         }
     }
@@ -99,8 +89,8 @@ fn the_cli_help_names_the_fallback_formats() {
         .output()
         .expect("extract binary runs");
     let help = String::from_utf8(output.stdout).unwrap();
-    for (extension, covered, _) in FORMATS {
-        if *covered {
+    for (extension, family, _) in FORMATS {
+        if !family.is_empty() {
             assert!(
                 help.contains(extension),
                 "--help does not mention .{extension}, which the extractor does handle"

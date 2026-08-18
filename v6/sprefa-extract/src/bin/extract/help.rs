@@ -114,11 +114,13 @@ LANGUAGE COVERAGE (first-match, by extension)
   kt/kts                           full     kinds: cst, type, call, df (no const facet)
   pl/pro/prolog/datalog/horn       full     kinds: cst, type, call, df
   md/markdown                      cst only (tree-sitter-md block + inline grammars)
-  html/yaml/json/css               cst only (ast-grep grammar, no native front-end)
+  json/jsonl/ndjson/yaml/yml/toml  data     kinds: data (+ cst where ast-grep has
+                                            the grammar: json, yaml)
+  html/css                         cst only (ast-grep grammar, no native front-end)
   python/java/c/cpp/cs/rb/php/sh/lua/scala/swift/ex/hs   cst only, same route
   any other extension              no output, exit 0 (not an error)
 
-  NOT COVERED, and each costs a new grammar dependency: md, toml, xml.
+  NOT COVERED, and it costs a new grammar dependency: xml.
 
   Asking for a kind a language does not emit makes that kind simply absent.
   An unrecognized language produces zero lines and exits 0.
@@ -133,11 +135,13 @@ above). Output goes to stdout; with --bench, the timing summary goes to stderr
 instead and no facts are printed.";
 
 pub const FAMILY_LONG: &str = "\
-Which kinds of facts to extract, comma-separated: cst, type, call, df, cfg.
-Defaults to the first four. An unknown name is a named error, never a skip;
+Which kinds of facts to extract, comma-separated: cst, type, call, df, data, cfg.
+Defaults to every kind. An unknown name is a named error, never a skip;
 `type` and `types` are equivalent. `cfg` (intra-procedural control flow) is
 derived from the cst parse, so naming it turns cst on; rust, go, ts and kotlin
 have the kind_role rows it needs and every other language emits no cfg rows.
+`data` is the json/jsonl/yaml/toml plane: one `data_doc` per document carrying it
+as a json value, plus one span-carrying `data_value` per value inside it.
 
 Under --resolve this instead picks which resolved edges to emit: `call` (the
 default), `type` and/or `flow`, the inter-procedural value-flow join over the

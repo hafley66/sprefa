@@ -1,0 +1,15 @@
+{"record":"data_doc","family":"data","ordinal":0,"span":{"start":0,"end":225},"format":"json","doc":{"escaped":"line\nbreak","name":"pokeapi","paths":{"/pets":{"get":{"operationId":"list_pets"}}},"public":true,"ratio":1.5,"retired":null,"tags":["a","b"],"version":2}}
+{"record":"data_value","family":"data","ordinal":0,"path":"","kind":"object","text":null,"span":{"start":0,"end":225}}
+{"record":"data_value","family":"data","ordinal":0,"path":"name","kind":"string","text":"pokeapi","span":{"start":13,"end":20}}
+{"record":"data_value","family":"data","ordinal":0,"path":"version","kind":"number","text":"2","span":{"start":36,"end":37}}
+{"record":"data_value","family":"data","ordinal":0,"path":"ratio","kind":"number","text":"1.5","span":{"start":50,"end":53}}
+{"record":"data_value","family":"data","ordinal":0,"path":"public","kind":"boolean","text":"true","span":{"start":67,"end":71}}
+{"record":"data_value","family":"data","ordinal":0,"path":"retired","kind":"null","text":"null","span":{"start":86,"end":90}}
+{"record":"data_value","family":"data","ordinal":0,"path":"paths","kind":"object","text":null,"span":{"start":103,"end":173}}
+{"record":"data_value","family":"data","ordinal":0,"path":"paths./pets","kind":"object","text":null,"span":{"start":118,"end":169}}
+{"record":"data_value","family":"data","ordinal":0,"path":"paths./pets.get","kind":"object","text":null,"span":{"start":133,"end":163}}
+{"record":"data_value","family":"data","ordinal":0,"path":"paths./pets.get.operationId","kind":"string","text":"list_pets","span":{"start":151,"end":160}}
+{"record":"data_value","family":"data","ordinal":0,"path":"tags","kind":"array","text":null,"span":{"start":185,"end":195}}
+{"record":"data_value","family":"data","ordinal":0,"path":"tags.0","kind":"string","text":"a","span":{"start":187,"end":188}}
+{"record":"data_value","family":"data","ordinal":0,"path":"tags.1","kind":"string","text":"b","span":{"start":192,"end":193}}
+{"record":"data_value","family":"data","ordinal":0,"path":"escaped","kind":"string","text":"line\nbreak","span":{"start":211,"end":222}}

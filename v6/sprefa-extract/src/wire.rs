@@ -23,7 +23,7 @@ pub use crate::schema::SCHEMA;
 pub use crate::scip_rows::{flatten_scip, scip_file_edges};
 use crate::shape::{content_id_of, Strings};
 use crate::source::ExtractOutput;
-use crate::types::CfgF;
+use crate::types::{CfgF, DataF};
 pub use crate::types::{FlatFact, SpanOut};
 
 /// Flatten one file's `ExtractOutput` to flat facts: every present family, in
@@ -45,7 +45,37 @@ pub fn flatten(out: &ExtractOutput) -> Vec<FlatFact> {
     if let Some(bundle) = &out.df {
         facts.extend(flatten_df(bundle, &out.strings));
     }
+    if let Some(bundle) = &out.data {
+        facts.extend(flatten_data(bundle, &out.strings));
+    }
     facts
+}
+
+/// `doc` on a document row is the whole document as a json value, so a consumer
+/// declaring only that column reads documents and skips every value row.
+fn flatten_data(bundle: &FamilyBundle<DataF>, strings: &Strings) -> Vec<FlatFact> {
+    let format = bundle.aux.format;
+    let mut out = Vec::with_capacity(bundle.aux.docs.len() + bundle.aux.values.len());
+    for doc in &bundle.aux.docs {
+        out.push(FlatFact::DataDocOut {
+            family: DataF::TAG,
+            ordinal: doc.ordinal,
+            span: SpanOut::new(doc.span.start, doc.span.end()),
+            format: format.as_str().to_string(),
+            doc: doc.value.clone(),
+        });
+    }
+    for row in &bundle.aux.values {
+        out.push(FlatFact::DataValueOut {
+            family: DataF::TAG,
+            ordinal: row.doc,
+            path: strings.lookup(row.path).to_string(),
+            kind: row.kind.as_str().to_string(),
+            text: row.text.map(|id| strings.lookup(id).to_string()),
+            span: SpanOut::new(row.span.start, row.span.end()),
+        });
+    }
+    out
 }
 
 /// Convenience: flatten to sorted JSONL lines. The sort makes the snapshot

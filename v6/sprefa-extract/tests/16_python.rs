@@ -116,6 +116,7 @@ fn python_family_mask_leaves_masked_off_families_none() {
             types: false,
             call: false,
             df: false,
+            data: false,
         },
     );
     assert!(output.cst.is_some());

@@ -70,6 +70,16 @@ tree-sitter-kotlin-sg = "0.4"
 # v6/prolog. ABI 14 and LanguageFn match the tree-sitter 0.25 runtime above.
 tree-sitter-prolog = "0.1"
 tree-sitter-dl6 = { path = "tree-sitter-dl6" }
+# The `data` family's three grammars, v5's `src/datapath.rs` plane ported.
+# yaml/toml-ng match v5's own pins (root Cargo.toml:129-130). json is 0.23, NOT
+# v5's 0.24 (root Cargo.toml:108): 0.23.0 is already an ast-grep-language
+# transitive here, and `cargo tree -d` on a 0.24 pin listed tree-sitter-json
+# TWICE (0.23.0 + 0.24.8) against zero copies on 0.23. JSON's node vocabulary
+# (object/pair/array/string/number/true/false/null) is identical across the two,
+# and no v5 oracle facet judges this plane.
+tree-sitter-json = "0.23"
+tree-sitter-yaml = "0.7"
+tree-sitter-toml-ng = "0.7"
 # tree-sitter-md is the markdown front-end v5 carries (root Cargo.toml:116,
 # src/cst.rs + src/ingest/mod.rs). LANGUAGE = block, INLINE_LANGUAGE = inline.
 

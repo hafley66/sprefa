@@ -2961,6 +2961,7 @@ impl Source for TsSource {
             types,
             call,
             df,
+            data: None,
         }
     }
 }

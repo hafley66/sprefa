@@ -8,6 +8,7 @@
 //! `AstgrepSource` (cst-only).
 
 pub mod astgrep;
+pub mod data;
 pub mod dl6;
 pub mod go;
 pub mod kotlin;
@@ -21,6 +22,7 @@ pub use astgrep::{
     query_patterns, AstCaptureFact, AstGrepParser, AstPatternQuery, AstgrepSource, CstProjector,
     SgRoot,
 };
+pub use data::DataSource;
 pub use dl6::DlSource;
 pub use go::GoSource;
 pub use kotlin::KotlinSource;
@@ -39,6 +41,8 @@ use crate::source::Source;
 /// KotlinSource precedes TsSource because `"x.kts".ends_with(".ts")` is true -
 /// a `.kts` must route to kotlin, not ts (v5 `type_langs()` makes the same
 /// order-dependent call, typegraph/mod.rs:488).
+/// DataSource precedes AstgrepSource so a `.json`/`.yaml` reaches the data plane;
+/// it delegates its own cst plane back to AstgrepSource, so no row is lost.
 pub fn sources() -> &'static [&'static dyn Source] {
     &[
         &RustSource,
@@ -46,6 +50,7 @@ pub fn sources() -> &'static [&'static dyn Source] {
         &KotlinSource,
         &MarkdownSource,
         &PrologSource,
+        &DataSource,
         &DlSource,
         &TsSource,
         &AstgrepSource,
