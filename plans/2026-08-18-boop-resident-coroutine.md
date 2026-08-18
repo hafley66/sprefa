@@ -118,7 +118,7 @@ flowchart LR
 | phase | lane | owns | delivers |
 |---|---|---|---|
 | 1a DONE sprefa #369 `33994b67b` | sprefa `feature/rel-deltas-route` (terra) | `v6/sprefa-engine-rs/src/serve.rs`, `tests/serve_uds.rs`, `v6/dl/fixtures/resident-coroutine.dl6`, `v6/prolog/conformance/fixtures/<n>_resident_coroutine.pl`, `v6/prolog/3_clock_check.pl` (one `clock_boundary(externally_fed(Rel))` row), `compile/out/**` | `GET /rel/{name}/deltas?since=<tick>` (long-poll, JSON `{tick, add:[..], del:[..]}`); fixture compiles rc=0 and its Rust golden runs with test-side arrivals into `turn` and `resident`; boundary row named, never refused |
-| 1b DONE hafley-rs #26 | hafley-rs `feature/boop-chat-runner` (terra) | `crates/boop/src/runner.rs` (new), `crates/boop/src/concatmap.rs` (delete cursor/done/coalesce/out; keep `Rewriter::Chat` seam), `crates/boop/src/main.rs` (`boop run <program.dl6> --session <src> --resident-model <m>`) | runner: compiles+serves the program over UDS (shell out to the engine binary; no engine crate link yet), pushes source-session turns, follows `resident_ask` deltas, one chat channel, serial, posts `resident` rows; `boop concatmap` prints a pointer to `boop run` |
+| 1b DONE hafley-rs #26 then #27 | hafley-rs `fix/boop-host-chat-cut` (terra) | `crates/boop/src/host.rs`, `main.rs` verb | `boop host chat`: stdin `{resident, model, goal?, prompt}`, stdout `{reply_turn, reply}` or `{outcome: failed, detail}`, one harness conversation reused per resident (`~/.agent/run/<resident>/chat.json`). #26 had put a whole runner in boop that compiled and booted the engine (`boop run`); WRONG, deleted by #27. boop never boots engines. |
 | 2 IN PROGRESS | sprefa `feature/tsv2-process-adapter` (terra) | `registry.pl:324-400`, `parse_dl_dcg.pl:812-841`, `1_host_expand.pl`, `hosts.rs:46-49`, `source_bind.rs`, 19 `bind` fixtures + `extract`/`source_stage` fixtures, `manifest.json` regen | executor sniffing gone (`sh` = shell only), runner config file for in-process executors, `bind` deleted |
 
 Order: 1a and 1b in parallel (disjoint repos); 1b integrates against 1a's route once merged. Phase 2 after 1a.
@@ -130,9 +130,9 @@ boop = the database (`~/.agent/boop.db`) plus events. Reacting is dl6's job.
 | piece | owner | state |
 |---|---|---|
 | rows: turns, touches, cmds, spawns, mail | boop | done |
-| events: new rows within seconds | boop `db sync create --forever` (`main.rs:1334`, 1s poll over session mtimes) | resident since 2026-08-18 via launchd `com.hafley.boop.follow` (KeepAlive); the 600s launchd one-shot `com.hafley.agentperf.sync` stays as backstop |
+| events: new rows within seconds | NO daemon, NO server, NO launchd (Chris, 2026-08-18; a launchd `--forever` job was added and removed the same hour, do not re-add). The database is fresh because every read verb syncs the new bytes first, incrementally (byte cursor per transcript, `ident.rs:798`), and that pass is sub-second (root-mtime skip). Lane `fix/boop-sync-on-read`. | in progress |
 | `turn` rel fed from `agent_turn` | the engine: a sqlite source over `boop.db` (poll `agent_turn where ts > cursor` at the program's interval) | TODO, next arc; not boop code |
-| resident chat | an adapter row (`IProcessAdapter`, phase 2); boop exposes `boop host chat` (stdin prompt+session, stdout reply row) | `boop run` (#26) built the runner INSIDE boop and boots the engine itself: wrong place; cut to `boop host chat` |
+| resident chat | an adapter row (`IProcessAdapter`, phase 2); the engine spawns `boop host chat` per ask | landed #27 |
 | dogfood | `run_follow` IS `interval(1s).pipe(map(sessions), scan(mtime), filter(changed), concatMap(ingest))`: a `.dl6` with an interval rel and an extractor adapter over transcript files. Later arc; boop's sync loop is the first program the reactive compiler replaces | not started |
 
 ## Cost to the clock model

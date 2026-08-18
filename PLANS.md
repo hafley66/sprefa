@@ -75,6 +75,8 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `decision` plans/2026-08-12-fs-effects-recon.RESEARCH.visual.human.unga.md:164 — pick batching path.
 - `decision` plans/2026-08-12-fs-effects-recon.RESEARCH.visual.human.unga.md:165 — pick watch surface.
 - `decision` plans/2026-08-13-soopy-source-mechanics-boundary.md:226 — Define whether `RepositoryId` identifies a checkout, shared Git object database, or configured logical repository, then test linked-worktree identity.
+- `decision` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:627 — Select contextual construction and matching semantics for anonymous product values.
+- `decision` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:628 — Select ID-valued or tagged runtime ingress and egress for anonymous sums.
 - `docs` plans/2026-07-10-change-cost-friction-inventory.md:151 — item 6 — a generated per-language coverage table (which node kinds each TypeLang lift emits, tested counts on a fixture) in docs/reference
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:105 — match() trailing positional is a match ID not captured text — rename convention to match_id in shipped examples, show named-capture form in the op quickref
 - `docs` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:106 — comment_node.text strips comment tokens — state it in the relations table row, not only the buried authoring bullet
@@ -94,6 +96,7 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `docs` plans/2026-07-11-docs-and-dogfood-audit.md:28 — book/tutorial refresh for sym/file_lines/--max-wall/semi-naive
 - `docs` plans/2026-07-18-db-seam-migration.md:464 — src/db.rs grows past 1500 lines under this plan; it is already in scripts/filesize-allow.txt, but a future split into src/db/ requires extending rusqlite_seam in .dl/no-new-rusqlite.dl
 - `docs` plans/2026-07-25-analysis-engine-bakeoff-labs.md:119 — scale matrix committed to labs/bakeoff/MATRIX.md (tool × Q1–Q10 × C0–C3 × wall/RSS/LOC/cold-start)
+- `docs` plans/2026-08-18-typescript-shaped-interface-bounds.md:203 — Document interface applications, exact arguments, and wildcard arguments in the DL6 syntax reference.
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:148 — item 1 — a first-class --hermetic flag that implies all three, plus the already-ledgered loud "daemon is serving this root, writes went there" warning on hijack
 - `feature` plans/2026-07-10-change-cost-friction-inventory.md:150 — item 3 — --format=json (or tsv) for ? query blocks and one paragraph documenting the human format's contract
 - `feature` plans/2026-07-11-agent-feedback-smashy-guard-rails.md:103 — agent_edit carries line/span columns so touched-region x AST-span joins work (guarded-MATCH vs guarded-FILE)
@@ -145,6 +148,10 @@ prose outside them is hand-owned. Convention + authoring guide:
 - `feature` plans/2026-08-13-soopy-source-mechanics-boundary.md:245 — Implement native Rust text search over `SourceQuery` using the ripgrep library stack.
 - `feature` plans/2026-08-13-soopy-source-mechanics-boundary.md:247 — Replace the `fzf` subprocess with high-level `nucleo` ranking exposed through the existing `clap` command surface and stable selection identities.
 - `feature` plans/2026-08-13-soopy-source-mechanics-boundary.md:249 — Implement typed repository and checkout watches for worktree creation, removal, attachment, HEAD movement, ref movement, and index changes.
+- `feature` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:629 — Normalize lowercase `key(T)` through the existing keyed relation IR.
+- `feature` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:630 — Add owner-scoped anonymous product and sum type literals.
+- `feature` plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:631 — Represent type-valued capability and functional-output relations over semantic type IDs.
+- `feature` plans/2026-08-18-typescript-shaped-interface-bounds.md:202 — Implement TypeScript-shaped interface bounds with `any` argument patterns.
 - `perf` plans/2026-07-11-codex-feedback-queue.md:92 — semi-naive delta-growth bail + wedge visibility
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:189 — replace corpus-wide extraction payload caches with bounded byte-weighted reuse and stream WORK and Git inventories into staging
 - `perf` plans/2026-07-14-bounded-single-sweep-runtime.md:190 — replace per-connection 512 MiB SQLite cache and mmap settings with one measured process-wide budget and permit disk-backed large temporary work
@@ -343,6 +350,13 @@ prose outside them is hand-owned. Convention + authoring guide:
 - plans/2026-08-13-soopy-source-mechanics-boundary.md:245 `feature` — Implement native Rust text search over `SourceQuery` using the ripgrep library stack.
 - plans/2026-08-13-soopy-source-mechanics-boundary.md:247 `feature` — Replace the `fzf` subprocess with high-level `nucleo` ranking exposed through the existing `clap` command surface and stable selection identities.
 - plans/2026-08-13-soopy-source-mechanics-boundary.md:249 `feature` — Implement typed repository and checkout watches for worktree creation, removal, attachment, HEAD movement, ref movement, and index changes.
+- plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:627 `decision` — Select contextual construction and matching semantics for anonymous product values.
+- plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:628 `decision` — Select ID-valued or tagged runtime ingress and egress for anonymous sums.
+- plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:629 `feature` — Normalize lowercase `key(T)` through the existing keyed relation IR.
+- plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:630 `feature` — Add owner-scoped anonymous product and sum type literals.
+- plans/2026-08-18-relational-type-schema-wrappers-and-literals.md:631 `feature` — Represent type-valued capability and functional-output relations over semantic type IDs.
+- plans/2026-08-18-typescript-shaped-interface-bounds.md:202 `feature` — Implement TypeScript-shaped interface bounds with `any` argument patterns.
+- plans/2026-08-18-typescript-shaped-interface-bounds.md:203 `docs` — Document interface applications, exact arguments, and wildcard arguments in the DL6 syntax reference.
 <!-- END: plans-by-plan -->
 
 ## By code file
