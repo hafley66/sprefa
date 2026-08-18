@@ -24,7 +24,73 @@ expand_option_program(prog(Decls0, Rules), prog(Decls, Rules)) :-
 
 expand_option_decls(Decls0, Decls) :-
     strip_acyclic_wrappers(Decls0, Decls1),
-    desugar_option_columns(Decls1, Decls).
+    desugar_enum_payload_options(Decls1, Decls2),
+    desugar_option_columns(Decls2, Decls).
+
+% Enum expansion turns every payload field into an ordinary col_type/3 after
+% this phase.  Normalize option payloads first, while their complete source
+% type is still attached to the declaring variant.  The marker carries that
+% source type forward for the catalog-backed TS/Rust/JSON emitters; SQLite
+% still sees the generated option enum endpoint as an integer column.
+desugar_enum_payload_options(Decls0, Decls) :-
+    enum_payload_option_elements(Decls0, Elements),
+    ensure_option_enum_decls(Elements, Decls0, WithEnums),
+    rewrite_enum_payload_option_decls(WithEnums, Decls).
+
+enum_payload_option_elements(Decls, Elements) :-
+    findall(Element,
+            ( member(enum_decl(_, Variants), Decls),
+              enum_variant_payload_type(Variants, option(Element)) ),
+            Found),
+    sort(Found, Elements).
+
+enum_variant_payload_type((Left ; Right), Type) :-
+    !,
+    ( enum_variant_payload_type(Left, Type)
+    ; enum_variant_payload_type(Right, Type) ).
+enum_variant_payload_type(Variant, Type) :-
+    Variant =.. [_ | Fields],
+    member(_:Type, Fields).
+
+ensure_option_enum_decls([], Decls, Decls).
+ensure_option_enum_decls([Element | Rest], Decls0, Decls) :-
+    ensure_option_enum_decls(Decls0, Element, _EnumName, Decls1),
+    ensure_option_enum_decls(Rest, Decls1, Decls).
+
+rewrite_enum_payload_option_decls([], []).
+rewrite_enum_payload_option_decls([enum_decl(EnumName, Variants0) | Rest],
+                                  [enum_decl(EnumName, Variants) | Output]) :-
+    !,
+    rewrite_enum_variant_options(EnumName, Variants0, Variants, Markers),
+    rewrite_enum_payload_option_decls(Rest, RestOutput),
+    append(Markers, RestOutput, Output).
+rewrite_enum_payload_option_decls([Decl | Rest], [Decl | Output]) :-
+    rewrite_enum_payload_option_decls(Rest, Output).
+
+rewrite_enum_variant_options(EnumName, (Left0 ; Right0), (Left ; Right),
+                             Markers) :-
+    !,
+    rewrite_enum_variant_options(EnumName, Left0, Left, LeftMarkers),
+    rewrite_enum_variant_options(EnumName, Right0, Right, RightMarkers),
+    append(LeftMarkers, RightMarkers, Markers).
+rewrite_enum_variant_options(EnumName, Variant0, Variant, Markers) :-
+    Variant0 =.. [VariantName | Fields0],
+    rewrite_enum_variant_fields(EnumName, VariantName, Fields0, Fields,
+                                Markers),
+    Variant =.. [VariantName | Fields].
+
+rewrite_enum_variant_fields(_, _, [], [], []).
+rewrite_enum_variant_fields(EnumName, VariantName,
+                            [FieldName:option(Element) | Rest],
+                            [FieldName:OptionEnum | Fields],
+                            [enum_option_payload(EnumName, VariantName,
+                                                 FieldName, Element) | Markers]) :-
+    !,
+    option_enum_name(Element, OptionEnum),
+    rewrite_enum_variant_fields(EnumName, VariantName, Rest, Fields, Markers).
+rewrite_enum_variant_fields(EnumName, VariantName, [Field | Rest],
+                            [Field | Fields], Markers) :-
+    rewrite_enum_variant_fields(EnumName, VariantName, Rest, Fields, Markers).
 
 desugar_option_columns(Decls0, Decls) :-
     ( member(col_type(Ref, Column, option(Element)), Decls0)

@@ -118,7 +118,9 @@ option_rows(Decls, Rows0, Rows) :-
     option_row_ids(OptionTypes, AfterVariants, EnumToId, OptionToId, OptionRows, _),
     append([EnumRows, EnumVariantRows, OptionRows], WrapperRows),
     maplist(rewrite_option_column(Decls, Rows0, OptionToId), Rows0, Rewritten0),
-    maplist(rewrite_enum_column(Decls, Rows0, EnumToId), Rewritten0, Rewritten),
+    maplist(rewrite_enum_column(Decls, Rows0, EnumToId), Rewritten0, Rewritten1),
+    maplist(rewrite_enum_option_payload(Decls, Rows0, OptionToId),
+            Rewritten1, Rewritten),
     append(Rewritten, WrapperRows, Rows).
 
 % Direct enum columns (a col_type typed as an enum, not wrapped in option) are
@@ -159,7 +161,8 @@ max_row_id(Rows, MaxId) :-
 
 option_surface_types(Decls, Elements) :-
     findall(Element,
-            ( member(option_column(_, _, Element), Decls),
+            ( ( member(option_column(_, _, Element), Decls)
+              ; member(enum_option_payload(_, _, _, Element), Decls) ),
               option_surface_value(Decls, Element) ),
             Found),
     sort(Found, Elements).
@@ -287,6 +290,25 @@ rewrite_option_column(Decls, Rows0, OptionToId, Row0, Row) :-
     Row = row(Id, RelId, Ord, Name, column, OptId, Arity, ModuleId, HId, HS, HR).
 rewrite_option_column(_Decls, _Rows0, _ElementToId, Row, Row).
 
+% The enum declaration has become a variant relation by this point.  The
+% marker from option expansion locates the generated field and restores the
+% public `Option<T>` catalog type while the underlying variant table retains
+% the option enum endpoint INTEGER.
+rewrite_enum_option_payload(Decls, Rows0, OptionToId, Row0, Row) :-
+    Row0 = row(Id, RelId, Ord, FieldName, column, _TypeId, Arity,
+               ModuleId, HId, HS, HR),
+    enum_option_payload(EnumName, VariantName, FieldName, Element, Decls),
+    atomic_list_concat([EnumName, VariantName], '_', VariantRelName),
+    member(row(RelId, _, _, VariantRelName, rel, _, _, _, _, _, _), Rows0),
+    memberchk(option(Element)-OptionId, OptionToId),
+    !,
+    Row = row(Id, RelId, Ord, FieldName, column, OptionId, Arity,
+              ModuleId, HId, HS, HR).
+rewrite_enum_option_payload(_Decls, _Rows0, _OptionToId, Row, Row).
+
+enum_option_payload(EnumName, VariantName, FieldName, Element, Decls) :-
+    member(enum_option_payload(EnumName, VariantName, FieldName, Element), Decls).
+
 option_column_element(Decls, Rows0, RelId, ColumnName, Element) :-
     member(option_column(RelName/_, ColumnName, Element), Decls),
     option_surface_value(Decls, Element),
@@ -364,11 +386,44 @@ kind_schema(Rows, Prefix, _Target, _Name, option, ElementTypeId, Schema) :-
            properties: _{ tag: _{ const: some }, value: Inner },
            required: [tag, value], additionalProperties: false }
     ] }.
+kind_schema(Rows, Prefix, TargetRow, _Name, enum, _ElementTypeId, Schema) :-
+    enum_schema(Rows, Prefix, TargetRow, Schema).
 kind_schema(Rows, RefPrefix, TargetRow, _Name, rel, _Element, Schema) :-
     rel_path(Rows, TargetRow, Path),
     atomic_list_concat(Path, '.', Pointer),
     atomic_list_concat([RefPrefix, Pointer], Ref),
     Schema = _{ '$ref': Ref }.
+
+enum_schema(Rows, Prefix, EnumRow, _{ oneOf: Variants }) :-
+    EnumRow = row(EnumId, _, _, _, enum, _, _, _, _, _, _),
+    findall(Ordinal-Variant,
+            ( member(row(_, EnumId, Ordinal, Name, enum_variant,
+                         VariantRelId, _, _, _, _, _), Rows),
+              enum_variant_schema(Rows, Prefix, Name, VariantRelId, Variant) ),
+            Unordered),
+    keysort(Unordered, Ordered),
+    pairs_values(Ordered, Variants).
+
+enum_variant_schema(Rows, Prefix, Tag, VariantRelId, Schema) :-
+    findall(Ordinal-Name-TypeId,
+            ( member(row(_, VariantRelId, Ordinal, Name, column, TypeId,
+                         _, _, _, _, _), Rows),
+              Name \== id ),
+            Unordered),
+    keysort(Unordered, Fields),
+    enum_variant_properties(Rows, Prefix, Fields, Properties, Required),
+    put_dict(tag, Properties, _{ const: Tag }, WithTag),
+    Schema = _{ type: object,
+                properties: WithTag,
+                required: [tag | Required],
+                additionalProperties: false }.
+
+enum_variant_properties(_, _, [], _{}, []).
+enum_variant_properties(Rows, Prefix, [_-Name-TypeId | Rest], Properties,
+                        [Name | Required]) :-
+    column_schema(Rows, Prefix, TypeId, FieldSchema),
+    enum_variant_properties(Rows, Prefix, Rest, Tail, Required),
+    put_dict(Name, Tail, FieldSchema, Properties).
 
 primitive_schema(int,    _{ type: integer }).
 primitive_schema(float,  _{ type: number }).

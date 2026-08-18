@@ -63,7 +63,7 @@ rust_relation_id_alias_parts(Text, [Text]).
 
 rust_enum_text(Rows, Text) :-
     member(row(EnumId, _, _, Name, enum, _, _, _, _, _, _), Rows),
-    ( \+ compiler_helper_rel(Name) ; generic_minted_enum(Name) ),
+    renderable_enum(Name),
     type_name(Name, TypeName),
     findall(Ordinal-VariantText,
             ( member(row(_, EnumId, Ordinal, VariantName, enum_variant,
@@ -104,6 +104,10 @@ renderable_rel(Rows, RelRow) :-
 
 compiler_helper_rel(Name) :- sub_atom(Name, _, _, _, '__').
 generic_minted_enum(Name) :- sub_atom(Name, 0, _, _, '__gen_').
+anonymous_minted_enum(Name) :- sub_atom(Name, 0, _, _, '__anon_').
+renderable_enum(Name) :- \+ compiler_helper_rel(Name).
+renderable_enum(Name) :- generic_minted_enum(Name).
+renderable_enum(Name) :- anonymous_minted_enum(Name).
 concrete_rel(Rows, RelId) :-
     memberchk(row(_, RelId, _, _, concrete_type, _, _, _, _, _, _), Rows).
 

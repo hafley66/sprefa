@@ -55,7 +55,8 @@ expand_generic_program_with_bindings(prog(Decls0, Rules0), Bindings,
     expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
-    normalize_key_wrappers(AnonymousDecls, KeyNormalizedDecls),
+    merge_anonymous_enum_type_rows(AnonymousDecls, AnonymousEnumRowedDecls),
+    normalize_key_wrappers(AnonymousEnumRowedDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
@@ -73,13 +74,39 @@ expand_generic_program_raw(prog(Decls0, Rules0), prog(Decls, Rules)) :-
     expand_list_decodes(WithMintedDecls, Rules0, ExpandedRules),
     replace_generic_types(WithMintedDecls, Instances, RewrittenDecls),
     expand_anonymous_decls(RewrittenDecls, AnonymousDecls),
-    normalize_key_wrappers(AnonymousDecls, KeyNormalizedDecls),
+    merge_anonymous_enum_type_rows(AnonymousDecls, AnonymousEnumRowedDecls),
+    normalize_key_wrappers(AnonymousEnumRowedDecls, KeyNormalizedDecls),
     generic_artifact_order(Instances, KeyNormalizedDecls, CanonicalDecls),
     merge_flavor_type_rows(Instances, CanonicalDecls, FlavorRowedDecls),
     expand_option_decls(FlavorRowedDecls, OptionDecls),
     retarget_type_decl_mirrors(OptionDecls, ExpandedDecls),
     elaborate_and_erase_compiler_relations(ExpandedDecls, ExpandedRules, [],
                                            Decls, Rules).
+
+% Anonymous sums materialize after the source enum row pass has already been
+% planned.  Their declaration row exists from anonymous expansion; variant
+% declaration/member rows are added here before enum lowering erases the
+% source enum_decl/2 term.  Catalog type emitters recover tagged union fields
+% from these rows.
+merge_anonymous_enum_type_rows(Decls0, Decls) :-
+    findall(enum_decl(Name, Variants),
+            ( member(anonymous_generated_decl(Name), Decls0),
+              member(enum_decl(Name, Variants), Decls0) ),
+            AnonymousEnums),
+    enum_type_rows(AnonymousEnums, EnumRows),
+    (   EnumRows == []
+    ->  Decls = Decls0
+    ;   memberchk(semantic_type_rows(_), Decls0)
+    ->  maplist(merge_anonymous_enum_type_rows_(EnumRows), Decls0, Decls)
+    ;   append(Decls0, [semantic_type_rows(EnumRows)], Decls)
+    ).
+
+merge_anonymous_enum_type_rows_(EnumRows, semantic_type_rows(Rows0),
+                                semantic_type_rows(Rows)) :-
+    !,
+    append(Rows0, EnumRows, Unsorted),
+    sort(Unsorted, Rows).
+merge_anonymous_enum_type_rows_(_, Decl, Decl).
 
 % `decode(Parts, [... Part])` over a list(T) source is a keyed read of the
 % minted member rel, and becomes that atom for BOTH doors here.
@@ -331,7 +358,7 @@ enum_template_definitions(Decls, Templates) :-
 
 enum_template_instances(Decls, Templates, Instances) :-
     findall(Application,
-            ( member(col_type(_, _, Type), Decls),
+            ( generic_source_type(Decls, Type),
               sub_term(Application, Type),
               compound(Application),
               functor(Application, Name, Arity),
@@ -345,7 +372,7 @@ enum_template_instances(Decls, Templates, Instances) :-
 % generic-product templates use (generic_template_arity), checked at discovery
 % so a malformed application is refused even when no well-formed one exists.
 check_enum_template_application_arities(Decls, Templates) :-
-    ( member(col_type(_, _, Type), Decls),
+    ( generic_source_type(Decls, Type),
       sub_term(Application, Type),
       compound(Application),
       functor(Application, Name, Actual),
@@ -1313,7 +1340,7 @@ user_template_fixpoint(Decls, Templates, Seen, AllDecls, Instances) :-
 
 user_template_instances(Decls, Templates, Instances) :-
     findall(Application,
-            ( member(col_type(_, _, Type), Decls),
+            ( generic_source_type(Decls, Type),
               sub_term(Application, Type),
               compound(Application),
               functor(Application, Name, Arity),
@@ -1324,7 +1351,7 @@ user_template_instances(Decls, Templates, Instances) :-
     sort(Found, Instances).
 
 check_template_application_arities(Decls, Templates) :-
-    ( member(col_type(_, _, Type), Decls),
+    ( generic_source_type(Decls, Type),
       sub_term(Application, Type),
       compound(Application),
       functor(Application, Name, Actual),
@@ -1470,7 +1497,25 @@ rewrite_user_template_decl(Instances,
                            col_type(Ref, Column, Type)) :-
     !,
     rewrite_user_template_type(Instances, Type0, Type).
+rewrite_user_template_decl(Instances, enum_decl(Name, Variants0),
+                           enum_decl(Name, Variants)) :-
+    !,
+    rewrite_user_template_enum_variants(Instances, Variants0, Variants).
 rewrite_user_template_decl(_, Decl, Decl).
+
+rewrite_user_template_enum_variants(Instances, (Left0 ; Right0),
+                                    (Left ; Right)) :-
+    !,
+    rewrite_user_template_enum_variants(Instances, Left0, Left),
+    rewrite_user_template_enum_variants(Instances, Right0, Right).
+rewrite_user_template_enum_variants(Instances, Variant0, Variant) :-
+    Variant0 =.. [Name | Fields0],
+    maplist(rewrite_user_template_enum_field(Instances), Fields0, Fields),
+    Variant =.. [Name | Fields].
+
+rewrite_user_template_enum_field(Instances, FieldName:Type0,
+                                 FieldName:Type) :-
+    rewrite_user_template_type(Instances, Type0, Type).
 
 rewrite_user_template_type(Instances, Type0, Type) :-
     memberchk(Type0, Instances),
@@ -1533,13 +1578,22 @@ generic_fixpoint_(Decls, MintedSoFar, AllDecls, Instances) :-
     ).
 
 generic_type_instances(Decls, Instances) :-
-    findall(Type, ( member(col_type(_, _, Type), Decls), generic_type(Type) ),
+    findall(Type, ( generic_source_type(Decls, Type), generic_type(Type) ),
             Found),
     maplist(check_ground_generic, Found),
     findall(Instance,
             ( member(Type, Found), generic_dependency(Type, Instance) ),
             FoundInstances),
     sort(FoundInstances, Instances).
+
+% Before enum lowering, payload fields live inside enum_decl/2 rather than as
+% col_type/3.  Generic applications therefore use the same source walk in
+% ordinary columns and enum payloads.
+generic_source_type(Decls, Type) :-
+    member(col_type(_, _, Type), Decls).
+generic_source_type(Decls, Type) :-
+    member(enum_decl(_, Variants), Decls),
+    enum_payload_type(Variants, Type).
 
 generic_type(list(_)).
 generic_type(list_entity_dense_sequence(_)).
