@@ -132,6 +132,10 @@ rel relation_id_column(column_id: int).
 relation_id_column(ColumnId) <-
   type_storage(column_id: ColumnId, local_name: 'relation_id').
 
+rel has_relation_id(value: int).
+has_relation_id(1) <- relation_id_column(_).
+has_relation_id(1) <- type_row(kind: 'relation_id_list').
+
 rel relation_id_type(column_id: int, text: text).
 relation_id_type(ColumnId, Text) <-
   relation_id_column(ColumnId),
@@ -157,6 +161,7 @@ list_element(Id, Text) <- option_of_leaf(Id, Text).
 rel list_row(id: int, element_id: int).
 list_row(Id, ElemId) <- type_row(Id, kind: 'json_list', type_id: ElemId).
 list_row(Id, ElemId) <- type_row(Id, kind: 'list', type_id: ElemId).
+list_row(Id, ElemId) <- type_row(Id, kind: 'relation_id_list', type_id: ElemId).
 
 # Step 1 is the outermost wrap, inner_id what is left inside after that many.
 # The head carries an int: lower.pl:5258 stops a built text in a recursive head.
@@ -171,7 +176,18 @@ list_step(Id, Step, InnerId) <-
 rel list_innermost(list_id: int, element_text: text).
 list_innermost(Id, ElementText) <-
   list_step(Id, _, InnerId),
+  not(list_relation_id_terminal(Id, _)),
   list_element(InnerId, ElementText).
+
+rel list_relation_id_terminal(list_id: int, target_id: int).
+list_relation_id_terminal(Id, TargetId) <-
+  list_step(Id, _, RelationIdList),
+  type_row(id: RelationIdList, kind: 'relation_id_list', type_id: TargetId).
+
+list_innermost(Id, ElementText) <-
+  list_relation_id_terminal(Id, TargetId),
+  emitted_type_name(TargetId, Target),
+  ElementText := concat(['RelationId<\'', Target, '\'>']).
 
 # One opener and one closer per step, folded by group_concat, so nesting
 # carries no depth bound.
@@ -320,7 +336,7 @@ rendered_type('Option', 0, 0,
 
 rendered_type('RelationId', 0, -1,
               'declare const __dl6RelationId: unique symbol;\nexport type RelationId<T extends string> = number & { readonly [__dl6RelationId]: T };\n') <-
-  relation_id_column(_).
+  has_relation_id(1).
 
 # An interface declaration names a capability and holds no columns, so its
 # whole text is the empty-brace pair on one line.

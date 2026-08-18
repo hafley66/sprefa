@@ -5,8 +5,13 @@ rel ValueOnly(revision: Revision).
 rel Both(revision: Revision, revision_id: Revision.id).
 rel Holder(file: File).
 rel DotId(revision_id: Revision.id).
+rel RevisionBatch(revisions: list(Revision.id)).
+rel ListedId(revision_id: Revision.id).
+rel ListedValue(revision: Revision).
 
 IdOnly(RevisionId) <- File(RevisionId, _).
 ValueOnly(Revision) <- File(Revision, _).
 Both(Revision, Revision) <- File(Revision, _).
 DotId(RevisionId) <- Holder(FileRec), RevisionId := FileRec.revision.id.
+ListedId(RevisionId) <- RevisionBatch(Revisions), decode(Revisions, [... RevisionId]).
+ListedValue(Revision) <- RevisionBatch(Revisions), decode(Revisions, [... Revision]).

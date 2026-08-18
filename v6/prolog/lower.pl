@@ -2052,6 +2052,7 @@ catalog_list_rows([ListType | Rest], ListIdMap, RelIdMap, Id, [Row | MoreRows]) 
     Row = row(Id, 0, 0, LocalName, Kind, ElementId, 0, 0, '', '', ''),
     catalog_list_rows(Rest, ListIdMap, RelIdMap, NextId, MoreRows).
 
+list_row_kind(list(id(Element)), relation_id_list, Element) :- !.
 list_row_kind(json_list(Element), json_list, Element).
 list_row_kind(list(Element), list, Element).
 
@@ -2061,6 +2062,8 @@ list_element_type_id(json_list(Inner), ListIdMap, _RelIdMap, TypeId) :- !,
     list_row_id(ListIdMap, json_list(Inner), TypeId).
 list_element_type_id(list(Inner), ListIdMap, _RelIdMap, TypeId) :- !,
     list_row_id(ListIdMap, list(Inner), TypeId).
+list_element_type_id(id(Element), _ListIdMap, RelIdMap, TypeId) :- !,
+    rel_row_id(RelIdMap, Element, TypeId).
 list_element_type_id(Element, _ListIdMap, RelIdMap, TypeId) :-
     catalog_type_id(Element, PrimitiveId),
     (   PrimitiveId =\= 0
@@ -2439,8 +2442,10 @@ list_intern_statement(FromSql, WhereSql, list_intern(ElementType, ArraySql),
                       Statements) :-
     canonical_type_name(list(ElementType), EntityName),
     atomic_list_concat([EntityName, member], '__', MemberName),
-    quote_ident(EntityName, QuotedEntity),
-    quote_ident(MemberName, QuotedMember),
+    table_name(EntityName/1, EntityTable),
+    table_name(MemberName/3, MemberTable),
+    quote_ident(EntityTable, QuotedEntity),
+    quote_ident(MemberTable, QuotedMember),
     interned_id_sql(ArraySql, ContentIdSql),
     list_intern_from(FromSql, From),
     list_intern_where(WhereSql, Where),
@@ -2451,14 +2456,33 @@ list_intern_statement(FromSql, WhereSql, list_intern(ElementType, ArraySql),
     format(atom(EntityInternSql),
            'INSERT OR IGNORE INTO ~w ("content") SELECT DISTINCT ~w~w~w ORDER BY ~w',
            [QuotedEntity, ContentIdSql, From, Where, ArraySql]),
+    list_member_intern_sql(ElementType, QuotedMember, MemberFrom, QuotedEntity,
+                           ContentIdSql, Where, MemberStatements),
+    append([ContentInternSql, EntityInternSql], MemberStatements, Statements).
+
+% Relation endpoints are already-local INTEGER identities. Preserve the JSON
+% array's order and duplicates in the ordinary indexed member relation without
+% routing the endpoint through the string dictionary.
+list_member_intern_sql(id(_), QuotedMember, MemberFrom, QuotedEntity,
+                       ContentIdSql, Where, [MemberInsertSql]) :- !,
+    list_relation_id_where(Where, TypedWhere),
+    format(atom(MemberInsertSql),
+           'INSERT OR IGNORE INTO ~w ("list_id", "idx", "value") SELECT e."__id", i.key, i.value FROM ~w JOIN ~w e ON e."content" = ~w~w ON CONFLICT ("list_id", "idx") DO NOTHING',
+           [QuotedMember, MemberFrom, QuotedEntity, ContentIdSql, TypedWhere]).
+list_member_intern_sql(ElementType, QuotedMember, MemberFrom, QuotedEntity,
+                       ContentIdSql, Where,
+                       [MemberValueInternSql, MemberInsertSql]) :-
+    ElementType \= id(_),
     format(atom(MemberValueInternSql),
            'INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT i.value FROM ~w~w',
            [MemberFrom, Where]),
     format(atom(MemberInsertSql),
            'INSERT OR IGNORE INTO ~w ("list_id", "idx", "value") SELECT e."__id", i.key, s."__id" FROM ~w JOIN ~w e ON e."content" = ~w JOIN "__str" s ON s."content" = i.value~w ON CONFLICT ("list_id", "idx") DO NOTHING',
-           [QuotedMember, MemberFrom, QuotedEntity, ContentIdSql, Where]),
-    Statements = [ContentInternSql, EntityInternSql, MemberValueInternSql,
-                  MemberInsertSql].
+           [QuotedMember, MemberFrom, QuotedEntity, ContentIdSql, Where]).
+
+list_relation_id_where('', ' WHERE i.type = ''integer''') :- !.
+list_relation_id_where(Where, TypedWhere) :-
+    format(atom(TypedWhere), '~w AND i.type = ''integer''', [Where]).
 
 list_intern_from(none, '') :- !.
 list_intern_from(FromSql, From) :- format(atom(From), ' FROM ~w', [FromSql]).
