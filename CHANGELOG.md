@@ -6,6 +6,15 @@ tags consumed by cargo-dist.
 
 ## [Unreleased]
 
+### Changed
+- DL6 executable targets now separate authored relation names from physical
+  SQLite storage names. Tables and their delta, frontier, reference, aggregate,
+  and recursive helpers receive normalized module-path prefixes; SQLite
+  case-folding collisions receive deterministic numeric suffixes. TypeScript
+  plans and Rust `ProgramJson` retain the authored relation name alongside the
+  physical table name. Multi-module integration fixtures compile and execute
+  the same arrivals and derived rows through both SQLite runtimes.
+
 ## [0.12.0] - 2026-07-21
 
 ### Added
