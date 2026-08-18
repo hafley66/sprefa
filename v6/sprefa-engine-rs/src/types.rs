@@ -583,6 +583,18 @@ pub struct HostPlanData {
     pub response_type: Option<HostTypeDescriptor>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HostAdapterRow {
+    pub adapter: String,
+    pub demand_rel: String,
+    pub response_rel: String,
+}
+
+pub fn load_host_adapter_rows(path: impl AsRef<std::path::Path>) -> std::io::Result<Vec<HostAdapterRow>> {
+    let text = std::fs::read_to_string(path)?;
+    serde_json::from_str(&text).map_err(std::io::Error::other)
+}
+
 // The serde mirror of the emitted program: one JSON object per fixture.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProgramJson {

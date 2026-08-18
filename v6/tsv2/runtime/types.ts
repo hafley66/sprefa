@@ -672,6 +672,31 @@ export interface IHostPlan {
   readonly response_type?: IHostTypeDescriptor;
 }
 
+export interface IHostDemand {
+  readonly plan: IHostPlan;
+  readonly witness_digest: string;
+  readonly inputs: ReadonlyMap<string, IRowValue>;
+}
+
+export interface IProcessSpec {
+  readonly argv: readonly string[];
+  readonly env: Readonly<Record<string, string>>;
+  readonly stdin?: string;
+}
+
+export interface IProcessAdapter {
+  readonly name: string;
+  readonly applicative: boolean;
+  command(demand: IHostDemand): IProcessSpec;
+  decode(stdout: string, plan: IHostPlan): readonly IRowValue[][];
+}
+
+export interface IHostAdapterRow {
+  readonly adapter: string;
+  readonly demand_rel: string;
+  readonly response_rel: string;
+}
+
 /**
  * One `bind_decl` as emitted data. `literals` is the program's own statement
  * about WHICH INSTANCES of the world source it consumes: the distinct literals

@@ -16,9 +16,7 @@
             wrapper_lower_role/3,
             bind_definition/2,
             bind_executor/2,
-            host_executor/2,
             host_execution/3,
-            host_executor_contract/2,
             host_input_contract/3,
             host_input_roles/3,
             http_route/3,
@@ -327,72 +325,8 @@ bind_definition(watch,    [col(glob, text), col(path, text), col(digest, text)])
 bind_executor(interval, live_interval).
 bind_executor(watch,    live_watch).
 
-% `sh` remains the only host declaration surface. The emitted plan holds this
-% target-neutral key. `extract` is the existing extraction declaration name;
-% its input is fixed, while its output stays the declaration's JSONL projection.
-host_executor(extract, sprefa_extract) :- !.
-host_executor(_,       shell).
-
-% Execution is selected from the declaration as a whole. The old name-based
-% `extract` row remains for compatibility, while every fixed
-% `$DL_EXTRACT_BIN ... {path}` declaration uses the same target-neutral
-% executor regardless of which named projection receives its stdout.
-%
-% REPO-SCOPED EXTRACTION (ruling repo_column_spelling = distinct_name_hosts,
-% applied one level down). A crawl runs the extractor against files in ANOTHER
-% working tree, so its template reads `{repo}/{path}` and its input list is
-% three columns wide. That is a different contract, and it gets a DIFFERENT
-% EXECUTOR NAME rather than a widened `sprefa_extract` row: the contract's
-% exact positional list is what pins which declarations the batching below is
-% allowed to fold, and loosening it to "two or three columns" would silently
-% admit a two-column declaration whose first column happened to be named repo.
-%
-% The clause order is the whole selection: a repo template ALSO ends in
-% `{path}` when it ends in the file at all, and would otherwise be claimed by
-% the unscoped row and then thrown out by its contract (measured:
-% `host_executor_mismatch`, which is what a cold author saw before this row
-% existed).
-%
-% CONTAINS, not ends-with, and the difference is a real declaration: the crawl
-% bench's extraction host writes
-% `"$DL_EXTRACT_BIN" ... {repo}/{path} >/dev/null && printf '%s\n' '{path}'`
-% so that it answers ONE row per file rather than the extractor's whole JSONL.
-% That is still the extractor run against `{repo}/{path}`; requiring the file
-% to be the last thing on the line would have refused it for punctuation.
-%
-% THE ALTERNATIVE, priced and not taken: let the repo-scoped declaration fall
-% to the generic `shell` executor. That needs no row at all -- writing the
-% template as `'{repo}/{path}'` already fails the suffix test -- and it costs
-% the applicative fold, so N named projections over one file become N
-% subprocesses instead of one. It also makes a QUOTING CHARACTER decide which
-% executor runs, which is the kind of silence this repo files as a defect.
-% Source mutations retain the ordinary `sh` declaration syntax and use two
-% fixed names. Their Rust executor owns the durable stage store and commit
-% journal in-process. `request` is one complete canonical StageRequest JSON
-% value: the current language has no aggregate that can collect arbitrary
-% action rows into that value.
-host_execution(source_stage, _, soopy_mutation) :- !.
-host_execution(source_commit, _, soopy_mutation) :- !.
-host_execution(_, Template, sprefa_extract_repo) :-
-    string(Template),
-    sub_string(Template, 0, _, _, "\"$DL_EXTRACT_BIN\" "),
-    sub_string(Template, _, 13, 0, "{repo}/{path}"),
-    !.
-host_execution(Name, Template, sprefa_extract) :-
-    ( Name == extract
-    ; string(Template),
-      sub_string(Template, 0, _, _, "\"$DL_EXTRACT_BIN\" "),
-      sub_string(Template, _, 6, 0, "{path}")
-    ),
-    !.
+% `sh` is shorthand for a shell-executed host and nothing else.
 host_execution(_, _, shell).
-
-host_executor_contract(sprefa_extract,
-                       [col(path, text), col(digest, text)]).
-host_executor_contract(sprefa_extract_repo,
-                       [col(repo, text), col(path, text), col(digest, text)]).
-host_executor_contract(soopy_mutation, _).
-host_executor_contract(shell, _).
 
 % Ordinary `sh` inputs can serve two existing internal host roles. Identity
 % inputs participate in both demand identity and witness digests and return on

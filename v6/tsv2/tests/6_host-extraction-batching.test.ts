@@ -14,6 +14,7 @@ import { ScratchStore } from "../runtime/scratchStore.ts";
 import type {
   IArrivalBatch,
   IHostEffectDone,
+  IProcessAdapter,
   IHostPlan,
   ILiveEngine,
   IRow,
@@ -54,12 +55,6 @@ const EXTRACT_STDOUT = [
     ty: "number",
   }),
 ].join("\n");
-
-type Executor = (
-  host: string,
-  command_line: string,
-  env: Record<string, string>,
-) => Observable<string>;
 
 type Scenario = {
   readonly effects: readonly IHostEffectDone[];
@@ -190,21 +185,31 @@ async function run_scenario(
   let host_runs = 0;
   let extractor_runs = 0;
 
-  const executors = new Map<string, Executor>([
+  const executors = new Map<string, IProcessAdapter>([
     [
       "shell",
-      (host) => {
-        host_runs += 1;
-        if (host === "resolve_at") extractor_runs += 1;
-        return of("");
+      {
+        name: "shell",
+        applicative: false,
+        command(demand) {
+          host_runs += 1;
+          if (demand.plan.name === "resolve_at") extractor_runs += 1;
+          return { argv: [], env: {}, stdin: "" };
+        },
+        decode() { return []; },
       },
     ],
     [
       "sprefa_extract",
-      () => {
-        host_runs += 1;
-        extractor_runs += 1;
-        return of(EXTRACT_STDOUT);
+      {
+        name: "sprefa_extract",
+        applicative: true,
+        command() {
+          host_runs += 1;
+          extractor_runs += 1;
+          return { argv: [], env: {}, stdin: EXTRACT_STDOUT };
+        },
+        decode(_stdout, plan) { return [plan.outputs.map(() => "")]; },
       },
     ],
   ]);

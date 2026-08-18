@@ -49,7 +49,11 @@ import type {
   IArrivalRow,
   IHostColumnPlan,
   IHostEffectDone,
+  IHostDemand,
+  IHostAdapterRow,
   IHostPlan,
+  IProcessAdapter,
+  IProcessSpec,
   ILiveEngine,
   IRow,
   IRowValue,
@@ -224,9 +228,15 @@ function envForInputs(inputs: ReadonlyMap<string, IRowValue>): Record<string, st
   return variables;
 }
 
-function runShellLine(host: string, commandLine: string, env: Record<string, string>): Observable<string> {
+function runProcess(host: string, spec: IProcessSpec): Observable<string> {
   return new Observable<string>((subscriber) => {
-    const child = spawn(commandLine, [], { shell: true, env: { ...process.env, ...env } });
+    const [command, ...args] = spec.argv;
+    if (!command) {
+      subscriber.next(spec.stdin ?? "");
+      subscriber.complete();
+      return undefined;
+    }
+    const child = spawn(command, args, { shell: false, env: { ...process.env, ...spec.env } });
     let stdout = "";
     let stderr = "";
     child.stdout?.on("data", (chunk: Buffer) => {
@@ -238,57 +248,17 @@ function runShellLine(host: string, commandLine: string, env: Record<string, str
     child.on("error", (failure) => subscriber.error(failure));
     child.on("close", (code) => {
       if (code !== 0) {
-        subscriber.error(new Error(`sh host '${host}' exited ${code}: ${stderr.trim()}`));
+        subscriber.error(new Error(`host '${host}' exited ${code}: ${stderr.trim()}`));
         return;
       }
       subscriber.next(stdout);
       subscriber.complete();
     });
+    if (spec.stdin !== undefined) child.stdin?.end(spec.stdin);
     return () => child.kill();
   });
 }
 
-type HostExecutor = (host: string, commandLine: string, env: Record<string, string>) => Observable<string>;
-
-function runSprefaExtract(host: string, commandLine: string, env: Record<string, string>): Observable<string> {
-  return runShellLine(host, commandLine, env);
-}
-
-/**
- * The Rust target links Soopy's stage store and commit engine in-process.
- * The TypeScript target has no Rust FFI boundary, so it returns one ordinary
- * capability-refusal row instead of spawning the template or duplicating the
- * mutation engine. The declared source-mutation fixture exposes this outcome
- * as data for callers that selected the TS target.
- */
-function runSoopyMutation(host: string): Observable<string> {
-  const detail = "soopy_mutation requires the Rust runtime target";
-  const row = host === "source_stage"
-    ? { stage_id: "", outcome: "unsupported", detail, document: [] }
-    : { outcome: "unsupported", detail, document: {} };
-  return of(JSON.stringify(row));
-}
-
-/** Executor registry. `sprefa_extract` retains the declaration's current
- * subprocess command while isolating the V6.2 process boundary from DL6.
- * `sprefa_extract_repo` is the repo-scoped twin (ruling repo_column_spelling =
- * distinct_name_hosts): same subprocess, different declared contract, and the
- * compiler picks between them from the template (registry.pl host_execution). */
-export const HostExecutors: ReadonlyMap<string, HostExecutor> = new Map([
-  ["shell", runShellLine],
-  ["sprefa_extract", runSprefaExtract],
-  ["sprefa_extract_repo", runSprefaExtract],
-  ["soopy_mutation", runSoopyMutation],
-]);
-
-/**
- * The executors whose invocations may be FOLDED (see groupInvocations). This is
- * a set and not a `=== "sprefa_extract"` test because the repo-scoped twin
- * earns the fold on the same argument -- its command is a pure read of a file
- * that the demand row already names -- and a name test that silently excluded
- * it would have cost one subprocess per named projection with nothing saying so.
- */
-const ApplicativeExecutors: ReadonlySet<string> = new Set(["sprefa_extract", "sprefa_extract_repo"]);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Output decode. Three shapes, tried in order: a JSON array of objects, JSON
@@ -461,16 +431,80 @@ function decodeOutput(host: string, stdout: string, outputs: readonly IHostColum
   return parseWhitespace(host, trimmed, outputs);
 }
 
+const ShellAdapter: IProcessAdapter = {
+  name: "shell",
+  applicative: false,
+  command(demand) {
+    return {
+      argv: ["sh", "-c", fillTemplate(demand.plan.template, demand.inputs)],
+      env: envForInputs(demand.inputs),
+    };
+  },
+  decode(stdout, plan) {
+    return decodeOutput(plan.name, stdout, plan.outputs);
+  },
+};
+
+const SprefaExtractAdapter: IProcessAdapter = {
+  name: "sprefa_extract",
+  applicative: true,
+  command(demand) {
+    const path = String(demand.inputs.get("path") ?? "");
+    const repo = demand.inputs.get("repo");
+    const flags = String(demand.inputs.get("flags") ?? "").split(" ").filter(Boolean);
+    return {
+      argv: [process.env.DL_EXTRACT_BIN ?? "extract", ...flags, repo === undefined ? path : `${repo}/${path}`],
+      env: {},
+    };
+  },
+  decode(stdout, plan) {
+    return decodeOutput(plan.name, stdout, plan.outputs);
+  },
+};
+
+const SoopyAdapter: IProcessAdapter = {
+  name: "soopy",
+  applicative: false,
+  command(demand) {
+    const detail = "soopy requires the Rust runtime target"; // hosts.rs:47
+    const row = demand.plan.name === "source_stage"
+      ? { stage_id: "", outcome: "unsupported", detail, document: [] }
+      : { outcome: "unsupported", detail, document: {} };
+    return { argv: [], env: {}, stdin: JSON.stringify(row) };
+  },
+  decode(stdout, plan) {
+    return decodeOutput(plan.name, stdout, plan.outputs);
+  },
+};
+
+const BoopAdapter: IProcessAdapter = {
+  name: "boop",
+  applicative: false,
+  command(demand) {
+    return {
+      argv: ["boop", "host", "oneshot"],
+      env: {},
+      stdin: JSON.stringify(Object.fromEntries(demand.inputs)),
+    };
+  },
+  decode(stdout, plan) {
+    return decodeOutput(plan.name, stdout, plan.outputs);
+  },
+};
+
+export const ProcessAdapters: ReadonlyMap<string, IProcessAdapter> = new Map([
+  [ShellAdapter.name, ShellAdapter],
+  [SprefaExtractAdapter.name, SprefaExtractAdapter],
+  [SoopyAdapter.name, SoopyAdapter],
+  [BoopAdapter.name, BoopAdapter],
+]);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HostRunner.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** One demand row, already split into the parts the run needs. */
-type HostDemand = {
-  readonly plan: IHostPlan;
-  readonly witness_digest: string;
-  readonly inputs: ReadonlyMap<string, IRowValue>;
-};
+type HostDemand = IHostDemand & { readonly adapter: IProcessAdapter };
 
 type HostInvocation = {
   readonly demands: readonly HostDemand[];
@@ -489,8 +523,7 @@ function invocationKey(demand: HostDemand): string {
     demand.inputs.get(input.name) ?? "",
   ]);
   return JSON.stringify([
-    demand.plan.execution,
-    demand.plan.template,
+    demand.adapter.name,
     orderedInputs,
   ]);
 }
@@ -505,7 +538,7 @@ function groupInvocations(demands: readonly HostDemand[]): readonly HostInvocati
   const groups: HostInvocation[] = [];
   const extractGroupByKey = new Map<string, HostDemand[]>();
   for (const demand of demands) {
-    if (!ApplicativeExecutors.has(demand.plan.execution)) {
+    if (!demand.adapter.applicative) {
       groups.push({ demands: [demand] });
       continue;
     }
@@ -531,10 +564,11 @@ export class HostRunner implements IHostRunner {
     private readonly engine: ILiveEngine,
     private readonly seam: ISqlSeam,
     plans: readonly IHostPlan[],
-    private readonly executors: ReadonlyMap<string, HostExecutor> = HostExecutors,
+    private readonly adapters: ReadonlyMap<string, IProcessAdapter> = ProcessAdapters,
+    private readonly adapter_rows: readonly IHostAdapterRow[] = [],
   ) {
-    const executable = plans.filter((plan) => executors.has(plan.execution));
-    const refused = plans.filter((plan) => !executors.has(plan.execution));
+    const executable = plans.filter((plan) => this.adapterFor(plan) !== undefined);
+    const refused = plans.filter((plan) => this.adapterFor(plan) === undefined);
     this.effects$ =
       executable.length === 0 && refused.length === 0
         ? EMPTY
@@ -543,7 +577,7 @@ export class HostRunner implements IHostRunner {
             // than skipped in silence.
             from(refused).pipe(
               map((plan): IHostEffectDone => {
-                throw new Error(`unknown host executor '${plan.execution}' for host '${plan.name}'`);
+                throw new Error(`unknown process adapter for host '${plan.name}'`);
               }),
             ),
             merge(this.bootDemand$(executable), this.liveDemand$(executable)).pipe(
@@ -598,6 +632,14 @@ export class HostRunner implements IHostRunner {
     );
   }
 
+  private adapterFor(plan: IHostPlan): IProcessAdapter | undefined {
+    if (plan.execution !== "shell") return this.adapters.get(plan.execution);
+    const row = this.adapter_rows.find((candidate) =>
+      candidate.demand_rel === plan.demand_rel && candidate.response_rel === plan.response_rel,
+    );
+    return this.adapters.get(row?.adapter ?? plan.execution);
+  }
+
   private demandOf(plan: IHostPlan, row: IRow): HostDemand {
     const columns = this.engine.program.rel_columns[plan.demand_rel] ?? [];
     const inputs = new Map<string, IRowValue>();
@@ -606,7 +648,9 @@ export class HostRunner implements IHostRunner {
       inputs.set(input.name, index >= 0 ? (row[index] ?? "") : "");
     }
     const witness_index = columns.indexOf("witness_digest");
-    return { plan, witness_digest: String(row[witness_index] ?? ""), inputs };
+    const adapter = this.adapterFor(plan);
+    if (!adapter) throw new Error(`unknown process adapter for host '${plan.name}'`);
+    return { plan, witness_digest: String(row[witness_index] ?? ""), inputs, adapter };
   }
 
   private claimOnce(demand: HostDemand): boolean {
@@ -619,7 +663,7 @@ export class HostRunner implements IHostRunner {
   private project(demand: HostDemand, stdout: string): HostProjection {
     const { plan, witness_digest: witnessDigest } = demand;
     try {
-      const outputRows = decodeOutput(plan.name, stdout, plan.outputs);
+      const outputRows = demand.adapter.decode(stdout, plan);
       const response_columns = this.engine.program.rel_columns[plan.response_rel] ?? [];
       const arrivals: IArrivalRow[] = outputRows.map((outputRow, ordinal) => ({
         rel: plan.response_rel,
@@ -698,15 +742,7 @@ export class HostRunner implements IHostRunner {
       ),
       toArray(),
       concatMap(() => {
-        const executor = this.executors.get(first.plan.execution);
-        if (!executor) {
-          throw new Error(`unknown host executor '${first.plan.execution}' for host '${first.plan.name}'`);
-        }
-        return executor(
-          first.plan.name,
-          fillTemplate(first.plan.template, first.inputs),
-          envForInputs(first.inputs),
-        );
+        return runProcess(first.plan.name, first.adapter.command(first));
       }),
       concatMap((stdout) => {
         const projections = invocation.demands.map((demand) => this.project(demand, stdout));

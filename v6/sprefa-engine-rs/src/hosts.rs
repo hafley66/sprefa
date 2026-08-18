@@ -16,7 +16,7 @@ use crate::dep_resolve::{
     DEP_VISITED_COLUMNS,
 };
 use crate::types::{
-    Arrival, ArrivalSign, BoundaryError, HostColumnPlan, HostPlanData, ScalarSeam, ScalarValue,
+    Arrival, ArrivalSign, BoundaryError, HostAdapterRow, HostColumnPlan, HostPlanData, ScalarSeam, ScalarValue,
     TickDeltas, Value,
 };
 
@@ -44,7 +44,7 @@ pub trait IHostExecutor: Sync {
 pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
     match execution {
         "shell" => Some(&ShellExecutor),
-        "soopy_mutation" => Some(&SoopyMutationExecutor),
+        "soopy" => Some(&SoopyMutationExecutor),
         // The linked twin: sprefa-extract runs in this process, no child spawn.
         "sprefa_extract" | "sprefa_extract_repo" => Some(&*EXTRACT),
         _ => None,
@@ -56,29 +56,6 @@ pub fn executor_for(execution: &str) -> Option<&'static dyn IHostExecutor> {
 // Rust live runner recognizes these four ruled names and delegates their Git
 // mechanics to Soopy instead of spawning the emitted pipeline.
 fn executor_for_plan(plan: &HostPlanData) -> Option<&'static dyn IHostExecutor> {
-    if plan.execution == "soopy_mutation" {
-        return Some(&SoopyMutationExecutor);
-    }
-    if plan.execution == "shell"
-        && matches!(
-            plan.name.as_str(),
-            "files" | "files_at" | "repo_files" | "repo_files_at"
-        )
-    {
-        return Some(&SoopyFilesExecutor);
-    }
-    if plan.execution == "shell" && DEP_CRAWL_HOSTS.contains(&plan.name.as_str()) {
-        return Some(&*DEP_CRAWL);
-    }
-    if plan.execution == "shell" && GIT_REF_HOSTS.contains(&plan.name.as_str()) {
-        return Some(&*GIT_REFS);
-    }
-    if plan.execution == "shell" && GIT_REVISION_HOSTS.contains(&plan.name.as_str()) {
-        return Some(&*GIT_REVISIONS);
-    }
-    if plan.execution == "shell" && GIT_CHANGE_HOSTS.contains(&plan.name.as_str()) {
-        return Some(&*GIT_CHANGES);
-    }
     executor_for(&plan.execution)
 }
 
@@ -1697,6 +1674,7 @@ struct HostDemand<'p> {
 pub struct HostLiveRunner<'p> {
     plans: Vec<&'p HostPlanData>,
     rel_columns: &'p HashMap<String, Vec<String>>,
+    adapter_rows: Vec<HostAdapterRow>,
     claimed: HashSet<String>,
 }
 
@@ -1707,23 +1685,45 @@ impl<'p> HostLiveRunner<'p> {
         plans: &'p [HostPlanData],
         rel_columns: &'p HashMap<String, Vec<String>>,
     ) -> Result<Self, HostError> {
+        Self::with_adapter_rows(plans, rel_columns, &[])
+    }
+
+    pub fn with_adapter_rows(
+        plans: &'p [HostPlanData],
+        rel_columns: &'p HashMap<String, Vec<String>>,
+        adapter_rows: &[HostAdapterRow],
+    ) -> Result<Self, HostError> {
         for plan in plans {
-            if executor_for_plan(plan).is_none() {
+            let execution = adapter_rows
+                .iter()
+                .find(|row| row.demand_rel == plan.demand_rel && row.response_rel == plan.response_rel)
+                .map(|row| row.adapter.as_str())
+                .unwrap_or(&plan.execution);
+            if executor_for(execution).is_none() {
                 return Err(HostError {
                     host: plan.name.clone(),
-                    message: format!("unknown host executor '{}'", plan.execution),
+                    message: format!("unknown process adapter '{execution}'"),
                 });
             }
         }
         Ok(HostLiveRunner {
             plans: plans.iter().collect(),
             rel_columns,
+            adapter_rows: adapter_rows.to_vec(),
             claimed: HashSet::new(),
         })
     }
 
     pub fn has_plans(&self) -> bool {
         !self.plans.is_empty()
+    }
+
+    fn execution_for(&self, plan: &HostPlanData) -> String {
+        self.adapter_rows
+            .iter()
+            .find(|row| row.demand_rel == plan.demand_rel && row.response_rel == plan.response_rel)
+            .map(|row| row.adapter.clone())
+            .unwrap_or_else(|| plan.execution.clone())
     }
 
     // The one place a demand row's values become template arguments, so the
@@ -1749,7 +1749,7 @@ impl<'p> HostLiveRunner<'p> {
                 .position(|column| *column == input.name)
                 .and_then(|index| row.get(index).cloned())
                 .unwrap_or(Value::Text(String::new()));
-            let scalar = if plan.execution == "shell" {
+            let scalar = if self.execution_for(plan) == "shell" {
                 ShellHostAdapter::input(&plan.name, input, &value)?
             } else {
                 // Native executors own their typed decode seam.  The current
@@ -1865,7 +1865,8 @@ impl<'p> HostLiveRunner<'p> {
         let mut groups: Vec<Vec<&HostDemand<'p>>> = Vec::new();
         for demand in &claimed {
             reject_binary_host_transport(&demand.plan.name, &demand.inputs)?;
-            if !is_applicative(&demand.plan.execution) {
+            let execution = self.execution_for(demand.plan);
+            if !is_applicative(&execution) {
                 groups.push(vec![demand]);
                 continue;
             }
@@ -1885,8 +1886,8 @@ impl<'p> HostLiveRunner<'p> {
                 })
                 .collect();
             let key = format!(
-                "{}|{}|{:?}",
-                demand.plan.execution, demand.plan.template, ordered_inputs
+                "{}|{:?}",
+                execution, ordered_inputs
             );
             match group_index.get(&key) {
                 Some(&index) => groups[index].push(demand),
@@ -1898,7 +1899,8 @@ impl<'p> HostLiveRunner<'p> {
         }
         for group in groups {
             let first = group[0];
-            let executor = executor_for_plan(first.plan).expect("validated at construction");
+            let execution = self.execution_for(first.plan);
+            let executor = executor_for(&execution).expect("validated at construction");
             let command_line = fill_template(&first.plan.template, &first.inputs);
             let env = env_for_inputs(&first.inputs);
             let stdout = executor.run(&first.plan.name, &command_line, &env)?;
