@@ -19,7 +19,8 @@
 :- use_module(library(readutil)).
 :- use_module('../../compile',
               [ read_fixture_term/4, program_plan/2, program_plan/3,
-                compile_dl6/2, compile_dl6/3, default_intern_mode/1,
+                compile_dl6/2, compile_dl6/3, compile_program/6,
+                default_intern_mode/1,
                 dl6_seeded_form/3,
                 compiler_owned_contract/1 ]).
 :- use_module('../../0_unsupported_messages',
@@ -8384,7 +8385,67 @@ test(enum_option_and_list_mints_use_entry_storage_prefix) :-
     sub_string(Text, _, _, _, 'CREATE TABLE "main___opt_int_none"'),
     sub_string(Text, _, _, _, 'CREATE TABLE "main___gen__list_text_').
 
+% FAIL-FIRST EVIDENCE: with the entry compilation unit read only off
+% entry_module_decl/1, a program carrying no module decls at all took no
+% prefix, so this comparison read `CREATE TABLE "Root"` against
+% `CREATE TABLE "main_Root"`, and all 349 fixtures compared by
+% compile/scripts/text_door_receipt.sh diverged.
+test(a_program_without_module_decls_takes_the_entry_storage_prefix) :-
+    make_use_fixture(Dir,
+        ["main.dl6" = "rel Root(value:int).\nrel leaf(value:int).\nleaf(Value) <- Root(Value).\n"]),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/text.ts'], TextOut),
+    atomic_list_concat([Dir, '/term.ts'], TermOut),
+    compile_dl6(Entry, TextOut),
+    module_free_term_program(Entry, Name, TermProg, Initial, Bindings),
+    compile_program(Name, fixture(Name, TermProg, Initial, [], []), Bindings,
+                    Initial, TermOut, emit_ts:emit_program),
+    read_file_to_string(TextOut, TextText, []),
+    read_file_to_string(TermOut, TermText, []),
+    sub_string(TermText, _, _, _, 'CREATE TABLE "main_Root"'),
+    TermText == TextText.
+
+% Both compile paths read the same resolved program, so a `use` chain reaches
+% one DDL: the imported module keeps its own path prefix, the entry keeps
+% its own.
+test(a_two_module_program_lowers_one_ddl_on_both_paths) :-
+    make_use_dir(Dir),
+    atomic_list_concat([Dir, '/a'], LeftDir),
+    make_directory_path(LeftDir),
+    write_use_file(Dir, 'a/model.dl6' = "rel First(value:int).\n"),
+    write_use_file(Dir, 'main.dl6' =
+        "use \"a/model.dl6\".\nrel Root(value:int).\nRoot(Value) <- First(Value).\n"),
+    use_entry(Dir, 'main.dl6', Entry),
+    atomic_list_concat([Dir, '/text.ts'], TextOut),
+    atomic_list_concat([Dir, '/term.ts'], TermOut),
+    compile_dl6(Entry, TextOut),
+    expand_uses(Entry, [], [], _, Prog, _, Bindings, []),
+    dl6_seeded_form(Prog, Initial, TermProg),
+    compile_program(main, fixture(main, TermProg, Initial, [], []), Bindings,
+                    Initial, TermOut, emit_ts:emit_program),
+    read_file_to_string(TextOut, TextText, []),
+    read_file_to_string(TermOut, TermText, []),
+    sub_string(TermText, _, _, _, 'CREATE TABLE "a_model_First"'),
+    sub_string(TermText, _, _, _, 'CREATE TABLE "main_Root"'),
+    TermText == TextText.
+
 :- end_tests(use_module_system).
+
+% The fixture term form of a .dl6 file: the resolved program with every
+% module bookkeeping decl dropped, which is what a conformance fixture hands
+% compile_program/6.
+module_free_term_program(Entry, Name, TermProg, Initial, Bindings) :-
+    expand_uses(Entry, [], [], _, Prog, _, Bindings, []),
+    dl6_seeded_form(Prog, Initial, prog(Decls, Rules)),
+    exclude(module_bookkeeping_decl, Decls, BareDecls),
+    file_base_name(Entry, Base),
+    file_name_extension(Name, _, Base),
+    TermProg = prog(BareDecls, Rules).
+
+module_bookkeeping_decl(module_decl(_, _)).
+module_bookkeeping_decl(module_storage_decl(_, _)).
+module_bookkeeping_decl(rel_module_decl(_, _)).
+module_bookkeeping_decl(entry_module_decl(_)).
 
 text_program_lowered(Entry, Lowered) :-
     expand_uses(Entry, [], [], _, Prog, _, Bindings, []),

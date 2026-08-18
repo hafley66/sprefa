@@ -158,25 +158,25 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "hit" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL, UNIQUE ("path", "line", "col3"))`,
-  `CREATE TEMP VIEW "__txt_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line" AS "line", t."col3" AS "col3" FROM "hit" t`,
-  `CREATE TABLE "hits" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "col2"))`,
-  `CREATE TEMP VIEW "__txt_hits" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "hits" t`,
-  `CREATE TEMP TABLE "__delta_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_hit_sign" ON "__delta_hit" ("_sign")`,
-  `CREATE INDEX "__delta_hit_group" ON "__delta_hit" ("path", "line", "col3")`,
-  `CREATE TEMP TABLE "__frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_hit_phase" ON "__frontier_hit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line" AS "line", t."col3" AS "col3", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_hit" t`,
-  `CREATE TEMP TABLE "__delta_hits" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_hits_sign" ON "__delta_hits" ("_sign")`,
-  `CREATE INDEX "__delta_hits_group" ON "__delta_hits" ("path", "col2")`,
-  `CREATE TEMP TABLE "__frontier_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_hits_phase" ON "__frontier_hits" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_hits" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."col2" AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_hits" t`,
-  `CREATE TEMP TABLE "__agg_scope_hits" ("path" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
+  `CREATE TABLE "count_is_bag_of_derivations_hit" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL, UNIQUE ("path", "line", "col3"))`,
+  `CREATE TEMP VIEW "__txt_count_is_bag_of_derivations_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line" AS "line", t."col3" AS "col3" FROM "count_is_bag_of_derivations_hit" t`,
+  `CREATE TABLE "count_is_bag_of_derivations_hits" ("__id" INTEGER PRIMARY KEY, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("path", "col2"))`,
+  `CREATE TEMP VIEW "__txt_count_is_bag_of_derivations_hits" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."col2" AS "col2", t."__refcount" AS "__refcount" FROM "count_is_bag_of_derivations_hits" t`,
+  `CREATE TEMP TABLE "__delta_count_is_bag_of_derivations_hit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_count_is_bag_of_derivations_hit_sign" ON "__delta_count_is_bag_of_derivations_hit" ("_sign")`,
+  `CREATE INDEX "__delta_count_is_bag_of_derivations_hit_group" ON "__delta_count_is_bag_of_derivations_hit" ("path", "line", "col3")`,
+  `CREATE TEMP TABLE "__frontier_count_is_bag_of_derivations_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_count_is_bag_of_derivations_hit_phase" ON "__frontier_count_is_bag_of_derivations_hit" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_count_is_bag_of_derivations_hit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "line" INTEGER NOT NULL, "col3" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_count_is_bag_of_derivations_hit" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."line" AS "line", t."col3" AS "col3", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_count_is_bag_of_derivations_hit" t`,
+  `CREATE TEMP TABLE "__delta_count_is_bag_of_derivations_hits" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_count_is_bag_of_derivations_hits_sign" ON "__delta_count_is_bag_of_derivations_hits" ("_sign")`,
+  `CREATE INDEX "__delta_count_is_bag_of_derivations_hits_group" ON "__delta_count_is_bag_of_derivations_hits" ("path", "col2")`,
+  `CREATE TEMP TABLE "__frontier_count_is_bag_of_derivations_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_count_is_bag_of_derivations_hits_phase" ON "__frontier_count_is_bag_of_derivations_hits" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_count_is_bag_of_derivations_hits" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "path" INTEGER NOT NULL, "col2" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_count_is_bag_of_derivations_hits" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."path") AS "path", t."col2" AS "col2", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_count_is_bag_of_derivations_hits" t`,
+  `CREATE TEMP TABLE "__agg_scope_count_is_bag_of_derivations_hits" ("path" INTEGER NOT NULL, PRIMARY KEY ("path")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -212,13 +212,13 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__delta_hit", kind: "delta", type_id: 0, arity: 5, module_id: 7, h_id: "c2d527e25faed220", h_schema: "87c24ad00f3d7293", h_rule: "" },
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__frontier_hit", kind: "frontier", type_id: 0, arity: 5, module_id: 7, h_id: "abfc967b6dece373", h_schema: "7f63e47cdc496fbe", h_rule: "" },
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__next_frontier_hit", kind: "next_frontier", type_id: 0, arity: 5, module_id: 7, h_id: "b23c8ef95ed95ef6", h_schema: "7f63e47cdc496fbe", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_hit", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "dfc0941ebb406b43", h_schema: "285ede7a412f208f", h_rule: "" },
-  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_hit", kind: "view", type_id: 0, arity: 5, module_id: 7, h_id: "7218ef7416e948a2", h_schema: "285ede7a412f208f", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_count_is_bag_of_derivations_hit", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "6403edc97b326d04", h_schema: "285ede7a412f208f", h_rule: "" },
+  { rel_id: 19, parent_id: 15, ordinal: 0, local_name: "__txt___delta_count_is_bag_of_derivations_hit", kind: "view", type_id: 0, arity: 5, module_id: 7, h_id: "b6553f52dc704cc5", h_schema: "285ede7a412f208f", h_rule: "" },
   { rel_id: 20, parent_id: 12, ordinal: 0, local_name: "__delta_hits", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "ca46b55cac592e54", h_schema: "987f9806230f63aa", h_rule: "" },
   { rel_id: 21, parent_id: 12, ordinal: 0, local_name: "__frontier_hits", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "da75d0a7fcf1fb28", h_schema: "be8b4dc57222d215", h_rule: "" },
   { rel_id: 22, parent_id: 12, ordinal: 0, local_name: "__next_frontier_hits", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "759135c437925536", h_schema: "be8b4dc57222d215", h_rule: "" },
-  { rel_id: 23, parent_id: 12, ordinal: 0, local_name: "__txt_hits", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "4d3018d4549b3106", h_schema: "1353c94c029aa6d3", h_rule: "" },
-  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_hits", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "d60de12681e0e1cf", h_schema: "1353c94c029aa6d3", h_rule: "" },
+  { rel_id: 23, parent_id: 12, ordinal: 0, local_name: "__txt_count_is_bag_of_derivations_hits", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "4cab3dbae158d806", h_schema: "1353c94c029aa6d3", h_rule: "" },
+  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_count_is_bag_of_derivations_hits", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "29faee72b17f38a6", h_schema: "1353c94c029aa6d3", h_rule: "" },
   { rel_id: 25, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "9434e4705842ac7f", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 12, ordinal: 0, local_name: "__agg_scope_hits", kind: "scope", type_id: 0, arity: 1, module_id: 7, h_id: "29863d635b81369b", h_schema: "8596fa45d0ad8be0", h_rule: "" },
   { rel_id: 27, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "ca1fc249c3d1f818", h_schema: "", h_rule: "" },
@@ -235,31 +235,31 @@ const arrival_targets: readonly string[] = ["hit"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["main_rs"] },
-  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["main_rs", 1, 3] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "count_is_bag_of_derivations_hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["main_rs", 1, 3] },
   { rel: "hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["main_rs"] },
-  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["main_rs", 1, 7] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "count_is_bag_of_derivations_hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["main_rs", 1, 7] },
   { rel: "hit", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["lib_rs"] },
-  { rel: "hit", sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["lib_rs", 9, 1] },
-  { rel: "hits", sql: `DELETE FROM "hits"`, params: [] },
-  { rel: "hits", sql: `INSERT OR IGNORE INTO "hits" ("path", "col2") SELECT b0."path", count(*) FROM "hit" b0 GROUP BY b0."path" HAVING count(*) > 0`, params: [] },
+  { rel: "hit", sql: `INSERT OR IGNORE INTO "count_is_bag_of_derivations_hit" ("path", "line", "col3") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?, ?)`, params: ["lib_rs", 9, 1] },
+  { rel: "hits", sql: `DELETE FROM "count_is_bag_of_derivations_hits"`, params: [] },
+  { rel: "hits", sql: `INSERT OR IGNORE INTO "count_is_bag_of_derivations_hits" ("path", "col2") SELECT b0."path", count(*) FROM "count_is_bag_of_derivations_hit" b0 GROUP BY b0."path" HAVING count(*) > 0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  hit: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line", t."col3" FROM "__txt_hit" t`,
-  hits: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."col2" FROM "__txt_hits" t`,
+  hit: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line", t."col3" FROM "__txt_count_is_bag_of_derivations_hit" t`,
+  hits: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."col2" FROM "__txt_count_is_bag_of_derivations_hits" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "hit", kind: "set", table_name: "hit", delta_table_name: "__delta_hit", frontier_table_name: "__frontier_hit", next_frontier_table_name: "__next_frontier_hit", columns: ["path", "line", "col3"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "hit" ("path", "line", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "line", "col3"`, arrival_del_sql: `DELETE FROM "hit" WHERE ("path", "line", "col3") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "path", "line", "col3"`, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line", t."col3", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_hit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."line", t."col3", t."_sign"`, rule_observers: ["hits/2"] },
-  { rel: "hits", kind: "set", table_name: "hits", delta_table_name: "__delta_hits", frontier_table_name: "__frontier_hits", next_frontier_table_name: "__next_frontier_hits", columns: ["path", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_hits" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."col2", t."_sign"`, rule_observers: [] },
+  { rel: "hit", kind: "set", table_name: "count_is_bag_of_derivations_hit", delta_table_name: "__delta_count_is_bag_of_derivations_hit", frontier_table_name: "__frontier_count_is_bag_of_derivations_hit", next_frontier_table_name: "__next_frontier_count_is_bag_of_derivations_hit", columns: ["path", "line", "col3"], column_types: ["text", "int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "count_is_bag_of_derivations_hit" ("path", "line", "col3") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?) RETURNING "path", "line", "col3"`, arrival_del_sql: `DELETE FROM "count_is_bag_of_derivations_hit" WHERE ("path", "line", "col3") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]'), json_extract(value, '$[2]') FROM json_each(?)) RETURNING "path", "line", "col3"`, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."line", t."col3", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_count_is_bag_of_derivations_hit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."line", t."col3", t."_sign"`, rule_observers: ["hits/2"] },
+  { rel: "hits", kind: "set", table_name: "count_is_bag_of_derivations_hits", delta_table_name: "__delta_count_is_bag_of_derivations_hits", frontier_table_name: "__frontier_count_is_bag_of_derivations_hits", next_frontier_table_name: "__next_frontier_count_is_bag_of_derivations_hits", columns: ["path", "col2"], column_types: ["text", "int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."path") AND json_type(t."path") = 'object' AND json_type(t."path", '$.fn') = 'text' AND json_type(t."path", '$.args') = 'array' THEN json_extract(t."path", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."path", '$.args')), '') || ')' ELSE t."path" END AS "path", t."col2", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_count_is_bag_of_derivations_hits" t WHERE t."_sign" IN (-1, 1) GROUP BY t."path", t."col2", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "hits", rule_id: "count_is_bag_of_derivations:hits/2#1", head_delta_table_name: "__delta_hits", head_columns: ["path", "col2"], insert_sql: null, select_sql: `SELECT "path", "col2" FROM "hits"`, recompute_sql: `DELETE FROM "hits";
-INSERT OR IGNORE INTO "hits" ("path", "col2") SELECT b0."path", count(*) FROM "hit" b0 GROUP BY b0."path" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_hits"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_hits" ("path") SELECT DISTINCT d0."path" FROM "__delta_hit" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "hits" WHERE ("path") IN (SELECT "path" FROM "__agg_scope_hits") RETURNING "path", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "hits" ("path", "col2") SELECT b0."path", count(*) FROM "hit" b0 WHERE (b0."path") IN (SELECT "path" FROM "__agg_scope_hits") GROUP BY b0."path" HAVING count(*) > 0 RETURNING "path", "col2"`], delta_maintained: false } },
+  { head_rel: "hits", rule_id: "count_is_bag_of_derivations:hits/2#1", head_delta_table_name: "__delta_count_is_bag_of_derivations_hits", head_columns: ["path", "col2"], insert_sql: null, select_sql: `SELECT "path", "col2" FROM "count_is_bag_of_derivations_hits"`, recompute_sql: `DELETE FROM "count_is_bag_of_derivations_hits";
+INSERT OR IGNORE INTO "count_is_bag_of_derivations_hits" ("path", "col2") SELECT b0."path", count(*) FROM "count_is_bag_of_derivations_hit" b0 GROUP BY b0."path" HAVING count(*) > 0`, support_sql: null, expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: { scope_clear_sql: `DELETE FROM "__agg_scope_count_is_bag_of_derivations_hits"`, scope_seed_sql: [`INSERT OR IGNORE INTO "__agg_scope_count_is_bag_of_derivations_hits" ("path") SELECT DISTINCT d0."path" FROM "__delta_count_is_bag_of_derivations_hit" d0 WHERE d0."_sign" IN (-1, 1)`], delete_scoped_sql: `DELETE FROM "count_is_bag_of_derivations_hits" WHERE ("path") IN (SELECT "path" FROM "__agg_scope_count_is_bag_of_derivations_hits") RETURNING "path", "col2"`, insert_scoped_sql: [`INSERT OR IGNORE INTO "count_is_bag_of_derivations_hits" ("path", "col2") SELECT b0."path", count(*) FROM "count_is_bag_of_derivations_hit" b0 WHERE (b0."path") IN (SELECT "path" FROM "__agg_scope_count_is_bag_of_derivations_hits") GROUP BY b0."path" HAVING count(*) > 0 RETURNING "path", "col2"`], delta_maintained: false } },
 ];
 
 const RECONCILE_EVERY_TICK = false;

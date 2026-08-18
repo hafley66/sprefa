@@ -157,15 +157,15 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "flag" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), UNIQUE ("name", "enabled"))`,
-  `CREATE TEMP VIEW "__txt_flag" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."enabled" AS "enabled" FROM "flag" t`,
-  `CREATE TEMP TABLE "__delta_flag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
-  `CREATE INDEX "__delta_flag_sign" ON "__delta_flag" ("_sign")`,
-  `CREATE INDEX "__delta_flag_group" ON "__delta_flag" ("name", "enabled")`,
-  `CREATE TEMP TABLE "__frontier_flag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
-  `CREATE INDEX "__frontier_flag_phase" ON "__frontier_flag" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_flag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
-  `CREATE TEMP VIEW "__txt___delta_flag" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."enabled" AS "enabled", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_flag" t`,
+  `CREATE TABLE "bool_literals_round_trip_flag" ("__id" INTEGER PRIMARY KEY, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)), UNIQUE ("name", "enabled"))`,
+  `CREATE TEMP VIEW "__txt_bool_literals_round_trip_flag" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."enabled" AS "enabled" FROM "bool_literals_round_trip_flag" t`,
+  `CREATE TEMP TABLE "__delta_bool_literals_round_trip_flag" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
+  `CREATE INDEX "__delta_bool_literals_round_trip_flag_sign" ON "__delta_bool_literals_round_trip_flag" ("_sign")`,
+  `CREATE INDEX "__delta_bool_literals_round_trip_flag_group" ON "__delta_bool_literals_round_trip_flag" ("name", "enabled")`,
+  `CREATE TEMP TABLE "__frontier_bool_literals_round_trip_flag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
+  `CREATE INDEX "__frontier_bool_literals_round_trip_flag_phase" ON "__frontier_bool_literals_round_trip_flag" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_bool_literals_round_trip_flag" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "name" INTEGER NOT NULL, "enabled" INTEGER NOT NULL CHECK ("enabled" IN (0,1)))`,
+  `CREATE TEMP VIEW "__txt___delta_bool_literals_round_trip_flag" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."name") AS "name", t."enabled" AS "enabled", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_bool_literals_round_trip_flag" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -194,8 +194,8 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__delta_flag", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "22685d1ae4550d99", h_schema: "67b17ffc3ff3e088", h_rule: "" },
   { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__frontier_flag", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "b632a1367e54db3d", h_schema: "53802fc1d9d453a7", h_rule: "" },
   { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__next_frontier_flag", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "c8a8cbd209400f2d", h_schema: "53802fc1d9d453a7", h_rule: "" },
-  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__txt_flag", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "01ab20d4942e9a2d", h_schema: "49645800ff8032d7", h_rule: "" },
-  { rel_id: 15, parent_id: 11, ordinal: 0, local_name: "__txt___delta_flag", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "3df4638befe0b8aa", h_schema: "49645800ff8032d7", h_rule: "" },
+  { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__txt_bool_literals_round_trip_flag", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "3891533c8fbf36b0", h_schema: "49645800ff8032d7", h_rule: "" },
+  { rel_id: 15, parent_id: 11, ordinal: 0, local_name: "__txt___delta_bool_literals_round_trip_flag", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "3dcd53fa73435b3e", h_schema: "49645800ff8032d7", h_rule: "" },
   { rel_id: 16, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "bc4c3f63814d66a1", h_schema: "", h_rule: "" },
   { rel_id: 17, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "7de668fde5f74183", h_schema: "", h_rule: "" },
   { rel_id: 18, parent_id: 10, ordinal: 2, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "7c0625fab3ae38fa", h_schema: "", h_rule: "" },
@@ -209,15 +209,15 @@ const arrival_targets: readonly string[] = ["flag"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "flag", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["alpha"] },
-  { rel: "flag", sql: `INSERT OR IGNORE INTO "flag" ("name", "enabled") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["alpha", true] },
+  { rel: "flag", sql: `INSERT OR IGNORE INTO "bool_literals_round_trip_flag" ("name", "enabled") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), ?)`, params: ["alpha", true] },
 ];
 
 const final_select: Record<string, string> = {
-  flag: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."enabled" FROM "__txt_flag" t`,
+  flag: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."enabled" FROM "__txt_bool_literals_round_trip_flag" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "flag", kind: "set", table_name: "flag", delta_table_name: "__delta_flag", frontier_table_name: "__frontier_flag", next_frontier_table_name: "__next_frontier_flag", columns: ["name", "enabled"], column_types: ["text", "bool"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "flag" ("name", "enabled") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "enabled"`, arrival_del_sql: `DELETE FROM "flag" WHERE ("name", "enabled") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "enabled"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."enabled", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_flag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."enabled", t."_sign"`, rule_observers: [] },
+  { rel: "flag", kind: "set", table_name: "bool_literals_round_trip_flag", delta_table_name: "__delta_bool_literals_round_trip_flag", frontier_table_name: "__frontier_bool_literals_round_trip_flag", next_frontier_table_name: "__next_frontier_bool_literals_round_trip_flag", columns: ["name", "enabled"], column_types: ["text", "bool"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "bool_literals_round_trip_flag" ("name", "enabled") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "name", "enabled"`, arrival_del_sql: `DELETE FROM "bool_literals_round_trip_flag" WHERE ("name", "enabled") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "name", "enabled"`, boundary_sql: `SELECT CASE WHEN json_valid(t."name") AND json_type(t."name") = 'object' AND json_type(t."name", '$.fn') = 'text' AND json_type(t."name", '$.args') = 'array' THEN json_extract(t."name", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."name", '$.args')), '') || ')' ELSE t."name" END AS "name", t."enabled", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_bool_literals_round_trip_flag" t WHERE t."_sign" IN (-1, 1) GROUP BY t."name", t."enabled", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

@@ -146,13 +146,13 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "score" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__delta_score_sign" ON "__delta_score" ("_sign")`,
-  `CREATE INDEX "__delta_score_group" ON "__delta_score" ("value")`,
-  `CREATE TEMP TABLE "__frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__frontier_score_phase" ON "__frontier_score" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TABLE "float_integral_value_keeps_real_storage_score" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_float_integral_value_keeps_real_storage_score" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE INDEX "__delta_float_integral_value_keeps_real_storage_score_sign" ON "__delta_float_integral_value_keeps_real_storage_score" ("_sign")`,
+  `CREATE INDEX "__delta_float_integral_value_keeps_real_storage_score_group" ON "__delta_float_integral_value_keeps_real_storage_score" ("value")`,
+  `CREATE TEMP TABLE "__frontier_float_integral_value_keeps_real_storage_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE INDEX "__frontier_float_integral_value_keeps_real_storage_score_phase" ON "__frontier_float_integral_value_keeps_real_storage_score" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_float_integral_value_keeps_real_storage_score" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -190,15 +190,15 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["score"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "score", sql: `INSERT OR IGNORE INTO "score" ("value") VALUES (?)`, params: [1.0] },
+  { rel: "score", sql: `INSERT OR IGNORE INTO "float_integral_value_keeps_real_storage_score" ("value") VALUES (?)`, params: [1.0] },
 ];
 
 const final_select: Record<string, string> = {
-  score: `SELECT t."value" FROM "score" t`,
+  score: `SELECT t."value" FROM "float_integral_value_keeps_real_storage_score" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "score", kind: "set", table_name: "score", delta_table_name: "__delta_score", frontier_table_name: "__frontier_score", next_frontier_table_name: "__next_frontier_score", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "score" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "score" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_score" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "score", kind: "set", table_name: "float_integral_value_keeps_real_storage_score", delta_table_name: "__delta_float_integral_value_keeps_real_storage_score", frontier_table_name: "__frontier_float_integral_value_keeps_real_storage_score", next_frontier_table_name: "__next_frontier_float_integral_value_keeps_real_storage_score", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "float_integral_value_keeps_real_storage_score" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "float_integral_value_keeps_real_storage_score" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_float_integral_value_keeps_real_storage_score" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

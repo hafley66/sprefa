@@ -158,15 +158,15 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "event" ("col1" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1" FROM "event" t`,
-  `CREATE TEMP TABLE "__delta_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_event_sign" ON "__delta_event" ("_sign")`,
-  `CREATE INDEX "__delta_event_group" ON "__delta_event" ("col1")`,
-  `CREATE TEMP TABLE "__frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_event_phase" ON "__frontier_event" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_event" t`,
+  `CREATE TABLE "retention_prune_is_a_visible_minus_event" ("col1" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_retention_prune_is_a_visible_minus_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1" FROM "retention_prune_is_a_visible_minus_event" t`,
+  `CREATE TEMP TABLE "__delta_retention_prune_is_a_visible_minus_event" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_retention_prune_is_a_visible_minus_event_sign" ON "__delta_retention_prune_is_a_visible_minus_event" ("_sign")`,
+  `CREATE INDEX "__delta_retention_prune_is_a_visible_minus_event_group" ON "__delta_retention_prune_is_a_visible_minus_event" ("col1")`,
+  `CREATE TEMP TABLE "__frontier_retention_prune_is_a_visible_minus_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_retention_prune_is_a_visible_minus_event_phase" ON "__frontier_retention_prune_is_a_visible_minus_event" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_retention_prune_is_a_visible_minus_event" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "col1" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_retention_prune_is_a_visible_minus_event" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."col1") AS "col1", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_retention_prune_is_a_visible_minus_event" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -194,8 +194,8 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 10, parent_id: 8, ordinal: 0, local_name: "__delta_event", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "a6b1239c6e840092", h_schema: "8e22fd46a4219fe1", h_rule: "" },
   { rel_id: 11, parent_id: 8, ordinal: 0, local_name: "__frontier_event", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "74466816d3658922", h_schema: "987415a90c19f0a7", h_rule: "" },
   { rel_id: 12, parent_id: 8, ordinal: 0, local_name: "__next_frontier_event", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "0605e7d5784f4102", h_schema: "987415a90c19f0a7", h_rule: "" },
-  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__txt_event", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "b94ea79162fe1342", h_schema: "32b13250133857cf", h_rule: "" },
-  { rel_id: 14, parent_id: 10, ordinal: 0, local_name: "__txt___delta_event", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "cb96207687a6c2e8", h_schema: "32b13250133857cf", h_rule: "" },
+  { rel_id: 13, parent_id: 8, ordinal: 0, local_name: "__txt_retention_prune_is_a_visible_minus_event", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "a51b1b1d1e8bcf46", h_schema: "32b13250133857cf", h_rule: "" },
+  { rel_id: 14, parent_id: 10, ordinal: 0, local_name: "__txt___delta_retention_prune_is_a_visible_minus_event", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "1123326d0b433bb6", h_schema: "32b13250133857cf", h_rule: "" },
   { rel_id: 15, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "142e5a0c4038c3fd", h_schema: "", h_rule: "" },
   { rel_id: 16, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "9793882075ae7dae", h_schema: "", h_rule: "" },
 ];
@@ -209,11 +209,11 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  event: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_event" t`,
+  event: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1" FROM "__txt_retention_prune_is_a_visible_minus_event" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "event", kind: "log", table_name: "event", delta_table_name: "__delta_event", frontier_table_name: "__frontier_event", next_frontier_table_name: "__next_frontier_event", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "event" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_event" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
+  { rel: "event", kind: "log", table_name: "retention_prune_is_a_visible_minus_event", delta_table_name: "__delta_retention_prune_is_a_visible_minus_event", frontier_table_name: "__frontier_retention_prune_is_a_visible_minus_event", next_frontier_table_name: "__next_frontier_retention_prune_is_a_visible_minus_event", columns: ["col1"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT INTO "retention_prune_is_a_visible_minus_event" ("col1") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "col1"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."col1") AND json_type(t."col1") = 'object' AND json_type(t."col1", '$.fn') = 'text' AND json_type(t."col1", '$.args') = 'array' THEN json_extract(t."col1", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."col1", '$.args')), '') || ')' ELSE t."col1" END AS "col1", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_retention_prune_is_a_visible_minus_event" t WHERE t."_sign" IN (-1, 1) GROUP BY t."col1", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
@@ -223,7 +223,7 @@ const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
 const INCREMENTAL_RETENTION_STATEMENTS: readonly IIncrementalRetentionStatement[] = [
-  { rel: "event", count: 2, delete_sql: `DELETE FROM "event" WHERE rowid NOT IN (SELECT rowid FROM "event" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"` },
+  { rel: "event", count: 2, delete_sql: `DELETE FROM "retention_prune_is_a_visible_minus_event" WHERE rowid NOT IN (SELECT rowid FROM "retention_prune_is_a_visible_minus_event" ORDER BY rowid DESC LIMIT 2) RETURNING "col1"` },
 ];
 
 const RECONCILE_EVERY_TICK = false;

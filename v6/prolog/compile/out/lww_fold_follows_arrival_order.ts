@@ -177,25 +177,25 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "latest" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("key"))`,
-  `CREATE TEMP VIEW "__txt_latest" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "latest" t`,
-  `CREATE TABLE "set_value" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_set_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "set_value" t`,
-  `CREATE TEMP TABLE "__delta_latest" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_latest_sign" ON "__delta_latest" ("_sign")`,
-  `CREATE INDEX "__delta_latest_group" ON "__delta_latest" ("key", "value")`,
-  `CREATE TEMP TABLE "__frontier_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_latest_phase" ON "__frontier_latest" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_latest" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_latest" t`,
-  `CREATE TEMP TABLE "__delta_set_value" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_set_value_sign" ON "__delta_set_value" ("_sign")`,
-  `CREATE INDEX "__delta_set_value_group" ON "__delta_set_value" ("key", "value")`,
-  `CREATE TEMP TABLE "__frontier_set_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_set_value_phase" ON "__frontier_set_value" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_set_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_set_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_set_value" t`,
-  `CREATE TEMP TABLE "__pre_latest" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
+  `CREATE TABLE "lww_fold_follows_arrival_order_latest" ("__id" INTEGER PRIMARY KEY, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL, UNIQUE ("key"))`,
+  `CREATE TEMP VIEW "__txt_lww_fold_follows_arrival_order_latest" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "lww_fold_follows_arrival_order_latest" t`,
+  `CREATE TABLE "lww_fold_follows_arrival_order_set_value" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_lww_fold_follows_arrival_order_set_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value" FROM "lww_fold_follows_arrival_order_set_value" t`,
+  `CREATE TEMP TABLE "__delta_lww_fold_follows_arrival_order_latest" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_lww_fold_follows_arrival_order_latest_sign" ON "__delta_lww_fold_follows_arrival_order_latest" ("_sign")`,
+  `CREATE INDEX "__delta_lww_fold_follows_arrival_order_latest_group" ON "__delta_lww_fold_follows_arrival_order_latest" ("key", "value")`,
+  `CREATE TEMP TABLE "__frontier_lww_fold_follows_arrival_order_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_lww_fold_follows_arrival_order_latest_phase" ON "__frontier_lww_fold_follows_arrival_order_latest" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_lww_fold_follows_arrival_order_latest" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_lww_fold_follows_arrival_order_latest" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_lww_fold_follows_arrival_order_latest" t`,
+  `CREATE TEMP TABLE "__delta_lww_fold_follows_arrival_order_set_value" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_lww_fold_follows_arrival_order_set_value_sign" ON "__delta_lww_fold_follows_arrival_order_set_value" ("_sign")`,
+  `CREATE INDEX "__delta_lww_fold_follows_arrival_order_set_value_group" ON "__delta_lww_fold_follows_arrival_order_set_value" ("key", "value")`,
+  `CREATE TEMP TABLE "__frontier_lww_fold_follows_arrival_order_set_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_lww_fold_follows_arrival_order_set_value_phase" ON "__frontier_lww_fold_follows_arrival_order_set_value" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_lww_fold_follows_arrival_order_set_value" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "key" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_lww_fold_follows_arrival_order_set_value" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."key") AS "key", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."value") AS "value", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_lww_fold_follows_arrival_order_set_value" t`,
+  `CREATE TEMP TABLE "__pre_lww_fold_follows_arrival_order_latest" ("key" INTEGER NOT NULL, "value" INTEGER NOT NULL, PRIMARY KEY ("key")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -231,13 +231,13 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_latest", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "d97bf8217eccab10", h_schema: "9dceee669bf5f906", h_rule: "" },
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_latest", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "eb002835dc36d7b0", h_schema: "9dceee669bf5f906", h_rule: "" },
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__pre_latest", kind: "pre", type_id: 0, arity: 2, module_id: 7, h_id: "652127716cb25759", h_schema: "7d4194af9c268071", h_rule: "" },
-  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_latest", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "bc0a100a7958f493", h_schema: "7d4194af9c268071", h_rule: "" },
-  { rel_id: 19, parent_id: 14, ordinal: 0, local_name: "__txt___delta_latest", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "ac6693b531c7619a", h_schema: "7d4194af9c268071", h_rule: "" },
+  { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__txt_lww_fold_follows_arrival_order_latest", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "39e02ec190e7f61d", h_schema: "7d4194af9c268071", h_rule: "" },
+  { rel_id: 19, parent_id: 14, ordinal: 0, local_name: "__txt___delta_lww_fold_follows_arrival_order_latest", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "8a5f494631006f7a", h_schema: "7d4194af9c268071", h_rule: "" },
   { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__delta_set_value", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "76f8f44a498e2ad5", h_schema: "fdf6b6ef55287c94", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__frontier_set_value", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a28117c511536082", h_schema: "9dceee669bf5f906", h_rule: "" },
   { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__next_frontier_set_value", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "849f527eed2031f8", h_schema: "9dceee669bf5f906", h_rule: "" },
-  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_set_value", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "08a7d414559f27b9", h_schema: "7d4194af9c268071", h_rule: "" },
-  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_set_value", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "f80eec3e5768170d", h_schema: "7d4194af9c268071", h_rule: "" },
+  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_lww_fold_follows_arrival_order_set_value", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "124e5fa22ca00542", h_schema: "7d4194af9c268071", h_rule: "" },
+  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_lww_fold_follows_arrival_order_set_value", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "5852974328dea8e7", h_schema: "7d4194af9c268071", h_rule: "" },
   { rel_id: 25, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "9b767afd964ce2ec", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "db5a01e42ab2ec65", h_schema: "", h_rule: "" },
   { rel_id: 27, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "b25423413fab45d0", h_schema: "", h_rule: "" },
@@ -253,7 +253,7 @@ const arrival_targets: readonly string[] = ["set_value"];
 const boot: readonly IBootStatement[] = [
   { rel: "latest", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["cli"] },
   { rel: "latest", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["v0"] },
-  { rel: "latest", sql: `INSERT OR IGNORE INTO "latest" ("key", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["cli", "v0"] },
+  { rel: "latest", sql: `INSERT OR IGNORE INTO "lww_fold_follows_arrival_order_latest" ("key", "value") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["cli", "v0"] },
 ];
 
 type Snapshot = {
@@ -263,8 +263,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    latest: select_rows(seam, `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_latest" t`, rel_columns.latest!, rel_column_types.latest!),
-    set_value: select_rows(seam, `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_set_value" t`, rel_columns.set_value!, rel_column_types.set_value!),
+    latest: select_rows(seam, `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_lww_fold_follows_arrival_order_latest" t`, rel_columns.latest!, rel_column_types.latest!),
+    set_value: select_rows(seam, `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_lww_fold_follows_arrival_order_set_value" t`, rel_columns.set_value!, rel_column_types.set_value!),
   });
 }
 
@@ -272,8 +272,8 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    latest: select_rows(seam, `SELECT "key", "value" FROM "latest"`, rel_columns.latest!, rel_stored_column_types.latest!),
-    set_value: select_rows(seam, `SELECT "key", "value" FROM "set_value"`, rel_columns.set_value!, rel_stored_column_types.set_value!),
+    latest: select_rows(seam, `SELECT "key", "value" FROM "lww_fold_follows_arrival_order_latest"`, rel_columns.latest!, rel_stored_column_types.latest!),
+    set_value: select_rows(seam, `SELECT "key", "value" FROM "lww_fold_follows_arrival_order_set_value"`, rel_columns.set_value!, rel_stored_column_types.set_value!),
   });
 }
 
@@ -282,12 +282,12 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  latest: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_latest" t`,
-  set_value: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_set_value" t`,
+  latest: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_lww_fold_follows_arrival_order_latest" t`,
+  set_value: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value" FROM "__txt_lww_fold_follows_arrival_order_set_value" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  set_value: { kind: "log", add_sql: `INSERT INTO "set_value" ("key", "value") VALUES (?, ?)`, del_sql: null },
+  set_value: { kind: "log", add_sql: `INSERT INTO "lww_fold_follows_arrival_order_set_value" ("key", "value") VALUES (?, ?)`, del_sql: null },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -313,23 +313,23 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "latest", kind: "set", table_name: "latest", delta_table_name: "__delta_latest", frontier_table_name: "__frontier_latest", next_frontier_table_name: "__next_frontier_latest", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_latest" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: [] },
-  { rel: "set_value", kind: "log", table_name: "set_value", delta_table_name: "__delta_set_value", frontier_table_name: "__frontier_set_value", next_frontier_table_name: "__next_frontier_set_value", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "set_value" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_set_value" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["latest/2"] },
+  { rel: "latest", kind: "set", table_name: "lww_fold_follows_arrival_order_latest", delta_table_name: "__delta_lww_fold_follows_arrival_order_latest", frontier_table_name: "__frontier_lww_fold_follows_arrival_order_latest", next_frontier_table_name: "__next_frontier_lww_fold_follows_arrival_order_latest", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_lww_fold_follows_arrival_order_latest" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: [] },
+  { rel: "set_value", kind: "log", table_name: "lww_fold_follows_arrival_order_set_value", delta_table_name: "__delta_lww_fold_follows_arrival_order_set_value", frontier_table_name: "__frontier_lww_fold_follows_arrival_order_set_value", next_frontier_table_name: "__next_frontier_lww_fold_follows_arrival_order_set_value", columns: ["key", "value"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "lww_fold_follows_arrival_order_set_value" ("key", "value") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "key", "value"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."key") AND json_type(t."key") = 'object' AND json_type(t."key", '$.fn') = 'text' AND json_type(t."key", '$.args') = 'array' THEN json_extract(t."key", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."key", '$.args')), '') || ')' ELSE t."key" END AS "key", CASE WHEN json_valid(t."value") AND json_type(t."value") = 'object' AND json_type(t."value", '$.fn') = 'text' AND json_type(t."value", '$.args') = 'array' THEN json_extract(t."value", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."value", '$.args')), '') || ')' ELSE t."value" END AS "value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_lww_fold_follows_arrival_order_set_value" t WHERE t."_sign" IN (-1, 1) GROUP BY t."key", t."value", t."_sign"`, rule_observers: ["latest/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "latest", rule_id: "lww_fold_follows_arrival_order:latest/2#1", head_kind: "set", head_table_name: "latest", head_delta_table_name: "__delta_latest", head_columns: ["key", "value"], key_indices: [0], project_sql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_set_value" d0, "__pre_latest" b0 WHERE d0."_phase" >= 0 AND b0."key" = d0."key" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "latest", rule_id: "lww_fold_follows_arrival_order:latest/2#1", head_kind: "set", head_table_name: "lww_fold_follows_arrival_order_latest", head_delta_table_name: "__delta_lww_fold_follows_arrival_order_latest", head_columns: ["key", "value"], key_indices: [0], project_sql: `SELECT d0."key" AS "key", d0."value" AS "value" FROM "__frontier_lww_fold_follows_arrival_order_set_value" d0, "__pre_lww_fold_follows_arrival_order_latest" b0 WHERE d0."_phase" >= 0 AND b0."key" = d0."key" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
 function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
-  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_latest";
-INSERT INTO "__pre_latest" ("key", "value") SELECT "key", "value" FROM "latest"`);
+  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_lww_fold_follows_arrival_order_latest";
+INSERT INTO "__pre_lww_fold_follows_arrival_order_latest" ("key", "value") SELECT "key", "value" FROM "lww_fold_follows_arrival_order_latest"`);
 }
 
-interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
+interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_table_name: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
 interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
 interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
 
@@ -340,7 +340,7 @@ function quote_ordered_identifier(identifier: string): string {
 function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {
   const { arm, row } = write;
   if (!arm.evolves_pre) return null;
-  const table = quote_ordered_identifier("__pre_" + arm.head_rel);
+  const table = quote_ordered_identifier("__pre_" + arm.head_table_name);
   const columns = arm.head_columns.map(quote_ordered_identifier);
   const placeholders = columns.map(() => "?").join(", ");
   if (arm.head_kind === "log") {
@@ -356,14 +356,14 @@ function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null 
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { trigger_rel: "set_value", trigger_kind: "arrival", head_rel: "latest", head_kind: "set", head_columns: ["key", "value"], key_indices: [0], project_sql: `SELECT ?1 AS "key", ?2 AS "value" FROM "__pre_latest" b0 WHERE b0."key" = ?1`, write_sql: `INSERT INTO "latest" ("key", "value") VALUES (?, ?) ON CONFLICT("key") DO UPDATE SET "value" = excluded."value"`, evolves_pre: true },
+  { trigger_rel: "set_value", trigger_kind: "arrival", head_rel: "latest", head_table_name: "lww_fold_follows_arrival_order_latest", head_kind: "set", head_columns: ["key", "value"], key_indices: [0], project_sql: `SELECT ?1 AS "key", ?2 AS "value" FROM "__pre_lww_fold_follows_arrival_order_latest" b0 WHERE b0."key" = ?1`, write_sql: `INSERT INTO "lww_fold_follows_arrival_order_latest" ("key", "value") VALUES (?, ?) ON CONFLICT("key") DO UPDATE SET "value" = excluded."value"`, evolves_pre: true },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "set_value", sql: `SELECT "_sequence" AS "__sequence", "key", "value" FROM "__frontier_set_value" ORDER BY "_phase", "_sequence"`, columns: ["key", "value"] },
+  { rel: "set_value", sql: `SELECT "_sequence" AS "__sequence", "key", "value" FROM "__frontier_lww_fold_follows_arrival_order_set_value" ORDER BY "_phase", "_sequence"`, columns: ["key", "value"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {

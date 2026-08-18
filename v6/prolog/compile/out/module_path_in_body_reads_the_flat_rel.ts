@@ -146,23 +146,23 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "orchard__fruit" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL, UNIQUE ("tree_id", "picked"))`,
-  `CREATE TABLE "ripe" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("tree_id"))`,
-  `CREATE TEMP TABLE "__delta_orchard__fruit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_orchard__fruit_sign" ON "__delta_orchard__fruit" ("_sign")`,
-  `CREATE INDEX "__delta_orchard__fruit_group" ON "__delta_orchard__fruit" ("tree_id", "picked")`,
-  `CREATE TEMP TABLE "__frontier_orchard__fruit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_orchard__fruit_phase" ON "__frontier_orchard__fruit" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_orchard__fruit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_ripe" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_ripe_sign" ON "__delta_ripe" ("_sign")`,
-  `CREATE INDEX "__delta_ripe_group" ON "__delta_ripe" ("tree_id")`,
-  `CREATE TEMP TABLE "__frontier_ripe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_ripe_phase" ON "__frontier_ripe" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_ripe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__support_next_ripe" ("tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
-  `CREATE TEMP TABLE "__new_ripe" ("tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
-  `CREATE INDEX "ripe_zero" ON "ripe" ("__refcount") WHERE "__refcount" <= 0`,
+  `CREATE TABLE "module_path_in_body_reads_the_flat_rel_orchard__fruit" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL, UNIQUE ("tree_id", "picked"))`,
+  `CREATE TABLE "module_path_in_body_reads_the_flat_rel_ripe" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL DEFAULT 1, UNIQUE ("tree_id"))`,
+  `CREATE TEMP TABLE "__delta_module_path_in_body_reads_the_flat_rel_orchard__fruit" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_module_path_in_body_reads_the_flat_rel_orchard__fruit_sign" ON "__delta_module_path_in_body_reads_the_flat_rel_orchard__fruit" ("_sign")`,
+  `CREATE INDEX "__delta_module_path_in_body_reads_the_flat_rel_orchard__fruit_group" ON "__delta_module_path_in_body_reads_the_flat_rel_orchard__fruit" ("tree_id", "picked")`,
+  `CREATE TEMP TABLE "__frontier_module_path_in_body_reads_the_flat_rel_orchard__fruit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_module_path_in_body_reads_the_flat_rel_orchard__fruit_phase" ON "__frontier_module_path_in_body_reads_the_flat_rel_orchard__fruit" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_module_path_in_body_reads_the_flat_rel_orchard__fruit" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "picked" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_module_path_in_body_reads_the_flat_rel_ripe" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_module_path_in_body_reads_the_flat_rel_ripe_sign" ON "__delta_module_path_in_body_reads_the_flat_rel_ripe" ("_sign")`,
+  `CREATE INDEX "__delta_module_path_in_body_reads_the_flat_rel_ripe_group" ON "__delta_module_path_in_body_reads_the_flat_rel_ripe" ("tree_id")`,
+  `CREATE TEMP TABLE "__frontier_module_path_in_body_reads_the_flat_rel_ripe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_module_path_in_body_reads_the_flat_rel_ripe_phase" ON "__frontier_module_path_in_body_reads_the_flat_rel_ripe" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_module_path_in_body_reads_the_flat_rel_ripe" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__support_next_module_path_in_body_reads_the_flat_rel_ripe" ("tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL, PRIMARY KEY ("tree_id")) WITHOUT ROWID`,
+  `CREATE TEMP TABLE "__new_module_path_in_body_reads_the_flat_rel_ripe" ("tree_id" INTEGER NOT NULL, "__refcount" INTEGER NOT NULL)`,
+  `CREATE INDEX "module_path_in_body_reads_the_flat_rel_ripe_zero" ON "module_path_in_body_reads_the_flat_rel_ripe" ("__refcount") WHERE "__refcount" <= 0`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -215,26 +215,26 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["orchard__fruit"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "ripe", sql: `DELETE FROM "ripe"`, params: [] },
-  { rel: "ripe", sql: `INSERT OR IGNORE INTO "ripe" ("tree_id") SELECT b0."tree_id" FROM "orchard__fruit" b0`, params: [] },
+  { rel: "ripe", sql: `DELETE FROM "module_path_in_body_reads_the_flat_rel_ripe"`, params: [] },
+  { rel: "ripe", sql: `INSERT OR IGNORE INTO "module_path_in_body_reads_the_flat_rel_ripe" ("tree_id") SELECT b0."tree_id" FROM "module_path_in_body_reads_the_flat_rel_orchard__fruit" b0`, params: [] },
 ];
 
 const final_select: Record<string, string> = {
-  orchard__fruit: `SELECT t."tree_id", t."picked" FROM "orchard__fruit" t`,
-  ripe: `SELECT t."tree_id" FROM "ripe" t`,
+  orchard__fruit: `SELECT t."tree_id", t."picked" FROM "module_path_in_body_reads_the_flat_rel_orchard__fruit" t`,
+  ripe: `SELECT t."tree_id" FROM "module_path_in_body_reads_the_flat_rel_ripe" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "orchard__fruit", kind: "set", table_name: "orchard__fruit", delta_table_name: "__delta_orchard__fruit", frontier_table_name: "__frontier_orchard__fruit", next_frontier_table_name: "__next_frontier_orchard__fruit", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "orchard__fruit" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "orchard__fruit" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT t."tree_id", t."picked", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_orchard__fruit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."picked", t."_sign"`, rule_observers: ["ripe/1"] },
-  { rel: "ripe", kind: "set", table_name: "ripe", delta_table_name: "__delta_ripe", frontier_table_name: "__frontier_ripe", next_frontier_table_name: "__next_frontier_ripe", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_ripe" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: [] },
+  { rel: "orchard__fruit", kind: "set", table_name: "module_path_in_body_reads_the_flat_rel_orchard__fruit", delta_table_name: "__delta_module_path_in_body_reads_the_flat_rel_orchard__fruit", frontier_table_name: "__frontier_module_path_in_body_reads_the_flat_rel_orchard__fruit", next_frontier_table_name: "__next_frontier_module_path_in_body_reads_the_flat_rel_orchard__fruit", columns: ["tree_id", "picked"], column_types: ["int", "int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "module_path_in_body_reads_the_flat_rel_orchard__fruit" ("tree_id", "picked") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "picked"`, arrival_del_sql: `DELETE FROM "module_path_in_body_reads_the_flat_rel_orchard__fruit" WHERE ("tree_id", "picked") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "picked"`, boundary_sql: `SELECT t."tree_id", t."picked", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_module_path_in_body_reads_the_flat_rel_orchard__fruit" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."picked", t."_sign"`, rule_observers: ["ripe/1"] },
+  { rel: "ripe", kind: "set", table_name: "module_path_in_body_reads_the_flat_rel_ripe", delta_table_name: "__delta_module_path_in_body_reads_the_flat_rel_ripe", frontier_table_name: "__frontier_module_path_in_body_reads_the_flat_rel_ripe", next_frontier_table_name: "__next_frontier_module_path_in_body_reads_the_flat_rel_ripe", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_module_path_in_body_reads_the_flat_rel_ripe" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
-  { head_rel: "ripe", rule_id: "module_path_in_body_reads_the_flat_rel:ripe/1#1", head_delta_table_name: "__delta_ripe", head_columns: ["tree_id"], insert_sql: `INSERT OR IGNORE INTO "ripe" ("tree_id") SELECT DISTINCT d0."tree_id" FROM "__frontier_orchard__fruit" d0 WHERE d0."_phase" >= 0 RETURNING "tree_id"`, select_sql: `SELECT "tree_id" FROM "ripe"`, recompute_sql: `DELETE FROM "ripe";
-INSERT OR IGNORE INTO "ripe" ("tree_id") SELECT b0."tree_id" FROM "orchard__fruit" b0`, support_sql: [`DELETE FROM "__support_next_ripe"`, `INSERT INTO "__support_next_ripe" ("tree_id", "__refcount") SELECT "tree_id", sum("__refcount") FROM (SELECT b0."tree_id" AS "tree_id", count(*) AS "__refcount" FROM "orchard__fruit" b0 GROUP BY b0."tree_id") GROUP BY "tree_id"`, `UPDATE "ripe" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_ripe" n WHERE n."tree_id" = h."tree_id"), 0)`, `INSERT INTO "__delta_ripe" ("_sign", "_sequence", "tree_id") SELECT -1, row_number() OVER () - 1, "tree_id" FROM "ripe" WHERE "__refcount" <= 0`, `DELETE FROM "ripe" WHERE "__refcount" <= 0`, `DELETE FROM "__new_ripe"`, `INSERT INTO "__new_ripe" ("tree_id", "__refcount") SELECT n."tree_id", n."__refcount" FROM "__support_next_ripe" n LEFT JOIN "ripe" h ON n."tree_id" = h."tree_id" WHERE h."tree_id" IS NULL`, `INSERT INTO "__delta_ripe" ("_sign", "_sequence", "tree_id") SELECT 1, "rowid" - 1, "tree_id" FROM "__new_ripe"`, `INSERT INTO "__frontier_ripe" ("_phase", "_sequence", "tree_id") SELECT ?, "rowid" - 1, "tree_id" FROM "__new_ripe"`, `INSERT INTO "__next_frontier_ripe" ("_phase", "_sequence", "tree_id") SELECT ?, "rowid" - 1, "tree_id" FROM "__new_ripe"`, `INSERT OR IGNORE INTO "ripe" ("tree_id", "__refcount") SELECT n."tree_id", n."__refcount" FROM "__support_next_ripe" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
+  { head_rel: "ripe", rule_id: "module_path_in_body_reads_the_flat_rel:ripe/1#1", head_delta_table_name: "__delta_module_path_in_body_reads_the_flat_rel_ripe", head_columns: ["tree_id"], insert_sql: `INSERT OR IGNORE INTO "module_path_in_body_reads_the_flat_rel_ripe" ("tree_id") SELECT DISTINCT d0."tree_id" FROM "__frontier_module_path_in_body_reads_the_flat_rel_orchard__fruit" d0 WHERE d0."_phase" >= 0 RETURNING "tree_id"`, select_sql: `SELECT "tree_id" FROM "module_path_in_body_reads_the_flat_rel_ripe"`, recompute_sql: `DELETE FROM "module_path_in_body_reads_the_flat_rel_ripe";
+INSERT OR IGNORE INTO "module_path_in_body_reads_the_flat_rel_ripe" ("tree_id") SELECT b0."tree_id" FROM "module_path_in_body_reads_the_flat_rel_orchard__fruit" b0`, support_sql: [`DELETE FROM "__support_next_module_path_in_body_reads_the_flat_rel_ripe"`, `INSERT INTO "__support_next_module_path_in_body_reads_the_flat_rel_ripe" ("tree_id", "__refcount") SELECT "tree_id", sum("__refcount") FROM (SELECT b0."tree_id" AS "tree_id", count(*) AS "__refcount" FROM "module_path_in_body_reads_the_flat_rel_orchard__fruit" b0 GROUP BY b0."tree_id") GROUP BY "tree_id"`, `UPDATE "module_path_in_body_reads_the_flat_rel_ripe" AS h SET "__refcount" = COALESCE((SELECT n."__refcount" FROM "__support_next_module_path_in_body_reads_the_flat_rel_ripe" n WHERE n."tree_id" = h."tree_id"), 0)`, `INSERT INTO "__delta_module_path_in_body_reads_the_flat_rel_ripe" ("_sign", "_sequence", "tree_id") SELECT -1, row_number() OVER () - 1, "tree_id" FROM "module_path_in_body_reads_the_flat_rel_ripe" WHERE "__refcount" <= 0`, `DELETE FROM "module_path_in_body_reads_the_flat_rel_ripe" WHERE "__refcount" <= 0`, `DELETE FROM "__new_module_path_in_body_reads_the_flat_rel_ripe"`, `INSERT INTO "__new_module_path_in_body_reads_the_flat_rel_ripe" ("tree_id", "__refcount") SELECT n."tree_id", n."__refcount" FROM "__support_next_module_path_in_body_reads_the_flat_rel_ripe" n LEFT JOIN "module_path_in_body_reads_the_flat_rel_ripe" h ON n."tree_id" = h."tree_id" WHERE h."tree_id" IS NULL`, `INSERT INTO "__delta_module_path_in_body_reads_the_flat_rel_ripe" ("_sign", "_sequence", "tree_id") SELECT 1, "rowid" - 1, "tree_id" FROM "__new_module_path_in_body_reads_the_flat_rel_ripe"`, `INSERT INTO "__frontier_module_path_in_body_reads_the_flat_rel_ripe" ("_phase", "_sequence", "tree_id") SELECT ?, "rowid" - 1, "tree_id" FROM "__new_module_path_in_body_reads_the_flat_rel_ripe"`, `INSERT INTO "__next_frontier_module_path_in_body_reads_the_flat_rel_ripe" ("_phase", "_sequence", "tree_id") SELECT ?, "rowid" - 1, "tree_id" FROM "__new_module_path_in_body_reads_the_flat_rel_ripe"`, `INSERT OR IGNORE INTO "module_path_in_body_reads_the_flat_rel_ripe" ("tree_id", "__refcount") SELECT n."tree_id", n."__refcount" FROM "__support_next_module_path_in_body_reads_the_flat_rel_ripe" n`], expand_sql: null, dred_sql: null, fixpoint_ir: null, aggregate_sql: null },
 ];
 
 const RECONCILE_EVERY_TICK = false;

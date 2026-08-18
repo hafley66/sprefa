@@ -146,13 +146,13 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "typed_input" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_typed_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_typed_input_sign" ON "__delta_typed_input" ("_sign")`,
-  `CREATE INDEX "__delta_typed_input_group" ON "__delta_typed_input" ("value")`,
-  `CREATE TEMP TABLE "__frontier_typed_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_typed_input_phase" ON "__frontier_typed_input" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_typed_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TABLE "typed_int_without_literal_witness_typed_input" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_typed_int_without_literal_witness_typed_input" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_typed_int_without_literal_witness_typed_input_sign" ON "__delta_typed_int_without_literal_witness_typed_input" ("_sign")`,
+  `CREATE INDEX "__delta_typed_int_without_literal_witness_typed_input_group" ON "__delta_typed_int_without_literal_witness_typed_input" ("value")`,
+  `CREATE TEMP TABLE "__frontier_typed_int_without_literal_witness_typed_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_typed_int_without_literal_witness_typed_input_phase" ON "__frontier_typed_int_without_literal_witness_typed_input" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_typed_int_without_literal_witness_typed_input" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -193,11 +193,11 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  typed_input: `SELECT t."value" FROM "typed_input" t`,
+  typed_input: `SELECT t."value" FROM "typed_int_without_literal_witness_typed_input" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "typed_input", kind: "set", table_name: "typed_input", delta_table_name: "__delta_typed_input", frontier_table_name: "__frontier_typed_input", next_frontier_table_name: "__next_frontier_typed_input", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "typed_input" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "typed_input" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_typed_input" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "typed_input", kind: "set", table_name: "typed_int_without_literal_witness_typed_input", delta_table_name: "__delta_typed_int_without_literal_witness_typed_input", frontier_table_name: "__frontier_typed_int_without_literal_witness_typed_input", next_frontier_table_name: "__next_frontier_typed_int_without_literal_witness_typed_input", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "typed_int_without_literal_witness_typed_input" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "typed_int_without_literal_witness_typed_input" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_typed_int_without_literal_witness_typed_input" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

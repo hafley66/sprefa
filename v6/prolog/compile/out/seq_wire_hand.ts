@@ -179,34 +179,34 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('q')`,
-  `CREATE TABLE "arrival" ("__id" INTEGER PRIMARY KEY, "payload" INTEGER NOT NULL, UNIQUE ("payload"))`,
-  `CREATE TEMP VIEW "__txt_arrival" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "arrival" t`,
-  `CREATE TABLE "numbered" ("ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_numbered" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "numbered" t`,
-  `CREATE TABLE "seq_numbered_1" ("__id" INTEGER PRIMARY KEY, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("partition"))`,
-  `CREATE TEMP VIEW "__txt_seq_numbered_1" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."partition") AS "partition", t."at" AS "at" FROM "seq_numbered_1" t`,
-  `CREATE TEMP TABLE "__delta_arrival" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_arrival_sign" ON "__delta_arrival" ("_sign")`,
-  `CREATE INDEX "__delta_arrival_group" ON "__delta_arrival" ("payload")`,
-  `CREATE TEMP TABLE "__frontier_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_arrival_phase" ON "__frontier_arrival" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_arrival" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_arrival" t`,
-  `CREATE TEMP TABLE "__delta_numbered" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_numbered_sign" ON "__delta_numbered" ("_sign")`,
-  `CREATE INDEX "__delta_numbered_group" ON "__delta_numbered" ("ordinal", "payload")`,
-  `CREATE TEMP TABLE "__frontier_numbered" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_numbered_phase" ON "__frontier_numbered" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_numbered" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_numbered" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_numbered" t`,
-  `CREATE TEMP TABLE "__delta_seq_numbered_1" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_seq_numbered_1_sign" ON "__delta_seq_numbered_1" ("_sign")`,
-  `CREATE INDEX "__delta_seq_numbered_1_group" ON "__delta_seq_numbered_1" ("partition", "at")`,
-  `CREATE TEMP TABLE "__frontier_seq_numbered_1" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_seq_numbered_1_phase" ON "__frontier_seq_numbered_1" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_seq_numbered_1" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_seq_numbered_1" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."partition") AS "partition", t."at" AS "at", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seq_numbered_1" t`,
-  `CREATE TEMP TABLE "__pre_seq_numbered_1" ("partition" INTEGER NOT NULL, "at" INTEGER NOT NULL, PRIMARY KEY ("partition")) WITHOUT ROWID`,
+  `CREATE TABLE "seq_wire_hand_arrival" ("__id" INTEGER PRIMARY KEY, "payload" INTEGER NOT NULL, UNIQUE ("payload"))`,
+  `CREATE TEMP VIEW "__txt_seq_wire_hand_arrival" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "seq_wire_hand_arrival" t`,
+  `CREATE TABLE "seq_wire_hand_numbered" ("ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_seq_wire_hand_numbered" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "seq_wire_hand_numbered" t`,
+  `CREATE TABLE "seq_wire_hand_seq_numbered_1" ("__id" INTEGER PRIMARY KEY, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL, UNIQUE ("partition"))`,
+  `CREATE TEMP VIEW "__txt_seq_wire_hand_seq_numbered_1" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."partition") AS "partition", t."at" AS "at" FROM "seq_wire_hand_seq_numbered_1" t`,
+  `CREATE TEMP TABLE "__delta_seq_wire_hand_arrival" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_seq_wire_hand_arrival_sign" ON "__delta_seq_wire_hand_arrival" ("_sign")`,
+  `CREATE INDEX "__delta_seq_wire_hand_arrival_group" ON "__delta_seq_wire_hand_arrival" ("payload")`,
+  `CREATE TEMP TABLE "__frontier_seq_wire_hand_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_seq_wire_hand_arrival_phase" ON "__frontier_seq_wire_hand_arrival" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_seq_wire_hand_arrival" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seq_wire_hand_arrival" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seq_wire_hand_arrival" t`,
+  `CREATE TEMP TABLE "__delta_seq_wire_hand_numbered" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_seq_wire_hand_numbered_sign" ON "__delta_seq_wire_hand_numbered" ("_sign")`,
+  `CREATE INDEX "__delta_seq_wire_hand_numbered_group" ON "__delta_seq_wire_hand_numbered" ("ordinal", "payload")`,
+  `CREATE TEMP TABLE "__frontier_seq_wire_hand_numbered" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_seq_wire_hand_numbered_phase" ON "__frontier_seq_wire_hand_numbered" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_seq_wire_hand_numbered" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "ordinal" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seq_wire_hand_numbered" AS SELECT t."ordinal" AS "ordinal", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seq_wire_hand_numbered" t`,
+  `CREATE TEMP TABLE "__delta_seq_wire_hand_seq_numbered_1" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_seq_wire_hand_seq_numbered_1_sign" ON "__delta_seq_wire_hand_seq_numbered_1" ("_sign")`,
+  `CREATE INDEX "__delta_seq_wire_hand_seq_numbered_1_group" ON "__delta_seq_wire_hand_seq_numbered_1" ("partition", "at")`,
+  `CREATE TEMP TABLE "__frontier_seq_wire_hand_seq_numbered_1" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_seq_wire_hand_seq_numbered_1_phase" ON "__frontier_seq_wire_hand_seq_numbered_1" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_seq_wire_hand_seq_numbered_1" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "partition" INTEGER NOT NULL, "at" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_seq_wire_hand_seq_numbered_1" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."partition") AS "partition", t."at" AS "at", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_seq_wire_hand_seq_numbered_1" t`,
+  `CREATE TEMP TABLE "__pre_seq_wire_hand_seq_numbered_1" ("partition" INTEGER NOT NULL, "at" INTEGER NOT NULL, PRIMARY KEY ("partition")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -246,19 +246,19 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__delta_arrival", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "ce27b364b0876ac4", h_schema: "a78080c56fbc69a8", h_rule: "" },
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__frontier_arrival", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a62ad1008ed54544", h_schema: "cda92b437bd60136", h_rule: "" },
   { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__next_frontier_arrival", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "a78f4d330439e952", h_schema: "cda92b437bd60136", h_rule: "" },
-  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_arrival", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "5a1dcf2e48ff3b64", h_schema: "c78b9e06d3cd491a", h_rule: "" },
-  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_arrival", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "170f6307a71d6f37", h_schema: "c78b9e06d3cd491a", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_seq_wire_hand_arrival", kind: "view", type_id: 0, arity: 1, module_id: 7, h_id: "defdb0900f516955", h_schema: "c78b9e06d3cd491a", h_rule: "" },
+  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_seq_wire_hand_arrival", kind: "view", type_id: 0, arity: 3, module_id: 7, h_id: "69a70e9c65d9ad6f", h_schema: "c78b9e06d3cd491a", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__delta_numbered", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "f56ca2168c22834d", h_schema: "3b08a0c8f807ffcd", h_rule: "" },
   { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__frontier_numbered", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "6ad83295f1e6dff8", h_schema: "33a0babd395759ff", h_rule: "" },
   { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__next_frontier_numbered", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "597e52cafeb179d5", h_schema: "33a0babd395759ff", h_rule: "" },
-  { rel_id: 24, parent_id: 10, ordinal: 0, local_name: "__txt_numbered", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "89ae8137b84d8e8d", h_schema: "86198db6aac4a59c", h_rule: "" },
-  { rel_id: 25, parent_id: 21, ordinal: 0, local_name: "__txt___delta_numbered", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "febaa0732f3a4378", h_schema: "86198db6aac4a59c", h_rule: "" },
+  { rel_id: 24, parent_id: 10, ordinal: 0, local_name: "__txt_seq_wire_hand_numbered", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "d21d0355ccb9fce6", h_schema: "86198db6aac4a59c", h_rule: "" },
+  { rel_id: 25, parent_id: 21, ordinal: 0, local_name: "__txt___delta_seq_wire_hand_numbered", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "6292a69b250932b2", h_schema: "86198db6aac4a59c", h_rule: "" },
   { rel_id: 26, parent_id: 13, ordinal: 0, local_name: "__delta_seq_numbered_1", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "8ae03e13bf9834de", h_schema: "b42bbab927d8aebb", h_rule: "" },
   { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__frontier_seq_numbered_1", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "d546ae5015630df6", h_schema: "047a855adb40b5f5", h_rule: "" },
   { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__next_frontier_seq_numbered_1", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "7016470ce5a2fde7", h_schema: "047a855adb40b5f5", h_rule: "" },
   { rel_id: 29, parent_id: 13, ordinal: 0, local_name: "__pre_seq_numbered_1", kind: "pre", type_id: 0, arity: 2, module_id: 7, h_id: "eb3051dde66a16c6", h_schema: "2f4e6ba54edbaeb2", h_rule: "" },
-  { rel_id: 30, parent_id: 13, ordinal: 0, local_name: "__txt_seq_numbered_1", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "c92154ba23605f55", h_schema: "2f4e6ba54edbaeb2", h_rule: "" },
-  { rel_id: 31, parent_id: 26, ordinal: 0, local_name: "__txt___delta_seq_numbered_1", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "7f89a2c3a3db8d29", h_schema: "2f4e6ba54edbaeb2", h_rule: "" },
+  { rel_id: 30, parent_id: 13, ordinal: 0, local_name: "__txt_seq_wire_hand_seq_numbered_1", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "6eb9c26e76a7b4e9", h_schema: "2f4e6ba54edbaeb2", h_rule: "" },
+  { rel_id: 31, parent_id: 26, ordinal: 0, local_name: "__txt___delta_seq_wire_hand_seq_numbered_1", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "86dfacd733eb4b3f", h_schema: "2f4e6ba54edbaeb2", h_rule: "" },
   { rel_id: 32, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "686536ab7e18c718", h_schema: "", h_rule: "" },
   { rel_id: 33, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "fae36548ab0f025c", h_schema: "", h_rule: "" },
   { rel_id: 34, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "13d51c25d93fea3d", h_schema: "", h_rule: "" },
@@ -286,9 +286,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrival: select_rows(seam, `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_arrival" t`, rel_columns.arrival!, rel_column_types.arrival!),
-    numbered: select_rows(seam, `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_numbered" t`, rel_columns.numbered!, rel_column_types.numbered!),
-    seq_numbered_1: select_rows(seam, `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at" FROM "__txt_seq_numbered_1" t`, rel_columns.seq_numbered_1!, rel_column_types.seq_numbered_1!),
+    arrival: select_rows(seam, `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_hand_arrival" t`, rel_columns.arrival!, rel_column_types.arrival!),
+    numbered: select_rows(seam, `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_hand_numbered" t`, rel_columns.numbered!, rel_column_types.numbered!),
+    seq_numbered_1: select_rows(seam, `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at" FROM "__txt_seq_wire_hand_seq_numbered_1" t`, rel_columns.seq_numbered_1!, rel_column_types.seq_numbered_1!),
   });
 }
 
@@ -296,9 +296,9 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrival: select_rows(seam, `SELECT "payload" FROM "arrival"`, rel_columns.arrival!, rel_stored_column_types.arrival!),
-    numbered: select_rows(seam, `SELECT "ordinal", "payload" FROM "numbered"`, rel_columns.numbered!, rel_stored_column_types.numbered!),
-    seq_numbered_1: select_rows(seam, `SELECT "partition", "at" FROM "seq_numbered_1"`, rel_columns.seq_numbered_1!, rel_stored_column_types.seq_numbered_1!),
+    arrival: select_rows(seam, `SELECT "payload" FROM "seq_wire_hand_arrival"`, rel_columns.arrival!, rel_stored_column_types.arrival!),
+    numbered: select_rows(seam, `SELECT "ordinal", "payload" FROM "seq_wire_hand_numbered"`, rel_columns.numbered!, rel_stored_column_types.numbered!),
+    seq_numbered_1: select_rows(seam, `SELECT "partition", "at" FROM "seq_wire_hand_seq_numbered_1"`, rel_columns.seq_numbered_1!, rel_stored_column_types.seq_numbered_1!),
   });
 }
 
@@ -307,13 +307,13 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  arrival: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_arrival" t`,
-  numbered: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_numbered" t`,
-  seq_numbered_1: `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at" FROM "__txt_seq_numbered_1" t`,
+  arrival: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_hand_arrival" t`,
+  numbered: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_seq_wire_hand_numbered" t`,
+  seq_numbered_1: `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at" FROM "__txt_seq_wire_hand_seq_numbered_1" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  arrival: { kind: "set", add_sql: `INSERT OR IGNORE INTO "arrival" ("payload") VALUES (?)`, del_sql: `DELETE FROM "arrival" WHERE "payload" = ?` },
+  arrival: { kind: "set", add_sql: `INSERT OR IGNORE INTO "seq_wire_hand_arrival" ("payload") VALUES (?)`, del_sql: `DELETE FROM "seq_wire_hand_arrival" WHERE "payload" = ?` },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -339,27 +339,27 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "arrival", kind: "set", table_name: "arrival", delta_table_name: "__delta_arrival", frontier_table_name: "__frontier_arrival", next_frontier_table_name: "__next_frontier_arrival", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "arrival" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: `DELETE FROM "arrival" WHERE ("payload") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "payload"`, boundary_sql: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_arrival" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: ["numbered/2", "seq_numbered_1/2"] },
-  { rel: "numbered", kind: "log", table_name: "numbered", delta_table_name: "__delta_numbered", frontier_table_name: "__frontier_numbered", next_frontier_table_name: "__next_frontier_numbered", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_numbered" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ordinal", t."payload", t."_sign"`, rule_observers: [] },
-  { rel: "seq_numbered_1", kind: "set", table_name: "seq_numbered_1", delta_table_name: "__delta_seq_numbered_1", frontier_table_name: "__frontier_seq_numbered_1", next_frontier_table_name: "__next_frontier_seq_numbered_1", columns: ["partition", "at"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_numbered_1" t WHERE t."_sign" IN (-1, 1) GROUP BY t."partition", t."at", t."_sign"`, rule_observers: [] },
+  { rel: "arrival", kind: "set", table_name: "seq_wire_hand_arrival", delta_table_name: "__delta_seq_wire_hand_arrival", frontier_table_name: "__frontier_seq_wire_hand_arrival", next_frontier_table_name: "__next_frontier_seq_wire_hand_arrival", columns: ["payload"], column_types: ["text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "seq_wire_hand_arrival" ("payload") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "payload"`, arrival_del_sql: `DELETE FROM "seq_wire_hand_arrival" WHERE ("payload") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "payload"`, boundary_sql: `SELECT CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_wire_hand_arrival" t WHERE t."_sign" IN (-1, 1) GROUP BY t."payload", t."_sign"`, rule_observers: ["numbered/2", "seq_numbered_1/2"] },
+  { rel: "numbered", kind: "log", table_name: "seq_wire_hand_numbered", delta_table_name: "__delta_seq_wire_hand_numbered", frontier_table_name: "__frontier_seq_wire_hand_numbered", next_frontier_table_name: "__next_frontier_seq_wire_hand_numbered", columns: ["ordinal", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."ordinal", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_wire_hand_numbered" t WHERE t."_sign" IN (-1, 1) GROUP BY t."ordinal", t."payload", t."_sign"`, rule_observers: [] },
+  { rel: "seq_numbered_1", kind: "set", table_name: "seq_wire_hand_seq_numbered_1", delta_table_name: "__delta_seq_wire_hand_seq_numbered_1", frontier_table_name: "__frontier_seq_wire_hand_seq_numbered_1", next_frontier_table_name: "__next_frontier_seq_wire_hand_seq_numbered_1", columns: ["partition", "at"], column_types: ["text", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."partition") AND json_type(t."partition") = 'object' AND json_type(t."partition", '$.fn') = 'text' AND json_type(t."partition", '$.args') = 'array' THEN json_extract(t."partition", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."partition", '$.args')), '') || ')' ELSE t."partition" END AS "partition", t."at", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_seq_wire_hand_seq_numbered_1" t WHERE t."_sign" IN (-1, 1) GROUP BY t."partition", t."at", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "seq_numbered_1", rule_id: "seq_wire_hand:seq_numbered_1/2#1", head_kind: "set", head_table_name: "seq_numbered_1", head_delta_table_name: "__delta_seq_numbered_1", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", 1 AS "at" FROM "__frontier_arrival" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')) ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "seq_numbered_1", rule_id: "seq_wire_hand:seq_numbered_1/2#2", head_kind: "set", head_table_name: "seq_numbered_1", head_delta_table_name: "__delta_seq_numbered_1", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", (b0."at" + 1) AS "at" FROM "__frontier_arrival" d0, "__pre_seq_numbered_1" b0 WHERE d0."_phase" >= 0 AND b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "numbered", rule_id: "seq_wire_hand:numbered/2#1", head_kind: "log", head_table_name: "numbered", head_delta_table_name: "__delta_numbered", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT 1 AS "ordinal", d0."payload" AS "payload" FROM "__frontier_arrival" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')) ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "numbered", rule_id: "seq_wire_hand:numbered/2#2", head_kind: "log", head_table_name: "numbered", head_delta_table_name: "__delta_numbered", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT (b0."at" + 1) AS "ordinal", d0."payload" AS "payload" FROM "__frontier_arrival" d0, "__pre_seq_numbered_1" b0 WHERE d0."_phase" >= 0 AND b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "seq_numbered_1", rule_id: "seq_wire_hand:seq_numbered_1/2#1", head_kind: "set", head_table_name: "seq_wire_hand_seq_numbered_1", head_delta_table_name: "__delta_seq_wire_hand_seq_numbered_1", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", 1 AS "at" FROM "__frontier_seq_wire_hand_arrival" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "seq_wire_hand_seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')) ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "seq_numbered_1", rule_id: "seq_wire_hand:seq_numbered_1/2#2", head_kind: "set", head_table_name: "seq_wire_hand_seq_numbered_1", head_delta_table_name: "__delta_seq_wire_hand_seq_numbered_1", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", (b0."at" + 1) AS "at" FROM "__frontier_seq_wire_hand_arrival" d0, "__pre_seq_wire_hand_seq_numbered_1" b0 WHERE d0."_phase" >= 0 AND b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "numbered", rule_id: "seq_wire_hand:numbered/2#1", head_kind: "log", head_table_name: "seq_wire_hand_numbered", head_delta_table_name: "__delta_seq_wire_hand_numbered", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT 1 AS "ordinal", d0."payload" AS "payload" FROM "__frontier_seq_wire_hand_arrival" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "seq_wire_hand_seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')) ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "numbered", rule_id: "seq_wire_hand:numbered/2#2", head_kind: "log", head_table_name: "seq_wire_hand_numbered", head_delta_table_name: "__delta_seq_wire_hand_numbered", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT (b0."at" + 1) AS "ordinal", d0."payload" AS "payload" FROM "__frontier_seq_wire_hand_arrival" d0, "__pre_seq_wire_hand_seq_numbered_1" b0 WHERE d0."_phase" >= 0 AND b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
 function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
-  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_seq_numbered_1";
-INSERT INTO "__pre_seq_numbered_1" ("partition", "at") SELECT "partition", "at" FROM "seq_numbered_1"`);
+  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_seq_wire_hand_seq_numbered_1";
+INSERT INTO "__pre_seq_wire_hand_seq_numbered_1" ("partition", "at") SELECT "partition", "at" FROM "seq_wire_hand_seq_numbered_1"`);
 }
 
-interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
+interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_table_name: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
 interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
 interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
 
@@ -370,7 +370,7 @@ function quote_ordered_identifier(identifier: string): string {
 function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {
   const { arm, row } = write;
   if (!arm.evolves_pre) return null;
-  const table = quote_ordered_identifier("__pre_" + arm.head_rel);
+  const table = quote_ordered_identifier("__pre_" + arm.head_table_name);
   const columns = arm.head_columns.map(quote_ordered_identifier);
   const placeholders = columns.map(() => "?").join(", ");
   if (arm.head_kind === "log") {
@@ -386,17 +386,17 @@ function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null 
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { trigger_rel: "arrival", trigger_kind: "arrival", head_rel: "seq_numbered_1", head_kind: "set", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", 1 AS "at" WHERE NOT EXISTS (SELECT 1 FROM "seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q'))`, write_sql: `INSERT INTO "seq_numbered_1" ("partition", "at") VALUES (?, ?) ON CONFLICT("partition") DO UPDATE SET "at" = excluded."at"`, evolves_pre: true },
-  { trigger_rel: "arrival", trigger_kind: "arrival", head_rel: "seq_numbered_1", head_kind: "set", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", (b0."at" + 1) AS "at" FROM "__pre_seq_numbered_1" b0 WHERE b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')`, write_sql: `INSERT INTO "seq_numbered_1" ("partition", "at") VALUES (?, ?) ON CONFLICT("partition") DO UPDATE SET "at" = excluded."at"`, evolves_pre: true },
-  { trigger_rel: "arrival", trigger_kind: "arrival", head_rel: "numbered", head_kind: "log", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT 1 AS "ordinal", ?1 AS "payload" WHERE NOT EXISTS (SELECT 1 FROM "seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q'))`, write_sql: `INSERT INTO "numbered" ("ordinal", "payload") VALUES (?, ?)`, evolves_pre: false },
-  { trigger_rel: "arrival", trigger_kind: "arrival", head_rel: "numbered", head_kind: "log", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT (b0."at" + 1) AS "ordinal", ?1 AS "payload" FROM "__pre_seq_numbered_1" b0 WHERE b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')`, write_sql: `INSERT INTO "numbered" ("ordinal", "payload") VALUES (?, ?)`, evolves_pre: false },
+  { trigger_rel: "arrival", trigger_kind: "arrival", head_rel: "seq_numbered_1", head_table_name: "seq_wire_hand_seq_numbered_1", head_kind: "set", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", 1 AS "at" WHERE NOT EXISTS (SELECT 1 FROM "seq_wire_hand_seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q'))`, write_sql: `INSERT INTO "seq_wire_hand_seq_numbered_1" ("partition", "at") VALUES (?, ?) ON CONFLICT("partition") DO UPDATE SET "at" = excluded."at"`, evolves_pre: true },
+  { trigger_rel: "arrival", trigger_kind: "arrival", head_rel: "seq_numbered_1", head_table_name: "seq_wire_hand_seq_numbered_1", head_kind: "set", head_columns: ["partition", "at"], key_indices: [0], project_sql: `SELECT (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q') AS "partition", (b0."at" + 1) AS "at" FROM "__pre_seq_wire_hand_seq_numbered_1" b0 WHERE b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')`, write_sql: `INSERT INTO "seq_wire_hand_seq_numbered_1" ("partition", "at") VALUES (?, ?) ON CONFLICT("partition") DO UPDATE SET "at" = excluded."at"`, evolves_pre: true },
+  { trigger_rel: "arrival", trigger_kind: "arrival", head_rel: "numbered", head_table_name: "seq_wire_hand_numbered", head_kind: "log", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT 1 AS "ordinal", ?1 AS "payload" WHERE NOT EXISTS (SELECT 1 FROM "seq_wire_hand_seq_numbered_1" n0 WHERE n0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q'))`, write_sql: `INSERT INTO "seq_wire_hand_numbered" ("ordinal", "payload") VALUES (?, ?)`, evolves_pre: false },
+  { trigger_rel: "arrival", trigger_kind: "arrival", head_rel: "numbered", head_table_name: "seq_wire_hand_numbered", head_kind: "log", head_columns: ["ordinal", "payload"], key_indices: [], project_sql: `SELECT (b0."at" + 1) AS "ordinal", ?1 AS "payload" FROM "__pre_seq_wire_hand_seq_numbered_1" b0 WHERE b0."partition" = (SELECT s."__id" FROM "__str" s WHERE s."content" = 'q')`, write_sql: `INSERT INTO "seq_wire_hand_numbered" ("ordinal", "payload") VALUES (?, ?)`, evolves_pre: false },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "arrival", sql: `SELECT "_sequence" AS "__sequence", "payload" FROM "__frontier_arrival" ORDER BY "_phase", "_sequence"`, columns: ["payload"] },
+  { rel: "arrival", sql: `SELECT "_sequence" AS "__sequence", "payload" FROM "__frontier_seq_wire_hand_arrival" ORDER BY "_phase", "_sequence"`, columns: ["payload"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {

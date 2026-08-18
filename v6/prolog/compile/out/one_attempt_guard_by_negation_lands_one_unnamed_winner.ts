@@ -177,29 +177,29 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
   `INSERT OR IGNORE INTO "__str" ("content") VALUES ('acked'), ('sealed')`,
-  `CREATE TABLE "dispatch_ack" ("__id" INTEGER PRIMARY KEY, "dispatch_id" INTEGER NOT NULL, UNIQUE ("dispatch_id"))`,
-  `CREATE TABLE "dispatch_first" ("dispatch_id" INTEGER NOT NULL, "ack_tag" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_dispatch_first" AS SELECT t."dispatch_id" AS "dispatch_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ack_tag") AS "ack_tag" FROM "dispatch_first" t`,
-  `CREATE TABLE "dispatch_seal" ("__id" INTEGER PRIMARY KEY, "sealed_id" INTEGER NOT NULL, UNIQUE ("sealed_id"))`,
-  `CREATE TEMP TABLE "__delta_dispatch_ack" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_dispatch_ack_sign" ON "__delta_dispatch_ack" ("_sign")`,
-  `CREATE INDEX "__delta_dispatch_ack_group" ON "__delta_dispatch_ack" ("dispatch_id")`,
-  `CREATE TEMP TABLE "__frontier_dispatch_ack" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_dispatch_ack_phase" ON "__frontier_dispatch_ack" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_dispatch_ack" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_dispatch_first" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "ack_tag" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_dispatch_first_sign" ON "__delta_dispatch_first" ("_sign")`,
-  `CREATE INDEX "__delta_dispatch_first_group" ON "__delta_dispatch_first" ("dispatch_id", "ack_tag")`,
-  `CREATE TEMP TABLE "__frontier_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "ack_tag" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_dispatch_first_phase" ON "__frontier_dispatch_first" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "ack_tag" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_dispatch_first" AS SELECT t."dispatch_id" AS "dispatch_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ack_tag") AS "ack_tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_dispatch_first" t`,
-  `CREATE TEMP TABLE "__delta_dispatch_seal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_dispatch_seal_sign" ON "__delta_dispatch_seal" ("_sign")`,
-  `CREATE INDEX "__delta_dispatch_seal_group" ON "__delta_dispatch_seal" ("sealed_id")`,
-  `CREATE TEMP TABLE "__frontier_dispatch_seal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_dispatch_seal_phase" ON "__frontier_dispatch_seal" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_dispatch_seal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
+  `CREATE TABLE "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("__id" INTEGER PRIMARY KEY, "dispatch_id" INTEGER NOT NULL, UNIQUE ("dispatch_id"))`,
+  `CREATE TABLE "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("dispatch_id" INTEGER NOT NULL, "ack_tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" AS SELECT t."dispatch_id" AS "dispatch_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ack_tag") AS "ack_tag" FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" t`,
+  `CREATE TABLE "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("__id" INTEGER PRIMARY KEY, "sealed_id" INTEGER NOT NULL, UNIQUE ("sealed_id"))`,
+  `CREATE TEMP TABLE "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack_sign" ON "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("_sign")`,
+  `CREATE INDEX "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack_group" ON "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("dispatch_id")`,
+  `CREATE TEMP TABLE "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack_phase" ON "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "ack_tag" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first_sign" ON "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("_sign")`,
+  `CREATE INDEX "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first_group" ON "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("dispatch_id", "ack_tag")`,
+  `CREATE TEMP TABLE "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "ack_tag" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first_phase" ON "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "dispatch_id" INTEGER NOT NULL, "ack_tag" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" AS SELECT t."dispatch_id" AS "dispatch_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."ack_tag") AS "ack_tag", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" t`,
+  `CREATE TEMP TABLE "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal_sign" ON "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("_sign")`,
+  `CREATE INDEX "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal_group" ON "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("sealed_id")`,
+  `CREATE TEMP TABLE "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal_phase" ON "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "sealed_id" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -241,8 +241,8 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 18, parent_id: 10, ordinal: 0, local_name: "__delta_dispatch_first", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "331d3c0a6b921d82", h_schema: "fcfc2928df5cb635", h_rule: "" },
   { rel_id: 19, parent_id: 10, ordinal: 0, local_name: "__frontier_dispatch_first", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "ce8bcfd8dd19081b", h_schema: "88cf3cf57a6c6320", h_rule: "" },
   { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__next_frontier_dispatch_first", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "9e7f257688388d0a", h_schema: "88cf3cf57a6c6320", h_rule: "" },
-  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__txt_dispatch_first", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "eec8166a63da1e47", h_schema: "47758899287d59df", h_rule: "" },
-  { rel_id: 22, parent_id: 18, ordinal: 0, local_name: "__txt___delta_dispatch_first", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "26a27d3e8f2ce2e0", h_schema: "47758899287d59df", h_rule: "" },
+  { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__txt_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "8e3c036dd05e2ddc", h_schema: "47758899287d59df", h_rule: "" },
+  { rel_id: 22, parent_id: 18, ordinal: 0, local_name: "__txt___delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "29a5fe7ce96c0173", h_schema: "47758899287d59df", h_rule: "" },
   { rel_id: 23, parent_id: 13, ordinal: 0, local_name: "__delta_dispatch_seal", kind: "delta", type_id: 0, arity: 3, module_id: 7, h_id: "7e75955ca138ec56", h_schema: "72c477cba58c96d8", h_rule: "" },
   { rel_id: 24, parent_id: 13, ordinal: 0, local_name: "__frontier_dispatch_seal", kind: "frontier", type_id: 0, arity: 3, module_id: 7, h_id: "740c2d400fb0688b", h_schema: "fe1daf7ec018af3d", h_rule: "" },
   { rel_id: 25, parent_id: 13, ordinal: 0, local_name: "__next_frontier_dispatch_seal", kind: "next_frontier", type_id: 0, arity: 3, module_id: 7, h_id: "df761c7e580194d5", h_schema: "fe1daf7ec018af3d", h_rule: "" },
@@ -269,9 +269,9 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dispatch_ack: select_rows(seam, `SELECT t."dispatch_id" FROM "dispatch_ack" t`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
-    dispatch_first: select_rows(seam, `SELECT t."dispatch_id", CASE WHEN json_valid(t."ack_tag") AND json_type(t."ack_tag") = 'object' AND json_type(t."ack_tag", '$.fn') = 'text' AND json_type(t."ack_tag", '$.args') = 'array' THEN json_extract(t."ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ack_tag", '$.args')), '') || ')' ELSE t."ack_tag" END AS "ack_tag" FROM "__txt_dispatch_first" t`, rel_columns.dispatch_first!, rel_column_types.dispatch_first!),
-    dispatch_seal: select_rows(seam, `SELECT t."sealed_id" FROM "dispatch_seal" t`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
+    dispatch_ack: select_rows(seam, `SELECT t."dispatch_id" FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" t`, rel_columns.dispatch_ack!, rel_column_types.dispatch_ack!),
+    dispatch_first: select_rows(seam, `SELECT t."dispatch_id", CASE WHEN json_valid(t."ack_tag") AND json_type(t."ack_tag") = 'object' AND json_type(t."ack_tag", '$.fn') = 'text' AND json_type(t."ack_tag", '$.args') = 'array' THEN json_extract(t."ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ack_tag", '$.args')), '') || ')' ELSE t."ack_tag" END AS "ack_tag" FROM "__txt_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" t`, rel_columns.dispatch_first!, rel_column_types.dispatch_first!),
+    dispatch_seal: select_rows(seam, `SELECT t."sealed_id" FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" t`, rel_columns.dispatch_seal!, rel_column_types.dispatch_seal!),
   });
 }
 
@@ -279,9 +279,9 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "dispatch_ack"`, rel_columns.dispatch_ack!, rel_stored_column_types.dispatch_ack!),
-    dispatch_first: select_rows(seam, `SELECT "dispatch_id", "ack_tag" FROM "dispatch_first"`, rel_columns.dispatch_first!, rel_stored_column_types.dispatch_first!),
-    dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "dispatch_seal"`, rel_columns.dispatch_seal!, rel_stored_column_types.dispatch_seal!),
+    dispatch_ack: select_rows(seam, `SELECT "dispatch_id" FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack"`, rel_columns.dispatch_ack!, rel_stored_column_types.dispatch_ack!),
+    dispatch_first: select_rows(seam, `SELECT "dispatch_id", "ack_tag" FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first"`, rel_columns.dispatch_first!, rel_stored_column_types.dispatch_first!),
+    dispatch_seal: select_rows(seam, `SELECT "sealed_id" FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal"`, rel_columns.dispatch_seal!, rel_stored_column_types.dispatch_seal!),
   });
 }
 
@@ -290,14 +290,14 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  dispatch_ack: `SELECT t."dispatch_id" FROM "dispatch_ack" t`,
-  dispatch_first: `SELECT t."dispatch_id", CASE WHEN json_valid(t."ack_tag") AND json_type(t."ack_tag") = 'object' AND json_type(t."ack_tag", '$.fn') = 'text' AND json_type(t."ack_tag", '$.args') = 'array' THEN json_extract(t."ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ack_tag", '$.args')), '') || ')' ELSE t."ack_tag" END AS "ack_tag" FROM "__txt_dispatch_first" t`,
-  dispatch_seal: `SELECT t."sealed_id" FROM "dispatch_seal" t`,
+  dispatch_ack: `SELECT t."dispatch_id" FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" t`,
+  dispatch_first: `SELECT t."dispatch_id", CASE WHEN json_valid(t."ack_tag") AND json_type(t."ack_tag") = 'object' AND json_type(t."ack_tag", '$.fn') = 'text' AND json_type(t."ack_tag", '$.args') = 'array' THEN json_extract(t."ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ack_tag", '$.args')), '') || ')' ELSE t."ack_tag" END AS "ack_tag" FROM "__txt_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" t`,
+  dispatch_seal: `SELECT t."sealed_id" FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  dispatch_ack: { kind: "set", add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") VALUES (?)`, del_sql: `DELETE FROM "dispatch_ack" WHERE "dispatch_id" = ?` },
-  dispatch_seal: { kind: "set", add_sql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") VALUES (?)`, del_sql: `DELETE FROM "dispatch_seal" WHERE "sealed_id" = ?` },
+  dispatch_ack: { kind: "set", add_sql: `INSERT OR IGNORE INTO "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("dispatch_id") VALUES (?)`, del_sql: `DELETE FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" WHERE "dispatch_id" = ?` },
+  dispatch_seal: { kind: "set", add_sql: `INSERT OR IGNORE INTO "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("sealed_id") VALUES (?)`, del_sql: `DELETE FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" WHERE "sealed_id" = ?` },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -323,14 +323,14 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "dispatch_ack", kind: "set", table_name: "dispatch_ack", delta_table_name: "__delta_dispatch_ack", frontier_table_name: "__frontier_dispatch_ack", next_frontier_table_name: "__next_frontier_dispatch_ack", columns: ["dispatch_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrival_del_sql: `DELETE FROM "dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundary_sql: `SELECT t."dispatch_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_ack" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dispatch_id", t."_sign"`, rule_observers: ["dispatch_first/2"] },
-  { rel: "dispatch_first", kind: "log", table_name: "dispatch_first", delta_table_name: "__delta_dispatch_first", frontier_table_name: "__frontier_dispatch_first", next_frontier_table_name: "__next_frontier_dispatch_first", columns: ["dispatch_id", "ack_tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."dispatch_id", CASE WHEN json_valid(t."ack_tag") AND json_type(t."ack_tag") = 'object' AND json_type(t."ack_tag", '$.fn') = 'text' AND json_type(t."ack_tag", '$.args') = 'array' THEN json_extract(t."ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ack_tag", '$.args')), '') || ')' ELSE t."ack_tag" END AS "ack_tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_dispatch_first" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dispatch_id", t."ack_tag", t."_sign"`, rule_observers: [] },
-  { rel: "dispatch_seal", kind: "set", table_name: "dispatch_seal", delta_table_name: "__delta_dispatch_seal", frontier_table_name: "__frontier_dispatch_seal", next_frontier_table_name: "__next_frontier_dispatch_seal", columns: ["sealed_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrival_del_sql: `DELETE FROM "dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundary_sql: `SELECT t."sealed_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_dispatch_seal" t WHERE t."_sign" IN (-1, 1) GROUP BY t."sealed_id", t."_sign"`, rule_observers: ["dispatch_first/2"] },
+  { rel: "dispatch_ack", kind: "set", table_name: "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack", delta_table_name: "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack", frontier_table_name: "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack", next_frontier_table_name: "__next_frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack", columns: ["dispatch_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ("dispatch_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "dispatch_id"`, arrival_del_sql: `DELETE FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" WHERE ("dispatch_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "dispatch_id"`, boundary_sql: `SELECT t."dispatch_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dispatch_id", t."_sign"`, rule_observers: ["dispatch_first/2"] },
+  { rel: "dispatch_first", kind: "log", table_name: "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", delta_table_name: "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", frontier_table_name: "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", next_frontier_table_name: "__next_frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", columns: ["dispatch_id", "ack_tag"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."dispatch_id", CASE WHEN json_valid(t."ack_tag") AND json_type(t."ack_tag") = 'object' AND json_type(t."ack_tag", '$.fn') = 'text' AND json_type(t."ack_tag", '$.args') = 'array' THEN json_extract(t."ack_tag", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."ack_tag", '$.args')), '') || ')' ELSE t."ack_tag" END AS "ack_tag", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" t WHERE t."_sign" IN (-1, 1) GROUP BY t."dispatch_id", t."ack_tag", t."_sign"`, rule_observers: [] },
+  { rel: "dispatch_seal", kind: "set", table_name: "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal", delta_table_name: "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal", frontier_table_name: "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal", next_frontier_table_name: "__next_frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal", columns: ["sealed_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ("sealed_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "sealed_id"`, arrival_del_sql: `DELETE FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" WHERE ("sealed_id") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "sealed_id"`, boundary_sql: `SELECT t."sealed_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" t WHERE t."_sign" IN (-1, 1) GROUP BY t."sealed_id", t."_sign"`, rule_observers: ["dispatch_first/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "dispatch_first", rule_id: "one_attempt_guard_by_negation_lands_one_unnamed_winner:dispatch_first/2#1", head_kind: "log", head_table_name: "dispatch_first", head_delta_table_name: "__delta_dispatch_first", head_columns: ["dispatch_id", "ack_tag"], key_indices: [], project_sql: `SELECT d0."dispatch_id" AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acked') AS "ack_tag" FROM "__frontier_dispatch_ack" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = d0."dispatch_id") ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "dispatch_first", rule_id: "one_attempt_guard_by_negation_lands_one_unnamed_winner:dispatch_first/2#2", head_kind: "log", head_table_name: "dispatch_first", head_delta_table_name: "__delta_dispatch_first", head_columns: ["dispatch_id", "ack_tag"], key_indices: [], project_sql: `SELECT d0."sealed_id" AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'sealed') AS "ack_tag" FROM "__frontier_dispatch_seal" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = d0."sealed_id") ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "dispatch_first", rule_id: "one_attempt_guard_by_negation_lands_one_unnamed_winner:dispatch_first/2#1", head_kind: "log", head_table_name: "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", head_delta_table_name: "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", head_columns: ["dispatch_id", "ack_tag"], key_indices: [], project_sql: `SELECT d0."dispatch_id" AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acked') AS "ack_tag" FROM "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" n0 WHERE n0."dispatch_id" = d0."dispatch_id") ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "dispatch_first", rule_id: "one_attempt_guard_by_negation_lands_one_unnamed_winner:dispatch_first/2#2", head_kind: "log", head_table_name: "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", head_delta_table_name: "__delta_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", head_columns: ["dispatch_id", "ack_tag"], key_indices: [], project_sql: `SELECT d0."sealed_id" AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'sealed') AS "ack_tag" FROM "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" n0 WHERE n0."dispatch_id" = d0."sealed_id") ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
@@ -340,7 +340,7 @@ function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
   return seam.runner.executeMultiple(seam.db, ``);
 }
 
-interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
+interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_table_name: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
 interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
 interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
 
@@ -351,7 +351,7 @@ function quote_ordered_identifier(identifier: string): string {
 function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {
   const { arm, row } = write;
   if (!arm.evolves_pre) return null;
-  const table = quote_ordered_identifier("__pre_" + arm.head_rel);
+  const table = quote_ordered_identifier("__pre_" + arm.head_table_name);
   const columns = arm.head_columns.map(quote_ordered_identifier);
   const placeholders = columns.map(() => "?").join(", ");
   if (arm.head_kind === "log") {
@@ -367,16 +367,16 @@ function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null 
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { trigger_rel: "dispatch_ack", trigger_kind: "arrival", head_rel: "dispatch_first", head_kind: "log", head_columns: ["dispatch_id", "ack_tag"], key_indices: [], project_sql: `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acked') AS "ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, write_sql: `INSERT INTO "dispatch_first" ("dispatch_id", "ack_tag") VALUES (?, ?)`, evolves_pre: false },
-  { trigger_rel: "dispatch_seal", trigger_kind: "arrival", head_rel: "dispatch_first", head_kind: "log", head_columns: ["dispatch_id", "ack_tag"], key_indices: [], project_sql: `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'sealed') AS "ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, write_sql: `INSERT INTO "dispatch_first" ("dispatch_id", "ack_tag") VALUES (?, ?)`, evolves_pre: false },
+  { trigger_rel: "dispatch_ack", trigger_kind: "arrival", head_rel: "dispatch_first", head_table_name: "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", head_kind: "log", head_columns: ["dispatch_id", "ack_tag"], key_indices: [], project_sql: `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'acked') AS "ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, write_sql: `INSERT INTO "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("dispatch_id", "ack_tag") VALUES (?, ?)`, evolves_pre: false },
+  { trigger_rel: "dispatch_seal", trigger_kind: "arrival", head_rel: "dispatch_first", head_table_name: "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first", head_kind: "log", head_columns: ["dispatch_id", "ack_tag"], key_indices: [], project_sql: `SELECT ?1 AS "dispatch_id", (SELECT s."__id" FROM "__str" s WHERE s."content" = 'sealed') AS "ack_tag" WHERE NOT EXISTS (SELECT 1 FROM "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" n0 WHERE n0."dispatch_id" = ?1)`, write_sql: `INSERT INTO "one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_first" ("dispatch_id", "ack_tag") VALUES (?, ?)`, evolves_pre: false },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "dispatch_ack", sql: `SELECT "_sequence" AS "__sequence", "dispatch_id" FROM "__frontier_dispatch_ack" ORDER BY "_phase", "_sequence"`, columns: ["dispatch_id"] },
-  { rel: "dispatch_seal", sql: `SELECT "_sequence" AS "__sequence", "sealed_id" FROM "__frontier_dispatch_seal" ORDER BY "_phase", "_sequence"`, columns: ["sealed_id"] },
+  { rel: "dispatch_ack", sql: `SELECT "_sequence" AS "__sequence", "dispatch_id" FROM "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_ack" ORDER BY "_phase", "_sequence"`, columns: ["dispatch_id"] },
+  { rel: "dispatch_seal", sql: `SELECT "_sequence" AS "__sequence", "sealed_id" FROM "__frontier_one_attempt_guard_by_negation_lands_one_unnamed_winner_dispatch_seal" ORDER BY "_phase", "_sequence"`, columns: ["sealed_id"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {

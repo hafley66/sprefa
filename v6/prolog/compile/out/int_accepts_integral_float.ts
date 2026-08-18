@@ -146,13 +146,13 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "measure" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_measure" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_measure_sign" ON "__delta_measure" ("_sign")`,
-  `CREATE INDEX "__delta_measure_group" ON "__delta_measure" ("value")`,
-  `CREATE TEMP TABLE "__frontier_measure" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_measure_phase" ON "__frontier_measure" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_measure" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE TABLE "int_accepts_integral_float_measure" ("__id" INTEGER PRIMARY KEY, "value" INTEGER NOT NULL, UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_int_accepts_integral_float_measure" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_int_accepts_integral_float_measure_sign" ON "__delta_int_accepts_integral_float_measure" ("_sign")`,
+  `CREATE INDEX "__delta_int_accepts_integral_float_measure_group" ON "__delta_int_accepts_integral_float_measure" ("value")`,
+  `CREATE TEMP TABLE "__frontier_int_accepts_integral_float_measure" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_int_accepts_integral_float_measure_phase" ON "__frontier_int_accepts_integral_float_measure" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_int_accepts_integral_float_measure" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -190,15 +190,15 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["measure"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "measure", sql: `INSERT OR IGNORE INTO "measure" ("value") VALUES (?)`, params: [1.0] },
+  { rel: "measure", sql: `INSERT OR IGNORE INTO "int_accepts_integral_float_measure" ("value") VALUES (?)`, params: [1.0] },
 ];
 
 const final_select: Record<string, string> = {
-  measure: `SELECT t."value" FROM "measure" t`,
+  measure: `SELECT t."value" FROM "int_accepts_integral_float_measure" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "measure", kind: "set", table_name: "measure", delta_table_name: "__delta_measure", frontier_table_name: "__frontier_measure", next_frontier_table_name: "__next_frontier_measure", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "measure" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "measure" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_measure" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "measure", kind: "set", table_name: "int_accepts_integral_float_measure", delta_table_name: "__delta_int_accepts_integral_float_measure", frontier_table_name: "__frontier_int_accepts_integral_float_measure", next_frontier_table_name: "__next_frontier_int_accepts_integral_float_measure", columns: ["value"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "int_accepts_integral_float_measure" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "int_accepts_integral_float_measure" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_int_accepts_integral_float_measure" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

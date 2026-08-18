@@ -474,6 +474,7 @@ pub struct RecursionGroupPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncrementalLevelStatement {
     pub head_rel: String,
+    pub head_table_name: String,
     pub head_delta_table_name: String,
     pub head_columns: Vec<String>,
     pub head_column_types: Vec<RowColumnType>,
@@ -518,6 +519,7 @@ pub struct OrderedEdgeArm {
     pub trigger_rel: String,
     pub trigger_kind: OrderedTriggerKind,
     pub head_rel: String,
+    pub head_table_name: String,
     pub head_kind: RelationKind,
     pub head_columns: Vec<String>,
     pub key_indices: Vec<usize>,

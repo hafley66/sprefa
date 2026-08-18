@@ -177,25 +177,25 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "append_line" ("channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_append_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece" FROM "append_line" t`,
-  `CREATE TABLE "log_text" ("__id" INTEGER PRIMARY KEY, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("channel"))`,
-  `CREATE TEMP VIEW "__txt_log_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."next") AS "next" FROM "log_text" t`,
-  `CREATE TEMP TABLE "__delta_append_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_append_line_sign" ON "__delta_append_line" ("_sign")`,
-  `CREATE INDEX "__delta_append_line_group" ON "__delta_append_line" ("channel", "piece")`,
-  `CREATE TEMP TABLE "__frontier_append_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_append_line_phase" ON "__frontier_append_line" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_append_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_append_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_append_line" t`,
-  `CREATE TEMP TABLE "__delta_log_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_log_text_sign" ON "__delta_log_text" ("_sign")`,
-  `CREATE INDEX "__delta_log_text_group" ON "__delta_log_text" ("channel", "next")`,
-  `CREATE TEMP TABLE "__frontier_log_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_log_text_phase" ON "__frontier_log_text" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_log_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_log_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."next") AS "next", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_log_text" t`,
-  `CREATE TEMP TABLE "__pre_log_text" ("channel" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("channel")) WITHOUT ROWID`,
+  `CREATE TABLE "concat_fold_follows_arrival_order_append_line" ("channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_concat_fold_follows_arrival_order_append_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece" FROM "concat_fold_follows_arrival_order_append_line" t`,
+  `CREATE TABLE "concat_fold_follows_arrival_order_log_text" ("__id" INTEGER PRIMARY KEY, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL, UNIQUE ("channel"))`,
+  `CREATE TEMP VIEW "__txt_concat_fold_follows_arrival_order_log_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."next") AS "next" FROM "concat_fold_follows_arrival_order_log_text" t`,
+  `CREATE TEMP TABLE "__delta_concat_fold_follows_arrival_order_append_line" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_concat_fold_follows_arrival_order_append_line_sign" ON "__delta_concat_fold_follows_arrival_order_append_line" ("_sign")`,
+  `CREATE INDEX "__delta_concat_fold_follows_arrival_order_append_line_group" ON "__delta_concat_fold_follows_arrival_order_append_line" ("channel", "piece")`,
+  `CREATE TEMP TABLE "__frontier_concat_fold_follows_arrival_order_append_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_concat_fold_follows_arrival_order_append_line_phase" ON "__frontier_concat_fold_follows_arrival_order_append_line" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_concat_fold_follows_arrival_order_append_line" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "piece" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_concat_fold_follows_arrival_order_append_line" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."piece") AS "piece", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_concat_fold_follows_arrival_order_append_line" t`,
+  `CREATE TEMP TABLE "__delta_concat_fold_follows_arrival_order_log_text" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_concat_fold_follows_arrival_order_log_text_sign" ON "__delta_concat_fold_follows_arrival_order_log_text" ("_sign")`,
+  `CREATE INDEX "__delta_concat_fold_follows_arrival_order_log_text_group" ON "__delta_concat_fold_follows_arrival_order_log_text" ("channel", "next")`,
+  `CREATE TEMP TABLE "__frontier_concat_fold_follows_arrival_order_log_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_concat_fold_follows_arrival_order_log_text_phase" ON "__frontier_concat_fold_follows_arrival_order_log_text" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_concat_fold_follows_arrival_order_log_text" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "channel" INTEGER NOT NULL, "next" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_concat_fold_follows_arrival_order_log_text" AS SELECT (SELECT s."content" FROM "__str" s WHERE s."__id" = t."channel") AS "channel", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."next") AS "next", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_concat_fold_follows_arrival_order_log_text" t`,
+  `CREATE TEMP TABLE "__pre_concat_fold_follows_arrival_order_log_text" ("channel" INTEGER NOT NULL, "next" INTEGER NOT NULL, PRIMARY KEY ("channel")) WITHOUT ROWID`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -230,14 +230,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 14, parent_id: 8, ordinal: 0, local_name: "__delta_append_line", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "c1e5d51c472a38e3", h_schema: "6a61fbe18c90b9ff", h_rule: "" },
   { rel_id: 15, parent_id: 8, ordinal: 0, local_name: "__frontier_append_line", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "582c7e2b6a0718ba", h_schema: "9a35737892978e29", h_rule: "" },
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__next_frontier_append_line", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a4a77d2df480ae52", h_schema: "9a35737892978e29", h_rule: "" },
-  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_append_line", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "d4291e6b59eb2439", h_schema: "8457c5aa5b496623", h_rule: "" },
-  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_append_line", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "1aec6d1e8f7d863b", h_schema: "8457c5aa5b496623", h_rule: "" },
+  { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__txt_concat_fold_follows_arrival_order_append_line", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "9a46a0256da2d9ca", h_schema: "8457c5aa5b496623", h_rule: "" },
+  { rel_id: 18, parent_id: 14, ordinal: 0, local_name: "__txt___delta_concat_fold_follows_arrival_order_append_line", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "3454beb207e4c37c", h_schema: "8457c5aa5b496623", h_rule: "" },
   { rel_id: 19, parent_id: 11, ordinal: 0, local_name: "__delta_log_text", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "73059b4e944ca7fd", h_schema: "ac18887c3096a667", h_rule: "" },
   { rel_id: 20, parent_id: 11, ordinal: 0, local_name: "__frontier_log_text", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "04a5338ec4304e8c", h_schema: "7713e5490b4f2efa", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__next_frontier_log_text", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "4d66fc92632f4426", h_schema: "7713e5490b4f2efa", h_rule: "" },
   { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__pre_log_text", kind: "pre", type_id: 0, arity: 2, module_id: 7, h_id: "d5dcecd1cb0f1b01", h_schema: "bc78ddfcf8f0161f", h_rule: "" },
-  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_log_text", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "4dc16a1c5800fd0f", h_schema: "bc78ddfcf8f0161f", h_rule: "" },
-  { rel_id: 24, parent_id: 19, ordinal: 0, local_name: "__txt___delta_log_text", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "4fa7ba59439041a8", h_schema: "bc78ddfcf8f0161f", h_rule: "" },
+  { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__txt_concat_fold_follows_arrival_order_log_text", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "877d1ba5638000b8", h_schema: "bc78ddfcf8f0161f", h_rule: "" },
+  { rel_id: 24, parent_id: 19, ordinal: 0, local_name: "__txt___delta_concat_fold_follows_arrival_order_log_text", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "300632ff51742623", h_schema: "bc78ddfcf8f0161f", h_rule: "" },
   { rel_id: 25, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "232cc3727d39fe0a", h_schema: "", h_rule: "" },
   { rel_id: 26, parent_id: 9, ordinal: 1, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "eb941c994a0d7c1f", h_schema: "", h_rule: "" },
   { rel_id: 27, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "fef2bbe4bffde6d8", h_schema: "", h_rule: "" },
@@ -253,7 +253,7 @@ const arrival_targets: readonly string[] = ["append_line"];
 const boot: readonly IBootStatement[] = [
   { rel: "log_text", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["main"] },
   { rel: "log_text", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: [""] },
-  { rel: "log_text", sql: `INSERT OR IGNORE INTO "log_text" ("channel", "next") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["main", ""] },
+  { rel: "log_text", sql: `INSERT OR IGNORE INTO "concat_fold_follows_arrival_order_log_text" ("channel", "next") VALUES ((SELECT "__id" FROM "__str" WHERE "content" = ?), (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: ["main", ""] },
 ];
 
 type Snapshot = {
@@ -263,8 +263,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    append_line: select_rows(seam, `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_append_line" t`, rel_columns.append_line!, rel_column_types.append_line!),
-    log_text: select_rows(seam, `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next" FROM "__txt_log_text" t`, rel_columns.log_text!, rel_column_types.log_text!),
+    append_line: select_rows(seam, `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_concat_fold_follows_arrival_order_append_line" t`, rel_columns.append_line!, rel_column_types.append_line!),
+    log_text: select_rows(seam, `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next" FROM "__txt_concat_fold_follows_arrival_order_log_text" t`, rel_columns.log_text!, rel_column_types.log_text!),
   });
 }
 
@@ -272,8 +272,8 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    append_line: select_rows(seam, `SELECT "channel", "piece" FROM "append_line"`, rel_columns.append_line!, rel_stored_column_types.append_line!),
-    log_text: select_rows(seam, `SELECT "channel", "next" FROM "log_text"`, rel_columns.log_text!, rel_stored_column_types.log_text!),
+    append_line: select_rows(seam, `SELECT "channel", "piece" FROM "concat_fold_follows_arrival_order_append_line"`, rel_columns.append_line!, rel_stored_column_types.append_line!),
+    log_text: select_rows(seam, `SELECT "channel", "next" FROM "concat_fold_follows_arrival_order_log_text"`, rel_columns.log_text!, rel_stored_column_types.log_text!),
   });
 }
 
@@ -282,12 +282,12 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  append_line: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_append_line" t`,
-  log_text: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next" FROM "__txt_log_text" t`,
+  append_line: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece" FROM "__txt_concat_fold_follows_arrival_order_append_line" t`,
+  log_text: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next" FROM "__txt_concat_fold_follows_arrival_order_log_text" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  append_line: { kind: "log", add_sql: `INSERT INTO "append_line" ("channel", "piece") VALUES (?, ?)`, del_sql: null },
+  append_line: { kind: "log", add_sql: `INSERT INTO "concat_fold_follows_arrival_order_append_line" ("channel", "piece") VALUES (?, ?)`, del_sql: null },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -313,23 +313,23 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "append_line", kind: "log", table_name: "append_line", delta_table_name: "__delta_append_line", frontier_table_name: "__frontier_append_line", next_frontier_table_name: "__next_frontier_append_line", columns: ["channel", "piece"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "append_line" ("channel", "piece") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "channel", "piece"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_append_line" t WHERE t."_sign" IN (-1, 1) GROUP BY t."channel", t."piece", t."_sign"`, rule_observers: ["log_text/2"] },
-  { rel: "log_text", kind: "set", table_name: "log_text", delta_table_name: "__delta_log_text", frontier_table_name: "__frontier_log_text", next_frontier_table_name: "__next_frontier_log_text", columns: ["channel", "next"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_log_text" t WHERE t."_sign" IN (-1, 1) GROUP BY t."channel", t."next", t."_sign"`, rule_observers: [] },
+  { rel: "append_line", kind: "log", table_name: "concat_fold_follows_arrival_order_append_line", delta_table_name: "__delta_concat_fold_follows_arrival_order_append_line", frontier_table_name: "__frontier_concat_fold_follows_arrival_order_append_line", next_frontier_table_name: "__next_frontier_concat_fold_follows_arrival_order_append_line", columns: ["channel", "piece"], column_types: ["text", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "concat_fold_follows_arrival_order_append_line" ("channel", "piece") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "channel", "piece"`, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."piece") AND json_type(t."piece") = 'object' AND json_type(t."piece", '$.fn') = 'text' AND json_type(t."piece", '$.args') = 'array' THEN json_extract(t."piece", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."piece", '$.args')), '') || ')' ELSE t."piece" END AS "piece", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_concat_fold_follows_arrival_order_append_line" t WHERE t."_sign" IN (-1, 1) GROUP BY t."channel", t."piece", t."_sign"`, rule_observers: ["log_text/2"] },
+  { rel: "log_text", kind: "set", table_name: "concat_fold_follows_arrival_order_log_text", delta_table_name: "__delta_concat_fold_follows_arrival_order_log_text", frontier_table_name: "__frontier_concat_fold_follows_arrival_order_log_text", next_frontier_table_name: "__next_frontier_concat_fold_follows_arrival_order_log_text", columns: ["channel", "next"], column_types: ["text", "text"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT CASE WHEN json_valid(t."channel") AND json_type(t."channel") = 'object' AND json_type(t."channel", '$.fn') = 'text' AND json_type(t."channel", '$.args') = 'array' THEN json_extract(t."channel", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."channel", '$.args')), '') || ')' ELSE t."channel" END AS "channel", CASE WHEN json_valid(t."next") AND json_type(t."next") = 'object' AND json_type(t."next", '$.fn') = 'text' AND json_type(t."next", '$.args') = 'array' THEN json_extract(t."next", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."next", '$.args')), '') || ')' ELSE t."next" END AS "next", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_concat_fold_follows_arrival_order_log_text" t WHERE t."_sign" IN (-1, 1) GROUP BY t."channel", t."next", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "log_text", rule_id: "concat_fold_follows_arrival_order:log_text/2#1", head_kind: "set", head_table_name: "log_text", head_delta_table_name: "__delta_log_text", head_columns: ["channel", "next"], key_indices: [0], project_sql: `SELECT d0."channel" AS "channel", (SELECT s."__id" FROM "__str" s WHERE s."content" = ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."piece"))) AS "next" FROM "__frontier_append_line" d0, "__pre_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel" ORDER BY d0."_phase", d0."_sequence"`, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."piece")) FROM "__frontier_append_line" d0, "__pre_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel"`] },
+  { head_rel: "log_text", rule_id: "concat_fold_follows_arrival_order:log_text/2#1", head_kind: "set", head_table_name: "concat_fold_follows_arrival_order_log_text", head_delta_table_name: "__delta_concat_fold_follows_arrival_order_log_text", head_columns: ["channel", "next"], key_indices: [0], project_sql: `SELECT d0."channel" AS "channel", (SELECT s."__id" FROM "__str" s WHERE s."content" = ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."piece"))) AS "next" FROM "__frontier_concat_fold_follows_arrival_order_append_line" d0, "__pre_concat_fold_follows_arrival_order_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel" ORDER BY d0."_phase", d0."_sequence"`, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = d0."piece")) FROM "__frontier_concat_fold_follows_arrival_order_append_line" d0, "__pre_concat_fold_follows_arrival_order_log_text" b0 WHERE d0."_phase" >= 0 AND b0."channel" = d0."channel"`] },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
 function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
-  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_log_text";
-INSERT INTO "__pre_log_text" ("channel", "next") SELECT "channel", "next" FROM "log_text"`);
+  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_concat_fold_follows_arrival_order_log_text";
+INSERT INTO "__pre_concat_fold_follows_arrival_order_log_text" ("channel", "next") SELECT "channel", "next" FROM "concat_fold_follows_arrival_order_log_text"`);
 }
 
-interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean; readonly intern_sql?: readonly string[] }
+interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_table_name: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean; readonly intern_sql?: readonly string[] }
 interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
 interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
 
@@ -340,7 +340,7 @@ function quote_ordered_identifier(identifier: string): string {
 function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {
   const { arm, row } = write;
   if (!arm.evolves_pre) return null;
-  const table = quote_ordered_identifier("__pre_" + arm.head_rel);
+  const table = quote_ordered_identifier("__pre_" + arm.head_table_name);
   const columns = arm.head_columns.map(quote_ordered_identifier);
   const placeholders = columns.map(() => "?").join(", ");
   if (arm.head_kind === "log") {
@@ -356,14 +356,14 @@ function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null 
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { trigger_rel: "append_line", trigger_kind: "arrival", head_rel: "log_text", head_kind: "set", head_columns: ["channel", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "channel", (SELECT s."__id" FROM "__str" s WHERE s."content" = ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = ?2))) AS "next" FROM "__pre_log_text" b0 WHERE b0."channel" = ?1`, write_sql: `INSERT INTO "log_text" ("channel", "next") VALUES (?, ?) ON CONFLICT("channel") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = ?2)) FROM "__pre_log_text" b0 WHERE b0."channel" = ?1`] },
+  { trigger_rel: "append_line", trigger_kind: "arrival", head_rel: "log_text", head_table_name: "concat_fold_follows_arrival_order_log_text", head_kind: "set", head_columns: ["channel", "next"], key_indices: [0], project_sql: `SELECT ?1 AS "channel", (SELECT s."__id" FROM "__str" s WHERE s."content" = ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = ?2))) AS "next" FROM "__pre_concat_fold_follows_arrival_order_log_text" b0 WHERE b0."channel" = ?1`, write_sql: `INSERT INTO "concat_fold_follows_arrival_order_log_text" ("channel", "next") VALUES (?, ?) ON CONFLICT("channel") DO UPDATE SET "next" = excluded."next"`, evolves_pre: true, intern_sql: [`INSERT OR IGNORE INTO "__str" ("content") SELECT DISTINCT ((SELECT s."content" FROM "__str" s WHERE s."__id" = b0."next") || (SELECT s."content" FROM "__str" s WHERE s."__id" = ?2)) FROM "__pre_concat_fold_follows_arrival_order_log_text" b0 WHERE b0."channel" = ?1`] },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "append_line", sql: `SELECT "_sequence" AS "__sequence", "channel", "piece" FROM "__frontier_append_line" ORDER BY "_phase", "_sequence"`, columns: ["channel", "piece"] },
+  { rel: "append_line", sql: `SELECT "_sequence" AS "__sequence", "channel", "piece" FROM "__frontier_concat_fold_follows_arrival_order_append_line" ORDER BY "_phase", "_sequence"`, columns: ["channel", "piece"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {

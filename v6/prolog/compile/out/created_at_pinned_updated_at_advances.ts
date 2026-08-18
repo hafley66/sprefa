@@ -177,25 +177,25 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "arrive" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_arrive" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "arrive" t`,
-  `CREATE TABLE "thing" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, UNIQUE ("id"))`,
-  `CREATE TEMP VIEW "__txt_thing" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."born" AS "born", t."tick" AS "tick" FROM "thing" t`,
-  `CREATE TEMP TABLE "__delta_arrive" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_arrive_sign" ON "__delta_arrive" ("_sign")`,
-  `CREATE INDEX "__delta_arrive_group" ON "__delta_arrive" ("id", "payload")`,
-  `CREATE TEMP TABLE "__frontier_arrive" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_arrive_phase" ON "__frontier_arrive" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_arrive" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_arrive" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_arrive" t`,
-  `CREATE TEMP TABLE "__delta_thing" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_thing_sign" ON "__delta_thing" ("_sign")`,
-  `CREATE INDEX "__delta_thing_group" ON "__delta_thing" ("id", "payload", "born", "tick")`,
-  `CREATE TEMP TABLE "__frontier_thing" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_thing_phase" ON "__frontier_thing" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_thing" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_thing" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."born" AS "born", t."tick" AS "tick", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_thing" t`,
-  `CREATE TEMP TABLE "__pre_thing" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
+  `CREATE TABLE "created_at_pinned_updated_at_advances_arrive" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_created_at_pinned_updated_at_advances_arrive" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload" FROM "created_at_pinned_updated_at_advances_arrive" t`,
+  `CREATE TABLE "created_at_pinned_updated_at_advances_thing" ("__id" INTEGER PRIMARY KEY, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, UNIQUE ("id"))`,
+  `CREATE TEMP VIEW "__txt_created_at_pinned_updated_at_advances_thing" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."born" AS "born", t."tick" AS "tick" FROM "created_at_pinned_updated_at_advances_thing" t`,
+  `CREATE TEMP TABLE "__delta_created_at_pinned_updated_at_advances_arrive" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_created_at_pinned_updated_at_advances_arrive_sign" ON "__delta_created_at_pinned_updated_at_advances_arrive" ("_sign")`,
+  `CREATE INDEX "__delta_created_at_pinned_updated_at_advances_arrive_group" ON "__delta_created_at_pinned_updated_at_advances_arrive" ("id", "payload")`,
+  `CREATE TEMP TABLE "__frontier_created_at_pinned_updated_at_advances_arrive" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_created_at_pinned_updated_at_advances_arrive_phase" ON "__frontier_created_at_pinned_updated_at_advances_arrive" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_created_at_pinned_updated_at_advances_arrive" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_created_at_pinned_updated_at_advances_arrive" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_created_at_pinned_updated_at_advances_arrive" t`,
+  `CREATE TEMP TABLE "__delta_created_at_pinned_updated_at_advances_thing" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_created_at_pinned_updated_at_advances_thing_sign" ON "__delta_created_at_pinned_updated_at_advances_thing" ("_sign")`,
+  `CREATE INDEX "__delta_created_at_pinned_updated_at_advances_thing_group" ON "__delta_created_at_pinned_updated_at_advances_thing" ("id", "payload", "born", "tick")`,
+  `CREATE TEMP TABLE "__frontier_created_at_pinned_updated_at_advances_thing" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_created_at_pinned_updated_at_advances_thing_phase" ON "__frontier_created_at_pinned_updated_at_advances_thing" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_created_at_pinned_updated_at_advances_thing" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_created_at_pinned_updated_at_advances_thing" AS SELECT t."id" AS "id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."payload") AS "payload", t."born" AS "born", t."tick" AS "tick", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_created_at_pinned_updated_at_advances_thing" t`,
+  `CREATE TEMP TABLE "__pre_created_at_pinned_updated_at_advances_thing" ("id" INTEGER NOT NULL, "payload" INTEGER NOT NULL, "born" INTEGER NOT NULL, "tick" INTEGER NOT NULL, PRIMARY KEY ("id")) WITHOUT ROWID`,
   `CREATE TABLE "__tick" ("n" INTEGER NOT NULL)`,
   `INSERT INTO "__tick" ("n") SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM "__tick")`,
 ];
@@ -234,14 +234,14 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 16, parent_id: 8, ordinal: 0, local_name: "__delta_arrive", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "e7d092e5341d6a6b", h_schema: "4a6dbc4fa26af91f", h_rule: "" },
   { rel_id: 17, parent_id: 8, ordinal: 0, local_name: "__frontier_arrive", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a939e19172a20151", h_schema: "deb289323d1cca14", h_rule: "" },
   { rel_id: 18, parent_id: 8, ordinal: 0, local_name: "__next_frontier_arrive", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "55990538d6a0b07e", h_schema: "deb289323d1cca14", h_rule: "" },
-  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_arrive", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "083a515adad86575", h_schema: "a1949cdd1cb051b0", h_rule: "" },
-  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_arrive", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "cb8f3fb0082ac002", h_schema: "a1949cdd1cb051b0", h_rule: "" },
+  { rel_id: 19, parent_id: 8, ordinal: 0, local_name: "__txt_created_at_pinned_updated_at_advances_arrive", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "fb6ce61f85c588d0", h_schema: "a1949cdd1cb051b0", h_rule: "" },
+  { rel_id: 20, parent_id: 16, ordinal: 0, local_name: "__txt___delta_created_at_pinned_updated_at_advances_arrive", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "80d8ac097d5645da", h_schema: "a1949cdd1cb051b0", h_rule: "" },
   { rel_id: 21, parent_id: 11, ordinal: 0, local_name: "__delta_thing", kind: "delta", type_id: 0, arity: 6, module_id: 7, h_id: "a1782784139292f7", h_schema: "7f653e53f7b70a4b", h_rule: "" },
   { rel_id: 22, parent_id: 11, ordinal: 0, local_name: "__frontier_thing", kind: "frontier", type_id: 0, arity: 6, module_id: 7, h_id: "c36847bf92a0583c", h_schema: "2a9f492296936634", h_rule: "" },
   { rel_id: 23, parent_id: 11, ordinal: 0, local_name: "__next_frontier_thing", kind: "next_frontier", type_id: 0, arity: 6, module_id: 7, h_id: "80e4eada1e734e73", h_schema: "2a9f492296936634", h_rule: "" },
   { rel_id: 24, parent_id: 11, ordinal: 0, local_name: "__pre_thing", kind: "pre", type_id: 0, arity: 4, module_id: 7, h_id: "7b86036b414108d8", h_schema: "e10e0debdae0f94b", h_rule: "" },
-  { rel_id: 25, parent_id: 11, ordinal: 0, local_name: "__txt_thing", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "ecba0893972ed92e", h_schema: "e10e0debdae0f94b", h_rule: "" },
-  { rel_id: 26, parent_id: 21, ordinal: 0, local_name: "__txt___delta_thing", kind: "view", type_id: 0, arity: 6, module_id: 7, h_id: "628e7e7fd22f8b20", h_schema: "e10e0debdae0f94b", h_rule: "" },
+  { rel_id: 25, parent_id: 11, ordinal: 0, local_name: "__txt_created_at_pinned_updated_at_advances_thing", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "be947e0402cde83b", h_schema: "e10e0debdae0f94b", h_rule: "" },
+  { rel_id: 26, parent_id: 21, ordinal: 0, local_name: "__txt___delta_created_at_pinned_updated_at_advances_thing", kind: "view", type_id: 0, arity: 6, module_id: 7, h_id: "305fbb58c8d6c7ba", h_schema: "e10e0debdae0f94b", h_rule: "" },
   { rel_id: 27, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "3828454d16359909", h_schema: "", h_rule: "" },
   { rel_id: 28, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "1bb98533d6793a58", h_schema: "", h_rule: "" },
   { rel_id: 29, parent_id: 10, ordinal: 2, local_name: "interned_id", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "8c38aaf1d0706f12", h_schema: "", h_rule: "" },
@@ -266,8 +266,8 @@ type Snapshot = {
 
 function read_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrive: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_arrive" t`, rel_columns.arrive!, rel_column_types.arrive!),
-    thing: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."born", t."tick" FROM "__txt_thing" t`, rel_columns.thing!, rel_column_types.thing!),
+    arrive: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_created_at_pinned_updated_at_advances_arrive" t`, rel_columns.arrive!, rel_column_types.arrive!),
+    thing: select_rows(seam, `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."born", t."tick" FROM "__txt_created_at_pinned_updated_at_advances_thing" t`, rel_columns.thing!, rel_column_types.thing!),
   });
 }
 
@@ -275,8 +275,8 @@ type Snapshots = { readonly decoded: Snapshot; readonly stored: Snapshot };
 
 function read_stored_snapshot(seam: ISqlSeam): Observable<Snapshot> {
   return forkJoin({
-    arrive: select_rows(seam, `SELECT "id", "payload" FROM "arrive"`, rel_columns.arrive!, rel_stored_column_types.arrive!),
-    thing: select_rows(seam, `SELECT "id", "payload", "born", "tick" FROM "thing"`, rel_columns.thing!, rel_stored_column_types.thing!),
+    arrive: select_rows(seam, `SELECT "id", "payload" FROM "created_at_pinned_updated_at_advances_arrive"`, rel_columns.arrive!, rel_stored_column_types.arrive!),
+    thing: select_rows(seam, `SELECT "id", "payload", "born", "tick" FROM "created_at_pinned_updated_at_advances_thing"`, rel_columns.thing!, rel_stored_column_types.thing!),
   });
 }
 
@@ -285,12 +285,12 @@ function read_snapshots(seam: ISqlSeam): Observable<Snapshots> {
 }
 
 const final_select: Record<string, string> = {
-  arrive: `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_arrive" t`,
-  thing: `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."born", t."tick" FROM "__txt_thing" t`,
+  arrive: `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload" FROM "__txt_created_at_pinned_updated_at_advances_arrive" t`,
+  thing: `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."born", t."tick" FROM "__txt_created_at_pinned_updated_at_advances_thing" t`,
 };
 
 const ARRIVAL_STATEMENTS: Record<string, { kind: "log" | "set"; add_sql: string; del_sql: string | null }> = {
-  arrive: { kind: "log", add_sql: `INSERT INTO "arrive" ("id", "payload") VALUES (?, ?)`, del_sql: null },
+  arrive: { kind: "log", add_sql: `INSERT INTO "created_at_pinned_updated_at_advances_arrive" ("id", "payload") VALUES (?, ?)`, del_sql: null },
 };
 
 function arrival_statement(arrival: IArrivalRow): SqlStatement {
@@ -316,24 +316,24 @@ function apply_arrivals(seam: ISqlSeam, arrivals: IArrivalBatch): Observable<unk
 }
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "arrive", kind: "log", table_name: "arrive", delta_table_name: "__delta_arrive", frontier_table_name: "__frontier_arrive", next_frontier_table_name: "__next_frontier_arrive", columns: ["id", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "arrive" ("id", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payload"`, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_arrive" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."payload", t."_sign"`, rule_observers: ["thing/4"] },
-  { rel: "thing", kind: "set", table_name: "thing", delta_table_name: "__delta_thing", frontier_table_name: "__frontier_thing", next_frontier_table_name: "__next_frontier_thing", columns: ["id", "payload", "born", "tick"], column_types: ["int", "text", "int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."born", t."tick", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_thing" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."payload", t."born", t."tick", t."_sign"`, rule_observers: [] },
+  { rel: "arrive", kind: "log", table_name: "created_at_pinned_updated_at_advances_arrive", delta_table_name: "__delta_created_at_pinned_updated_at_advances_arrive", frontier_table_name: "__frontier_created_at_pinned_updated_at_advances_arrive", next_frontier_table_name: "__next_frontier_created_at_pinned_updated_at_advances_arrive", columns: ["id", "payload"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT INTO "created_at_pinned_updated_at_advances_arrive" ("id", "payload") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "id", "payload"`, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_created_at_pinned_updated_at_advances_arrive" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."payload", t."_sign"`, rule_observers: ["thing/4"] },
+  { rel: "thing", kind: "set", table_name: "created_at_pinned_updated_at_advances_thing", delta_table_name: "__delta_created_at_pinned_updated_at_advances_thing", frontier_table_name: "__frontier_created_at_pinned_updated_at_advances_thing", next_frontier_table_name: "__next_frontier_created_at_pinned_updated_at_advances_thing", columns: ["id", "payload", "born", "tick"], column_types: ["int", "text", "int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."id", CASE WHEN json_valid(t."payload") AND json_type(t."payload") = 'object' AND json_type(t."payload", '$.fn') = 'text' AND json_type(t."payload", '$.args') = 'array' THEN json_extract(t."payload", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."payload", '$.args')), '') || ')' ELSE t."payload" END AS "payload", t."born", t."tick", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_created_at_pinned_updated_at_advances_thing" t WHERE t."_sign" IN (-1, 1) GROUP BY t."id", t."payload", t."born", t."tick", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "thing", rule_id: "created_at_pinned_updated_at_advances:thing/4#1", head_kind: "set", head_table_name: "thing", head_delta_table_name: "__delta_thing", head_columns: ["id", "payload", "born", "tick"], key_indices: [0], project_sql: `SELECT d0."id" AS "id", d0."payload" AS "payload", b0."born" AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_arrive" d0, "__pre_thing" b0 WHERE d0."_phase" >= 0 AND b0."id" = d0."id" ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "thing", rule_id: "created_at_pinned_updated_at_advances:thing/4#2", head_kind: "set", head_table_name: "thing", head_delta_table_name: "__delta_thing", head_columns: ["id", "payload", "born", "tick"], key_indices: [0], project_sql: `SELECT d0."id" AS "id", d0."payload" AS "payload", (SELECT "n" FROM "__tick") AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_arrive" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "thing" n0 WHERE n0."id" = d0."id") ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "thing", rule_id: "created_at_pinned_updated_at_advances:thing/4#1", head_kind: "set", head_table_name: "created_at_pinned_updated_at_advances_thing", head_delta_table_name: "__delta_created_at_pinned_updated_at_advances_thing", head_columns: ["id", "payload", "born", "tick"], key_indices: [0], project_sql: `SELECT d0."id" AS "id", d0."payload" AS "payload", b0."born" AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_created_at_pinned_updated_at_advances_arrive" d0, "__pre_created_at_pinned_updated_at_advances_thing" b0 WHERE d0."_phase" >= 0 AND b0."id" = d0."id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "thing", rule_id: "created_at_pinned_updated_at_advances:thing/4#2", head_kind: "set", head_table_name: "created_at_pinned_updated_at_advances_thing", head_delta_table_name: "__delta_created_at_pinned_updated_at_advances_thing", head_columns: ["id", "payload", "born", "tick"], key_indices: [0], project_sql: `SELECT d0."id" AS "id", d0."payload" AS "payload", (SELECT "n" FROM "__tick") AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__frontier_created_at_pinned_updated_at_advances_arrive" d0 WHERE d0."_phase" >= 0 AND NOT EXISTS (SELECT 1 FROM "created_at_pinned_updated_at_advances_thing" n0 WHERE n0."id" = d0."id") ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
 ];
 
 function snapshot_ordered_pre(seam: ISqlSeam): Observable<void> {
-  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_thing";
-INSERT INTO "__pre_thing" ("id", "payload", "born", "tick") SELECT "id", "payload", "born", "tick" FROM "thing"`);
+  return seam.runner.executeMultiple(seam.db, `DELETE FROM "__pre_created_at_pinned_updated_at_advances_thing";
+INSERT INTO "__pre_created_at_pinned_updated_at_advances_thing" ("id", "payload", "born", "tick") SELECT "id", "payload", "born", "tick" FROM "created_at_pinned_updated_at_advances_thing"`);
 }
 
-interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
+interface IOrderedEdgeArm { readonly trigger_rel: string; readonly trigger_kind: "arrival" | "departure"; readonly head_rel: string; readonly head_table_name: string; readonly head_kind: "log" | "set"; readonly head_columns: readonly string[]; readonly key_indices: readonly number[]; readonly project_sql: string; readonly write_sql: string; readonly evolves_pre: boolean }
 interface IOrderedOccurrence { readonly rel: string; readonly kind: "arrival" | "departure"; readonly row: IRow; readonly sequence?: number }
 interface IOrderedWrite { readonly arm: IOrderedEdgeArm; readonly row: IRow }
 
@@ -344,7 +344,7 @@ function quote_ordered_identifier(identifier: string): string {
 function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null {
   const { arm, row } = write;
   if (!arm.evolves_pre) return null;
-  const table = quote_ordered_identifier("__pre_" + arm.head_rel);
+  const table = quote_ordered_identifier("__pre_" + arm.head_table_name);
   const columns = arm.head_columns.map(quote_ordered_identifier);
   const placeholders = columns.map(() => "?").join(", ");
   if (arm.head_kind === "log") {
@@ -360,15 +360,15 @@ function ordered_pre_write_statement(write: IOrderedWrite): SqlStatement | null 
 }
 
 const ORDERED_EDGE_ARMS: readonly IOrderedEdgeArm[] = [
-  { trigger_rel: "arrive", trigger_kind: "arrival", head_rel: "thing", head_kind: "set", head_columns: ["id", "payload", "born", "tick"], key_indices: [0], project_sql: `SELECT ?1 AS "id", ?2 AS "payload", b0."born" AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__pre_thing" b0 WHERE b0."id" = ?1`, write_sql: `INSERT INTO "thing" ("id", "payload", "born", "tick") VALUES (?, ?, ?, ?) ON CONFLICT("id") DO UPDATE SET "payload" = excluded."payload", "born" = excluded."born", "tick" = excluded."tick"`, evolves_pre: true },
-  { trigger_rel: "arrive", trigger_kind: "arrival", head_rel: "thing", head_kind: "set", head_columns: ["id", "payload", "born", "tick"], key_indices: [0], project_sql: `SELECT ?1 AS "id", ?2 AS "payload", (SELECT "n" FROM "__tick") AS "born", (SELECT "n" FROM "__tick") AS "tick" WHERE NOT EXISTS (SELECT 1 FROM "thing" n0 WHERE n0."id" = ?1)`, write_sql: `INSERT INTO "thing" ("id", "payload", "born", "tick") VALUES (?, ?, ?, ?) ON CONFLICT("id") DO UPDATE SET "payload" = excluded."payload", "born" = excluded."born", "tick" = excluded."tick"`, evolves_pre: true },
+  { trigger_rel: "arrive", trigger_kind: "arrival", head_rel: "thing", head_table_name: "created_at_pinned_updated_at_advances_thing", head_kind: "set", head_columns: ["id", "payload", "born", "tick"], key_indices: [0], project_sql: `SELECT ?1 AS "id", ?2 AS "payload", b0."born" AS "born", (SELECT "n" FROM "__tick") AS "tick" FROM "__pre_created_at_pinned_updated_at_advances_thing" b0 WHERE b0."id" = ?1`, write_sql: `INSERT INTO "created_at_pinned_updated_at_advances_thing" ("id", "payload", "born", "tick") VALUES (?, ?, ?, ?) ON CONFLICT("id") DO UPDATE SET "payload" = excluded."payload", "born" = excluded."born", "tick" = excluded."tick"`, evolves_pre: true },
+  { trigger_rel: "arrive", trigger_kind: "arrival", head_rel: "thing", head_table_name: "created_at_pinned_updated_at_advances_thing", head_kind: "set", head_columns: ["id", "payload", "born", "tick"], key_indices: [0], project_sql: `SELECT ?1 AS "id", ?2 AS "payload", (SELECT "n" FROM "__tick") AS "born", (SELECT "n" FROM "__tick") AS "tick" WHERE NOT EXISTS (SELECT 1 FROM "created_at_pinned_updated_at_advances_thing" n0 WHERE n0."id" = ?1)`, write_sql: `INSERT INTO "created_at_pinned_updated_at_advances_thing" ("id", "payload", "born", "tick") VALUES (?, ?, ?, ?) ON CONFLICT("id") DO UPDATE SET "payload" = excluded."payload", "born" = excluded."born", "tick" = excluded."tick"`, evolves_pre: true },
 ];
 
 const ORDERED_DEPARTURE_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
 ];
 
 const ORDERED_CARRY_READS: readonly { readonly rel: string; readonly sql: string; readonly columns: readonly string[] }[] = [
-  { rel: "arrive", sql: `SELECT "_sequence" AS "__sequence", "id", "payload" FROM "__frontier_arrive" ORDER BY "_phase", "_sequence"`, columns: ["id", "payload"] },
+  { rel: "arrive", sql: `SELECT "_sequence" AS "__sequence", "id", "payload" FROM "__frontier_created_at_pinned_updated_at_advances_arrive" ORDER BY "_phase", "_sequence"`, columns: ["id", "payload"] },
 ];
 
 function ordered_outside_occurrences(before: Snapshot, arrivals: IArrivalBatch): readonly IOrderedOccurrence[] {

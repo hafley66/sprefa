@@ -146,13 +146,13 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "sample" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
-  `CREATE TEMP TABLE "__delta_sample" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__delta_sample_sign" ON "__delta_sample" ("_sign")`,
-  `CREATE INDEX "__delta_sample_group" ON "__delta_sample" ("value")`,
-  `CREATE TEMP TABLE "__frontier_sample" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
-  `CREATE INDEX "__frontier_sample_phase" ON "__frontier_sample" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_sample" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE TABLE "float_shortest_round_trip_wire_sample" ("__id" INTEGER PRIMARY KEY, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308), UNIQUE ("value"))`,
+  `CREATE TEMP TABLE "__delta_float_shortest_round_trip_wire_sample" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE INDEX "__delta_float_shortest_round_trip_wire_sample_sign" ON "__delta_float_shortest_round_trip_wire_sample" ("_sign")`,
+  `CREATE INDEX "__delta_float_shortest_round_trip_wire_sample_group" ON "__delta_float_shortest_round_trip_wire_sample" ("value")`,
+  `CREATE TEMP TABLE "__frontier_float_shortest_round_trip_wire_sample" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
+  `CREATE INDEX "__frontier_float_shortest_round_trip_wire_sample_phase" ON "__frontier_float_shortest_round_trip_wire_sample" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_float_shortest_round_trip_wire_sample" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "value" REAL NOT NULL CHECK (typeof("value") = 'real' AND "value" BETWEEN -1.7976931348623157e308 AND 1.7976931348623157e308))`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -190,15 +190,15 @@ const rel_declared_column_types: Record<string, readonly string[]> = {
 const arrival_targets: readonly string[] = ["sample"];
 
 const boot: readonly IBootStatement[] = [
-  { rel: "sample", sql: `INSERT OR IGNORE INTO "sample" ("value") VALUES (?)`, params: [1.0e+20] },
+  { rel: "sample", sql: `INSERT OR IGNORE INTO "float_shortest_round_trip_wire_sample" ("value") VALUES (?)`, params: [1.0e+20] },
 ];
 
 const final_select: Record<string, string> = {
-  sample: `SELECT t."value" FROM "sample" t`,
+  sample: `SELECT t."value" FROM "float_shortest_round_trip_wire_sample" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "sample", kind: "set", table_name: "sample", delta_table_name: "__delta_sample", frontier_table_name: "__frontier_sample", next_frontier_table_name: "__next_frontier_sample", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "sample" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "sample" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_sample" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
+  { rel: "sample", kind: "set", table_name: "float_shortest_round_trip_wire_sample", delta_table_name: "__delta_float_shortest_round_trip_wire_sample", frontier_table_name: "__frontier_float_shortest_round_trip_wire_sample", next_frontier_table_name: "__next_frontier_float_shortest_round_trip_wire_sample", columns: ["value"], column_types: ["float"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "float_shortest_round_trip_wire_sample" ("value") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "value"`, arrival_del_sql: `DELETE FROM "float_shortest_round_trip_wire_sample" WHERE ("value") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "value"`, boundary_sql: `SELECT t."value", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_float_shortest_round_trip_wire_sample" t WHERE t."_sign" IN (-1, 1) GROUP BY t."value", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [

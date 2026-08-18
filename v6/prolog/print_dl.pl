@@ -387,6 +387,10 @@ print_column_type(list(Element), Text) :-
     !,
     print_column_type(Element, InnerText),
     format(atom(Text), "list(~w)", [InnerText]).
+print_column_type(option(Element), Text) :-
+    !,
+    print_column_type(Element, InnerText),
+    format(atom(Text), "option(~w)", [InnerText]).
 print_column_type(list_entity_dense_sequence(Element), Text) :-
     !,
     print_column_type(Element, InnerText),

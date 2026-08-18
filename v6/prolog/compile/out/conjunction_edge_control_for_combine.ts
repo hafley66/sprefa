@@ -146,27 +146,27 @@ function validate_arrivals(arrivals: IArrivalBatch): IArrivalBatch {
 }
 
 const ddl: readonly string[] = [
-  `CREATE TABLE "pair" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, UNIQUE ("left"))`,
-  `CREATE TABLE "source_a" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, UNIQUE ("left"))`,
-  `CREATE TABLE "source_b" ("__id" INTEGER PRIMARY KEY, "right" INTEGER NOT NULL, UNIQUE ("right"))`,
-  `CREATE TEMP TABLE "__delta_pair" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_pair_sign" ON "__delta_pair" ("_sign")`,
-  `CREATE INDEX "__delta_pair_group" ON "__delta_pair" ("left", "right")`,
-  `CREATE TEMP TABLE "__frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_pair_phase" ON "__frontier_pair" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_source_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_source_a_sign" ON "__delta_source_a" ("_sign")`,
-  `CREATE INDEX "__delta_source_a_group" ON "__delta_source_a" ("left")`,
-  `CREATE TEMP TABLE "__frontier_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_source_a_phase" ON "__frontier_source_a" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_source_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_source_b_sign" ON "__delta_source_b" ("_sign")`,
-  `CREATE INDEX "__delta_source_b_group" ON "__delta_source_b" ("right")`,
-  `CREATE TEMP TABLE "__frontier_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_source_b_phase" ON "__frontier_source_b" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE TABLE "conjunction_edge_control_for_combine_pair" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL, UNIQUE ("left"))`,
+  `CREATE TABLE "conjunction_edge_control_for_combine_source_a" ("__id" INTEGER PRIMARY KEY, "left" INTEGER NOT NULL, UNIQUE ("left"))`,
+  `CREATE TABLE "conjunction_edge_control_for_combine_source_b" ("__id" INTEGER PRIMARY KEY, "right" INTEGER NOT NULL, UNIQUE ("right"))`,
+  `CREATE TEMP TABLE "__delta_conjunction_edge_control_for_combine_pair" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_conjunction_edge_control_for_combine_pair_sign" ON "__delta_conjunction_edge_control_for_combine_pair" ("_sign")`,
+  `CREATE INDEX "__delta_conjunction_edge_control_for_combine_pair_group" ON "__delta_conjunction_edge_control_for_combine_pair" ("left", "right")`,
+  `CREATE TEMP TABLE "__frontier_conjunction_edge_control_for_combine_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_conjunction_edge_control_for_combine_pair_phase" ON "__frontier_conjunction_edge_control_for_combine_pair" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_conjunction_edge_control_for_combine_pair" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_conjunction_edge_control_for_combine_source_a" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_conjunction_edge_control_for_combine_source_a_sign" ON "__delta_conjunction_edge_control_for_combine_source_a" ("_sign")`,
+  `CREATE INDEX "__delta_conjunction_edge_control_for_combine_source_a_group" ON "__delta_conjunction_edge_control_for_combine_source_a" ("left")`,
+  `CREATE TEMP TABLE "__frontier_conjunction_edge_control_for_combine_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_conjunction_edge_control_for_combine_source_a_phase" ON "__frontier_conjunction_edge_control_for_combine_source_a" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_conjunction_edge_control_for_combine_source_a" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "left" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_conjunction_edge_control_for_combine_source_b" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_conjunction_edge_control_for_combine_source_b_sign" ON "__delta_conjunction_edge_control_for_combine_source_b" ("_sign")`,
+  `CREATE INDEX "__delta_conjunction_edge_control_for_combine_source_b_group" ON "__delta_conjunction_edge_control_for_combine_source_b" ("right")`,
+  `CREATE TEMP TABLE "__frontier_conjunction_edge_control_for_combine_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_conjunction_edge_control_for_combine_source_b_phase" ON "__frontier_conjunction_edge_control_for_combine_source_b" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_conjunction_edge_control_for_combine_source_b" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "right" INTEGER NOT NULL)`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -226,20 +226,20 @@ const boot: readonly IBootStatement[] = [
 ];
 
 const final_select: Record<string, string> = {
-  pair: `SELECT t."left", t."right" FROM "pair" t`,
-  source_a: `SELECT t."left" FROM "source_a" t`,
-  source_b: `SELECT t."right" FROM "source_b" t`,
+  pair: `SELECT t."left", t."right" FROM "conjunction_edge_control_for_combine_pair" t`,
+  source_a: `SELECT t."left" FROM "conjunction_edge_control_for_combine_source_a" t`,
+  source_b: `SELECT t."right" FROM "conjunction_edge_control_for_combine_source_b" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "pair", kind: "set", table_name: "pair", delta_table_name: "__delta_pair", frontier_table_name: "__frontier_pair", next_frontier_table_name: "__next_frontier_pair", columns: ["left", "right"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."left", t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_pair" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."right", t."_sign"`, rule_observers: [] },
-  { rel: "source_a", kind: "set", table_name: "source_a", delta_table_name: "__delta_source_a", frontier_table_name: "__frontier_source_a", next_frontier_table_name: "__next_frontier_source_a", columns: ["left"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source_a" ("left") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "left"`, arrival_del_sql: `DELETE FROM "source_a" WHERE ("left") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "left"`, boundary_sql: `SELECT t."left", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."_sign"`, rule_observers: ["pair/2"] },
-  { rel: "source_b", kind: "set", table_name: "source_b", delta_table_name: "__delta_source_b", frontier_table_name: "__frontier_source_b", next_frontier_table_name: "__next_frontier_source_b", columns: ["right"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "source_b" ("right") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "right"`, arrival_del_sql: `DELETE FROM "source_b" WHERE ("right") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "right"`, boundary_sql: `SELECT t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_source_b" t WHERE t."_sign" IN (-1, 1) GROUP BY t."right", t."_sign"`, rule_observers: ["pair/2"] },
+  { rel: "pair", kind: "set", table_name: "conjunction_edge_control_for_combine_pair", delta_table_name: "__delta_conjunction_edge_control_for_combine_pair", frontier_table_name: "__frontier_conjunction_edge_control_for_combine_pair", next_frontier_table_name: "__next_frontier_conjunction_edge_control_for_combine_pair", columns: ["left", "right"], column_types: ["int", "int"], key_indices: [0], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."left", t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_conjunction_edge_control_for_combine_pair" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."right", t."_sign"`, rule_observers: [] },
+  { rel: "source_a", kind: "set", table_name: "conjunction_edge_control_for_combine_source_a", delta_table_name: "__delta_conjunction_edge_control_for_combine_source_a", frontier_table_name: "__frontier_conjunction_edge_control_for_combine_source_a", next_frontier_table_name: "__next_frontier_conjunction_edge_control_for_combine_source_a", columns: ["left"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "conjunction_edge_control_for_combine_source_a" ("left") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "left"`, arrival_del_sql: `DELETE FROM "conjunction_edge_control_for_combine_source_a" WHERE ("left") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "left"`, boundary_sql: `SELECT t."left", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_conjunction_edge_control_for_combine_source_a" t WHERE t."_sign" IN (-1, 1) GROUP BY t."left", t."_sign"`, rule_observers: ["pair/2"] },
+  { rel: "source_b", kind: "set", table_name: "conjunction_edge_control_for_combine_source_b", delta_table_name: "__delta_conjunction_edge_control_for_combine_source_b", frontier_table_name: "__frontier_conjunction_edge_control_for_combine_source_b", next_frontier_table_name: "__next_frontier_conjunction_edge_control_for_combine_source_b", columns: ["right"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "conjunction_edge_control_for_combine_source_b" ("right") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "right"`, arrival_del_sql: `DELETE FROM "conjunction_edge_control_for_combine_source_b" WHERE ("right") IN (SELECT json_extract(value, '$[0]') FROM json_each(?)) RETURNING "right"`, boundary_sql: `SELECT t."right", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_conjunction_edge_control_for_combine_source_b" t WHERE t."_sign" IN (-1, 1) GROUP BY t."right", t."_sign"`, rule_observers: ["pair/2"] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "pair", rule_id: "conjunction_edge_control_for_combine:pair/2#1", head_kind: "set", head_table_name: "pair", head_delta_table_name: "__delta_pair", head_columns: ["left", "right"], key_indices: [0], project_sql: `SELECT d0."left" AS "left", b0."right" AS "right" FROM "__frontier_source_a" d0, "source_b" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
-  { head_rel: "pair", rule_id: "conjunction_edge_control_for_combine:pair/2#2", head_kind: "set", head_table_name: "pair", head_delta_table_name: "__delta_pair", head_columns: ["left", "right"], key_indices: [0], project_sql: `SELECT b0."left" AS "left", d0."right" AS "right" FROM "__frontier_source_b" d0, "source_a" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "pair", rule_id: "conjunction_edge_control_for_combine:pair/2#1", head_kind: "set", head_table_name: "conjunction_edge_control_for_combine_pair", head_delta_table_name: "__delta_conjunction_edge_control_for_combine_pair", head_columns: ["left", "right"], key_indices: [0], project_sql: `SELECT d0."left" AS "left", b0."right" AS "right" FROM "__frontier_conjunction_edge_control_for_combine_source_a" d0, "conjunction_edge_control_for_combine_source_b" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "pair", rule_id: "conjunction_edge_control_for_combine:pair/2#2", head_kind: "set", head_table_name: "conjunction_edge_control_for_combine_pair", head_delta_table_name: "__delta_conjunction_edge_control_for_combine_pair", head_columns: ["left", "right"], key_indices: [0], project_sql: `SELECT b0."left" AS "left", d0."right" AS "right" FROM "__frontier_conjunction_edge_control_for_combine_source_b" d0, "conjunction_edge_control_for_combine_source_a" b0 WHERE d0."_phase" >= 0 ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [

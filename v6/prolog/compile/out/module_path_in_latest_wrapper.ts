@@ -158,31 +158,31 @@ export const TEXT_INTERN_PLAN: ITextInternPlan = {
 
 const ddl: readonly string[] = [
   `CREATE TABLE "__str" ("__id" INTEGER PRIMARY KEY, "content" TEXT NOT NULL UNIQUE)`,
-  `CREATE TABLE "bell" ("tree_id" INTEGER NOT NULL)`,
-  `CREATE TABLE "called" ("tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt_called" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner" FROM "called" t`,
-  `CREATE TABLE "orchard__roster" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL, UNIQUE ("tree_id", "owner"))`,
-  `CREATE TEMP VIEW "__txt_orchard__roster" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner" FROM "orchard__roster" t`,
-  `CREATE TEMP TABLE "__delta_bell" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_bell_sign" ON "__delta_bell" ("_sign")`,
-  `CREATE INDEX "__delta_bell_group" ON "__delta_bell" ("tree_id")`,
-  `CREATE TEMP TABLE "__frontier_bell" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_bell_phase" ON "__frontier_bell" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_bell" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
-  `CREATE TEMP TABLE "__delta_called" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_called_sign" ON "__delta_called" ("_sign")`,
-  `CREATE INDEX "__delta_called_group" ON "__delta_called" ("tree_id", "owner")`,
-  `CREATE TEMP TABLE "__frontier_called" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_called_phase" ON "__frontier_called" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_called" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_called" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_called" t`,
-  `CREATE TEMP TABLE "__delta_orchard__roster" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE INDEX "__delta_orchard__roster_sign" ON "__delta_orchard__roster" ("_sign")`,
-  `CREATE INDEX "__delta_orchard__roster_group" ON "__delta_orchard__roster" ("tree_id", "owner")`,
-  `CREATE TEMP TABLE "__frontier_orchard__roster" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE INDEX "__frontier_orchard__roster_phase" ON "__frontier_orchard__roster" ("_phase")`,
-  `CREATE TEMP TABLE "__next_frontier_orchard__roster" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
-  `CREATE TEMP VIEW "__txt___delta_orchard__roster" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_orchard__roster" t`,
+  `CREATE TABLE "module_path_in_latest_wrapper_bell" ("tree_id" INTEGER NOT NULL)`,
+  `CREATE TABLE "module_path_in_latest_wrapper_called" ("tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt_module_path_in_latest_wrapper_called" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner" FROM "module_path_in_latest_wrapper_called" t`,
+  `CREATE TABLE "module_path_in_latest_wrapper_orchard__roster" ("__id" INTEGER PRIMARY KEY, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL, UNIQUE ("tree_id", "owner"))`,
+  `CREATE TEMP VIEW "__txt_module_path_in_latest_wrapper_orchard__roster" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner" FROM "module_path_in_latest_wrapper_orchard__roster" t`,
+  `CREATE TEMP TABLE "__delta_module_path_in_latest_wrapper_bell" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_bell_sign" ON "__delta_module_path_in_latest_wrapper_bell" ("_sign")`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_bell_group" ON "__delta_module_path_in_latest_wrapper_bell" ("tree_id")`,
+  `CREATE TEMP TABLE "__frontier_module_path_in_latest_wrapper_bell" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_module_path_in_latest_wrapper_bell_phase" ON "__frontier_module_path_in_latest_wrapper_bell" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_module_path_in_latest_wrapper_bell" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL)`,
+  `CREATE TEMP TABLE "__delta_module_path_in_latest_wrapper_called" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_called_sign" ON "__delta_module_path_in_latest_wrapper_called" ("_sign")`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_called_group" ON "__delta_module_path_in_latest_wrapper_called" ("tree_id", "owner")`,
+  `CREATE TEMP TABLE "__frontier_module_path_in_latest_wrapper_called" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_module_path_in_latest_wrapper_called_phase" ON "__frontier_module_path_in_latest_wrapper_called" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_module_path_in_latest_wrapper_called" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_module_path_in_latest_wrapper_called" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_module_path_in_latest_wrapper_called" t`,
+  `CREATE TEMP TABLE "__delta_module_path_in_latest_wrapper_orchard__roster" ("_sign" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_orchard__roster_sign" ON "__delta_module_path_in_latest_wrapper_orchard__roster" ("_sign")`,
+  `CREATE INDEX "__delta_module_path_in_latest_wrapper_orchard__roster_group" ON "__delta_module_path_in_latest_wrapper_orchard__roster" ("tree_id", "owner")`,
+  `CREATE TEMP TABLE "__frontier_module_path_in_latest_wrapper_orchard__roster" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE INDEX "__frontier_module_path_in_latest_wrapper_orchard__roster_phase" ON "__frontier_module_path_in_latest_wrapper_orchard__roster" ("_phase")`,
+  `CREATE TEMP TABLE "__next_frontier_module_path_in_latest_wrapper_orchard__roster" ("_phase" INTEGER NOT NULL, "_sequence" INTEGER NOT NULL, "tree_id" INTEGER NOT NULL, "owner" INTEGER NOT NULL)`,
+  `CREATE TEMP VIEW "__txt___delta_module_path_in_latest_wrapper_orchard__roster" AS SELECT t."tree_id" AS "tree_id", (SELECT s."content" FROM "__str" s WHERE s."__id" = t."owner") AS "owner", t."_sign" AS "_sign", t."_sequence" AS "_sequence" FROM "__delta_module_path_in_latest_wrapper_orchard__roster" t`,
 ];
 
 const rel_columns: Record<string, readonly string[]> = {
@@ -226,13 +226,13 @@ const rel_catalog: readonly IRelCatalogRow[] = [
   { rel_id: 20, parent_id: 10, ordinal: 0, local_name: "__delta_called", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "ea5f81370e04beb4", h_schema: "dfe8e1c6e7d8cb81", h_rule: "" },
   { rel_id: 21, parent_id: 10, ordinal: 0, local_name: "__frontier_called", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "b95c4676c8886c99", h_schema: "4c4524f922e27010", h_rule: "" },
   { rel_id: 22, parent_id: 10, ordinal: 0, local_name: "__next_frontier_called", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "a808387fd2b83bc2", h_schema: "4c4524f922e27010", h_rule: "" },
-  { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__txt_called", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "0230879b72bba27f", h_schema: "15c2f0ed9826d721", h_rule: "" },
-  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_called", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "9335a9a757a70fb5", h_schema: "15c2f0ed9826d721", h_rule: "" },
+  { rel_id: 23, parent_id: 10, ordinal: 0, local_name: "__txt_module_path_in_latest_wrapper_called", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "0cea221b8ecf240a", h_schema: "15c2f0ed9826d721", h_rule: "" },
+  { rel_id: 24, parent_id: 20, ordinal: 0, local_name: "__txt___delta_module_path_in_latest_wrapper_called", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "54044ea2ce1c952d", h_schema: "15c2f0ed9826d721", h_rule: "" },
   { rel_id: 25, parent_id: 13, ordinal: 0, local_name: "__delta_orchard__roster", kind: "delta", type_id: 0, arity: 4, module_id: 7, h_id: "203f1b90057a35be", h_schema: "dfe8e1c6e7d8cb81", h_rule: "" },
   { rel_id: 26, parent_id: 13, ordinal: 0, local_name: "__frontier_orchard__roster", kind: "frontier", type_id: 0, arity: 4, module_id: 7, h_id: "878d410f77b5a812", h_schema: "4c4524f922e27010", h_rule: "" },
   { rel_id: 27, parent_id: 13, ordinal: 0, local_name: "__next_frontier_orchard__roster", kind: "next_frontier", type_id: 0, arity: 4, module_id: 7, h_id: "436301c23e2c0c37", h_schema: "4c4524f922e27010", h_rule: "" },
-  { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__txt_orchard__roster", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "ad4256593d6cb9fe", h_schema: "15c2f0ed9826d721", h_rule: "" },
-  { rel_id: 29, parent_id: 25, ordinal: 0, local_name: "__txt___delta_orchard__roster", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "6ae430f57420a477", h_schema: "15c2f0ed9826d721", h_rule: "" },
+  { rel_id: 28, parent_id: 13, ordinal: 0, local_name: "__txt_module_path_in_latest_wrapper_orchard__roster", kind: "view", type_id: 0, arity: 2, module_id: 7, h_id: "4866973c0abbc29a", h_schema: "15c2f0ed9826d721", h_rule: "" },
+  { rel_id: 29, parent_id: 25, ordinal: 0, local_name: "__txt___delta_module_path_in_latest_wrapper_orchard__roster", kind: "view", type_id: 0, arity: 4, module_id: 7, h_id: "7640112517578062", h_schema: "15c2f0ed9826d721", h_rule: "" },
   { rel_id: 30, parent_id: 7, ordinal: 0, local_name: "__str", kind: "dictionary", type_id: 0, arity: 2, module_id: 7, h_id: "313adcbae761eb88", h_schema: "", h_rule: "" },
   { rel_id: 31, parent_id: 9, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "ab67028783a2a8ce", h_schema: "", h_rule: "" },
   { rel_id: 32, parent_id: 11, ordinal: 1, local_name: "raw_characters", kind: "storage", type_id: 0, arity: 0, module_id: 7, h_id: "041755978eb91306", h_schema: "", h_rule: "" },
@@ -251,25 +251,25 @@ const arrival_targets: readonly string[] = ["bell", "orchard__roster"];
 
 const boot: readonly IBootStatement[] = [
   { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["ada"] },
-  { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "orchard__roster" ("tree_id", "owner") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [1, "ada"] },
+  { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster" ("tree_id", "owner") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [1, "ada"] },
   { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "__str" ("content") VALUES (?)`, params: ["bo"] },
-  { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "orchard__roster" ("tree_id", "owner") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [2, "bo"] },
+  { rel: "orchard__roster", sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster" ("tree_id", "owner") VALUES (?, (SELECT "__id" FROM "__str" WHERE "content" = ?))`, params: [2, "bo"] },
 ];
 
 const final_select: Record<string, string> = {
-  bell: `SELECT t."tree_id" FROM "bell" t`,
-  called: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner" FROM "__txt_called" t`,
-  orchard__roster: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner" FROM "__txt_orchard__roster" t`,
+  bell: `SELECT t."tree_id" FROM "module_path_in_latest_wrapper_bell" t`,
+  called: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner" FROM "__txt_module_path_in_latest_wrapper_called" t`,
+  orchard__roster: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner" FROM "__txt_module_path_in_latest_wrapper_orchard__roster" t`,
 };
 
 const INCREMENTAL_RELATIONS: readonly IIncrementalRelationPlan[] = [
-  { rel: "bell", kind: "log", table_name: "bell", delta_table_name: "__delta_bell", frontier_table_name: "__frontier_bell", next_frontier_table_name: "__next_frontier_bell", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "bell" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_bell" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: ["called/2"] },
-  { rel: "called", kind: "log", table_name: "called", delta_table_name: "__delta_called", frontier_table_name: "__frontier_called", next_frontier_table_name: "__next_frontier_called", columns: ["tree_id", "owner"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_called" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."owner", t."_sign"`, rule_observers: [] },
-  { rel: "orchard__roster", kind: "set", table_name: "orchard__roster", delta_table_name: "__delta_orchard__roster", frontier_table_name: "__frontier_orchard__roster", next_frontier_table_name: "__next_frontier_orchard__roster", columns: ["tree_id", "owner"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "orchard__roster" ("tree_id", "owner") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "owner"`, arrival_del_sql: `DELETE FROM "orchard__roster" WHERE ("tree_id", "owner") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "owner"`, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_orchard__roster" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."owner", t."_sign"`, rule_observers: [] },
+  { rel: "bell", kind: "log", table_name: "module_path_in_latest_wrapper_bell", delta_table_name: "__delta_module_path_in_latest_wrapper_bell", frontier_table_name: "__frontier_module_path_in_latest_wrapper_bell", next_frontier_table_name: "__next_frontier_module_path_in_latest_wrapper_bell", columns: ["tree_id"], column_types: ["int"], key_indices: [], arrival_add_sql: `INSERT INTO "module_path_in_latest_wrapper_bell" ("tree_id") SELECT json_extract(value, '$[0]') FROM json_each(?) RETURNING "tree_id"`, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", t."_sign" AS "__sign", count(*) AS "__count" FROM "__delta_module_path_in_latest_wrapper_bell" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."_sign"`, rule_observers: ["called/2"] },
+  { rel: "called", kind: "log", table_name: "module_path_in_latest_wrapper_called", delta_table_name: "__delta_module_path_in_latest_wrapper_called", frontier_table_name: "__frontier_module_path_in_latest_wrapper_called", next_frontier_table_name: "__next_frontier_module_path_in_latest_wrapper_called", columns: ["tree_id", "owner"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: null, arrival_del_sql: null, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_module_path_in_latest_wrapper_called" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."owner", t."_sign"`, rule_observers: [] },
+  { rel: "orchard__roster", kind: "set", table_name: "module_path_in_latest_wrapper_orchard__roster", delta_table_name: "__delta_module_path_in_latest_wrapper_orchard__roster", frontier_table_name: "__frontier_module_path_in_latest_wrapper_orchard__roster", next_frontier_table_name: "__next_frontier_module_path_in_latest_wrapper_orchard__roster", columns: ["tree_id", "owner"], column_types: ["int", "text"], key_indices: [], arrival_add_sql: `INSERT OR IGNORE INTO "module_path_in_latest_wrapper_orchard__roster" ("tree_id", "owner") SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?) RETURNING "tree_id", "owner"`, arrival_del_sql: `DELETE FROM "module_path_in_latest_wrapper_orchard__roster" WHERE ("tree_id", "owner") IN (SELECT json_extract(value, '$[0]'), json_extract(value, '$[1]') FROM json_each(?)) RETURNING "tree_id", "owner"`, boundary_sql: `SELECT t."tree_id", CASE WHEN json_valid(t."owner") AND json_type(t."owner") = 'object' AND json_type(t."owner", '$.fn') = 'text' AND json_type(t."owner", '$.args') = 'array' THEN json_extract(t."owner", '$.fn') || '(' || coalesce((SELECT group_concat(value, ',') FROM json_each(t."owner", '$.args')), '') || ')' ELSE t."owner" END AS "owner", t."_sign" AS "__sign", count(*) AS "__count" FROM "__txt___delta_module_path_in_latest_wrapper_orchard__roster" t WHERE t."_sign" IN (-1, 1) GROUP BY t."tree_id", t."owner", t."_sign"`, rule_observers: [] },
 ];
 
 const INCREMENTAL_EDGE_STATEMENTS: readonly IIncrementalEdgeStatement[] = [
-  { head_rel: "called", rule_id: "module_path_in_latest_wrapper:called/2#1", head_kind: "log", head_table_name: "called", head_delta_table_name: "__delta_called", head_columns: ["tree_id", "owner"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", b0."owner" AS "owner" FROM "__frontier_bell" d0, "orchard__roster" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
+  { head_rel: "called", rule_id: "module_path_in_latest_wrapper:called/2#1", head_kind: "log", head_table_name: "module_path_in_latest_wrapper_called", head_delta_table_name: "__delta_module_path_in_latest_wrapper_called", head_columns: ["tree_id", "owner"], key_indices: [], project_sql: `SELECT d0."tree_id" AS "tree_id", b0."owner" AS "owner" FROM "__frontier_module_path_in_latest_wrapper_bell" d0, "module_path_in_latest_wrapper_orchard__roster" b0 WHERE d0."_phase" >= 0 AND b0."tree_id" = d0."tree_id" ORDER BY d0."_phase", d0."_sequence"` },
 ];
 
 const INCREMENTAL_LEVEL_STATEMENTS: readonly IIncrementalLevelStatement[] = [
