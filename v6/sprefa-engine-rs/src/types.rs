@@ -12,6 +12,8 @@ pub enum RowColumnType {
     Bool,
     Json,
     Ref,
+    #[serde(rename = "relation_id")]
+    RelationId,
     List,
     Bytes,
 }

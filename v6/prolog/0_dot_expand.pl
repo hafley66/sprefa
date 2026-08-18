@@ -61,7 +61,10 @@
 :- use_module(library(apply)).
 :- use_module(library(occurs), [sub_term/2]).
 :- use_module('compile/registry', [surface/5]).
-:- use_module('0_type_plane', [column_element_type_name/2]).
+:- use_module('0_type_plane',
+              [ column_element_type_name/2,
+                type_definitions/2, type_definition/4, declared_type_name/2,
+                relation_columns_and_types/5 ]).
 
 :- op(1150, xfx, <-).
 :- op(1150, xfx, <+).
@@ -77,7 +80,7 @@ expand_dot_in_context(EnumContext, prog(Decls0, Rules0), prog(Decls, Rules)) :-
     ;   Rules2 = Rules1
     ),
     expand_nested_parent_refs(Decls1, Rules2, Decls, Rules3),
-    maplist(expand_dot_rule, Rules3, Rules).
+    maplist(expand_dot_rule(Decls), Rules3, Rules).
 
 resolve_qualified_types(prog(Decls0, Rules), prog(Decls, Rules)) :-
     resolve_qualified_type_paths(Decls0, Decls).
@@ -98,7 +101,9 @@ resolve_qualified_type_decl(_, Decl, Decl).
 
 resolve_qualified_type(Scopes, type_path(Segments), Name) :-
     !,
-    (   resolve_path(Scopes, Segments, Name)
+    (   relation_id_path(Scopes, Segments, RelationName)
+    ->  Name = id(RelationName)
+    ;   resolve_path(Scopes, Segments, Name)
     ->  true
     ;   throw(unsupported_construct(unresolvable_type_path(Segments)))
     ).
@@ -110,16 +115,29 @@ resolve_qualified_type(Scopes, Type0, Type) :-
     Type =.. [Functor | Args].
 resolve_qualified_type(_, Type, Type).
 
+% A terminal `.id` has relation-identity meaning only when its prefix already
+% resolves to a declared relation. A mounted `source.span` remains an ordinary
+% module path unless `source` itself names a declared relation.
+relation_id_path(Scopes, Segments, Name) :-
+    append(RelationSegments, [id], Segments),
+    RelationSegments \== [],
+    resolve_path(Scopes, RelationSegments, Name).
+
 % The type_decl/2 mirror the parser (normalize_relation_value_decls/2) gives a
-% bare name, at the same wrapper positions and no others.
+% bare name, at the same wrapper positions and no others. An id(Name) also
+% needs Name's declared row shape, although it carries only its identity.
 qualified_type_names(Scopes, Decls, Names) :-
     findall(Name,
             ( member(col_type(_, _, Surface), Decls),
               qualified_type_path(Surface, _),
               resolve_qualified_type(Scopes, Surface, Resolved),
-              column_element_type_name(Resolved, Name) ),
+              resolved_type_decl_name(Resolved, Name) ),
             Names0),
     sort(Names0, Names).
+
+resolved_type_decl_name(id(Name), Name) :- !.
+resolved_type_decl_name(Type, Name) :-
+    column_element_type_name(Type, Name).
 
 qualified_type_path(type_path(Segments), Segments) :- !.
 qualified_type_path(Type, Segments) :-
@@ -495,24 +513,24 @@ goal_wrapper(pre).
 goal_wrapper(finalize).
 goal_wrapper(next).
 
-expand_dot_rule(Rule0, Rule) :-
+expand_dot_rule(Decls, Rule0, Rule) :-
     ( contains_dot_get(Rule0)
-    -> desugar_dot_rule(Rule0, Rule)
+    -> desugar_dot_rule(Decls, Rule0, Rule)
     ;  Rule = Rule0
     ).
 
-desugar_dot_rule((Head0 <- Body0), (Head <- Body)) :- !,
-    desugar_head_and_body(Head0, Body0, Head, Body).
-desugar_dot_rule((Head0 <+ Body0), (Head <+ Body)) :- !,
-    desugar_head_and_body(Head0, Body0, Head, Body).
-desugar_dot_rule(Rule, Rule).
+desugar_dot_rule(Decls, (Head0 <- Body0), (Head <- Body)) :- !,
+    desugar_head_and_body(Decls, Head0, Body0, Head, Body).
+desugar_dot_rule(Decls, (Head0 <+ Body0), (Head <+ Body)) :- !,
+    desugar_head_and_body(Decls, Head0, Body0, Head, Body).
+desugar_dot_rule(_, Rule, Rule).
 
-desugar_head_and_body(Head0, Body0, Head, Body) :-
+desugar_head_and_body(Decls, Head0, Body0, Head, Body) :-
     conjunction_goals(Body0, Goals0),
     bound_body_vars(Goals0, BoundVars),
-    maplist(rewrite_goal(BoundVars), Goals0, GoalLists),
+    maplist(rewrite_goal(Decls, BoundVars, Goals0), Goals0, GoalLists),
     append(GoalLists, BodyGoals),
-    rewrite_head(Head0, BoundVars, Head, HeadDecodes),
+    rewrite_head(Decls, Goals0, Head0, BoundVars, Head, HeadDecodes),
     append(BodyGoals, HeadDecodes, FinalGoals),
     goals_conjunction(FinalGoals, Body).
 
@@ -521,20 +539,20 @@ desugar_head_and_body(Head0, Body0, Head, Body) :-
 % The receiver still has to be bound by the BODY, which is why the head is
 % rewritten against the same BoundVars set the body goals used.
 
-rewrite_head(Head0, BoundVars, Head, Decodes) :-
+rewrite_head(Decls, Goals, Head0, BoundVars, Head, Decodes) :-
     ( compound(Head0)
     -> Head0 =.. [Name | Args0],
-       foldl(replace_dot_gets_arg(BoundVars), Args0, Args, [], Decodes),
+       foldl(replace_dot_gets_arg(Decls, Goals, BoundVars), Args0, Args, [], Decodes),
        Head =.. [Name | Args]
     ;  Head = Head0, Decodes = []
     ).
 
 % ── goal rewriting ───────────────────────────────────────────────────────────
 
-rewrite_goal(_, Goal, [Goal]) :-
+rewrite_goal(_, _, _, Goal, [Goal]) :-
     \+ contains_dot_get(Goal),
     !.
-rewrite_goal(_, Goal, _) :-
+rewrite_goal(_, _, _, Goal, _) :-
     nonvar(Goal),
     Goal = dot_get(_, _),
     !,
@@ -545,42 +563,71 @@ rewrite_goal(_, Goal, _) :-
 % the brace original term for term. Any other bind shape (a dot inside a larger
 % expression) falls to the generic clause, where the decode lands BEFORE the
 % bind that reads its leaf.
-rewrite_goal(BoundVars, (Lhs := Rhs), [decode(Root, Pattern)]) :-
+rewrite_goal(Decls, BoundVars, Goals, (Lhs := Rhs), [decode(Root, Pattern)]) :-
     nonvar(Rhs),
     Rhs = dot_get(_, _),
     \+ contains_dot_get(Lhs),
     !,
     dot_chain_parts(Rhs, Root, Fields),
     check_dot_receiver(BoundVars, Root, Rhs),
-    fields_pattern(Fields, Lhs, Pattern).
-rewrite_goal(BoundVars, Goal0, GoalList) :-
-    replace_dot_gets(Goal0, BoundVars, Goal, Decodes),
+    dot_fields_pattern(Decls, Goals, Root, Fields, Lhs, Pattern).
+rewrite_goal(Decls, BoundVars, Goals, Goal0, GoalList) :-
+    replace_dot_gets(Decls, Goals, Goal0, BoundVars, Goal, Decodes),
     ( plain_relation_goal(Goal)
     -> GoalList = [Goal | Decodes]
     ;  append(Decodes, [Goal], GoalList)
     ).
 
-replace_dot_gets(Term, _, Term, []) :-
+replace_dot_gets(_, _, Term, _, Term, []) :-
     var(Term),
     !.
-replace_dot_gets(Term, BoundVars, Leaf, [decode(Root, Pattern)]) :-
+replace_dot_gets(Decls, Goals, Term, BoundVars, Leaf, [decode(Root, Pattern)]) :-
     nonvar(Term),
     Term = dot_get(_, _),
     !,
     dot_chain_parts(Term, Root, Fields),
     check_dot_receiver(BoundVars, Root, Term),
-    fields_pattern(Fields, Leaf, Pattern).
-replace_dot_gets(Term, BoundVars, Out, Decodes) :-
+    dot_fields_pattern(Decls, Goals, Root, Fields, Leaf, Pattern).
+replace_dot_gets(Decls, Goals, Term, BoundVars, Out, Decodes) :-
     compound(Term),
     !,
     Term =.. [Functor | Args0],
-    foldl(replace_dot_gets_arg(BoundVars), Args0, Args, [], Decodes),
+    foldl(replace_dot_gets_arg(Decls, Goals, BoundVars), Args0, Args, [], Decodes),
     Out =.. [Functor | Args].
-replace_dot_gets(Term, _, Term, []).
+replace_dot_gets(_, _, Term, _, Term, []).
 
-replace_dot_gets_arg(BoundVars, Arg0, Arg, Acc, Decodes) :-
-    replace_dot_gets(Arg0, BoundVars, Arg, ArgDecodes),
+replace_dot_gets_arg(Decls, Goals, BoundVars, Arg0, Arg, Acc, Decodes) :-
+    replace_dot_gets(Decls, Goals, Arg0, BoundVars, Arg, ArgDecodes),
     append(Acc, ArgDecodes, Decodes).
+
+% `FileRec.revision.id` reads File's stored endpoint once. The synthesized
+% decode joins File's dictionary but never follows Revision.
+dot_fields_pattern(Decls, Goals, Root, Fields, Leaf, Pattern) :-
+    ( relation_id_member_path(Decls, Goals, Root, Fields, Field)
+    -> fields_pattern([Field], Leaf, Pattern)
+    ;  fields_pattern(Fields, Leaf, Pattern)
+    ).
+
+relation_id_member_path(Decls, Goals, Root, Fields, Field) :-
+    Fields = [Field, id],
+    receiver_relation_type(Decls, Goals, Root, OwnerType),
+    type_definitions(Decls, Types),
+    type_definition(Types, OwnerType, Columns, ColumnTypes),
+    nth1(Position, Columns, Field),
+    nth1(Position, ColumnTypes, TargetType),
+    declared_type_name(Types, TargetType).
+
+receiver_relation_type(Decls, Goals, Root, OwnerType) :-
+    type_definitions(Decls, Types),
+    member(Goal, Goals),
+    compound(Goal),
+    functor(Goal, Name, Arity),
+    relation_columns_and_types(Decls, Types, Name/Arity, _Columns, ColumnTypes),
+    nth1(Position, ColumnTypes, OwnerType),
+    arg(Position, Goal, Argument),
+    Argument == Root,
+    declared_type_name(Types, OwnerType),
+    !.
 
 % dot_chain_parts decomposes dot_get(dot_get(A, b), c) into Root=A, [b, c].
 dot_chain_parts(Term, Root, Fields) :-

@@ -8,6 +8,9 @@
 # rendered_type rel into a TS file, and diff it against committed goldens.
 #
 # Exit nonzero on any diff; prints each diff.
+# Baseline receipt 2026-08-18: base 7072e4c90 and relation-ID head 49f1019ff
+# both return SQLITE_ERROR: no such table: __gen__list_text_df210f232c1299bd
+# from POST /program for render_ts.dl6 before the rendered_type query runs.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

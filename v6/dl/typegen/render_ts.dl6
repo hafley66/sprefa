@@ -1,7 +1,7 @@
 # @comment-ok: the dl6 door contract, the single doc site for the IR shape.
 # render_ts.dl6 -- the dl6 door for the TS interface plane (Phase F).
-# Reads the type plane as arrivals on EDB rel type_row/7 (one JSONL line per
-# semantic type row, written by v6/prolog/compile/typegen_export.pl) and
+# Reads the type plane as arrivals on EDB rel type_row/7 and type_storage/5
+# (one JSONL line per semantic row, written by v6/prolog/compile/typegen_export.pl) and
 # renders each renderable relation as a TS interface. The 3-rule IR shape is
 # the proven probe (chat_log/20260813.2):
 #   field_line(TypeName, Ordinal, LineText)   <- concat per column
@@ -15,6 +15,8 @@
 
 rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
              type_id: int, module_id: int).
+rel type_storage(id: int, column_id: int, ordinal: int, local_name: text,
+                 module_id: int).
 
 # Option is a tagged carrier so option(option(T)) retains every state.
 rel has_option(value: int).
@@ -126,6 +128,17 @@ emitted_type_name(RelId, TypeName) <-
   module_prefix(ModuleId, Prefix),
   TypeName := concat([Prefix, BareType]).
 
+rel relation_id_column(column_id: int).
+relation_id_column(ColumnId) <-
+  type_storage(column_id: ColumnId, local_name: 'relation_id').
+
+rel relation_id_type(column_id: int, text: text).
+relation_id_type(ColumnId, Text) <-
+  relation_id_column(ColumnId),
+  type_row(id: ColumnId, kind: 'column', type_id: TargetId),
+  emitted_type_name(TargetId, Target),
+  Text := concat(['RelationId<\'', Target, '\'>']).
+
 # An option over a leaf, kept apart from option_type so a list can hold one
 # without the list strata reading the option stratum that reads them back.
 rel option_of_leaf(id: int, text: text).
@@ -231,9 +244,16 @@ type_of(Id, Text) <- option_type(Id, Text).
 # and the name is joined on only at the wrap.
 rel field_line(rel_id: int, ordinal: int, line_text: text).
 field_line(RelId, Ordinal, LineText) <-
-  type_row(parent: RelId, ordinal: Ordinal, name: ColumnName,
+  type_row(id: ColumnId, parent: RelId, ordinal: Ordinal, name: ColumnName,
            kind: 'column', type_id: TypeId),
   renderable_rel(RelId, _, _),
+  relation_id_type(ColumnId, Type),
+  LineText := concat(['  ', ColumnName, ': ', Type, ';']).
+field_line(RelId, Ordinal, LineText) <-
+  type_row(id: ColumnId, parent: RelId, ordinal: Ordinal, name: ColumnName,
+           kind: 'column', type_id: TypeId),
+  renderable_rel(RelId, _, _),
+  not(relation_id_column(ColumnId)),
   type_of(TypeId, Type),
   LineText := concat(['  ', ColumnName, ': ', Type, ';']).
 
@@ -266,9 +286,17 @@ enum_variant_line(EnumId, Ordinal, Line) <-
 rel enum_variant_field(enum_id: int, ordinal: int, field_ordinal: int, name: text, text: text).
 enum_variant_field(EnumId, Ordinal, FieldOrdinal, FieldName, FieldText) <-
   type_row(parent: EnumId, ordinal: Ordinal, kind: 'enum_variant', type_id: VariantId),
-  type_row(parent: VariantId, ordinal: FieldOrdinal, name: FieldName,
+  type_row(id: ColumnId, parent: VariantId, ordinal: FieldOrdinal, name: FieldName,
            kind: 'column', type_id: TypeId),
   FieldName != 'id',
+  relation_id_type(ColumnId, Type),
+  FieldText := concat([FieldName, ': ', Type, ';']).
+enum_variant_field(EnumId, Ordinal, FieldOrdinal, FieldName, FieldText) <-
+  type_row(parent: EnumId, ordinal: Ordinal, kind: 'enum_variant', type_id: VariantId),
+  type_row(id: ColumnId, parent: VariantId, ordinal: FieldOrdinal, name: FieldName,
+           kind: 'column', type_id: TypeId),
+  FieldName != 'id',
+  not(relation_id_column(ColumnId)),
   type_of(TypeId, Type),
   FieldText := concat([FieldName, ': ', Type, ';']).
 
@@ -289,6 +317,10 @@ rendered_type(TypeName, 2, EnumId, FileText) <-
 rendered_type('Option', 0, 0,
               'export type Option<T> = { tag: \'none\' } | { tag: \'some\'; value: T };\n') <-
   has_option(1).
+
+rendered_type('RelationId', 0, -1,
+              'declare const __dl6RelationId: unique symbol;\nexport type RelationId<T extends string> = number & { readonly [__dl6RelationId]: T };\n') <-
+  relation_id_column(_).
 
 # An interface declaration names a capability and holds no columns, so its
 # whole text is the empty-brace pair on one line.

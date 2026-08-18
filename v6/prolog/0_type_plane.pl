@@ -31,6 +31,7 @@
           [ type_definitions/2,
             type_definition/4,
             declared_type_name/2,
+            relation_id_type/2,
             column_storage/3,
             type_wrapper/2,
             unwrapped_column_type/2,
@@ -73,6 +74,11 @@ type_definition(Types, Name, Columns, ColumnTypes) :-
     memberchk(type_def(Name, Columns, ColumnTypes), Types).
 
 declared_type_name(Types, Name) :- memberchk(type_def(Name, _, _), Types).
+
+% `Revision.id` is retained as `id(Revision)` after qualified-type resolution.
+% It denotes the target relation's existing SQLite endpoint, not a relation
+% value and not a request to intern or follow that row.
+relation_id_type(id(Name), Name) :- atom(Name).
 
 % The storage kind of a declared column type. `json` stores TEXT and keeps
 % the inline json1 path (SLOT-JSON1-FATE: untyped json only, never a cache of
@@ -129,10 +135,20 @@ column_storage(Types, json_list(Element), json_list(Element)) :-
 % lands in the member rel's `value` column, so every column type is admissible.
 column_storage(Types, list(Element), list(Element)) :-
     !,
+    ( relation_id_type(Element, Name)
+    -> throw(unsupported_construct(list_of_relation_ids(Name)))
+    ; true
+    ),
     column_storage(Types, Element, _).
 
 column_storage(_, bool, bool) :- !.
 column_storage(_, float, float) :- !.
+column_storage(Types, id(Name), idref(Name)) :-
+    !,
+    ( declared_type_name(Types, Name)
+    -> true
+    ; throw(unsupported_construct(relation_id_target_unknown(Name)))
+    ).
 column_storage(Types, Name, ref(Name)) :- declared_type_name(Types, Name), !.
 column_storage(_, Name, _) :-
     throw(unsupported_construct(column_type_unknown(Name))).
@@ -606,6 +622,8 @@ column_value_shape_error(_, int, Value, int_out_of_range(Value)) :-
     ),
     !.
 column_value_shape_error(_, int, Value, field_not_int(Value)) :-
+    \+ int_column_value(Value), !.
+column_value_shape_error(_, id(_), Value, field_not_int(Value)) :-
     \+ int_column_value(Value), !.
 column_value_shape_error(_, text, Value, field_not_text(Value)) :-
     \+ text_column_value(Value), !.

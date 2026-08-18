@@ -4,6 +4,8 @@
 :- use_module(library(pairs)).
 
 rust_types_text(_Name, Rows, Text) :-
+    rust_relation_id_alias_text(Rows, RelationIdAlias),
+    rust_relation_id_alias_parts(RelationIdAlias, RelationIdParts),
     rust_option_alias_text(Rows, OptionAlias),
     rust_option_alias_parts(OptionAlias, OptionParts),
     findall(InterfaceText, rust_interface_text(Rows, InterfaceText), InterfaceParts),
@@ -12,7 +14,7 @@ rust_types_text(_Name, Rows, Text) :-
     findall(RelRow, renderable_rel(Rows, RelRow), RelRows),
     collision_type_names(RelRows, CollisionTypeNames),
     maplist(rust_rel_text(Rows, CollisionTypeNames), RelRows, RelParts),
-    append([OptionParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
+    append([RelationIdParts, OptionParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
     atomic_list_concat(Parts, '\n', Atom),
     atom_string(Atom, Text).
 
@@ -25,6 +27,16 @@ rust_option_alias_text(_, '').
 
 rust_option_alias_parts('', []) :- !.
 rust_option_alias_parts(Text, [Text]).
+
+% The marker carries target identity in Rust's type system while serde keeps
+% the public wire representation as the one SQLite INTEGER endpoint.
+rust_relation_id_alias_text(Rows,
+                            '#[repr(transparent)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]\npub struct RelationId<T>(pub i64, pub std::marker::PhantomData<fn() -> T>);\n\nimpl<T> serde::Serialize for RelationId<T> {\n    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        serde::Serialize::serialize(&self.0, serializer)\n    }\n}\n\nimpl<''de, T> serde::Deserialize<''de> for RelationId<T> {\n    fn deserialize<D: serde::Deserializer<''de>>(deserializer: D) -> Result<Self, D::Error> {\n        let value = <i64 as serde::Deserialize>::deserialize(deserializer)?;\n        Ok(Self(value, std::marker::PhantomData))\n    }\n}\n') :-
+    rust_relation_id_storage(Rows, _), !.
+rust_relation_id_alias_text(_, '').
+
+rust_relation_id_alias_parts('', []) :- !.
+rust_relation_id_alias_parts(Text, [Text]).
 
 rust_enum_text(Rows, Text) :-
     member(row(EnumId, _, _, Name, enum, _, _, _, _, _, _), Rows),
@@ -43,8 +55,10 @@ rust_enum_text(Rows, Text) :-
 rust_enum_variant_text(Rows, VariantName, VariantRelId, Text) :-
     type_name(VariantName, VariantNameText),
     findall(Name-Type,
-            ( member(row(_, VariantRelId, _, Name, column, TypeId, _, _, _, _, _), Rows),
-              Name \== id, rust_type(Rows, TypeId, Type) ), Fields),
+            ( member(row(ColumnId, VariantRelId, _, Name, column, TypeId,
+                         _, _, _, _, _), Rows),
+              Name \== id,
+              rust_column_value_type(Rows, [], ColumnId, TypeId, Type) ), Fields),
     ( Fields == []
     -> format(string(Text), '    ~w,\n', [VariantNameText])
     ; maplist(rust_enum_field_text, Fields, FieldTexts),
@@ -160,8 +174,9 @@ drop_type_name(TypeName, [TypeName | Rest], Remaining) :-
 drop_type_name(_TypeName, Remaining, Remaining).
 
 rel_columns(Rows, row(RelId, _, _, _, rel, _, _, _, _, _, _), Columns) :-
-    findall(Ord-Name-TypeId,
-            member(row(_, RelId, Ord, Name, column, TypeId, _, _, _, _, _), Rows),
+    findall(Ord-ColumnId-Name-TypeId,
+            member(row(ColumnId, RelId, Ord, Name, column, TypeId,
+                       _, _, _, _, _), Rows),
             Unsorted),
     keysort(Unsorted, Columns).
 
@@ -172,12 +187,28 @@ rust_rel_text(Rows, CollisionTypeNames, RelRow, Text) :-
     atomic_list_concat(Properties, '', Body),
     format(string(Text), '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\npub struct ~w {\n~s}\n', [TypeName, Body]).
 
-rust_property_text(Rows, CollisionTypeNames, _Ord-Name-TypeId, Text) :-
-    rust_type(Rows, CollisionTypeNames, TypeId, Type),
+rust_property_text(Rows, CollisionTypeNames, _Ord-ColumnId-Name-TypeId, Text) :-
+    rust_column_value_type(Rows, CollisionTypeNames, ColumnId, TypeId, Type),
     rust_field_name(Name, Field),
     format(string(Text), '    pub ~w: ~w,\n', [Field, Type]).
 
-rust_column_type(Rows, _Ord-_Name-TypeId, Type) :- rust_type(Rows, TypeId, Type).
+rust_column_type(Rows, _Ord-ColumnId-_Name-TypeId, Type) :-
+    rust_column_value_type(Rows, [], ColumnId, TypeId, Type).
+
+rust_column_value_type(Rows, CollisionTypeNames, ColumnId, TypeId, Type) :-
+    ( rust_relation_id_storage(Rows, ColumnId)
+    -> rust_relation_id_type(Rows, CollisionTypeNames, TypeId, Type)
+    ; rust_type(Rows, CollisionTypeNames, TypeId, Type)
+    ).
+
+rust_relation_id_storage(Rows, ColumnId) :-
+    member(row(_, ColumnId, _, relation_id, storage, _, _, _, _, _, _), Rows).
+
+rust_relation_id_type(Rows, CollisionTypeNames, TargetId, Type) :-
+    member(TargetRow, Rows),
+    TargetRow = row(TargetId, _, _, _, rel, _, _, _, _, _, _),
+    emitted_type_name(Rows, CollisionTypeNames, TargetRow, Target),
+    format(string(Type), 'RelationId<~w>', [Target]).
 
 rust_type(Rows, TypeId, Type) :- rust_type(Rows, [], TypeId, Type).
 

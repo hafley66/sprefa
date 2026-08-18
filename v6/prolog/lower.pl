@@ -148,6 +148,10 @@
             % The same rows the catalog INSERT renders, read by emit_ts.pl.
             catalog_rows/4,
             catalog_all_rows/10,
+            % The type artifact needs declaration rows plus the per-column
+            % storage representation that distinguishes a followed ref from
+            % an identity-only endpoint.
+            catalog_type_rows/6,
             % The decl half alone, with the id layout the nesting rail reads.
             catalog_decl_rows/6,
             % Reproduce the RuleLevelStatements input the producer needs, used
@@ -420,7 +424,7 @@ compile_positive_uses(Mode, RelPlans,
                           MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Index, Bound0, Bound, [From | MoreFrom], WhereParts) :-
-    positive_use_table(Source, Ref, Table), quote_ident(Table, QuotedTable),
+    positive_use_table(Source, RelPlans, Ref, Table), quote_ident(Table, QuotedTable),
     format(atom(Alias), 'b~w', [Index]),
     format(atom(From), '~w ~w', [QuotedTable, Alias]),
     relplan_columns(RelPlans, Ref, Columns),
@@ -432,8 +436,9 @@ compile_positive_uses(Mode, RelPlans, [use(Ref, Args, pos, Source) | Rest], Inde
     compile_positive_uses(Mode, RelPlans, Rest, NextIndex, Bound1, Bound, MoreFrom, MoreWhere),
     append(HereWhere, MoreWhere, WhereParts).
 
-positive_use_table(pre, Ref, Table) :- !, pre_table_name(Ref, Table).
-positive_use_table(_, Ref, Table) :- table_name(Ref, Table).
+positive_use_table(pre, _RelPlans, Ref, Table) :- !, pre_table_name(Ref, Table).
+positive_use_table(_, RelPlans, Ref, Table) :-
+    relplan_storage_name(RelPlans, Ref, Table).
 
 compile_seeded_pre_use(Mode, RelPlans, Ref, Args, Seed, Index, Bound0, Bound,
                        WhereParts) :-
@@ -1160,6 +1165,17 @@ catalog_all_rows(Mode, ModuleName, Rules, RelPlans, DepartureRefs, PreRefs,
                        Types, RuleLevelStatements, Decls, Context, PlaneRows),
     append(DeclRows, PlaneRows, AllRows).
 
+%! catalog_type_rows(+Mode, +ModuleName, +Rules, +RelPlans, +Decls, -Rows) is det.
+% The public type artifacts do not need executable plane rows, but an idref
+% and a ref deliberately share the target relation's type_id. Their storage
+% child is therefore the semantic discriminator kept beside the type rows.
+catalog_type_rows(Mode, ModuleName, Rules, RelPlans, Decls, Rows) :-
+    catalog_decl_rows(ModuleName, Rules, RelPlans, Decls, DeclRows,
+                      ctx(Modules, RelIdMap, _ListIdMap, StartId)),
+    catalog_storage_rows(Mode, RelPlans, RelIdMap, Modules, StartId,
+                         StorageRows, _),
+    append(DeclRows, StorageRows, Rows).
+
 % The plane half is appended after the rels+columns block (plan 4) so no
 % existing id moves. Plane ids start at the decl block's FinalId.
 %
@@ -1494,7 +1510,9 @@ catalog_one_rel_storage(Mode, [ColumnName | RestColumns], ColumnTypes,
                         RelHId, RelId, Ordinal, ModuleId, Id0, Rows,
                         IdFinal) :-
     nth1(Ordinal, ColumnTypes, ColumnType),
-    (   interned_column(Mode, ColumnType)
+    (   ColumnType = idref(_)
+    ->  LocalName = relation_id
+    ;   interned_column(Mode, ColumnType)
     ->  LocalName = interned_id
     ;   LocalName = raw_characters
     ),
@@ -1890,6 +1908,7 @@ catalog_declared_column(Name-json_list(Element),
                         col(Name, declared(json_list(Element)), json_list(Element))).
 catalog_declared_column(Name-list(Element),
                         col(Name, declared(list(Element)), list(Element))).
+catalog_declared_column(Name-id(Type), col(Name, declared(id(Type)), idref(Type))).
 catalog_declared_column(Name-Type, col(Name, declared(Type), ref(Type))).
 
 catalog_rel_module_ids([], _HashIdMap, []).
@@ -2205,6 +2224,8 @@ catalog_column_rows([ColumnName | RestColumns], ColumnTypes,
 catalog_column_type_id(json_list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
     list_row_id(ListIdMap, json_list(Element), TypeId).
 catalog_column_type_id(ref(Name), RelIdMap, _ListIdMap, TypeId) :- !,
+    rel_row_id(RelIdMap, Name, TypeId).
+catalog_column_type_id(idref(Name), RelIdMap, _ListIdMap, TypeId) :- !,
     rel_row_id(RelIdMap, Name, TypeId).
 catalog_column_type_id(list(Element), _RelIdMap, ListIdMap, TypeId) :- !,
     list_row_id(ListIdMap, list(Element), TypeId).
@@ -2744,6 +2765,7 @@ column_def(_, QuotedColumn, bytes, Def) :- !,
 % second parent and leaving dangling refs (types-as-rels verdict finding 6,
 % plans/2026-07-28-sqlite-retraction-verdict.md fk_cascade WRONG).
 column_def(_, QuotedColumn, ref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
+column_def(_, QuotedColumn, idref(_), Def) :- !, format(atom(Def), '~w INTEGER NOT NULL', [QuotedColumn]).
 % A relational list column stores its minted entity's id, the ref(_) shape with
 % an ordered child set instead of one row.
 column_def(_, QuotedColumn, list(_), Def) :- !,
@@ -2807,6 +2829,10 @@ relation_render_column_expr(_, _, Column, ref(TypeName), Expr) :-
     format(atom(Expr),
            'json((SELECT c."__rendered" FROM ~w c WHERE c."__id" = t.~w))',
            [QuotedReferenceView, QuotedColumn]).
+relation_render_column_expr(_, _, Column, idref(_), Expr) :-
+    !,
+    quote_ident(Column, QuotedColumn),
+    format(atom(Expr), 't.~w', [QuotedColumn]).
 relation_render_column_expr(Mode, _, Column, ColumnType, Expr) :-
     interned_column(Mode, ColumnType),
     !,
@@ -5029,6 +5055,7 @@ ir_column_class(Mode, Column, Type, colclass(Column, TypeName, StorageClass,
 % Encoding is the interning slot: ref(Target) already stores a dense id into
 % Target's table rather than the value, which is dictionary encoding.
 ir_column_storage(_, ref(Target), ref, integer, dict(Target)) :- !.
+ir_column_storage(_, idref(_), id, integer, direct) :- !.
 ir_column_storage(_, bool, bool, integer, direct) :- !.
 ir_column_storage(_, int, int, integer, direct) :- !.
 ir_column_storage(_, float, float, real, direct) :- !.
@@ -6048,7 +6075,8 @@ delta_reference_identity(RelPlans, Name/Arity, Args, Columns,
                          Bound0, Bound, [From], Equalities) :-
     reference_target_ref(RelPlans, Name/Arity),
     !,
-    quote_ident(Name, QuotedTable),
+    relplan_storage_name(RelPlans, Name/Arity, Table),
+    quote_ident(Table, QuotedTable),
     format(atom(From), '~w r0', [QuotedTable]),
     findall(Equality,
             ( member(Column, Columns),
@@ -6322,6 +6350,9 @@ canonical_column_expr(Column, bytes, Expr) :-
 canonical_column_expr(Column, ref(TypeName), Expr) :-
     !,
     dictionary_render_expr(TypeName, Column, Expr).
+canonical_column_expr(Column, idref(_), Expr) :-
+    !,
+    outer_column_expr(Column, Expr).
 % A json column's STORED TEXT is already the rendering. The cross-target log
 % contract is canonical JSON (sorted keys, no whitespace), and json1 will not
 % canonicalize for us at any point in the pipeline -- json() minifies but

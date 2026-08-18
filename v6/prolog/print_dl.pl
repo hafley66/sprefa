@@ -399,6 +399,12 @@ print_column_type(list_entity_linked_sequence(Element), Text) :-
     !,
     print_column_type(Element, InnerText),
     format(atom(Text), "list_entity_linked_sequence(~w)", [InnerText]).
+print_column_type(id(Name), Text) :-
+    !,
+    format(atom(Text), "~w.id", [Name]).
+print_column_type(type_path(Segments), Text) :-
+    !,
+    atomic_list_concat(Segments, '.', Text).
 print_column_type(Type, Text) :-
     format(atom(Text), "~w", [Type]).
 

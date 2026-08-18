@@ -1,7 +1,7 @@
 # @comment-ok: the dl6 door contract, the single doc site for the IR shape.
 # render_rust.dl6 -- the dl6 door for the Rust type plane (Phase F twin).
-# Reads the type plane as arrivals on EDB rel type_row/7 (one JSONL line per
-# semantic type row, written by v6/prolog/compile/typegen_export.pl) and
+# Reads the type plane as arrivals on EDB rel type_row/7 and type_storage/5
+# (one JSONL line per semantic row, written by v6/prolog/compile/typegen_export.pl) and
 # renders each renderable relation as a Rust struct. The twin of
 # render_ts.dl6: same strata and naming, swapping the TS surface syntax for
 # what 8_emit_rust_types.pl emits (structs, Vec<T>, Option<T>, module-prefix
@@ -15,6 +15,8 @@
 
 rel type_row(id: int, parent: int, ordinal: int, name: text, kind: text,
              type_id: int, module_id: int).
+rel type_storage(id: int, column_id: int, ordinal: int, local_name: text,
+                 module_id: int).
 
 rel has_option(value: int).
 has_option(1) <- type_row(kind: 'option').
@@ -164,6 +166,17 @@ emitted_type_name(RelId, TypeName) <-
   module_prefix(ModuleId, Prefix),
   TypeName := concat([Prefix, BareType]).
 
+rel relation_id_column(column_id: int).
+relation_id_column(ColumnId) <-
+  type_storage(column_id: ColumnId, local_name: 'relation_id').
+
+rel relation_id_type(column_id: int, text: text).
+relation_id_type(ColumnId, Text) <-
+  relation_id_column(ColumnId),
+  type_row(id: ColumnId, kind: 'column', type_id: TargetId),
+  emitted_type_name(TargetId, Target),
+  Text := concat(['RelationId<', Target, '>']).
+
 # An option over a leaf, kept apart from option_type so a list can hold one
 # without the list strata reading the option stratum that reads them back.
 rel option_of_leaf(id: int, text: text).
@@ -270,9 +283,16 @@ type_of(Id, Text) <- option_type(Id, Text).
 # and the name is joined on only at the wrap. A Rust field carries `pub`.
 rel field_line(rel_id: int, ordinal: int, line_text: text).
 field_line(RelId, Ordinal, LineText) <-
-  type_row(parent: RelId, ordinal: Ordinal, name: ColumnName,
+  type_row(id: ColumnId, parent: RelId, ordinal: Ordinal, name: ColumnName,
            kind: 'column', type_id: TypeId),
   renderable_rel(RelId, _, _),
+  relation_id_type(ColumnId, Type),
+  LineText := concat(['    pub ', ColumnName, ': ', Type, ',']).
+field_line(RelId, Ordinal, LineText) <-
+  type_row(id: ColumnId, parent: RelId, ordinal: Ordinal, name: ColumnName,
+           kind: 'column', type_id: TypeId),
+  renderable_rel(RelId, _, _),
+  not(relation_id_column(ColumnId)),
   type_of(TypeId, Type),
   field_ident(ColumnName, Ident),
   LineText := concat(['    pub ', Ident, ': ', Type, ',']).
@@ -296,6 +316,10 @@ rendered_type('DlOption', 0, 0,
               '#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]\n#[serde(tag = "tag", content = "value", rename_all = "snake_case")]\npub enum DlOption<T> {\n    None,\n    Some(T),\n}\n') <-
   has_option(1).
 
+rendered_type('RelationId', 0, -1,
+              '#[repr(transparent)]\n#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]\npub struct RelationId<T>(pub i64, pub std::marker::PhantomData<fn() -> T>);\n\nimpl<T> serde::Serialize for RelationId<T> {\n    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n        serde::Serialize::serialize(&self.0, serializer)\n    }\n}\n\nimpl<\'de, T> serde::Deserialize<\'de> for RelationId<T> {\n    fn deserialize<D: serde::Deserializer<\'de>>(deserializer: D) -> Result<Self, D::Error> {\n        let value = <i64 as serde::Deserialize>::deserialize(deserializer)?;\n        Ok(Self(value, std::marker::PhantomData))\n    }\n}\n') <-
+  relation_id_column(_).
+
 rel enum_variant_line(enum_id: int, ordinal: int, line: text).
 enum_variant_line(EnumId, Ordinal, Line) <-
   type_row(parent: EnumId, ordinal: Ordinal, name: VariantName,
@@ -313,9 +337,17 @@ enum_variant_line(EnumId, Ordinal, Line) <-
 rel enum_variant_field(enum_id: int, ordinal: int, field_ordinal: int, name: text, text: text).
 enum_variant_field(EnumId, Ordinal, FieldOrdinal, FieldName, FieldText) <-
   type_row(parent: EnumId, ordinal: Ordinal, kind: 'enum_variant', type_id: VariantId),
-  type_row(parent: VariantId, ordinal: FieldOrdinal, name: FieldName,
+  type_row(id: ColumnId, parent: VariantId, ordinal: FieldOrdinal, name: FieldName,
            kind: 'column', type_id: TypeId),
   FieldName != 'id',
+  relation_id_type(ColumnId, Type),
+  FieldText := concat([FieldName, ': ', Type]).
+enum_variant_field(EnumId, Ordinal, FieldOrdinal, FieldName, FieldText) <-
+  type_row(parent: EnumId, ordinal: Ordinal, kind: 'enum_variant', type_id: VariantId),
+  type_row(id: ColumnId, parent: VariantId, ordinal: FieldOrdinal, name: FieldName,
+           kind: 'column', type_id: TypeId),
+  FieldName != 'id',
+  not(relation_id_column(ColumnId)),
   type_of(TypeId, Type),
   FieldText := concat([FieldName, ': ', Type]).
 

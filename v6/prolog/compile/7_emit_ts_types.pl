@@ -4,6 +4,8 @@
 :- use_module(library(pairs)).
 
 ts_types_text(_Name, Rows, Text) :-
+    relation_id_alias_text(Rows, RelationIdAlias),
+    relation_id_alias_parts(RelationIdAlias, RelationIdParts),
     option_alias_text(Rows, OptionAlias),
     option_alias_parts(OptionAlias, OptionParts),
     findall(InterfaceText, ts_interface_text(Rows, InterfaceText), InterfaceParts),
@@ -12,7 +14,7 @@ ts_types_text(_Name, Rows, Text) :-
     findall(RelRow, renderable_rel(Rows, RelRow), RelRows),
     collision_type_names(RelRows, CollisionTypeNames),
     maplist(ts_rel_text(Rows, CollisionTypeNames), RelRows, RelParts),
-    append([OptionParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
+    append([RelationIdParts, OptionParts, InterfaceParts, GenericParts, EnumParts, RelParts], Parts),
     atomic_list_concat(Parts, '\n', Atom),
     atom_string(Atom, Text).
 
@@ -26,6 +28,18 @@ option_alias_text(_, '').
 
 option_alias_parts('', []) :- !.
 option_alias_parts(Text, [Text]).
+
+% A relation endpoint is an integer on SQLite's wire, with a target-specific
+% phantom member in the authored TypeScript surface. The target name comes
+% from the column type_id, while the storage child says this is an endpoint
+% rather than a followed relation value.
+relation_id_alias_text(Rows,
+                       'declare const __dl6RelationId: unique symbol;\nexport type RelationId<T extends string> = number & { readonly [__dl6RelationId]: T };\n') :-
+    relation_id_storage(Rows, _), !.
+relation_id_alias_text(_, '').
+
+relation_id_alias_parts('', []) :- !.
+relation_id_alias_parts(Text, [Text]).
 
 ts_enum_text(Rows, Text) :-
     member(row(EnumId, _, _, Name, enum, _, _, _, _, _, _), Rows),
@@ -43,8 +57,10 @@ ts_enum_text(Rows, Text) :-
 
 ts_enum_variant_text(Rows, VariantName, VariantRelId, Text) :-
     findall(Name-Type,
-            ( member(row(_, VariantRelId, _, Name, column, TypeId, _, _, _, _, _), Rows),
-              Name \== id, ts_type(Rows, TypeId, Type) ), Fields),
+            ( member(row(ColumnId, VariantRelId, _, Name, column, TypeId,
+                         _, _, _, _, _), Rows),
+              Name \== id,
+              ts_column_value_type(Rows, [], ColumnId, TypeId, Type) ), Fields),
     ( Fields == []
     -> format(string(Text), '  | { tag: \'~w\' }\n', [VariantName])
     ; maplist(ts_enum_field_text, Fields, FieldTexts),
@@ -132,8 +148,9 @@ drop_type_name(TypeName, [TypeName | Rest], Remaining) :-
 drop_type_name(_TypeName, Remaining, Remaining).
 
 rel_columns(Rows, row(RelId, _, _, _, rel, _, _, _, _, _, _), Columns) :-
-    findall(Ord-Name-TypeId,
-            member(row(_, RelId, Ord, Name, column, TypeId, _, _, _, _, _), Rows),
+    findall(Ord-ColumnId-Name-TypeId,
+            member(row(ColumnId, RelId, Ord, Name, column, TypeId,
+                       _, _, _, _, _), Rows),
             Unsorted),
     keysort(Unsorted, Columns).
 
@@ -144,11 +161,27 @@ ts_rel_text(Rows, CollisionTypeNames, RelRow, Text) :-
     atomic_list_concat(Properties, '', Body),
     format(string(Text), 'export interface ~w {\n~s}\n', [TypeName, Body]).
 
-ts_property_text(Rows, CollisionTypeNames, _Ord-Name-TypeId, Text) :-
-    ts_type(Rows, CollisionTypeNames, TypeId, Type),
+ts_property_text(Rows, CollisionTypeNames, _Ord-ColumnId-Name-TypeId, Text) :-
+    ts_column_value_type(Rows, CollisionTypeNames, ColumnId, TypeId, Type),
     format(string(Text), '  ~w: ~w;\n', [Name, Type]).
 
-ts_column_type(Rows, _Ord-_Name-TypeId, Type) :- ts_type(Rows, TypeId, Type).
+ts_column_type(Rows, _Ord-ColumnId-_Name-TypeId, Type) :-
+    ts_column_value_type(Rows, [], ColumnId, TypeId, Type).
+
+ts_column_value_type(Rows, CollisionTypeNames, ColumnId, TypeId, Type) :-
+    ( relation_id_storage(Rows, ColumnId)
+    -> ts_relation_id_type(Rows, CollisionTypeNames, TypeId, Type)
+    ; ts_type(Rows, CollisionTypeNames, TypeId, Type)
+    ).
+
+relation_id_storage(Rows, ColumnId) :-
+    member(row(_, ColumnId, _, relation_id, storage, _, _, _, _, _, _), Rows).
+
+ts_relation_id_type(Rows, CollisionTypeNames, TargetId, Type) :-
+    member(TargetRow, Rows),
+    TargetRow = row(TargetId, _, _, _, rel, _, _, _, _, _, _),
+    emitted_type_name(Rows, CollisionTypeNames, TargetRow, Target),
+    format(string(Type), 'RelationId<\'~w\'>', [Target]).
 
 ts_type(Rows, TypeId, Type) :- ts_type(Rows, [], TypeId, Type).
 

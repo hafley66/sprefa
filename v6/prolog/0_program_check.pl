@@ -346,6 +346,7 @@ program_violation(column_type_unknown, prog(Decls, _), Name) :-
     \+ memberchk(Name, [int, text, json, bool, float, bytes]),
     \+ Name = json_list(_),
     \+ Name = list(_),
+    \+ Name = id(_),
     \+ declared_type_name(Types, Name).
 
 % An argument sitting in a ref-typed column that is not a relation value of
@@ -417,6 +418,7 @@ program_violation(relation_column_type_conflict, prog(Decls, Rules),
     rule_column_variable(Decls, Types, Rule, Other, OtherRef, OtherColumn, OtherType),
     Other == Variable,
     OtherType \== TypeName,
+    \+ column_type_assignable(Types, TypeName, OtherType),
     !.
 
 % ── the head column type wall (ruling type_gate_widening) ────────────────────
@@ -913,6 +915,8 @@ column_type_assignable(Types, From, To) :-
     storage_assignable(FromStorage, ToStorage).
 
 storage_assignable(Storage, Storage) :- !.
+storage_assignable(ref(Name), idref(Name)) :- !.
+storage_assignable(idref(Name), ref(Name)) :- !.
 storage_assignable(json_list(_), json) :- !.
 storage_assignable(json, json_list(_)) :- !.
 storage_assignable(int, float).

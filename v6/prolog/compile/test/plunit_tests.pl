@@ -32,6 +32,7 @@
                 intern_write_sql/4,
                 catalog_ddl_contract/2,
                 catalog_rows/4,
+                catalog_type_rows/6,
                 catalog_decl_rows/6,
                 catalog_all_rows/10,
                 plan_rule_level_statements/2,
@@ -69,7 +70,8 @@
                 reset_parse_counts/0, parse_count/2 ]).
 :- use_module('../../0_cst_query', [ parse_cst_query/2 ]).
 :- use_module('../../0_body_walk', [ relation_atom_wrapper/1 ]).
-:- use_module('../../0_type_plane', [ type_definitions/2 ]).
+:- use_module('../../0_type_plane', [ type_definitions/2, column_storage/3 ]).
+:- use_module('../../0_program_check', [ program_violation/3 ]).
 :- use_module('../../print_dl', [ print_dl_program/3, print_term/5 ]).
 :- use_module('../registry',
               [ surface/5, expression/5, host_execution/3,
@@ -10074,3 +10076,83 @@ test(bytes_world_arrival_rejects_untagged_transport,
                          Program, [byte_source(raw)], [], [])-[], _).
 
 :- end_tests(bytes_type_system).
+
+:- begin_tests(relation_id_access).
+
+test(relation_id_type_parses_prints_and_resolves_without_changing_module_paths) :-
+    string_codes(
+        "rel Revision(oid: text).\nrel File(revision: Revision.id).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    print_dl_program(Program, Bindings, Printed),
+    sub_atom(Printed, _, _, _, 'revision: Revision.id'),
+    atom_codes(Printed, PrintedCodes),
+    parse_dl(PrintedCodes, RoundTripped, RoundBindings, []),
+    Program =@= RoundTripped,
+    expand_program_with_bindings(RoundTripped, RoundBindings, prog(Decls, _), _),
+    memberchk(col_type('File'/1, revision, id('Revision')), Decls),
+    type_definitions(Decls, Types),
+    memberchk(type_def('Revision', [oid], [text]), Types).
+
+test(mounted_wrapper_path_and_terminal_relation_id_resolve_together) :-
+    Program = prog(
+        [ col_type(span/1, oid, text),
+          mount_decl(source, source_module, owner, [[span]-span]),
+          col_type(holder/2, spans, list(type_path([source, span]))),
+          col_type(holder/2, span_id, type_path([source, span, id])) ],
+        []),
+    dot_expand:resolve_qualified_types(Program, prog(Decls, [])),
+    memberchk(col_type(holder/2, spans, list(span)), Decls),
+    memberchk(col_type(holder/2, span_id, id(span)), Decls),
+    memberchk(type_decl(span, [col(oid, text)]), Decls).
+
+test(relation_id_list_is_a_named_refusal) :-
+    string_codes(
+        "rel Revision(oid: text).\nrel Batch(revisions: list(Revision.id)).\n",
+        Codes),
+    parse_dl(Codes, Program, Bindings, []),
+    catch(
+        ( program_plan(fixture(relation_id_list, Program, [], [], [])-Bindings, _), Thrown = none ),
+        Thrown,
+        true),
+    Thrown == unsupported_construct(list_of_relation_ids('Revision')).
+
+relation_id_catalog_rows(Rows) :-
+    inferred_relplans(
+        [ rel_spec('Revision'/1, set, [oid], none, [text]),
+          rel_spec('File'/1, set, [revision], none, [idref('Revision')]) ],
+        RelPlans),
+    catalog_type_rows(direct, relation_id_catalog, [], RelPlans, [], Rows).
+
+test(relation_id_catalog_keeps_the_target_type_and_marks_identity_storage) :-
+    relation_id_catalog_rows(Rows),
+    memberchk(row(RevisionId, _, _, 'Revision', rel, _, _, _, _, _, _), Rows),
+    memberchk(row(FileColumnId, _, 1, revision, column, RevisionId,
+                  _, _, _, _, _), Rows),
+    memberchk(row(_, FileColumnId, _, relation_id, storage, _, _, _, _, _, _),
+              Rows).
+
+test(relation_id_type_artifacts_keep_target_specific_nominal_surfaces) :-
+    relation_id_catalog_rows(Rows),
+    ts_types_text(relation_id_catalog, Rows, Ts),
+    rust_types_text(relation_id_catalog, Rows, Rust),
+    jsonschema_text(relation_id_catalog, Rows, JsonSchema),
+    sub_string(Ts, _, _, _, 'export type RelationId<T extends string>'),
+    sub_string(Ts, _, _, _, "revision: RelationId<'Revision'>;"),
+    sub_string(Rust, _, _, _, 'pub struct RelationId<T>'),
+    sub_string(Rust, _, _, _, 'pub revision: RelationId<Revision>,'),
+    sub_string(JsonSchema, _, _, _, '"$comment":"DL6 relation identity for Revision"'),
+    sub_string(JsonSchema, _, _, _, '"type":"integer"').
+
+test(relation_id_assignment_rejects_a_different_target) :-
+    Program = prog(
+        [ type_decl('Revision', [col(oid, text)]),
+          type_decl('Other', [col(oid, text)]),
+          col_type(source/1, value, id('Revision')),
+          col_type(sink/1, value, id('Other')) ],
+        [sink(Value) <- source(Value)]),
+    program_violation(head_column_type_conflict, Program,
+                      conflict(sink/1, value, id('Other'),
+                               source/1, value, id('Revision'))).
+
+:- end_tests(relation_id_access).

@@ -274,8 +274,9 @@ rel_def_pair(Rows, RefPrefix, RelRow, Key-Schema) :-
 
 rel_object(Rows, RefPrefix, RelRow, Schema) :-
     RelRow = row(RelId, _, _, _, _, _, _, _, _, _, _),
-    findall(Ord-ColumnName-ColumnTypeId,
-            member(row(_, RelId, Ord, ColumnName, column, ColumnTypeId, _, _, _, _, _), Rows),
+    findall(Ord-ColumnId-ColumnName-ColumnTypeId,
+            member(row(ColumnId, RelId, Ord, ColumnName, column, ColumnTypeId,
+                       _, _, _, _, _), Rows),
             Triples0),
     keysort(Triples0, Triples),
     maplist(column_property(Rows, RefPrefix), Triples, Pairs),
@@ -286,8 +287,20 @@ rel_object(Rows, RefPrefix, RelRow, Schema) :-
                 required: Required,
                 additionalProperties: false }.
 
-column_property(Rows, RefPrefix, _Ord-ColumnName-ColumnTypeId, ColumnName-Schema) :-
-    column_schema(Rows, RefPrefix, ColumnTypeId, Schema).
+column_property(Rows, RefPrefix, _Ord-ColumnId-ColumnName-ColumnTypeId,
+                ColumnName-Schema) :-
+    ( relation_id_storage(Rows, ColumnId)
+    -> relation_id_schema(Rows, ColumnTypeId, Schema)
+    ; column_schema(Rows, RefPrefix, ColumnTypeId, Schema)
+    ).
+
+relation_id_storage(Rows, ColumnId) :-
+    member(row(_, ColumnId, _, relation_id, storage, _, _, _, _, _, _), Rows).
+
+relation_id_schema(Rows, TargetId,
+                   _{ type: integer, '$comment': Comment }) :-
+    row_at(Rows, TargetId, row(_, _, _, TargetName, rel, _, _, _, _, _, _)),
+    format(atom(Comment), 'DL6 relation identity for ~w', [TargetName]).
 
 column_schema(Rows, RefPrefix, ColumnTypeId, Schema) :-
     row_at(Rows, ColumnTypeId, TargetRow),

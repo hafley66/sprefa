@@ -1,11 +1,13 @@
 % @comment-ok: module contract for the dl6 door, the single doc site for the row mapping.
 % typegen_export.pl: the dl6 door beside 7_emit_ts_types.pl. Dumps the same
-% semantic type rows the emitter consumes (lower:catalog_decl_rows/6 then
+% semantic type rows the emitter consumes (lower:catalog_type_rows/6 then
 % emit_jsonschema:option_rows/3, module-qualified) as one JSONL arrival per row
-% for render_ts.dl6's EDB rel type_row/7, so the two doors cannot drift.
+% for render_ts.dl6's EDB rel type_row/7 and type_storage/5, so the two doors
+% cannot drift.
 % row/11 -> type_row/7: id, parent, ordinal, name, kind, type_id, module_id
 % (Arity, Hash and the trailing pair are dropped). JSONL line shape:
 %   {"rel":"type_row","sign":"add","row":[<id>,<parent>,<ordinal>,"<name>","<kind>",<type_id>,<module_id>]}
+%   {"rel":"type_storage","sign":"add","row":[<id>,<column_id>,<ordinal>,"<local_name>",<module_id>]}
 
 :- module(typegen_export, [ dump_type_rows/2, dump_fixture_rows/3,
                             write_prolog_types/2 ]).
@@ -14,15 +16,15 @@
 :- use_module(library(lists)).
 
 :- use_module('../compile', [ program_plan/3 ]).
-:- use_module('../lower', [ catalog_decl_rows/6 ]).
+:- use_module('../lower', [ catalog_type_rows/6 ]).
 :- use_module('4_emit_jsonschema', [ option_rows/3 ]).
 :- use_module('7_emit_ts_types', [ ts_types_text/3 ]).
 
 %! dump_type_rows(+CompiledProgram, +JsonlPath) is det.
-%   CompiledProgram = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, _).
-dump_type_rows(plan(Name, prog(Decls, Rules), _Types, RelPlans, _, _, _, _, _),
+%   CompiledProgram = plan(Name, prog(Decls, Rules), _, RelPlans, _, _, _, _, Mode).
+dump_type_rows(plan(Name, prog(Decls, Rules), _Types, RelPlans, _, _, _, _, Mode),
                JsonlPath) :-
-    catalog_decl_rows(Name, Rules, RelPlans, Decls, Rows, _),
+    catalog_type_rows(Mode, Name, Rules, RelPlans, Decls, Rows),
     option_rows(Decls, Rows, RowsOpt),
     setup_call_cleanup(open(JsonlPath, write, Stream),
                        forall(member(Row, RowsOpt), write_row_line(Stream, Row)),
@@ -83,8 +85,21 @@ read_row_lines_loop(Stream, Rows) :-
 % Arity, Hash and the trailing pair are not read by either type renderer.
 row_of_dict(Dict, row(Id, Parent, Ordinal, Name, Kind, TypeId, 0, ModuleId,
                       '', '', '')) :-
+    Dict.rel == type_row,
     _{ row: [Id, Parent, Ordinal, Name, Kind, TypeId, ModuleId] } :< Dict.
+row_of_dict(Dict, row(Id, ColumnId, Ordinal, LocalName, storage, 0, 0,
+                      ModuleId, '', '', '')) :-
+    Dict.rel == type_storage,
+    _{ row: [Id, ColumnId, Ordinal, LocalName, ModuleId] } :< Dict.
 
+write_row_line(Stream, row(Id, ColumnId, Ordinal, LocalName, storage, _TypeId,
+                           _Arity, ModuleId, _Hash, _, _)) :-
+    !,
+    json_write_dict(Stream,
+                    _{ rel: type_storage, sign: add,
+                       row: [Id, ColumnId, Ordinal, LocalName, ModuleId] },
+                    [width(0)]),
+    format(Stream, '\n', []).
 write_row_line(Stream, row(Id, Parent, Ordinal, Name, Kind, TypeId, _Arity,
                            ModuleId, _Hash, _, _)) :-
     json_write_dict(Stream,

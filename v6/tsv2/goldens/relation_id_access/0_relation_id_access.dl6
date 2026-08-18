@@ -1,0 +1,12 @@
+rel Revision(oid: text).
+rel File(revision: Revision, path: text).
+rel IdOnly(revision_id: Revision.id).
+rel ValueOnly(revision: Revision).
+rel Both(revision: Revision, revision_id: Revision.id).
+rel Holder(file: File).
+rel DotId(revision_id: Revision.id).
+
+IdOnly(RevisionId) <- File(RevisionId, _).
+ValueOnly(Revision) <- File(Revision, _).
+Both(Revision, Revision) <- File(Revision, _).
+DotId(RevisionId) <- Holder(FileRec), RevisionId := FileRec.revision.id.

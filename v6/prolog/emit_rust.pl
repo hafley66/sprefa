@@ -88,6 +88,8 @@ rel_column_types_of(Rel, Types) :-
     maplist(boundary_type_name, ColumnTypes, Types).
 
 boundary_type_name(ref(_), ref) :- !.
+% Keep endpoint identity distinct from a followed row at the ProgramJson seam.
+boundary_type_name(idref(_), relation_id) :- !.
 boundary_type_name(json, json) :- !.
 boundary_type_name(json_list(_), json) :- !.
 % F3 mirror: Vec<Value> at the row seam, the same name on both doors.

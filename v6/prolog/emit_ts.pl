@@ -911,11 +911,15 @@ gate_column_type(text,  text)  :- !.
 gate_column_type(json,  json)  :- !.
 gate_column_type(json_list(_), json) :- !.
 gate_column_type(bytes, bytes) :- !.
+gate_column_type(id(_), int) :- !.
 % The stored id is what the gate sees; the elements live in the member rel.
 gate_column_type(list(_), int) :- !.
 gate_column_type(_,     other).
 
 boundary_column_type(ref(_), ref) :- !.
+% An identity endpoint is an INTEGER at SQLite, but it is neither an `int`
+% value nor a followed `ref` at the runtime boundary.
+boundary_column_type(idref(_), relation_id) :- !.
 % A `json` column keeps its own name at the driver seam. JSON scalars and
 % strings cannot be classified by inspecting only the first character.
 %

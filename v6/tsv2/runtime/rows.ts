@@ -49,7 +49,7 @@ export const row_value_from_sql: IRowValueFromSql = (type: IRowColumnType | unde
     }
     return Object.is(value, -0) ? 0 : value;
   }
-  if (type === "int") {
+  if (type === "int" || type === "relation_id") {
     if (typeof value === "bigint") {
       if (value < -9007199254740991n || value > 9007199254740991n) {
         throw new Error("int_out_of_range");
